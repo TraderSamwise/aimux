@@ -90,16 +90,26 @@ describe("AgentChatScreen composer render contract", () => {
   });
 
   it("lets held-input footer warnings wrap instead of clipping the reason", () => {
+    // The footer's precedence moved into `composerFooterState` and its
+    // rendering into `ComposerFooterContentView`, so this reads the error case
+    // of that component rather than a ternary that no longer exists. The
+    // property is the same one: a held-input reason is a sentence and has to
+    // wrap rather than clip to one line.
     const source = agentChatScreenSource();
-    const sendErrorStart = source.indexOf("{sendError ? (");
-    expect(sendErrorStart).toBeGreaterThanOrEqual(0);
-    const busyStart = source.indexOf(") : sendBusy || composerAwaitingAck ?", sendErrorStart);
-    expect(busyStart).toBeGreaterThan(sendErrorStart);
-    const sendErrorJsx = source.slice(sendErrorStart, busyStart);
+    const viewStart = source.indexOf("function ComposerFooterContentView(");
+    expect(viewStart).toBeGreaterThanOrEqual(0);
+    const viewEnd = source.indexOf("\nfunction ", viewStart + 1);
+    expect(viewEnd).toBeGreaterThan(viewStart);
+    const view = source.slice(viewStart, viewEnd);
+    const errorCase = view.slice(view.indexOf('case "error":'), view.indexOf('case "held":'));
+    expect(errorCase).toContain("items-start");
+    expect(errorCase).toContain("numberOfLines={3}");
+    expect(errorCase).not.toContain("numberOfLines={1}");
 
-    expect(sendErrorJsx).toContain("items-start");
-    expect(sendErrorJsx).toContain("numberOfLines={3}");
-    expect(sendErrorJsx).not.toContain("numberOfLines={1}");
+    const heldCase = view.slice(view.indexOf('case "held":'), view.indexOf('case "sending":'));
+    expect(heldCase).toContain("items-start");
+    expect(heldCase).toContain("numberOfLines={3}");
+    expect(heldCase).not.toContain("numberOfLines={1}");
   });
 
   it("keeps terminal output keyboard-aware and pinned on native keyboard changes", () => {
@@ -127,74 +137,45 @@ describe("AgentChatScreen composer render contract", () => {
   });
 });
 
-describe("sending shows the newest output in the pane it was sent from", () => {
-  // The terminal pane holds its rendered output back while the reader has
-  // scrolled up (`terminalVisibleOutputForLiveChange`), and
-  // `executeTerminalScrollCommand` drops any command that is not `initial` or
-  // `navigation` while unpinned. So sending from a scrolled-up terminal never
-  // showed the echo of your own message. The chat viewport had `showNewest`
-  // for exactly this; the terminal pane had no handle at all.
-  it("gives the terminal pane the same handle the chat viewport has", () => {
-    const terminalSource = componentSource(agentChatScreenSource(), "AgentTerminalOutputPane");
-    expect(terminalSource).toContain("useImperativeHandle");
-    expect(terminalSource).toContain("showNewest: showNewestTerminalOutput");
-
-    // Sliced to the handler's own body. Asserting against the whole component
-    // passed with the body gutted, because `setVisibleOutput(liveOutput)` also
-    // appears in the re-pin-on-reaching-end path further down.
-    const handlerStart = terminalSource.indexOf("const showNewestTerminalOutput = useCallback(");
-    expect(handlerStart).toBeGreaterThanOrEqual(0);
-    const handlerEnd = terminalSource.indexOf("useImperativeHandle", handlerStart);
-    expect(handlerEnd).toBeGreaterThan(handlerStart);
-    const handlerSource = terminalSource.slice(handlerStart, handlerEnd);
-
-    // Re-pinning is what lets the dropped scroll command through, and
-    // releasing the frozen output is what makes the echo render at all.
-    // Without both, the handle does nothing.
-    expect(handlerSource).toContain("chatPolicyAfterNavigationFocus()");
-    expect(handlerSource).toContain("setVisibleOutput(liveOutput)");
-    expect(handlerSource).toContain("executeTerminalScrollCommand(");
+/**
+ * The footer's WIRING, which no test can actually execute.
+ *
+ * `app/` has no render environment -- no jsdom, no renderer, and
+ * `vitest.config.ts` sets no `environment` -- so nothing can mount this screen
+ * and read what the footer shows. Every decision behind it IS covered
+ * (`composer-footer.test.ts`, `input-delivery.test.ts`,
+ * `send-confirmation.cross-surface.test.ts`), but the half-dozen lines that
+ * hand the screen's state to those decisions, and the one line that mounts the
+ * result, are reachable only as text.
+ *
+ * So this is a belt, and it is worth naming what it is: it catches someone
+ * accidentally hardwiring an argument or deleting the mount. An adversarial
+ * edit that keeps these strings and changes the behaviour passes, which is
+ * exactly what happened to the previous version of this file's assertions.
+ * The real fix is a render environment; it is queued.
+ */
+describe("the composer footer is wired to the derived state", () => {
+  it("mounts the rendered union", () => {
+    expect(agentChatScreenSource()).toContain(
+      "<ComposerFooterContentView content={composerFooterStateValue} />",
+    );
   });
 
-  it("asks both panes on send, because split view mounts both", () => {
+  it("passes the screen's own values, not constants", () => {
     const source = agentChatScreenSource();
-    const sendStart = source.indexOf("const handleSendMessage = useCallback(");
-    expect(sendStart).toBeGreaterThanOrEqual(0);
-    const sendEnd = source.indexOf("const handleSendPress = useCallback(", sendStart);
-    expect(sendEnd).toBeGreaterThan(sendStart);
-    const sendSource = source.slice(sendStart, sendEnd);
+    const callStart = source.indexOf("const composerFooterStateValue = composerFooterState({");
+    expect(callStart).toBeGreaterThanOrEqual(0);
+    const callEnd = source.indexOf("});", callStart);
+    expect(callEnd).toBeGreaterThan(callStart);
+    const call = source.slice(callStart, callEnd);
 
-    expect(sendSource).toContain("chatViewportRef.current?.showNewest()");
-    expect(sendSource).toContain("terminalViewportRef.current?.showNewest()");
-  });
-
-  it("passes the ref to the pane, or the handle is never attached", () => {
-    const source = agentChatScreenSource();
-    const mountStart = source.indexOf("<AgentTerminalOutputPane");
-    expect(mountStart).toBeGreaterThanOrEqual(0);
-    const mountEnd = source.indexOf("/>", mountStart);
-    expect(mountEnd).toBeGreaterThan(mountStart);
-    expect(source.slice(mountStart, mountEnd)).toContain("ref={terminalViewportRef}");
-  });
-});
-
-describe("per-conversation send state is reset when the conversation changes", () => {
-  // `heldDelivery` carries a baseline count of THIS conversation's user
-  // messages. Left behind on a switch it would be measured against another
-  // agent's transcript, stranding "Input held, not delivered yet" on a
-  // composer that never sent anything.
-  it("clears the held-send notice along with the rest", () => {
-    const source = agentChatScreenSource();
-    const resetStart = source.indexOf("activeComposerDraftKeyRef.current = composerDraftKey;");
-    expect(resetStart).toBeGreaterThanOrEqual(0);
-    const resetEnd = source.indexOf("}, [composerDraftKey, jotaiStore]);", resetStart);
-    expect(resetEnd).toBeGreaterThan(resetStart);
-    const resetSource = source.slice(resetStart, resetEnd);
-
-    // The established set, plus the one this branch added.
-    expect(resetSource).toContain("setPendingComposerAck(null)");
-    expect(resetSource).toContain("setAcceptedComposerMessages([])");
-    expect(resetSource).toContain("setSendError(null)");
-    expect(resetSource).toContain("setHeldDelivery(null)");
+    // The mode and owner-controls flag are what decide whether a transcript
+    // pane is on screen. Hardwiring either is how the original bug read as
+    // fixed while terminal mode still showed nothing.
+    expect(call).toContain("mode: agentOutputViewMode");
+    expect(call).toContain("rawOutputAllowed: canUseOwnerControls");
+    expect(call).toContain("awaitingEcho: composerSendPendingEcho");
+    expect(call).toContain("heldNotice: heldDeliveryNotice");
+    expect(call).toContain("error: sendError");
   });
 });

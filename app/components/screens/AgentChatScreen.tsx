@@ -43,7 +43,6 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronLeft,
-  Check,
   Clock,
   CircleAlert,
   Columns2,
@@ -112,10 +111,13 @@ import {
   type PickedAttachment,
 } from "@/lib/image-picker";
 import {
+  composerFooterState,
+  heldDeliveryClearDelayMs,
+  type ComposerFooterState,
+} from "@/lib/composer-footer";
+import {
   COMPOSER_SEND_TIMEOUT_MESSAGE,
   formatComposerSendFailure,
-  composerSendNotice,
-  heldDeliveryStillPending,
   normalizeComposerDraft,
   shouldSubmitComposerKey,
   userMessageAcknowledgesComposerSend,
@@ -126,8 +128,7 @@ import {
   type AcceptedComposerEcho,
 } from "@/lib/composer-echo";
 import {
-  formatLivePaneInputDeliveryNotice,
-  livePaneInputDeliveryOutcome,
+  sendDeliveryStateAfterResponse,
   formatLivePaneInputResponseRefusal,
   formatPostActionTranscriptRefreshResult,
 } from "@/lib/input-delivery";
@@ -553,7 +554,7 @@ export default function ChatScreen() {
   // about something delivered seconds ago.
   const [heldDelivery, setHeldDelivery] = useState<{
     notice: string;
-    baselineUserMessageCount: number;
+    maxDeliverAtMs: number | null;
   } | null>(null);
   const [chatChromeVisible, setChatChromeVisible] = useState(true);
   const [composerFocused, setComposerFocused] = useState(false);
@@ -1206,26 +1207,29 @@ export default function ChatScreen() {
   // exactly like one that did nothing, and the ten-second echo timeout then
   // said "Send not confirmed yet" with nothing on screen to explain it.
   const composerSendPendingEcho = acceptedComposerMessages.some((message) => !message.settled);
-  // Derived, not cleared in an effect: the service delivers a held send within
-  // its 15s safety hold and the input comes back as a user message, so the
-  // notice retires the moment the transcript moves past where it was queued.
-  // Left as state it sat there saying "not delivered yet" about something
-  // delivered seconds ago.
-  const heldDeliveryNotice =
-    heldDelivery &&
-    heldDeliveryStillPending({
-      heldAtUserMessageCount: heldDelivery.baselineUserMessageCount,
-      userMessageCount: parsedUserMessageCount,
-    })
-      ? heldDelivery.notice
-      : null;
-  const composerSendNoticeView = composerSendNotice({
+  const heldDeliveryNotice = heldDelivery?.notice ?? null;
+  const composerFooterStateValue = composerFooterState({
+    activityLabel,
+    activityLabelShimmer,
     awaitingEcho: composerSendPendingEcho,
     error: sendError,
     heldNotice: heldDeliveryNotice,
+    mode: agentOutputViewMode,
+    rawOutputAllowed: canUseOwnerControls,
     sending: sendBusy || composerAwaitingAck,
-    transcriptVisible: chatViewVisible,
+    width: chatSplitWidth,
   });
+
+  useEffect(() => {
+    if (!heldDelivery) return;
+    const delay = heldDeliveryClearDelayMs({
+      maxDeliverAtMs: heldDelivery.maxDeliverAtMs,
+      nowMs: Date.now(),
+    });
+    if (delay === null) return;
+    const timer = setTimeout(() => setHeldDelivery(null), delay);
+    return () => clearTimeout(timer);
+  }, [heldDelivery]);
 
   useLayoutEffect(() => {
     userMessageCountRef.current = userMessageCount;
@@ -1389,7 +1393,7 @@ export default function ChatScreen() {
         if (refusalNotice) {
           throw new Error(refusalNotice);
         }
-        const deliveryNotice = formatLivePaneInputDeliveryNotice(sendResponse.delivery);
+        const deliveryState = sendDeliveryStateAfterResponse(sendResponse);
         const clientMessageId = `composer:${sessionKey}:${Date.now()}`;
         const acceptedMessage = buildAcceptedComposerMessage({
           attachments,
@@ -1402,24 +1406,26 @@ export default function ChatScreen() {
           if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
           return;
         }
-        if (deliveryNotice) {
+        if (deliveryState.kind !== "none") {
           releasePendingAttachmentPreviews(attachments);
           writeComposerDraft(jotaiStore, sendComposerDraftKey, "");
           composerDraftTextRef.current = "";
           setPendingAttachments([]);
           setPendingComposerAck(null);
-          // `held` comes back with `accepted: true`: the input is queued and
-          // the service delivers it within the safety hold. Sending it to the
-          // red error line said the send had failed when it had not.
-          if (livePaneInputDeliveryOutcome(sendResponse.delivery) === "pending") {
-            setHeldDelivery({ baselineUserMessageCount, notice: deliveryNotice });
+          // `sendDeliveryStateAfterResponse` owns the routing: `held` comes
+          // back with `accepted: true`, so it is a wait, not a failure.
+          if (deliveryState.kind === "held") {
+            setHeldDelivery({
+              maxDeliverAtMs: deliveryState.maxDeliverAtMs,
+              notice: deliveryState.notice,
+            });
           } else {
-            setSendError(deliveryNotice);
+            setSendError(deliveryState.text);
           }
           if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
-          void refreshOutputSnapshot().catch((error) => {
-            setSendError(formatPostActionTranscriptRefreshResult("Input accepted", error));
-          });
+          // A refresh failure must not replace the queued-input explanation,
+          // which is the one thing the user needs here.
+          void refreshOutputSnapshot().catch(() => {});
           return;
         }
         setAcceptedComposerMessages((current) =>
@@ -2098,40 +2104,7 @@ export default function ChatScreen() {
                       onPress={handleAttachAttachment}
                     />
                     <View className="min-w-0 flex-1 px-1">
-                      {sendError ? (
-                        <View className="min-w-0 flex-row items-start gap-1.5">
-                          <CircleAlert size={13} color="#f87171" style={{ marginTop: 1 }} />
-                          <Text
-                            className="min-w-0 flex-1 text-xs text-destructive"
-                            numberOfLines={3}
-                          >
-                            {sendError}
-                          </Text>
-                        </View>
-                      ) : sendBusy || composerAwaitingAck ? (
-                        <View className="min-w-0 flex-row items-center gap-1.5">
-                          <ActivityIndicator size="small" color="#a1a1aa" />
-                          <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                            Sending...
-                          </Text>
-                        </View>
-                      ) : composerSendNoticeView ? (
-                        <View className="min-w-0 flex-row items-start gap-1.5">
-                          {composerSendNoticeView.kind === "held" ? (
-                            <Clock size={13} color="#e0b341" style={{ marginTop: 1 }} />
-                          ) : (
-                            <Check size={13} color="#a1a1aa" style={{ marginTop: 1 }} />
-                          )}
-                          <Text
-                            className="min-w-0 flex-1 text-xs text-muted-foreground"
-                            numberOfLines={3}
-                          >
-                            {composerSendNoticeView.text}
-                          </Text>
-                        </View>
-                      ) : activityLabel ? (
-                        <ActivityFooterLabel label={activityLabel} shimmer={activityLabelShimmer} />
-                      ) : null}
+                      <ComposerFooterContentView content={composerFooterStateValue} />
                     </View>
                     {/*
                   Always offered, never revealed only while we think the agent is
@@ -2166,11 +2139,9 @@ export default function ChatScreen() {
       </View>
     ),
     [
-      activityLabel,
-      activityLabelShimmer,
       canSendMessageBase,
       composerAwaitingAck,
-      composerSendNoticeView,
+      composerFooterStateValue,
       composerDraftKey,
       composerFooterBottomPadding,
       composerKeyboardProps,
@@ -2185,7 +2156,6 @@ export default function ChatScreen() {
       pendingAttachments,
       removePendingAttachment,
       sendBusy,
-      sendError,
       setComposerWidth,
       setComposerNativeFocus,
       setSendError,
@@ -3845,6 +3815,59 @@ function sessionFromActiveShare(activeShare: ActiveSharedSession): DesktopSessio
     worktreeName,
     label: "Shared session",
   };
+}
+
+/**
+ * Renders what `composerFooterContent` decided, and decides nothing itself.
+ *
+ * The precedence used to live here as a four-branch ternary, which meant it
+ * was reachable only by grepping this file's source in a test -- and every
+ * such assertion was defeated by a mutation that kept the asserted string.
+ */
+function ComposerFooterContentView({ content }: { content: ComposerFooterState }) {
+  switch (content.kind) {
+    case "error":
+      return (
+        <View className="min-w-0 flex-row items-start gap-1.5">
+          <CircleAlert size={13} color="#f87171" style={{ marginTop: 1 }} />
+          <Text className="min-w-0 flex-1 text-xs text-destructive" numberOfLines={3}>
+            {content.text}
+          </Text>
+        </View>
+      );
+    case "held":
+      return (
+        <View className="min-w-0 flex-row items-start gap-1.5">
+          <Clock size={13} color="#e0b341" style={{ marginTop: 1 }} />
+          <Text className="min-w-0 flex-1 text-xs text-muted-foreground" numberOfLines={3}>
+            {content.text}
+          </Text>
+        </View>
+      );
+    case "sending":
+      return (
+        <View className="min-w-0 flex-row items-center gap-1.5">
+          <ActivityIndicator size="small" color="#a1a1aa" />
+          <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+            Sending...
+          </Text>
+        </View>
+      );
+    case "awaiting-echo":
+      return (
+        <View className="min-w-0 flex-row items-start gap-1.5">
+          {/* Not a check: the send is away, the agent has not shown it yet. */}
+          <Clock size={13} color="#a1a1aa" style={{ marginTop: 1 }} />
+          <Text className="min-w-0 flex-1 text-xs text-muted-foreground" numberOfLines={3}>
+            {content.text}
+          </Text>
+        </View>
+      );
+    case "activity":
+      return <ActivityFooterLabel label={content.label} shimmer={content.shimmer} />;
+    case "empty":
+      return null;
+  }
 }
 
 function ActivityFooterLabel({ label, shimmer }: { label: string; shimmer: boolean }) {

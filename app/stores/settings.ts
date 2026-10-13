@@ -10,7 +10,15 @@ import {
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 
 export type ThemePreference = "system" | "light" | "dark";
-export type AgentOutputViewMode = "chat" | "split" | "terminal";
+/**
+ * Every view mode, as a value rather than only a type.
+ *
+ * A test that hardcoded the three could not notice a fourth being added,
+ * which is how the terminal mode ended up with no send confirmation: the gap
+ * was in exactly the mode nothing enumerated.
+ */
+export const AGENT_OUTPUT_VIEW_MODES = ["chat", "split", "terminal"] as const;
+export type AgentOutputViewMode = (typeof AGENT_OUTPUT_VIEW_MODES)[number];
 export type ExposePreviewMode = "chat" | "terminal";
 export type MonitorTargetKind = "project-agent" | "shared-chat";
 export type MonitorCaptureMode = "camera" | "audio" | "camera-audio";

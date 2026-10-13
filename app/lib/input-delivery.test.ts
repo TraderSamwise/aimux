@@ -5,6 +5,7 @@ import {
   formatLivePaneInputResponseRefusal,
   formatPostActionTranscriptRefreshResult,
   livePaneInputDeliveryOutcome,
+  sendDeliveryStateAfterResponse,
 } from "./input-delivery";
 
 describe("formatLivePaneInputDeliveryNotice", () => {
@@ -26,7 +27,9 @@ describe("formatLivePaneInputDeliveryNotice", () => {
     expect(
       formatLivePaneInputDeliveryNotice({
         state: "held",
-        reason: "visible-unsubmitted-input",
+        // The reason the service actually emits for typed-ahead text. It was
+        // `visible-unsubmitted-input` here, which nothing emits.
+        reason: "visible-unsubmitted-input-recent-user-input",
       }),
     ).toBe(
       "Input held, not delivered yet: the agent terminal already has typed text. Clear or send that terminal draft, or Aimux will send this after the 15s safety hold.",
@@ -39,13 +42,21 @@ describe("formatLivePaneInputDeliveryNotice", () => {
     ).toBe(
       "Input held, not delivered yet: a tmux client typed in the agent terminal recently. Aimux will retry after the terminal is quiet for a moment.",
     );
+    // `max-hold-elapsed` used to be asserted here and the service never emits
+    // it; this is the hold reason it does emit for typed-ahead text, which
+    // was rendering as a raw slug because the formatter keyed on a string
+    // that does not exist.
     expect(
       formatLivePaneInputDeliveryNotice({
         state: "held",
-        reason: "max-hold-elapsed",
+        reason: "visible-unsubmitted-input-recent-user-input",
       }),
     ).toBe(
-      "Input held, not delivered yet: the 15s safety hold elapsed, so Aimux is sending the queued input now.",
+      "Input held, not delivered yet: the agent terminal already has typed text. Clear or send that terminal draft, or Aimux will send this after the 15s safety hold.",
+    );
+    // A bare slug the formatter does not know is not shown to the user.
+    expect(formatLivePaneInputDeliveryNotice({ state: "held", reason: "some-future-reason" })).toBe(
+      "Input held, not delivered yet: Aimux will retry shortly; the agent terminal was busy.",
     );
   });
 
@@ -87,7 +98,10 @@ describe("whether a delivery notice is a failure or a wait", () => {
   // error line as a genuine failure, so an accepted send read as a failed one.
   it("calls a held send pending, not failed", () => {
     expect(
-      livePaneInputDeliveryOutcome({ state: "held", reason: "visible-unsubmitted-input" }),
+      livePaneInputDeliveryOutcome({
+        state: "held",
+        reason: "visible-unsubmitted-input-recent-user-input",
+      }),
     ).toBe("pending");
   });
 
@@ -101,5 +115,50 @@ describe("whether a delivery notice is a failure or a wait", () => {
   it("treats a delivered send, and an absent delivery, as delivered", () => {
     expect(livePaneInputDeliveryOutcome({ state: "delivered" })).toBe("delivered");
     expect(livePaneInputDeliveryOutcome(undefined)).toBe("delivered");
+  });
+});
+
+describe("what a send response means for the composer", () => {
+  // The screen used to decide this inline with
+  // `livePaneInputDeliveryOutcome(...) === "pending" ? setHeld : setError`,
+  // and nothing could reach that expression -- flipping it to `=== "failed"`
+  // put an accepted send back on the red error line with every test green.
+  it("routes a held send to a wait, carrying the service's deadline", () => {
+    expect(
+      sendDeliveryStateAfterResponse({
+        delivery: {
+          state: "held",
+          reason: "visible-unsubmitted-input-recent-user-input",
+          maxDeliverAtMs: 1_700_000_000_000,
+        },
+      }),
+    ).toEqual({
+      kind: "held",
+      notice:
+        "Input held, not delivered yet: the agent terminal already has typed text. Clear or send that terminal draft, or Aimux will send this after the 15s safety hold.",
+      maxDeliverAtMs: 1_700_000_000_000,
+    });
+  });
+
+  it("routes a real failure to the error line", () => {
+    expect(
+      sendDeliveryStateAfterResponse({ delivery: { state: "failed", error: "tmux is gone" } }),
+    ).toEqual({ kind: "error", text: "Input not delivered: tmux is gone" });
+  });
+
+  it("says nothing for a delivered send, or one with no delivery block", () => {
+    expect(sendDeliveryStateAfterResponse({ delivery: { state: "delivered" } })).toEqual({
+      kind: "none",
+    });
+    expect(sendDeliveryStateAfterResponse({ delivery: undefined })).toEqual({ kind: "none" });
+  });
+
+  // No deadline means nothing to count down, which `heldDeliveryStillPending`
+  // treats as still waiting rather than guessing.
+  it("carries a null deadline when the service sent none", () => {
+    const state = sendDeliveryStateAfterResponse({
+      delivery: { state: "held", reason: "active-client-recent-input" },
+    });
+    expect(state).toMatchObject({ kind: "held", maxDeliverAtMs: null });
   });
 });
