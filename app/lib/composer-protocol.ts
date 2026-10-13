@@ -52,6 +52,21 @@ export const COMPOSER_SEND_TIMEOUT_MESSAGE = "Send not confirmed yet. Check conn
  */
 export const COMPOSER_SEND_AWAITING_ECHO_NOTICE = "Sent \u2014 waiting for the agent to show it.";
 
+/**
+ * Whether a held send is still waiting, or the transcript has moved past it.
+ *
+ * The project service delivers a held send within its 15s safety hold, and
+ * the delivered input comes back as a user message. Without this the notice
+ * sat there saying "not delivered yet" about something delivered seconds ago,
+ * which is the same lying-wrapper problem as routing it to the error line.
+ */
+export function heldDeliveryStillPending(input: {
+  heldAtUserMessageCount: number;
+  userMessageCount: number;
+}): boolean {
+  return input.userMessageCount <= input.heldAtUserMessageCount;
+}
+
 export interface ComposerSendNoticeInput {
   /** True when a pane that renders the sent message is on screen. */
   transcriptVisible: boolean;

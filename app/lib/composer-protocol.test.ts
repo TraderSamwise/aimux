@@ -4,6 +4,7 @@ import {
   COMPOSER_SEND_AWAITING_ECHO_NOTICE,
   COMPOSER_SEND_TIMEOUT_MESSAGE,
   composerSendNotice,
+  heldDeliveryStillPending,
   formatComposerSendFailure,
   getComposerSendText,
   normalizeComposerDraft,
@@ -471,5 +472,27 @@ describe("what the composer says about a send that worked", () => {
     expect(composerSendNotice({ ...base, awaitingEcho: true, error: "nope" })).toBeNull();
     // The send button carries the in-flight state.
     expect(composerSendNotice({ ...base, sending: true, awaitingEcho: true })).toBeNull();
+  });
+});
+
+describe("whether a held send is still waiting", () => {
+  // The service delivers it within the 15s hold and the input comes back as a
+  // user message, so the transcript moving past where it was queued is the
+  // signal. Without this the notice claimed "not delivered yet" about
+  // something already delivered.
+  it("waits while the transcript has not moved", () => {
+    expect(heldDeliveryStillPending({ heldAtUserMessageCount: 3, userMessageCount: 3 })).toBe(true);
+  });
+
+  it("retires once the queued input lands", () => {
+    expect(heldDeliveryStillPending({ heldAtUserMessageCount: 3, userMessageCount: 4 })).toBe(
+      false,
+    );
+  });
+
+  // A transcript that shrank -- a shallower window, a different session --
+  // is not evidence the input landed.
+  it("keeps waiting if the transcript went backwards", () => {
+    expect(heldDeliveryStillPending({ heldAtUserMessageCount: 3, userMessageCount: 1 })).toBe(true);
   });
 });

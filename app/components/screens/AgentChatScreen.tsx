@@ -115,6 +115,7 @@ import {
   COMPOSER_SEND_TIMEOUT_MESSAGE,
   formatComposerSendFailure,
   composerSendNotice,
+  heldDeliveryStillPending,
   normalizeComposerDraft,
   shouldSubmitComposerKey,
   userMessageAcknowledgesComposerSend,
@@ -546,8 +547,14 @@ export default function ChatScreen() {
   const [composerWidth, setComposerWidth] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
   // An accepted send the project service queued rather than delivered. Kept
-  // apart from `sendError`: the route returns it with `accepted: true`.
-  const [heldDeliveryNotice, setHeldDeliveryNotice] = useState<string | null>(null);
+  // apart from `sendError`: the route returns it with `accepted: true`. The
+  // baseline rides along so the notice can retire itself once the queued input
+  // actually lands, rather than sitting there claiming "not delivered yet"
+  // about something delivered seconds ago.
+  const [heldDelivery, setHeldDelivery] = useState<{
+    notice: string;
+    baselineUserMessageCount: number;
+  } | null>(null);
   const [chatChromeVisible, setChatChromeVisible] = useState(true);
   const [composerFocused, setComposerFocused] = useState(false);
   const hasHardwareKeyboard = useHasHardwareKeyboard();
@@ -1195,6 +1202,19 @@ export default function ChatScreen() {
   // exactly like one that did nothing, and the ten-second echo timeout then
   // said "Send not confirmed yet" with nothing on screen to explain it.
   const composerSendPendingEcho = acceptedComposerMessages.some((message) => !message.settled);
+  // Derived, not cleared in an effect: the service delivers a held send within
+  // its 15s safety hold and the input comes back as a user message, so the
+  // notice retires the moment the transcript moves past where it was queued.
+  // Left as state it sat there saying "not delivered yet" about something
+  // delivered seconds ago.
+  const heldDeliveryNotice =
+    heldDelivery &&
+    heldDeliveryStillPending({
+      heldAtUserMessageCount: heldDelivery.baselineUserMessageCount,
+      userMessageCount: parsedUserMessageCount,
+    })
+      ? heldDelivery.notice
+      : null;
   const composerSendNoticeView = composerSendNotice({
     awaitingEcho: composerSendPendingEcho,
     error: sendError,
@@ -1330,7 +1350,7 @@ export default function ChatScreen() {
       terminalViewportRef.current?.showNewest();
       setSendBusy(true);
       setSendError(null);
-      setHeldDeliveryNotice(null);
+      setHeldDelivery(null);
       const sendStillOwnsActiveComposer = () =>
         sendOperationIdRef.current === sendOperationId &&
         activeComposerDraftKeyRef.current === sendComposerDraftKey;
@@ -1388,7 +1408,7 @@ export default function ChatScreen() {
           // the service delivers it within the safety hold. Sending it to the
           // red error line said the send had failed when it had not.
           if (livePaneInputDeliveryOutcome(sendResponse.delivery) === "pending") {
-            setHeldDeliveryNotice(deliveryNotice);
+            setHeldDelivery({ baselineUserMessageCount, notice: deliveryNotice });
           } else {
             setSendError(deliveryNotice);
           }
@@ -1474,7 +1494,7 @@ export default function ChatScreen() {
       sessionKey,
       setAcceptedComposerMessages,
       setPendingAttachments,
-      setHeldDeliveryNotice,
+      setHeldDelivery,
       setPendingComposerAck,
       setSendBusy,
       setSendError,
