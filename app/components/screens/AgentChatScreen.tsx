@@ -243,7 +243,6 @@ const COMPOSER_INPUT_MAX_HEIGHT =
   COMPOSER_INPUT_LINE_HEIGHT * COMPOSER_INPUT_MAX_LINES + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
 const COMPOSER_FOOTER_VERTICAL_PADDING = 12;
-const COMPOSER_SEND_ACK_TIMEOUT_MS = 10_000;
 const CHAT_COMPOSER_CONTROL_ROW_HEIGHT = 34;
 const CHAT_COMPOSER_RESERVE_GAP = 8;
 const CHAT_ATTACHMENT_STRIP_RESERVE = 88;
@@ -366,7 +365,6 @@ type PendingComposerAck = {
   id: number;
   text: string;
   attachmentFilenames: string[];
-  showTimeoutError: boolean;
   timedOut: boolean;
 };
 
@@ -1241,20 +1239,6 @@ export default function ChatScreen() {
     pendingComposerAck,
   ]);
 
-  useEffect(() => {
-    if (!pendingComposerAck) return;
-    if (pendingComposerAck.timedOut) return;
-    const pendingId = pendingComposerAck.id;
-    const timer = setTimeout(() => {
-      setPendingComposerAck((current) => {
-        if (current?.id !== pendingId) return current;
-        if (current.showTimeoutError) setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
-        return { ...current, timedOut: true };
-      });
-    }, COMPOSER_SEND_ACK_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [pendingComposerAck]);
-
   // The worktree leads, as it does in Exposé: it is what the session is, where the
   // generated id is only how it is addressed. The tone comes from the project's
   // ordered worktree list so the colour agrees with the sidebar and the TUI.
@@ -1382,19 +1366,7 @@ export default function ChatScreen() {
           throw new Error(refusalNotice);
         }
         const deliveryNotice = formatLivePaneInputDeliveryNotice(sendResponse.delivery);
-        const acceptedPending: PendingComposerAck = {
-          attachmentCount: attachments.length,
-          attachmentIds: attachments
-            .map((attachment) => attachment.uploadedAttachmentId)
-            .filter((id): id is string => Boolean(id)),
-          attachmentFilenames: attachments.map((attachment) => attachment.filename),
-          baselineUserMessageCount,
-          id: Date.now(),
-          showTimeoutError: false,
-          text,
-          timedOut: false,
-        };
-        const clientMessageId = `composer:${sessionKey}:${acceptedPending.id}`;
+        const clientMessageId = `composer:${sessionKey}:${Date.now()}`;
         const acceptedMessage = buildAcceptedComposerMessage({
           attachments,
           clientMessageId,
@@ -1468,7 +1440,6 @@ export default function ChatScreen() {
                 attachmentFilenames: attachments.map((attachment) => attachment.filename),
                 baselineUserMessageCount,
                 id: Date.now(),
-                showTimeoutError: true,
                 text,
                 timedOut: true,
               }
