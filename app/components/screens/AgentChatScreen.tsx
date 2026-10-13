@@ -43,6 +43,7 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronLeft,
+  Check,
   CircleAlert,
   Columns2,
   MessageSquareText,
@@ -112,6 +113,7 @@ import {
 import {
   COMPOSER_SEND_TIMEOUT_MESSAGE,
   formatComposerSendFailure,
+  composerSendNotice,
   normalizeComposerDraft,
   shouldSubmitComposerKey,
   userMessageAcknowledgesComposerSend,
@@ -1184,6 +1186,17 @@ export default function ChatScreen() {
     ? userMessageAcknowledgesComposerSend(allMessages, pendingComposerAck)
     : false;
   const composerAwaitingAck = pendingComposerAck !== null && !pendingComposerAck.timedOut;
+  // A send is confirmed by the message appearing in the transcript, and
+  // terminal mode does not mount that pane -- so a send that worked looked
+  // exactly like one that did nothing, and the ten-second echo timeout then
+  // said "Send not confirmed yet" with nothing on screen to explain it.
+  const composerSendPendingEcho = acceptedComposerMessages.some((message) => !message.settled);
+  const composerSendNoticeText = composerSendNotice({
+    awaitingEcho: composerSendPendingEcho,
+    error: sendError,
+    sending: sendBusy || composerAwaitingAck,
+    transcriptVisible: chatViewVisible,
+  });
 
   useLayoutEffect(() => {
     userMessageCountRef.current = userMessageCount;
@@ -2086,6 +2099,16 @@ export default function ChatScreen() {
                             Sending...
                           </Text>
                         </View>
+                      ) : composerSendNoticeText ? (
+                        <View className="min-w-0 flex-row items-center gap-1.5">
+                          <Check size={13} color="#a1a1aa" style={{ marginTop: 1 }} />
+                          <Text
+                            className="min-w-0 flex-1 text-xs text-muted-foreground"
+                            numberOfLines={2}
+                          >
+                            {composerSendNoticeText}
+                          </Text>
+                        </View>
                       ) : activityLabel ? (
                         <ActivityFooterLabel label={activityLabel} shimmer={activityLabelShimmer} />
                       ) : null}
@@ -2127,6 +2150,7 @@ export default function ChatScreen() {
       activityLabelShimmer,
       canSendMessageBase,
       composerAwaitingAck,
+      composerSendNoticeText,
       composerDraftKey,
       composerFooterBottomPadding,
       composerKeyboardProps,

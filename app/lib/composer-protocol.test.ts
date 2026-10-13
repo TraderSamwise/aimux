@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  COMPOSER_SEND_AWAITING_ECHO_NOTICE,
   COMPOSER_SEND_TIMEOUT_MESSAGE,
+  composerSendNotice,
   formatComposerSendFailure,
   getComposerSendText,
   normalizeComposerDraft,
@@ -419,5 +421,42 @@ describe("composer protocol", () => {
         },
       ),
     ).toBe(false);
+  });
+});
+
+describe("what the composer says about a send that worked", () => {
+  const base = {
+    transcriptVisible: false,
+    sending: false,
+    awaitingEcho: false,
+    error: null,
+  };
+
+  // The bug: terminal mode does not mount the transcript pane, so the one
+  // thing that confirmed a send -- the message appearing in it -- was not on
+  // screen, and a send that worked looked like one that did nothing.
+  it("confirms the send where there is no transcript to show it in", () => {
+    expect(composerSendNotice({ ...base, awaitingEcho: true })).toBe(
+      COMPOSER_SEND_AWAITING_ECHO_NOTICE,
+    );
+  });
+
+  // Once the echo lands, the pane the user is looking at shows the message,
+  // so a lingering notice would claim a fact that is already on screen.
+  it("stops once the echo has landed", () => {
+    expect(composerSendNotice(base)).toBeNull();
+  });
+
+  // Where there IS a transcript, the row is the confirmation and a second one
+  // beside it is noise.
+  it("says nothing where the transcript already shows it", () => {
+    expect(composerSendNotice({ ...base, transcriptVisible: true, awaitingEcho: true })).toBeNull();
+  });
+
+  it("yields to the louder facts", () => {
+    // An error renders on its own and is the thing that matters.
+    expect(composerSendNotice({ ...base, awaitingEcho: true, error: "nope" })).toBeNull();
+    // The send button carries the in-flight state.
+    expect(composerSendNotice({ ...base, sending: true, awaitingEcho: true })).toBeNull();
   });
 });

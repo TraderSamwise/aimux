@@ -37,6 +37,49 @@ export interface PendingComposerAckLike {
 
 export const COMPOSER_SEND_TIMEOUT_MESSAGE = "Send not confirmed yet. Check connection and retry.";
 
+/**
+ * What the composer says about a send that went through.
+ *
+ * A successful send is confirmed by the message appearing in the transcript,
+ * and that is the whole confirmation -- so in terminal mode, where the
+ * transcript pane is not mounted at all, a send that worked looked exactly
+ * like one that did nothing. The failure paths were always visible, because
+ * `sendError` renders inside the composer card rather than in a pane.
+ *
+ * One fact, two renderings: the transcript row where there is a transcript,
+ * this line where there is not. The surface filters a shared answer, it does
+ * not compute a different one.
+ */
+export const COMPOSER_SEND_AWAITING_ECHO_NOTICE = "Sent \u2014 waiting for the agent to show it.";
+
+export interface ComposerSendNoticeInput {
+  /** True when a pane that renders the sent message is on screen. */
+  transcriptVisible: boolean;
+  /** A send is in flight; the button already says so. */
+  sending: boolean;
+  /** A send was accepted and its echo has not come back yet. */
+  awaitingEcho: boolean;
+  /** Whatever the composer is already showing as an error. */
+  error: string | null;
+}
+
+/**
+ * Covers exactly the gap, and no longer: once the echo lands, the pane the
+ * user is looking at shows their message, so a lingering "Sent." would be a
+ * second claim about a fact already on screen. If the echo never comes, this
+ * stays up until the ten-second timeout replaces it with the error, which is
+ * the honest sequence.
+ */
+export function composerSendNotice(input: ComposerSendNoticeInput): string | null {
+  // An error is the louder fact and renders on its own.
+  if (input.error) return null;
+  // The transcript row IS the confirmation wherever there is one.
+  if (input.transcriptVisible) return null;
+  // The send button carries the in-flight state.
+  if (input.sending) return null;
+  return input.awaitingEcho ? COMPOSER_SEND_AWAITING_ECHO_NOTICE : null;
+}
+
 const LONG_COMPOSER_ACK_MIN_SENT_CHARS = 240;
 const LONG_COMPOSER_ACK_FRAGMENT_CHARS = 96;
 
