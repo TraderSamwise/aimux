@@ -249,6 +249,81 @@ fn an_attachment_body_is_measured_against_the_attachment_policy() {
     assert_eq!(other.status, 413);
 }
 
+/// A file of exactly the policy limit fits, envelope and all.
+///
+/// Without this the budget could be any number over a megabyte: `* 3 / 4`
+/// instead of the base64 expansion caps at 7.9 MB and refuses a legal 10 MB
+/// photo at about 5.9 MB of image -- the reported bug, restored, with every
+/// other test green. A zero envelope allowance is the same story one step
+/// smaller: the budget equals the base64 length exactly, so the JSON around it
+/// pushes a maximum-size upload over.
+#[test]
+fn a_file_of_exactly_the_limit_fits_with_a_real_envelope() {
+    let max_file = aimux::project_service::attachments::MAX_ATTACHMENT_BYTES;
+    let limit = aimux::project_service::attachments::attachment_upload_body_limit();
+
+    // The real base64 length of the largest legal file, plus the worst
+    // envelope a real client sends: a long filename, a long session id and a
+    // data-URL prefix.
+    let base64_len = max_file.div_ceil(3) * 4;
+    let body = format!(
+        concat!(
+            r#"{{"kind":"image","filename":"{}","mimeType":"image/heic","#,
+            r#""sessionId":"{}","dataBase64":"data:image/heic;base64,{}"}}"#
+        ),
+        "n".repeat(255),
+        "s".repeat(100),
+        "A".repeat(base64_len),
+    );
+    assert!(
+        body.len() <= limit,
+        "a {max_file}-byte file encodes to a {}-byte body, over the {limit}-byte budget",
+        body.len()
+    );
+
+    let mut routed = false;
+    let response = handle_project_service_http_request(
+        ProjectServiceHttpRequest {
+            method: "POST".into(),
+            path: routes::ATTACHMENTS.into(),
+            headers: BTreeMap::new(),
+            body_chunks: vec![body.into_bytes()],
+        },
+        |_method, _path, _body| {
+            routed = true;
+            ProjectServiceDispatchResponse {
+                status: 200,
+                body: json!({ "ok": true }),
+                bytes: None,
+                content_type: None,
+                stream: None,
+            }
+        },
+    );
+    assert_ne!(
+        response.status, 413,
+        "a file of exactly the limit must not be refused"
+    );
+    assert!(routed, "it has to reach the route");
+}
+
+/// `/attachments/publish` sends a path, not bytes, so it keeps the small cap.
+///
+/// Giving it the base64 budget widened a route that needs about a kilobyte.
+#[test]
+fn publishing_by_path_keeps_the_ordinary_body_cap() {
+    let oversized = handle_project_service_http_request(
+        ProjectServiceHttpRequest {
+            method: "POST".into(),
+            path: routes::ATTACHMENTS_PUBLISH.into(),
+            headers: BTreeMap::new(),
+            body_chunks: vec![vec![b'x'; 1024 * 1024 + 1]],
+        },
+        |_method, _path, _body| panic!("an oversized publish body should not route"),
+    );
+    assert_eq!(oversized.status, 413);
+}
+
 /// A syntactically valid JSON body of roughly `bytes` bytes.
 fn body_of_size(bytes: usize) -> Vec<u8> {
     let prefix = br#"{"kind":"image","filename":"a.png","mimeType":"image/png","dataBase64":""#;

@@ -26,6 +26,17 @@ pub const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
 /// be a flat 1 MiB for every route, which rejected an upload at about 786 KB
 /// of image and made the 10 MB limit this module declares unreachable. The
 /// limit that fires should be the limit that is written down.
+/// What the service says when a decoded attachment is over the policy.
+///
+/// Derived, because written as a literal it kept saying "10 MB" whatever the
+/// constant became, and nothing noticed.
+pub fn attachment_too_large_message() -> String {
+    format!(
+        "attachment exceeds {} MB",
+        MAX_ATTACHMENT_BYTES / (1024 * 1024)
+    )
+}
+
 pub fn attachment_upload_body_limit() -> usize {
     const ENVELOPE_BYTES: usize = 8 * 1024;
     MAX_ATTACHMENT_BYTES.div_ceil(3) * 4 + ENVELOPE_BYTES
@@ -138,6 +149,15 @@ pub fn route_attachment_request(
         200,
         json!({ "ok": true, "attachment": attachment }),
     ))
+}
+
+/// The one route that carries attachment bytes base64 in its JSON body.
+///
+/// Deliberately narrower than `is_attachment_route`: `/attachments/publish`
+/// takes a filesystem path and reads the file itself, so it needs about a
+/// kilobyte and giving it a 13 MB budget would widen a route for no reason.
+pub fn is_attachment_upload_route(method: &str, path: &str) -> bool {
+    method.eq_ignore_ascii_case("POST") && project_service_pathname(path) == routes::ATTACHMENTS
 }
 
 pub fn is_attachment_route(method: &str, path: &str) -> bool {
@@ -342,7 +362,7 @@ fn create_uploaded_attachment(
         return Err("attachment content is required".into());
     }
     if buffer.len() > MAX_ATTACHMENT_BYTES {
-        return Err("attachment exceeds 10 MB".into());
+        return Err(attachment_too_large_message());
     }
     let buffer_sha256 = sha256_hex(&buffer);
     let hosted_attachment = match input.hosted_attachment {
@@ -404,7 +424,7 @@ fn create_path_attachment(
         return Err("attachment content is required".into());
     }
     if buffer.len() > MAX_ATTACHMENT_BYTES {
-        return Err("attachment exceeds 10 MB".into());
+        return Err(attachment_too_large_message());
     }
     let buffer_sha256 = sha256_hex(&buffer);
     let hosted_attachment = match input.hosted_attachment {

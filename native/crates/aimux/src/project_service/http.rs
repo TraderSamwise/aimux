@@ -17,7 +17,7 @@ pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// photo. Derived from that declared limit rather than written down again, so
 /// the number that fires is the number the policy states.
 pub fn body_limit_for_route(method: &str, path: &str) -> usize {
-    if super::attachments::is_attachment_route(method, path) {
+    if super::attachments::is_attachment_upload_route(method, path) {
         super::attachments::attachment_upload_body_limit()
     } else {
         MAX_BODY_BYTES
