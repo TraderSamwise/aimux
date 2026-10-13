@@ -34,7 +34,11 @@ export function chatOutputPaneVisibility({
 } {
   const effectiveMode = effectiveChatOutputViewMode({ rawOutputAllowed, mode, width });
   return {
-    chatViewVisible: effectiveMode !== "terminal",
+    // An allowlist, not `!== "terminal"`. As a denylist every mode added
+    // later was assumed to render the chat transcript, so a new pane would
+    // get no send confirmation and the cross-surface gate would pass
+    // vacuously -- which is exactly how terminal mode ended up with none.
+    chatViewVisible: effectiveMode === "chat" || effectiveMode === "split",
     effectiveMode,
     terminalViewVisible: effectiveMode === "split" || effectiveMode === "terminal",
   };

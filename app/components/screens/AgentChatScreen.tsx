@@ -43,6 +43,7 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronLeft,
+  Clock,
   CircleAlert,
   Columns2,
   MessageSquareText,
@@ -110,6 +111,11 @@ import {
   type PickedAttachment,
 } from "@/lib/image-picker";
 import {
+  composerFooterState,
+  heldNoticeDurationMs,
+  type ComposerFooterState,
+} from "@/lib/composer-footer";
+import {
   COMPOSER_SEND_TIMEOUT_MESSAGE,
   formatComposerSendFailure,
   normalizeComposerDraft,
@@ -122,7 +128,7 @@ import {
   type AcceptedComposerEcho,
 } from "@/lib/composer-echo";
 import {
-  formatLivePaneInputDeliveryNotice,
+  sendDeliveryStateAfterResponse,
   formatLivePaneInputResponseRefusal,
   formatPostActionTranscriptRefreshResult,
 } from "@/lib/input-delivery";
@@ -239,7 +245,6 @@ const COMPOSER_INPUT_MAX_HEIGHT =
   COMPOSER_INPUT_LINE_HEIGHT * COMPOSER_INPUT_MAX_LINES + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
 const COMPOSER_FOOTER_VERTICAL_PADDING = 12;
-const COMPOSER_SEND_ACK_TIMEOUT_MS = 10_000;
 const CHAT_COMPOSER_CONTROL_ROW_HEIGHT = 34;
 const CHAT_COMPOSER_RESERVE_GAP = 8;
 const CHAT_ATTACHMENT_STRIP_RESERVE = 88;
@@ -362,7 +367,6 @@ type PendingComposerAck = {
   id: number;
   text: string;
   attachmentFilenames: string[];
-  showTimeoutError: boolean;
   timedOut: boolean;
 };
 
@@ -543,6 +547,14 @@ export default function ChatScreen() {
   const [sendBusy, setSendBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
+  // An accepted send the project service queued rather than delivered. Kept
+  // apart from `sendError`: the route returns it with `accepted: true`. The
+  // hold duration rides along so the notice retires on its own rather than
+  // sitting there claiming "not delivered yet" indefinitely.
+  const [heldDelivery, setHeldDelivery] = useState<{
+    notice: string;
+    holdMs: number | null;
+  } | null>(null);
   const [chatChromeVisible, setChatChromeVisible] = useState(true);
   const [composerFocused, setComposerFocused] = useState(false);
   const hasHardwareKeyboard = useHasHardwareKeyboard();
@@ -660,6 +672,7 @@ export default function ChatScreen() {
   const sendBusyRef = useRef(false);
   const composerInputRef = useRef<TextInput | null>(null);
   const chatViewportRef = useRef<ChatSessionViewportHandle | null>(null);
+  const terminalViewportRef = useRef<ChatSessionViewportHandle | null>(null);
   const activeComposerDraftKeyRef = useRef<string | null>(null);
   const composerFocusedRef = useRef(false);
   const screenFocusedRef = useRef(false);
@@ -768,6 +781,9 @@ export default function ChatScreen() {
     setSendBusy(false);
     sendBusyRef.current = false;
     setSendError(null);
+    // Carrying it into another agent's composer would strand "Input held, not
+    // delivered yet" on a composer that never sent anything.
+    setHeldDelivery(null);
   }, [composerDraftKey, jotaiStore]);
 
   useEffect(() => {
@@ -1184,6 +1200,35 @@ export default function ChatScreen() {
     ? userMessageAcknowledgesComposerSend(allMessages, pendingComposerAck)
     : false;
   const composerAwaitingAck = pendingComposerAck !== null && !pendingComposerAck.timedOut;
+  // A send is confirmed by the message appearing in the transcript, and
+  // terminal mode does not mount that pane -- so a send that worked looked
+  // exactly like one that did nothing, and the ten-second echo timeout then
+  // said "Send not confirmed yet" with nothing on screen to explain it.
+  const composerSendPendingEcho = acceptedComposerMessages.some((message) => !message.settled);
+  const heldDeliveryNotice = heldDelivery?.notice ?? null;
+  // Passes the mode rather than the `chatViewVisible` computed above: a
+  // boolean handed in could be hardwired, and in the first cut of this change
+  // it was. Same bindings, same render, same pure helper, so the two calls
+  // cannot disagree.
+  const composerFooterStateValue = composerFooterState({
+    activityLabel,
+    activityLabelShimmer,
+    awaitingEcho: composerSendPendingEcho,
+    error: sendError,
+    heldNotice: heldDeliveryNotice,
+    mode: agentOutputViewMode,
+    rawOutputAllowed: canUseOwnerControls,
+    sending: sendBusy || composerAwaitingAck,
+    width: chatSplitWidth,
+  });
+
+  useEffect(() => {
+    if (!heldDelivery) return;
+    const delay = heldNoticeDurationMs({ holdMs: heldDelivery.holdMs });
+    if (delay === null) return;
+    const timer = setTimeout(() => setHeldDelivery(null), delay);
+    return () => clearTimeout(timer);
+  }, [heldDelivery]);
 
   useLayoutEffect(() => {
     userMessageCountRef.current = userMessageCount;
@@ -1220,20 +1265,6 @@ export default function ChatScreen() {
     pendingAttachments,
     pendingComposerAck,
   ]);
-
-  useEffect(() => {
-    if (!pendingComposerAck) return;
-    if (pendingComposerAck.timedOut) return;
-    const pendingId = pendingComposerAck.id;
-    const timer = setTimeout(() => {
-      setPendingComposerAck((current) => {
-        if (current?.id !== pendingId) return current;
-        if (current.showTimeoutError) setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
-        return { ...current, timedOut: true };
-      });
-    }, COMPOSER_SEND_ACK_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [pendingComposerAck]);
 
   // The worktree leads, as it does in Exposé: it is what the session is, where the
   // generated id is only how it is addressed. The tone comes from the project's
@@ -1318,9 +1349,15 @@ export default function ChatScreen() {
       const baselineUserMessageCount = userMessageCountRef.current;
       const baselineParsedMessageCount = parsedMessageCountRef.current;
       const baselineParsedUserMessageCount = parsedUserMessageCountRef.current;
+      // Whichever pane is on screen. Only the mounted one has a ref, and in
+      // split view both are and both should move: sending is an explicit ask
+      // to see what happens next, which is why it overrides the freeze that
+      // holds output back while a reader has scrolled up.
       chatViewportRef.current?.showNewest();
+      terminalViewportRef.current?.showNewest();
       setSendBusy(true);
       setSendError(null);
+      setHeldDelivery(null);
       const sendStillOwnsActiveComposer = () =>
         sendOperationIdRef.current === sendOperationId &&
         activeComposerDraftKeyRef.current === sendComposerDraftKey;
@@ -1355,20 +1392,8 @@ export default function ChatScreen() {
         if (refusalNotice) {
           throw new Error(refusalNotice);
         }
-        const deliveryNotice = formatLivePaneInputDeliveryNotice(sendResponse.delivery);
-        const acceptedPending: PendingComposerAck = {
-          attachmentCount: attachments.length,
-          attachmentIds: attachments
-            .map((attachment) => attachment.uploadedAttachmentId)
-            .filter((id): id is string => Boolean(id)),
-          attachmentFilenames: attachments.map((attachment) => attachment.filename),
-          baselineUserMessageCount,
-          id: Date.now(),
-          showTimeoutError: false,
-          text,
-          timedOut: false,
-        };
-        const clientMessageId = `composer:${sessionKey}:${acceptedPending.id}`;
+        const deliveryState = sendDeliveryStateAfterResponse(sendResponse);
+        const clientMessageId = `composer:${sessionKey}:${Date.now()}`;
         const acceptedMessage = buildAcceptedComposerMessage({
           attachments,
           clientMessageId,
@@ -1380,17 +1405,23 @@ export default function ChatScreen() {
           if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
           return;
         }
-        if (deliveryNotice) {
+        if (deliveryState.kind !== "none") {
           releasePendingAttachmentPreviews(attachments);
           writeComposerDraft(jotaiStore, sendComposerDraftKey, "");
           composerDraftTextRef.current = "";
           setPendingAttachments([]);
           setPendingComposerAck(null);
-          setSendError(deliveryNotice);
+          // `sendDeliveryStateAfterResponse` owns the routing: `held` comes
+          // back with `accepted: true`, so it is a wait, not a failure.
+          if (deliveryState.kind === "held") {
+            setHeldDelivery({ holdMs: deliveryState.holdMs, notice: deliveryState.notice });
+          } else {
+            setSendError(deliveryState.text);
+          }
           if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
-          void refreshOutputSnapshot().catch((error) => {
-            setSendError(formatPostActionTranscriptRefreshResult("Input accepted", error));
-          });
+          // A refresh failure must not replace the queued-input explanation,
+          // which is the one thing the user needs here.
+          void refreshOutputSnapshot().catch(() => {});
           return;
         }
         setAcceptedComposerMessages((current) =>
@@ -1435,7 +1466,6 @@ export default function ChatScreen() {
                 attachmentFilenames: attachments.map((attachment) => attachment.filename),
                 baselineUserMessageCount,
                 id: Date.now(),
-                showTimeoutError: true,
                 text,
                 timedOut: true,
               }
@@ -1470,6 +1500,7 @@ export default function ChatScreen() {
       sessionKey,
       setAcceptedComposerMessages,
       setPendingAttachments,
+      setHeldDelivery,
       setPendingComposerAck,
       setSendBusy,
       setSendError,
@@ -2069,26 +2100,7 @@ export default function ChatScreen() {
                       onPress={handleAttachAttachment}
                     />
                     <View className="min-w-0 flex-1 px-1">
-                      {sendError ? (
-                        <View className="min-w-0 flex-row items-start gap-1.5">
-                          <CircleAlert size={13} color="#f87171" style={{ marginTop: 1 }} />
-                          <Text
-                            className="min-w-0 flex-1 text-xs text-destructive"
-                            numberOfLines={3}
-                          >
-                            {sendError}
-                          </Text>
-                        </View>
-                      ) : sendBusy || composerAwaitingAck ? (
-                        <View className="min-w-0 flex-row items-center gap-1.5">
-                          <ActivityIndicator size="small" color="#a1a1aa" />
-                          <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                            Sending...
-                          </Text>
-                        </View>
-                      ) : activityLabel ? (
-                        <ActivityFooterLabel label={activityLabel} shimmer={activityLabelShimmer} />
-                      ) : null}
+                      <ComposerFooterContentView content={composerFooterStateValue} />
                     </View>
                     {/*
                   Always offered, never revealed only while we think the agent is
@@ -2123,10 +2135,9 @@ export default function ChatScreen() {
       </View>
     ),
     [
-      activityLabel,
-      activityLabelShimmer,
       canSendMessageBase,
       composerAwaitingAck,
+      composerFooterStateValue,
       composerDraftKey,
       composerFooterBottomPadding,
       composerKeyboardProps,
@@ -2141,7 +2152,6 @@ export default function ChatScreen() {
       pendingAttachments,
       removePendingAttachment,
       sendBusy,
-      sendError,
       setComposerWidth,
       setComposerNativeFocus,
       setSendError,
@@ -2734,6 +2744,7 @@ export default function ChatScreen() {
                 {terminalViewVisible ? (
                   <View className="flex-1 bg-background" style={{ minWidth: 0 }}>
                     <AgentTerminalOutputPane
+                      ref={terminalViewportRef}
                       bottomContentInset={chatBottomContentReserve}
                       dividerWidth={chatDividerWidth}
                       keyboardVisible={keyboardVisible}
@@ -2942,263 +2953,292 @@ type AgentTerminalOutputPaneProps = {
   topContentInset: number;
 };
 
-const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
-  bottomContentInset,
-  dividerWidth,
-  keyboardVisible,
-  onChromeVisibleChange,
-  agentKey,
-  topContentInset,
-}: AgentTerminalOutputPaneProps) {
-  const outputPlain = useAtomValue(outputBufferFamily(agentKey));
-  const outputAnsi = useAtomValue(outputAnsiFamily(agentKey));
-  const outputAvailable = useAtomValue(outputAvailableFamily(agentKey));
-  const scrollRef = useRef<ChatScrollHandle | null>(null);
-  const output = outputAnsi || outputPlain;
-  const outputTail = useMemo(
-    () => output.replace(/\r/g, "").split("\n").slice(-TERMINAL_OUTPUT_MAX_LINES).join("\n"),
-    [output],
-  );
-  const liveLines = useMemo(
-    () =>
-      formatTerminalOutputForDisplay(outputTail, {
-        dividerWidth: Math.max(48, dividerWidth * 2),
-      }),
-    [dividerWidth, outputTail],
-  );
-  const liveOutput = useMemo(
-    () =>
-      terminalVisibleOutputForPinned({
-        lines: liveLines,
-        outputAvailable,
-        outputText: outputTail,
-        sessionKey: agentKey,
-      }),
-    [liveLines, outputAvailable, outputTail, agentKey],
-  );
-  const [visibleOutput, setVisibleOutput] = useState(liveOutput);
-  const terminalScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
-  const terminalScrollChromeRef = useRef<ChatScrollChromeState>(createChatScrollChromeState());
-  const terminalScrollFrameRef = useRef<number | null>(null);
-  const terminalInitialLayoutKeyRef = useRef<string | null>(null);
-  // `scrollToEnd` targets `contentHeight - viewportHeight` and knows nothing
-  // about the keyboard's contentInset, so with the keyboard up it lands short by
-  // exactly the inset and the newest output stays behind it. Track the geometry
-  // and scroll to the offset that really shows the last line.
-  const terminalGeometryRef = useRef<ChatScrollMetrics>({
-    bottomInset: 0,
-    contentHeight: 0,
-    offsetY: 0,
-    viewportHeight: 0,
-  });
-  const extraContentPadding = useSharedValue(bottomContentInset);
-  const visibleLines = visibleOutput.sessionKey === agentKey ? visibleOutput.lines : liveLines;
-  const visibleOutputText =
-    visibleOutput.sessionKey === agentKey ? visibleOutput.outputText : outputTail;
-  const visibleOutputAvailable =
-    visibleOutput.sessionKey === agentKey ? visibleOutput.outputAvailable : outputAvailable;
-  const hasOutput = visibleOutputText.trim().length > 0 || visibleOutputAvailable;
+const AgentTerminalOutputPane = React.memo(
+  React.forwardRef<ChatSessionViewportHandle, AgentTerminalOutputPaneProps>(
+    function AgentTerminalOutputPane(
+      {
+        bottomContentInset,
+        dividerWidth,
+        keyboardVisible,
+        onChromeVisibleChange,
+        agentKey,
+        topContentInset,
+      },
+      ref,
+    ) {
+      const outputPlain = useAtomValue(outputBufferFamily(agentKey));
+      const outputAnsi = useAtomValue(outputAnsiFamily(agentKey));
+      const outputAvailable = useAtomValue(outputAvailableFamily(agentKey));
+      const scrollRef = useRef<ChatScrollHandle | null>(null);
+      const output = outputAnsi || outputPlain;
+      const outputTail = useMemo(
+        () => output.replace(/\r/g, "").split("\n").slice(-TERMINAL_OUTPUT_MAX_LINES).join("\n"),
+        [output],
+      );
+      const liveLines = useMemo(
+        () =>
+          formatTerminalOutputForDisplay(outputTail, {
+            dividerWidth: Math.max(48, dividerWidth * 2),
+          }),
+        [dividerWidth, outputTail],
+      );
+      const liveOutput = useMemo(
+        () =>
+          terminalVisibleOutputForPinned({
+            lines: liveLines,
+            outputAvailable,
+            outputText: outputTail,
+            sessionKey: agentKey,
+          }),
+        [liveLines, outputAvailable, outputTail, agentKey],
+      );
+      const [visibleOutput, setVisibleOutput] = useState(liveOutput);
+      const terminalScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
+      const terminalScrollChromeRef = useRef<ChatScrollChromeState>(createChatScrollChromeState());
+      const terminalScrollFrameRef = useRef<number | null>(null);
+      const terminalInitialLayoutKeyRef = useRef<string | null>(null);
+      // `scrollToEnd` targets `contentHeight - viewportHeight` and knows nothing
+      // about the keyboard's contentInset, so with the keyboard up it lands short by
+      // exactly the inset and the newest output stays behind it. Track the geometry
+      // and scroll to the offset that really shows the last line.
+      const terminalGeometryRef = useRef<ChatScrollMetrics>({
+        bottomInset: 0,
+        contentHeight: 0,
+        offsetY: 0,
+        viewportHeight: 0,
+      });
+      const extraContentPadding = useSharedValue(bottomContentInset);
+      const visibleLines = visibleOutput.sessionKey === agentKey ? visibleOutput.lines : liveLines;
+      const visibleOutputText =
+        visibleOutput.sessionKey === agentKey ? visibleOutput.outputText : outputTail;
+      const visibleOutputAvailable =
+        visibleOutput.sessionKey === agentKey ? visibleOutput.outputAvailable : outputAvailable;
+      const hasOutput = visibleOutputText.trim().length > 0 || visibleOutputAvailable;
 
-  const cancelPendingTerminalScroll = useCallback(() => {
-    if (terminalScrollFrameRef.current === null) return;
-    cancelAnimationFrame(terminalScrollFrameRef.current);
-    terminalScrollFrameRef.current = null;
-  }, []);
-
-  useEffect(() => {
-    return cancelPendingTerminalScroll;
-  }, [cancelPendingTerminalScroll]);
-
-  useEffect(() => {
-    extraContentPadding.value = bottomContentInset;
-  }, [bottomContentInset, extraContentPadding]);
-
-  const executeTerminalScrollCommand = useCallback(
-    (command: ChatScrollCommand) => {
-      if (command.kind === "none") return;
-      cancelPendingTerminalScroll();
-      terminalScrollFrameRef.current = requestAnimationFrame(() => {
+      const cancelPendingTerminalScroll = useCallback(() => {
+        if (terminalScrollFrameRef.current === null) return;
+        cancelAnimationFrame(terminalScrollFrameRef.current);
         terminalScrollFrameRef.current = null;
-        if (
-          command.reason !== "initial" &&
-          command.reason !== "navigation" &&
-          terminalScrollPolicyRef.current.intent !== "pinned"
-        ) {
-          return;
-        }
-        const target = chatScrollTargetForEnd(terminalGeometryRef.current);
-        if (target > 0) {
-          scrollRef.current?.scrollTo({ animated: command.animated, y: target });
-        } else {
-          scrollRef.current?.scrollToEnd({ animated: command.animated });
-        }
-      });
-    },
-    [cancelPendingTerminalScroll],
-  );
+      }, []);
 
-  useEffect(() => {
-    terminalScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
-    terminalScrollChromeRef.current = createChatScrollChromeState();
-    terminalInitialLayoutKeyRef.current = null;
-    onChromeVisibleChange(true);
-    executeTerminalScrollCommand(chatCommandForNavigationFocus());
-  }, [executeTerminalScrollCommand, onChromeVisibleChange, agentKey]);
+      useEffect(() => {
+        return cancelPendingTerminalScroll;
+      }, [cancelPendingTerminalScroll]);
 
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-    executeTerminalScrollCommand(chatCommandForKeyboardChange(terminalScrollPolicyRef.current));
-  }, [executeTerminalScrollCommand, keyboardVisible]);
+      useEffect(() => {
+        extraContentPadding.value = bottomContentInset;
+      }, [bottomContentInset, extraContentPadding]);
 
-  useEffect(() => {
-    const next = terminalVisibleOutputForLiveChange(visibleOutput, {
-      intent: terminalScrollPolicyRef.current.intent,
-      liveOutput,
-    });
-    if (next !== visibleOutput) setVisibleOutput(next);
-  }, [liveOutput, visibleOutput]);
+      const executeTerminalScrollCommand = useCallback(
+        (command: ChatScrollCommand) => {
+          if (command.kind === "none") return;
+          cancelPendingTerminalScroll();
+          terminalScrollFrameRef.current = requestAnimationFrame(() => {
+            terminalScrollFrameRef.current = null;
+            if (
+              command.reason !== "initial" &&
+              command.reason !== "navigation" &&
+              terminalScrollPolicyRef.current.intent !== "pinned"
+            ) {
+              return;
+            }
+            const target = chatScrollTargetForEnd(terminalGeometryRef.current);
+            if (target > 0) {
+              scrollRef.current?.scrollTo({ animated: command.animated, y: target });
+            } else {
+              scrollRef.current?.scrollToEnd({ animated: command.animated });
+            }
+          });
+        },
+        [cancelPendingTerminalScroll],
+      );
 
-  const handleTerminalLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      terminalGeometryRef.current = {
-        ...terminalGeometryRef.current,
-        viewportHeight: event.nativeEvent.layout.height,
-      };
-      if (terminalInitialLayoutKeyRef.current !== agentKey) {
-        terminalInitialLayoutKeyRef.current = agentKey;
-        executeTerminalScrollCommand(chatCommandForInitialLayout());
-        return;
-      }
-      executeTerminalScrollCommand(chatCommandForContentChange(terminalScrollPolicyRef.current));
-    },
-    [executeTerminalScrollCommand, agentKey],
-  );
-
-  const handleTerminalContentSizeChange = useCallback(
-    (_contentWidth: number, contentHeight: number) => {
-      terminalGeometryRef.current = { ...terminalGeometryRef.current, contentHeight };
-      executeTerminalScrollCommand(chatCommandForContentChange(terminalScrollPolicyRef.current));
-    },
-    [executeTerminalScrollCommand],
-  );
-
-  // Android does not report the keyboard-driven inset in the scroll event, so
-  // the library hands it over here instead.
-  const handleTerminalContentInsetChange = useCallback((insets: { bottom: number }) => {
-    terminalGeometryRef.current = {
-      ...terminalGeometryRef.current,
-      bottomInset: insets.bottom,
-    };
-  }, []);
-
-  const handleTerminalScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const metrics: ChatScrollMetrics = {
-        bottomInset: terminalGeometryRef.current.bottomInset,
-        contentHeight: event.nativeEvent.contentSize.height,
-        offsetY: event.nativeEvent.contentOffset.y,
-        viewportHeight: event.nativeEvent.layoutMeasurement.height,
-      };
-      terminalGeometryRef.current = metrics;
-      const previousIntent = terminalScrollPolicyRef.current.intent;
-      const nextScroll = terminalScrollStateAfterUserScroll({
-        chrome: terminalScrollChromeRef.current,
-        metrics,
-        policy: terminalScrollPolicyRef.current,
-      });
-      const nextPolicy = nextScroll.policy;
-      if (nextPolicy.intent === "reading") {
-        cancelPendingTerminalScroll();
-      }
-      terminalScrollPolicyRef.current = nextPolicy;
-      if (nextScroll.chrome !== terminalScrollChromeRef.current) {
-        terminalScrollChromeRef.current = nextScroll.chrome;
-        onChromeVisibleChange(nextScroll.chrome.visible);
-      }
-      if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
+      // The terminal twin of the chat viewport's `showNewest`. The pane freezes
+      // its rendered output while the reader has scrolled up -- see
+      // `terminalVisibleOutputForLiveChange` -- so without this, sending from a
+      // scrolled-up terminal never showed the echo of your own message, and
+      // `executeTerminalScrollCommand` drops any command that is not `initial` or
+      // `navigation` while unpinned.
+      const showNewestTerminalOutput = useCallback(() => {
+        terminalScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+        terminalScrollChromeRef.current = createChatScrollChromeState();
+        onChromeVisibleChange(true);
         setVisibleOutput(liveOutput);
-      }
-    },
-    [cancelPendingTerminalScroll, liveOutput, onChromeVisibleChange],
-  );
+        executeTerminalScrollCommand(chatCommandForNavigationFocus());
+      }, [executeTerminalScrollCommand, liveOutput, onChromeVisibleChange]);
 
-  const contentContainerStyle = {
-    flexGrow: 1,
-    justifyContent: "flex-end" as const,
-    paddingBottom: Platform.OS === "web" ? bottomContentInset + 18 : 18,
-    paddingHorizontal: 12,
-    paddingTop: topContentInset + 16,
-  };
-  const content = hasOutput ? (
-    <View className="rounded-lg border border-border bg-card/80 px-3 py-2">
-      {visibleLines.map((line, lineIndex) => (
-        <RNText key={lineIndex} style={TERMINAL_OUTPUT_LINE_STYLE}>
-          {line.length === 0
-            ? "\u00a0"
-            : line.map((span, spanIndex) => (
-                <RNText key={spanIndex} style={span.style}>
-                  {span.text}
-                </RNText>
-              ))}
-        </RNText>
-      ))}
-    </View>
-  ) : (
-    <View className="items-center justify-center px-4 py-10">
-      <View
-        className="max-w-[90%] flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2"
-        style={{ minWidth: 220 }}
-      >
-        <ActivityIndicator size="small" color="#a1a1aa" />
-        <View className="min-w-0 shrink">
-          <Text className="text-sm text-muted-foreground">Loading output</Text>
-          <Text className="mt-1 text-xs text-muted-foreground">
-            Waiting for terminal output from the project service.
-          </Text>
+      useImperativeHandle(ref, () => ({ showNewest: showNewestTerminalOutput }), [
+        showNewestTerminalOutput,
+      ]);
+
+      useEffect(() => {
+        terminalScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+        terminalScrollChromeRef.current = createChatScrollChromeState();
+        terminalInitialLayoutKeyRef.current = null;
+        onChromeVisibleChange(true);
+        executeTerminalScrollCommand(chatCommandForNavigationFocus());
+      }, [executeTerminalScrollCommand, onChromeVisibleChange, agentKey]);
+
+      useEffect(() => {
+        if (Platform.OS === "web") return;
+        executeTerminalScrollCommand(chatCommandForKeyboardChange(terminalScrollPolicyRef.current));
+      }, [executeTerminalScrollCommand, keyboardVisible]);
+
+      useEffect(() => {
+        const next = terminalVisibleOutputForLiveChange(visibleOutput, {
+          intent: terminalScrollPolicyRef.current.intent,
+          liveOutput,
+        });
+        if (next !== visibleOutput) setVisibleOutput(next);
+      }, [liveOutput, visibleOutput]);
+
+      const handleTerminalLayout = useCallback(
+        (event: LayoutChangeEvent) => {
+          terminalGeometryRef.current = {
+            ...terminalGeometryRef.current,
+            viewportHeight: event.nativeEvent.layout.height,
+          };
+          if (terminalInitialLayoutKeyRef.current !== agentKey) {
+            terminalInitialLayoutKeyRef.current = agentKey;
+            executeTerminalScrollCommand(chatCommandForInitialLayout());
+            return;
+          }
+          executeTerminalScrollCommand(
+            chatCommandForContentChange(terminalScrollPolicyRef.current),
+          );
+        },
+        [executeTerminalScrollCommand, agentKey],
+      );
+
+      const handleTerminalContentSizeChange = useCallback(
+        (_contentWidth: number, contentHeight: number) => {
+          terminalGeometryRef.current = { ...terminalGeometryRef.current, contentHeight };
+          executeTerminalScrollCommand(
+            chatCommandForContentChange(terminalScrollPolicyRef.current),
+          );
+        },
+        [executeTerminalScrollCommand],
+      );
+
+      // Android does not report the keyboard-driven inset in the scroll event, so
+      // the library hands it over here instead.
+      const handleTerminalContentInsetChange = useCallback((insets: { bottom: number }) => {
+        terminalGeometryRef.current = {
+          ...terminalGeometryRef.current,
+          bottomInset: insets.bottom,
+        };
+      }, []);
+
+      const handleTerminalScroll = useCallback(
+        (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+          const metrics: ChatScrollMetrics = {
+            bottomInset: terminalGeometryRef.current.bottomInset,
+            contentHeight: event.nativeEvent.contentSize.height,
+            offsetY: event.nativeEvent.contentOffset.y,
+            viewportHeight: event.nativeEvent.layoutMeasurement.height,
+          };
+          terminalGeometryRef.current = metrics;
+          const previousIntent = terminalScrollPolicyRef.current.intent;
+          const nextScroll = terminalScrollStateAfterUserScroll({
+            chrome: terminalScrollChromeRef.current,
+            metrics,
+            policy: terminalScrollPolicyRef.current,
+          });
+          const nextPolicy = nextScroll.policy;
+          if (nextPolicy.intent === "reading") {
+            cancelPendingTerminalScroll();
+          }
+          terminalScrollPolicyRef.current = nextPolicy;
+          if (nextScroll.chrome !== terminalScrollChromeRef.current) {
+            terminalScrollChromeRef.current = nextScroll.chrome;
+            onChromeVisibleChange(nextScroll.chrome.visible);
+          }
+          if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
+            setVisibleOutput(liveOutput);
+          }
+        },
+        [cancelPendingTerminalScroll, liveOutput, onChromeVisibleChange],
+      );
+
+      const contentContainerStyle = {
+        flexGrow: 1,
+        justifyContent: "flex-end" as const,
+        paddingBottom: Platform.OS === "web" ? bottomContentInset + 18 : 18,
+        paddingHorizontal: 12,
+        paddingTop: topContentInset + 16,
+      };
+      const content = hasOutput ? (
+        <View className="rounded-lg border border-border bg-card/80 px-3 py-2">
+          {visibleLines.map((line, lineIndex) => (
+            <RNText key={lineIndex} style={TERMINAL_OUTPUT_LINE_STYLE}>
+              {line.length === 0
+                ? "\u00a0"
+                : line.map((span, spanIndex) => (
+                    <RNText key={spanIndex} style={span.style}>
+                      {span.text}
+                    </RNText>
+                  ))}
+            </RNText>
+          ))}
         </View>
-      </View>
-    </View>
-  );
+      ) : (
+        <View className="items-center justify-center px-4 py-10">
+          <View
+            className="max-w-[90%] flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2"
+            style={{ minWidth: 220 }}
+          >
+            <ActivityIndicator size="small" color="#a1a1aa" />
+            <View className="min-w-0 shrink">
+              <Text className="text-sm text-muted-foreground">Loading output</Text>
+              <Text className="mt-1 text-xs text-muted-foreground">
+                Waiting for terminal output from the project service.
+              </Text>
+            </View>
+          </View>
+        </View>
+      );
 
-  if (Platform.OS !== "web") {
-    return (
-      <KeyboardChatScrollView
-        ref={scrollRef as React.Ref<React.ElementRef<typeof KeyboardChatScrollView>>}
-        className="flex-1 bg-background"
-        contentContainerStyle={contentContainerStyle}
-        extraContentPadding={extraContentPadding}
-        keyboardDismissMode="interactive"
-        keyboardLiftBehavior="whenAtEnd"
-        keyboardShouldPersistTaps="handled"
-        onContentInsetChange={handleTerminalContentInsetChange}
-        onContentSizeChange={handleTerminalContentSizeChange}
-        onLayout={handleTerminalLayout}
-        onScroll={handleTerminalScroll}
-        scrollEventThrottle={16}
-        showsVerticalScrollIndicator
-      >
-        {content}
-      </KeyboardChatScrollView>
-    );
-  }
+      if (Platform.OS !== "web") {
+        return (
+          <KeyboardChatScrollView
+            ref={scrollRef as React.Ref<React.ElementRef<typeof KeyboardChatScrollView>>}
+            className="flex-1 bg-background"
+            contentContainerStyle={contentContainerStyle}
+            extraContentPadding={extraContentPadding}
+            keyboardDismissMode="interactive"
+            keyboardLiftBehavior="whenAtEnd"
+            keyboardShouldPersistTaps="handled"
+            onContentInsetChange={handleTerminalContentInsetChange}
+            onContentSizeChange={handleTerminalContentSizeChange}
+            onLayout={handleTerminalLayout}
+            onScroll={handleTerminalScroll}
+            scrollEventThrottle={16}
+            showsVerticalScrollIndicator
+          >
+            {content}
+          </KeyboardChatScrollView>
+        );
+      }
 
-  return (
-    <ScrollView
-      ref={scrollRef as React.Ref<ScrollView>}
-      className="flex-1 bg-background"
-      contentContainerStyle={contentContainerStyle}
-      keyboardDismissMode="on-drag"
-      keyboardShouldPersistTaps="handled"
-      onContentSizeChange={handleTerminalContentSizeChange}
-      onLayout={handleTerminalLayout}
-      onScroll={handleTerminalScroll}
-      scrollEventThrottle={16}
-      showsVerticalScrollIndicator
-    >
-      {content}
-    </ScrollView>
-  );
-});
+      return (
+        <ScrollView
+          ref={scrollRef as React.Ref<ScrollView>}
+          className="flex-1 bg-background"
+          contentContainerStyle={contentContainerStyle}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={handleTerminalContentSizeChange}
+          onLayout={handleTerminalLayout}
+          onScroll={handleTerminalScroll}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator
+        >
+          {content}
+        </ScrollView>
+      );
+    },
+  ),
+);
 AgentTerminalOutputPane.displayName = "AgentTerminalOutputPane";
 
 type AgentChatSessionViewportProps = {
@@ -3771,6 +3811,59 @@ function sessionFromActiveShare(activeShare: ActiveSharedSession): DesktopSessio
     worktreeName,
     label: "Shared session",
   };
+}
+
+/**
+ * Renders what `composerFooterContent` decided, and decides nothing itself.
+ *
+ * The precedence used to live here as a four-branch ternary, which meant it
+ * was reachable only by grepping this file's source in a test -- and every
+ * such assertion was defeated by a mutation that kept the asserted string.
+ */
+function ComposerFooterContentView({ content }: { content: ComposerFooterState }) {
+  switch (content.kind) {
+    case "error":
+      return (
+        <View className="min-w-0 flex-row items-start gap-1.5">
+          <CircleAlert size={13} color="#f87171" style={{ marginTop: 1 }} />
+          <Text className="min-w-0 flex-1 text-xs text-destructive" numberOfLines={3}>
+            {content.text}
+          </Text>
+        </View>
+      );
+    case "held":
+      return (
+        <View className="min-w-0 flex-row items-start gap-1.5">
+          <Clock size={13} color="#e0b341" style={{ marginTop: 1 }} />
+          <Text className="min-w-0 flex-1 text-xs text-muted-foreground" numberOfLines={3}>
+            {content.text}
+          </Text>
+        </View>
+      );
+    case "sending":
+      return (
+        <View className="min-w-0 flex-row items-center gap-1.5">
+          <ActivityIndicator size="small" color="#a1a1aa" />
+          <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+            Sending...
+          </Text>
+        </View>
+      );
+    case "awaiting-echo":
+      return (
+        <View className="min-w-0 flex-row items-start gap-1.5">
+          {/* Not a check: the send is away, the agent has not shown it yet. */}
+          <Clock size={13} color="#a1a1aa" style={{ marginTop: 1 }} />
+          <Text className="min-w-0 flex-1 text-xs text-muted-foreground" numberOfLines={3}>
+            {content.text}
+          </Text>
+        </View>
+      );
+    case "activity":
+      return <ActivityFooterLabel label={content.label} shimmer={content.shimmer} />;
+    case "empty":
+      return null;
+  }
 }
 
 function ActivityFooterLabel({ label, shimmer }: { label: string; shimmer: boolean }) {
