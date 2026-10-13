@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { WorktreeBucket } from "@/lib/desktop-state";
 import {
   AGENT_TOOL_CHOICES,
-  CREATION_REFRESH_VIEWS,
+  AGENT_CREATION_REFRESH_VIEWS,
+  WORKTREE_CREATION_REFRESH_VIEWS,
   canSubmitCreation,
   creatableWorktreeChoices,
   isSelectableWorktreePath,
@@ -73,8 +74,19 @@ describe("what a creation changes", () => {
     // the topology, the team and the coordination worklist too, and a
     // creation that refreshes only one leaves the rest stale.
     for (const view of ["agents", "topology", "team", "coordination-worklist", "worktrees"]) {
-      expect(CREATION_REFRESH_VIEWS).toContain(view);
+      expect(AGENT_CREATION_REFRESH_VIEWS).toContain(view);
     }
+  });
+
+  // A different set, not the same one. Sending the agent list for a worktree
+  // left the library stale, which is how two surfaces showing the same project
+  // started to disagree.
+  it("refreshes the lists a new worktree appears in, which are not the agent ones", () => {
+    for (const view of ["worktrees", "library", "graveyard"]) {
+      expect(WORKTREE_CREATION_REFRESH_VIEWS).toContain(view);
+    }
+    expect(WORKTREE_CREATION_REFRESH_VIEWS).not.toContain("agents");
+    expect(AGENT_CREATION_REFRESH_VIEWS).not.toContain("library");
   });
 
   it("offers the runtimes an agent can be", () => {

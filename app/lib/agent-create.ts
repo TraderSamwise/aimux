@@ -8,7 +8,17 @@ import type { WorktreeBucket } from "@/lib/desktop-state";
  * renderer agrees with the others only by luck.
  */
 
-/** The runtimes an agent can be launched as. */
+/**
+ * The runtimes an agent can be launched as.
+ *
+ * KNOWN INCOMPLETE. Tools are configured per project -- each with an `enabled`
+ * flag, and custom ones are allowed -- and the TUI builds its picker from that
+ * config. The app cannot: the project service exposes no route that lists
+ * them. So this offers the three built-ins, which means a disabled tool is
+ * still offered and a custom one is not. Having the wrong list in one place is
+ * what makes it one fix rather than three; the fix is a tools route, and it is
+ * not in this change.
+ */
 export const AGENT_TOOL_CHOICES = ["claude", "codex", "aider"] as const;
 
 export type AgentToolChoice = (typeof AGENT_TOOL_CHOICES)[number];
@@ -69,20 +79,34 @@ export function worktreeNameIsCreatable(name: string): boolean {
 }
 
 /**
- * What a creation changed, so every list showing it refreshes.
+ * What spawning an agent changed, so every list showing it refreshes.
  *
- * Spawning an agent moves the agent list, the topology, the team and the
- * coordination worklist as well as the worktree it landed in; a creation that
- * refreshes only what the caller happens to be looking at leaves the other
- * surfaces stale until something else kicks them.
+ * An agent moves the agent list, the topology, the team and the coordination
+ * worklist as well as the worktree it landed in; refreshing only what the
+ * caller happens to be looking at leaves the other surfaces stale until
+ * something else kicks them.
  */
-export const CREATION_REFRESH_VIEWS: readonly string[] = [
+export const AGENT_CREATION_REFRESH_VIEWS: readonly string[] = [
   "agents",
   "project-observability",
   "topology",
   "coordination-worklist",
   "team",
   "worktrees",
+];
+
+/**
+ * What creating a worktree changed. A different set, not the same one: a
+ * worktree shows up in the library and graveyard views and touches no agent,
+ * team or coordination state. Sending the agent list for both is how the
+ * sidebar and the Project screen started to disagree about what to refresh.
+ */
+export const WORKTREE_CREATION_REFRESH_VIEWS: readonly string[] = [
+  "worktrees",
+  "project-observability",
+  "topology",
+  "library",
+  "graveyard",
 ];
 
 /**

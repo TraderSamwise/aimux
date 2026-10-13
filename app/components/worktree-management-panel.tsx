@@ -8,7 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
 import { createWorktree, removeWorktree } from "@/lib/api";
-import { worktreeNameIsCreatable } from "@/lib/agent-create";
+import { WORKTREE_CREATION_REFRESH_VIEWS, worktreeNameIsCreatable } from "@/lib/agent-create";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { WorktreeBucket } from "@/lib/desktop-state";
 import { isTransientRequestError } from "@/lib/request-errors";
@@ -66,13 +66,7 @@ export function WorktreeManagementPanel({
     try {
       await fn();
       kickDesktopRefresh();
-      kickProjectViewRefresh([
-        "worktrees",
-        "project-observability",
-        "topology",
-        "library",
-        "graveyard",
-      ]);
+      kickProjectViewRefresh(WORKTREE_CREATION_REFRESH_VIEWS);
     } catch (e) {
       if (!isTransientRequestError(e)) {
         setError(e instanceof Error ? e.message : String(e));

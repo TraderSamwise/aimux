@@ -9,7 +9,8 @@ import { Text } from "@/components/ui/text";
 import { createWorktree, spawnAgent } from "@/lib/api";
 import {
   AGENT_TOOL_CHOICES,
-  CREATION_REFRESH_VIEWS,
+  AGENT_CREATION_REFRESH_VIEWS,
+  WORKTREE_CREATION_REFRESH_VIEWS,
   creatableWorktreeChoices,
   canSubmitCreation,
   isSelectableWorktreePath,
@@ -70,22 +71,21 @@ export function CreateInProjectDialog({
   token,
   projectStateKey,
   groups,
-  initialKind = "agent",
   onDismiss,
 }: {
   endpoint: ServiceEndpoint | null;
   token: string | null;
   projectStateKey: ProjectStateKey;
   groups: WorktreeBucket[];
-  initialKind?: CreateKind;
   onDismiss: () => void;
 }) {
-  const [kind, setKind] = useState<CreateKind>(initialKind);
+  const [kind, setKind] = useState<CreateKind>("agent");
   const [tool, setTool] = useState<AgentToolChoice>("claude");
   const [worktreePath, setWorktreePath] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<string | null>(null);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
@@ -118,18 +118,29 @@ export function CreateInProjectDialog({
           tool,
           worktreePath: selectedWorktreePath ?? undefined,
         });
-      } else {
-        const response = await createWorktree(endpoint, trimmedName, { token });
-        recordTransition({
-          projectStateKey,
-          transition: response.transition,
-          worktreeName: trimmedName,
-          worktreePath: response.path,
-        });
+        kickDesktopRefresh();
+        kickProjectViewRefresh(AGENT_CREATION_REFRESH_VIEWS);
+        onDismiss();
+        return;
       }
+      const response = await createWorktree(endpoint, trimmedName, { token });
+      recordTransition({
+        projectStateKey,
+        transition: response.transition,
+        worktreeName: trimmedName,
+        worktreePath: response.path,
+      });
       kickDesktopRefresh();
-      kickProjectViewRefresh(CREATION_REFRESH_VIEWS);
-      onDismiss();
+      kickProjectViewRefresh(WORKTREE_CREATION_REFRESH_VIEWS);
+      // Stays open on the agent step instead of closing. The sidebar lists
+      // active agents, so an empty worktree disappears from it the moment it
+      // stops being pending -- closing here would look like nothing happened.
+      // The worktree you just made is also the one you are about to put
+      // something in.
+      setCreated(trimmedName);
+      setName("");
+      setWorktreePath(response.path ?? null);
+      setKind("agent");
     } catch (e) {
       // Shown verbatim: the route is the thing that knows a name is taken, and
       // it names the path. A guess made here would be wrong in both
@@ -155,7 +166,16 @@ export function CreateInProjectDialog({
           <Text className="text-lg font-semibold text-foreground">Add to this project</Text>
 
           <View className="mt-4">
-            <SegmentedControl options={KIND_OPTIONS} value={kind} onChange={setKind} fullWidth />
+            <SegmentedControl
+              options={KIND_OPTIONS}
+              value={kind}
+              onChange={(next) => {
+                setCreated(null);
+                setError(null);
+                setKind(next);
+              }}
+              fullWidth
+            />
           </View>
 
           {kind === "agent" ? (
@@ -214,6 +234,13 @@ export function CreateInProjectDialog({
               />
             </>
           )}
+
+          {created ? (
+            <Text className="mt-4 text-[12px] text-muted-foreground">
+              Created {created}. It stays empty until something runs in it — launch an agent to see
+              it in the sidebar.
+            </Text>
+          ) : null}
 
           {error ? (
             <Text className="mt-4 text-[12px] text-destructive" accessibilityLabel="Create failed">

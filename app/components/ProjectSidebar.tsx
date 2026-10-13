@@ -383,7 +383,7 @@ function SidebarPrimaryNav({
 
 // ─── Top-level component ──────────────────────────────────────────────────
 
-export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boolean }) {
+export function ProjectSidebar() {
   const { width } = useWindowDimensions();
   // For the PERSISTENT sidebar, beside the chat and keeping its frame while an
   // iOS keyboard covers its bottom rows. The drawer is over the chat instead,
@@ -677,36 +677,18 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                   project={effectiveProject}
                   onSwitchProject={() => setShowPicker(true)}
                 />
-                {showPrimaryNav ? (
-                  <>
-                    <SidebarModeTabs
-                      mode={sidebarMode}
-                      onChange={setSidebarMode}
-                      onAdd={() => setCreateOpen(true)}
-                    />
-                    {sidebarMode === "views" ? (
-                      <SidebarPrimaryNav
-                        projectPath={routeProjectPath}
-                        onNavigate={() => {
-                          if (dismissSidebarOnNavigate) setSidebarOpen(false);
-                        }}
-                      />
-                    ) : (
-                      <WorktreeTree
-                        projectPath={effectiveProject.path}
-                        projectStateKey={routeProjectStateKey}
-                        machineName={effectiveProject.machineName}
-                        endpoint={endpoint}
-                        token={token}
-                        desktopState={desktopState}
-                        desktopStateError={desktopStateError}
-                        selectedSessionId={selectedSessionId}
-                        onPickSession={handlePickSession}
-                        onPickService={handlePickService}
-                        onKillSession={handleKillSession}
-                      />
-                    )}
-                  </>
+                <SidebarModeTabs
+                  mode={sidebarMode}
+                  onChange={setSidebarMode}
+                  onAdd={() => setCreateOpen(true)}
+                />
+                {sidebarMode === "views" ? (
+                  <SidebarPrimaryNav
+                    projectPath={routeProjectPath}
+                    onNavigate={() => {
+                      if (dismissSidebarOnNavigate) setSidebarOpen(false);
+                    }}
+                  />
                 ) : (
                   <WorktreeTree
                     projectPath={effectiveProject.path}

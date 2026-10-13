@@ -9,7 +9,7 @@ import { Text } from "@/components/ui/text";
 import { spawnAgent } from "@/lib/api";
 import {
   AGENT_TOOL_CHOICES,
-  CREATION_REFRESH_VIEWS,
+  AGENT_CREATION_REFRESH_VIEWS,
   creatableWorktreeChoices,
   isSelectableWorktreePath,
   type AgentToolChoice,
@@ -84,7 +84,7 @@ export function AgentCreatePanel({
         worktreePath: selectedPath ?? undefined,
       });
       kickDesktopRefresh();
-      kickProjectViewRefresh(CREATION_REFRESH_VIEWS);
+      kickProjectViewRefresh(AGENT_CREATION_REFRESH_VIEWS);
     } catch (e) {
       if (!isTransientRequestError(e)) {
         setError(e instanceof Error ? e.message : String(e));
