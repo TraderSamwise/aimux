@@ -6,36 +6,27 @@ Captured from the Node dashboard renderer and used as literal parity gates.
 
 `dashboard-node-full-frame-v1.txt` and `dashboard-node-control-scribe-frame-v1.txt`
 were re-recorded on 2026-10-13 so the agent row stops carrying unlabelled
-unread numbers.
+numbers, and carries a bounded number of them.
 
-Node drew up to seven chips on a row, and two of them answered the same
-question the unread badge now answers beside the agent name: `N unseen`, and a
+Node drew up to seven chips on a row. Two were unreadable: `N unseen`, and a
 `thread 8/0/5` triple whose three digits were unread / waiting on me / waiting
-on them with nothing to say so. Sam could not read it. The count now sits in one
-badge, the details pane spells the rest out in words, and the row says
-`waiting on you` -- from the project service's own `waitingOnMeCount`, which is
-already the greater of the thread and coordination counts -- where Node read the
-two raw fields separately and put a thread waiting on you in the middle digit of
-that triple.
+on them with nothing on screen to say so. The unread notification count now
+sits in a badge beside the agent name, and the rest of these counts say what
+they are, in the words the details pane uses for them.
 
-Both frames differ by exactly those two row lines each: the `thread` chip is
-gone, `waiting on you` replaces it where someone is in fact waiting, and
-`headline-claude-0` stops being truncated to `headline-cla…` now that the chip
-is not taking its room. Nothing else changed, and this is a deliberate
-divergence from the Node capture.
+They are also capped at two per row, in priority order. Seven chips pushed the
+next action and the headline off the end -- a row ending `→ open…` with no
+headline is worse than one that shows the two things that matter most and
+leaves the rest to the details pane, which carries all of them. This is the
+same bargain the supervisor chips already make by truncating to five.
 
-`dashboard-node-full-frame-v1.txt` and `dashboard-node-control-scribe-frame-v1.txt`
-were re-recorded on 2026-10-05 so the "8 pending" chip stops being red.
-
-`pendingDeliveries` counts thread messages that have not arrived yet. Node drew
-that chip in the danger colour (`38;5;174`), beside the chips for things that
-genuinely went wrong, so a thread that was merely mid-delivery read as a thread
-that had failed. It is now the working colour (`38;5;80`), which is what the
-rest of this change gives every transient state.
-
-Both frames differ by exactly those two chips. Nothing else changed, and this
-is a deliberate divergence from the Node capture.
-
+Both frames differ by exactly two row lines each. `label-claude-0` gains
+`8 threads unread` ahead of `8 pending` (its headline truncates by that much),
+and `label-claude-1` leads with `waiting on you` -- read from the project
+service's own `waitingOnMeCount`, already the greater of the thread and
+coordination counts, where Node read the two raw fields separately and put a
+thread waiting on you in the middle digit of that triple. Nothing else
+changed, and this is a deliberate divergence from the Node capture.
 
 `subscreen-node-library-frame-v1.txt` was re-recorded on 2026-10-05 so a
 transient footer note carries the same mark on a subscreen as it does on the

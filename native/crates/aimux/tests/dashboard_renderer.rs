@@ -1,8 +1,8 @@
 use aimux::dashboard_controller::DashboardScreen;
 use aimux::dashboard_model::{
     DashboardOperationFailure, DashboardSessionEvent, DashboardSessionLoopLastAction,
-    DashboardWorktreeRemovalInfo, DesktopStateGoldenFixture, SessionStatus, SessionTeamMetadata,
-    WorktreeGroup, WorktreeStatus, dashboard_has_clearable_failures,
+    DashboardWorktreeRemovalInfo, DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus,
+    SessionTeamMetadata, WorktreeGroup, WorktreeStatus, dashboard_has_clearable_failures,
 };
 use aimux::dashboard_pending_actions::DashboardPendingActions;
 use aimux::dashboard_renderer::{
@@ -14,7 +14,7 @@ use aimux::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineSource, WorkOutlineStatus,
 };
 use aimux::tui_render::text::strip_ansi;
-use aimux::tui_render::theme::{PROGRESS_MARK, visible_width};
+use aimux::tui_render::theme::{PROGRESS_MARK, Tone, pill, visible_width};
 use serde_json::json;
 
 const GOLDEN: &str = include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
@@ -990,13 +990,11 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
     session.command = "claude".into();
     session.label = None;
     session.last_output_at = Some("2026-01-01T00:00:00.000Z".into());
-    session.unseen_count = 1;
     session.semantic = Some(
         serde_json::from_value(json!({
             "user": { "label": "ready", "attention": "normal" },
             "notifications": { "unreadCount": 0 },
-            "presentation": { "statusLabel": "Ready", "compactHint": null, "attentionScore": 1 },
-            "activityNewCount": 1
+            "presentation": { "statusLabel": "Ready", "compactHint": null, "attentionScore": 1 }
         }))
         .expect("semantic parses"),
     );
@@ -1084,13 +1082,18 @@ fn an_unread_badge_takes_its_room_from_the_parenthetical_not_the_name() {
     });
     let plain = strip_ansi(&result.frame);
 
+    // Anchored on the row's index cell. A bare `contains` also matched the
+    // trailing headline preview, which truncates for its own reasons -- so the
+    // old negative assertion fired on `headline-clau…` and said nothing about
+    // the name.
     assert!(
-        plain.contains("claude 3 "),
-        "the badge sits beside the name"
+        plain.contains("[1] claude 3 "),
+        "the badge sits beside a whole name, got {plain}"
     );
-    // The name survives whole, and the status keeps its own column.
-    assert!(!plain.contains("clau…"));
-    assert!(!plain.contains("3 Ready"));
+    assert!(
+        !plain.contains("[1] claude…"),
+        "the name is not cut instead"
+    );
     assert!(plain.contains("Ready"));
     for line in frame_content_only(&result.frame).split("\r\n") {
         assert!(visible_width(line) <= 140);
@@ -3000,4 +3003,279 @@ mod what_a_row_in_progress_looks_like {
         );
         assert!(!frame.contains(&format!("{ATTENTION}●")), "{frame:?}");
     }
+}
+
+/// Builds a one-agent snapshot carrying exactly the semantic block given.
+fn snapshot_with_semantic(semantic: Option<serde_json::Value>) -> DesktopStateSnapshot {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    let session = &mut snapshot.sessions[0];
+    session.id = "claude-solo".into();
+    session.command = "claude".into();
+    session.label = None;
+    session.semantic = semantic
+        .map(|value| serde_json::from_value(value).expect("semantic parses"))
+        .or(None);
+    let only = session.clone();
+    // One agent in the whole frame. The fixture's other sessions carry their
+    // own counts, so a frame-wide `contains` answered about them instead -- a
+    // negative assertion in particular could never hold.
+    snapshot.sessions = vec![only.clone()];
+    snapshot.teammates.clear();
+    for group in snapshot.worktree_groups.iter_mut() {
+        group.sessions.clear();
+        group.services.clear();
+    }
+    snapshot.worktree_groups[0].sessions = vec![only];
+    snapshot
+}
+
+fn row_frame(snapshot: &DesktopStateSnapshot) -> String {
+    render_dashboard_frame(&DashboardRenderInput {
+        snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 160,
+        rows: 50,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-solo"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        focused_group_index: None,
+        runtime_label: None,
+        version: None,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    })
+    .frame
+}
+
+/// The counts the badge does NOT carry still reach the row.
+///
+/// `threadUnreadCount` and `notifications.unreadCount` are disjoint by
+/// construction -- the project service's thread summary skips every
+/// notification-tagged thread and its notification summary skips every thread
+/// that is not one. So an agent with unread teammate messages and no
+/// notifications has an empty badge, and for a while this row showed nothing
+/// at all for it. Same for new output, which carries no notification either.
+#[test]
+fn the_row_names_the_counts_the_unread_badge_cannot_carry() {
+    let snapshot = snapshot_with_semantic(Some(json!({
+        "user": { "label": "ready", "attention": "normal" },
+        "notifications": { "unreadCount": 0 },
+        "presentation": { "statusLabel": "Ready", "compactHint": null, "attentionScore": 0 },
+        "activityNewCount": 12,
+        "threadUnreadCount": 8
+    })));
+    let plain = strip_ansi(&row_frame(&snapshot));
+
+    // Labelled, in the words the details pane already uses, rather than the
+    // `thread 8/0/5` triple nobody could read.
+    assert!(plain.contains("8 threads unread"), "{plain}");
+    assert!(plain.contains("12 new activity"), "{plain}");
+    assert!(!plain.contains("8/0/5"));
+}
+
+/// A `semantic` block that predates a field must not read as a count of none.
+///
+/// Every field in `SessionSemanticState` is `#[serde(default)]`, so a payload
+/// carrying `semantic` without `notifications` deserialises to zero unread.
+/// Reading only the nested value therefore dropped the badge for a live agent
+/// rather than falling back to the flat field beside it.
+#[test]
+fn a_semantic_block_without_notifications_still_badges_the_flat_count() {
+    let mut snapshot = snapshot_with_semantic(Some(json!({
+        "user": { "label": "ready", "attention": "normal" },
+        "presentation": { "statusLabel": "Ready", "compactHint": null, "attentionScore": 0 }
+    })));
+    snapshot.sessions[0].notification_unread_count = 4;
+    snapshot.worktree_groups[0].sessions[0].notification_unread_count = 4;
+    let plain = strip_ansi(&row_frame(&snapshot));
+
+    assert!(
+        plain.contains("claude 4 "),
+        "the badge falls back, got {plain}"
+    );
+}
+
+/// The badge keeps a plain cell between itself and the status pill.
+///
+/// `cols` concatenates columns with no gap and the status cell is itself
+/// reverse video, so a badge that filled its column ran straight into
+/// ` NEEDS INPUT ` as one continuous highlighted block -- and a needs-input
+/// agent with unread notifications is the case this whole change is about.
+#[test]
+fn the_badge_does_not_run_into_the_status_pill() {
+    let snapshot = snapshot_with_semantic(Some(json!({
+        "user": { "label": "needs_input", "attention": "needs_input" },
+        "notifications": { "unreadCount": 2 },
+        "presentation": { "statusLabel": "needs input", "compactHint": "on you", "attentionScore": 4 }
+    })));
+    let frame = row_frame(&snapshot);
+    let badge = pill("2", Tone::Accent);
+    let at = frame.find(&badge).expect("the row badges 2");
+    assert!(
+        frame[at + badge.len()..].starts_with(' '),
+        "a plain cell has to follow the badge, got {:?}",
+        &frame[at..at + badge.len() + 12]
+    );
+}
+
+/// The badge's tone, which every other gate here is blind to.
+///
+/// They all read `strip_ansi`, so "filled badge", amber, and "muted for an
+/// agent that is gone or a notice whose agent has moved on" were unprovable --
+/// replacing `pill` with plain text passed the whole suite. Nothing paired a
+/// stale or offline session with a non-zero unread count in either direction.
+#[test]
+fn the_badge_is_filled_amber_live_and_muted_once_it_is_stale_or_gone() {
+    let live = snapshot_with_semantic(Some(json!({
+        "user": { "label": "ready", "attention": "normal" },
+        "notifications": { "unreadCount": 4 },
+        "presentation": { "statusLabel": "Ready", "compactHint": "4 unread", "attentionScore": 2 }
+    })));
+    assert!(
+        row_frame(&live).contains(&pill("4", Tone::Accent)),
+        "a live agent's badge is filled accent"
+    );
+
+    // A notice whose agent has moved on: still there, no longer shouting.
+    let mut stale = live.clone();
+    stale.sessions[0].notification_stale = true;
+    stale.worktree_groups[0].sessions[0].notification_stale = true;
+    let frame = row_frame(&stale);
+    assert!(
+        frame.contains(&pill("4", Tone::Muted)),
+        "a stale notice is muted"
+    );
+    assert!(!frame.contains(&pill("4", Tone::Accent)));
+
+    // And an agent that is gone.
+    let mut gone = live.clone();
+    gone.sessions[0].status = SessionStatus::Offline;
+    gone.worktree_groups[0].sessions[0].status = SessionStatus::Offline;
+    assert!(
+        row_frame(&gone).contains(&pill("4", Tone::Muted)),
+        "an offline agent's badge is muted"
+    );
+}
+
+/// A payload with no `semantic` block at all still badges.
+///
+/// The fallback to the flat field is the whole reason `unread_count` is not a
+/// one-line read, and nothing exercised it: both numbers come from one
+/// derivation, so every other test has them equal and cannot tell which was
+/// read.
+#[test]
+fn a_payload_with_no_semantic_block_still_badges_the_flat_count() {
+    let mut snapshot = snapshot_with_semantic(None);
+    snapshot.sessions[0].notification_unread_count = 5;
+    snapshot.worktree_groups[0].sessions[0].notification_unread_count = 5;
+    let plain = strip_ansi(&row_frame(&snapshot));
+    assert!(plain.contains("claude 5 "), "got {plain}");
+}
+
+/// The supervisor lane badges too, and nothing proved it.
+///
+/// Every session in the golden fixture has `unreadCount: 0`, so the lane was
+/// never rendered with a badge and dropping it there was free.
+#[test]
+fn the_supervisor_lane_badges_its_unread_count() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_full.clone();
+    let mut overseer = snapshot.sessions[0].clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Overseer".into());
+    overseer.overseer = Some(true);
+    overseer.scribe = Some(false);
+    overseer.project_control = Some(true);
+    overseer.notification_unread_count = 6;
+    overseer.semantic = Some(
+        serde_json::from_value(json!({
+            "user": { "label": "ready", "attention": "normal" },
+            "notifications": { "unreadCount": 6 },
+            "presentation": { "statusLabel": "Ready", "compactHint": "6 unread", "attentionScore": 2 }
+        }))
+        .expect("semantic parses"),
+    );
+    overseer.team = Some(SessionTeamMetadata {
+        team_id: "project-control".into(),
+        parent_session_id: String::new(),
+        role: Some("overseer".into()),
+        label: Some("Overseer".into()),
+        extra: Default::default(),
+    });
+    let overseer_sessions = vec![overseer.clone()];
+    snapshot.sessions.insert(0, overseer);
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &overseer_sessions,
+        scribe_sessions: &[],
+        cols: 200,
+        rows: 50,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-0"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        focused_group_index: None,
+        runtime_label: Some("tmux"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    assert!(
+        result.frame.contains(&pill("6", Tone::Accent)),
+        "the lane row carries the badge"
+    );
+}
+
+/// `waiting on you` reads the published answer, not the raw thread field.
+///
+/// In the golden fixture `semantic.waitingOnMeCount` and
+/// `threadWaitingOnMeCount` are both 8, so no gate there could tell which was
+/// read -- reading the raw field passed every test. Here they disagree, which
+/// is the only way to prove it.
+#[test]
+fn waiting_on_you_comes_from_the_published_count() {
+    let published_says_no = snapshot_with_semantic(Some(json!({
+        "user": { "label": "ready", "attention": "normal" },
+        "notifications": { "unreadCount": 0 },
+        "presentation": { "statusLabel": "Ready", "compactHint": null, "attentionScore": 0 },
+        "waitingOnMeCount": 0
+    })));
+    let mut raw_says_yes = published_says_no.clone();
+    raw_says_yes.sessions[0].thread_waiting_on_me_count = 3;
+    raw_says_yes.worktree_groups[0].sessions[0].thread_waiting_on_me_count = 3;
+    assert!(
+        !strip_ansi(&row_frame(&raw_says_yes)).contains("waiting on you"),
+        "the raw field does not get a vote"
+    );
+
+    let published_says_yes = snapshot_with_semantic(Some(json!({
+        "user": { "label": "ready", "attention": "normal" },
+        "notifications": { "unreadCount": 0 },
+        "presentation": { "statusLabel": "Ready", "compactHint": null, "attentionScore": 0 },
+        "waitingOnMeCount": 2
+    })));
+    assert!(
+        strip_ansi(&row_frame(&published_says_yes)).contains("waiting on you"),
+        "and the published count does"
+    );
 }

@@ -287,6 +287,16 @@ fn the_row_the_app_and_the_details_show_one_unread_count() {
             row.contains(&format!("(live) {count} ")),
             "the row badges the same number beside the name, got {row:?}"
         );
+        // Once, in one place. Every other assertion here is a positive
+        // `contains`, so re-adding the retired `N unread` chip beside the
+        // badge -- a row reading `codex (live) 3  Ready  3 unread` -- passed
+        // the whole suite. This fixture has no threads and no new output, so
+        // the row carries the badge and nothing else.
+        assert!(
+            !row.contains("unread"),
+            "the count is the badge, not also a chip, got {row:?}"
+        );
+        assert!(!row.contains("unseen"), "got {row:?}");
         let details = render_session_details(Some(session), 60, 40).join("\n");
         assert!(
             details.contains(&format!("Unread: {count}")),
@@ -337,5 +347,52 @@ fn a_hundred_unread_reads_as_the_apps_cap() {
     assert!(
         row.contains("99+"),
         "the row caps the way the app does, got {row:?}"
+    );
+
+    // And 99 itself is not capped. Without this the threshold could sit
+    // anywhere below 100 and still pass.
+    let ninety_nine = dashboard_row(&desktop_state("/repo", &exchange(99), None));
+    // The parenthetical has yielded by here -- a four-cell badge leaves 11 for
+    // the identity and `codex (live)` is 12 -- so anchor on the index cell.
+    assert!(ninety_nine.contains("[1] codex 99 "), "got {ninety_nine:?}");
+    assert!(!ninety_nine.contains("99+"), "got {ninety_nine:?}");
+}
+
+/// One cap rule, every surface that renders the number.
+///
+/// `compactHint` used to build its text with `unreadCount.min(99)`, so 150
+/// unread rendered as "99 unread" -- a wrong number, not a capped one -- while
+/// both badges said "99+" and the statusline's top line said "150 unread".
+/// Three rules for one cap, which is the class this change set out to fix.
+#[test]
+fn past_ninety_nine_every_surface_caps_the_same_way() {
+    let state = desktop_state("/repo", &exchange(150), None);
+    let session = &state["sessions"][0];
+    assert_eq!(
+        session["notificationUnreadCount"].as_u64(),
+        Some(150),
+        "the real count is still published in full"
+    );
+    assert_eq!(
+        session["semantic"]["presentation"]["compactHint"],
+        json!("99+ unread"),
+        "the hint marks the cap instead of claiming 99"
+    );
+    let row = dashboard_row(&state);
+    assert!(row.contains("99+"), "the row badge caps, got {row:?}");
+    let chip = footer_chip(session);
+    assert!(
+        chip.contains("99+ unread"),
+        "and so does the rendered chip, got {chip:?}"
+    );
+    // `render_session_chip` suppresses its glyph badge when the hint contains
+    // " unread", by substring. The capped hint has to keep matching that or an
+    // unread agent grows a second, contradictory marker.
+    let hint = session["semantic"]["presentation"]["compactHint"]
+        .as_str()
+        .expect("a hint");
+    assert!(
+        hint.contains(" unread"),
+        "the statusline sniff still matches"
     );
 }

@@ -231,8 +231,6 @@ pub struct DashboardSession {
     pub workflow_next_action: Option<String>,
     #[serde(default)]
     pub notification_unread_count: usize,
-    #[serde(default)]
-    pub notification_needs_input_unread_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_notification_text: Option<String>,
     #[serde(default)]

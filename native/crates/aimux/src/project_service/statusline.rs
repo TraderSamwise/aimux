@@ -1030,7 +1030,10 @@ fn render_active_metadata(
         .and_then(|notifications| number_field(notifications, "unreadCount"))
         .filter(|count| *count > 0)
     {
-        return Some(format!("{unread_count} unread"));
+        return Some(format!(
+            "{} unread",
+            crate::project_service::session_semantics::capped_count_label(unread_count)
+        ));
     }
     if let Some(new_count) = active_session
         .and_then(|session| session.get("semantic"))

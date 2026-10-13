@@ -246,7 +246,8 @@ fn claude_hook_backend_id_updates_the_topology_session_row() {
     let plain = strip_ansi(&result.frame);
     assert!(plain.contains("Done"));
     assert!(plain.contains("output "));
-    assert!(plain.contains("2 unseen"));
+    // The row names this count now rather than printing `2 unseen`.
+    assert!(plain.contains("2 new activity"));
     cleanup(project);
 }
 
