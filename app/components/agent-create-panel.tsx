@@ -7,6 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { spawnAgent } from "@/lib/api";
+import {
+  AGENT_TOOL_CHOICES,
+  CREATION_REFRESH_VIEWS,
+  creatableWorktreeChoices,
+  isSelectableWorktreePath,
+  type AgentToolChoice,
+} from "@/lib/agent-create";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { WorktreeBucket } from "@/lib/desktop-state";
 import { isTransientRequestError } from "@/lib/request-errors";
@@ -14,9 +21,6 @@ import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
-
-const TOOL_CHOICES = ["claude", "codex", "aider"] as const;
-type ToolChoice = (typeof TOOL_CHOICES)[number];
 
 export function AgentCreatePanel({
   endpoint,
@@ -29,8 +33,8 @@ export function AgentCreatePanel({
   projectStateKey: ProjectStateKey;
   groups: WorktreeBucket[];
 }) {
-  const [tool, setTool] = useState<ToolChoice>("claude");
-  const toolRef = useRef<ToolChoice>("claude");
+  const [tool, setTool] = useState<AgentToolChoice>("claude");
+  const toolRef = useRef<AgentToolChoice>("claude");
   const [worktreePath, setWorktreePath] = useState<string | null>(null);
   const worktreePathRef = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,18 +43,12 @@ export function AgentCreatePanel({
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
 
-  const worktreeChoices = useMemo(
-    () =>
-      groups
-        .filter((group) => !group.isMainCheckout && group.path && !group.pending && !group.removing)
-        .map((group) => ({ key: group.key, label: group.name, path: group.path })),
-    [groups],
-  );
-  const selectedWorktreePath = worktreeChoices.some((choice) => choice.path === worktreePath)
+  const worktreeChoices = useMemo(() => creatableWorktreeChoices(groups), [groups]);
+  const selectedWorktreePath = isSelectableWorktreePath(worktreeChoices, worktreePath)
     ? worktreePath
     : null;
 
-  function selectTool(choice: ToolChoice) {
+  function selectTool(choice: AgentToolChoice) {
     toolRef.current = choice;
     setTool(choice);
   }
@@ -63,7 +61,7 @@ export function AgentCreatePanel({
   async function createAgent() {
     if (!endpoint || busy) return;
     const selectedTool = toolRef.current;
-    const selectedPath = worktreeChoices.some((choice) => choice.path === worktreePathRef.current)
+    const selectedPath = isSelectableWorktreePath(worktreeChoices, worktreePathRef.current)
       ? worktreePathRef.current
       : null;
     setBusy(true);
@@ -86,14 +84,7 @@ export function AgentCreatePanel({
         worktreePath: selectedPath ?? undefined,
       });
       kickDesktopRefresh();
-      kickProjectViewRefresh([
-        "agents",
-        "project-observability",
-        "topology",
-        "coordination-worklist",
-        "team",
-        "worktrees",
-      ]);
+      kickProjectViewRefresh(CREATION_REFRESH_VIEWS);
     } catch (e) {
       if (!isTransientRequestError(e)) {
         setError(e instanceof Error ? e.message : String(e));
@@ -116,7 +107,7 @@ export function AgentCreatePanel({
         </View>
 
         <View className="flex-row rounded-md border border-border">
-          {TOOL_CHOICES.map((choice) => (
+          {AGENT_TOOL_CHOICES.map((choice) => (
             <Pressable
               key={choice}
               onPress={() => selectTool(choice)}

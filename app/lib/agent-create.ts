@@ -84,3 +84,21 @@ export const CREATION_REFRESH_VIEWS: readonly string[] = [
   "team",
   "worktrees",
 ];
+
+/**
+ * Whether the create button does anything yet.
+ *
+ * Kept out of the dialog so the one decision that can waste a request, or
+ * send a blank name the route will refuse, is testable without a renderer.
+ * An agent needs no name -- its tool and worktree both have defaults -- so
+ * only a worktree creation waits on typing.
+ */
+export function canSubmitCreation(input: {
+  kind: "agent" | "worktree";
+  hasEndpoint: boolean;
+  busy: boolean;
+  name: string;
+}): boolean {
+  if (!input.hasEndpoint || input.busy) return false;
+  return input.kind === "agent" || worktreeNameIsCreatable(input.name);
+}

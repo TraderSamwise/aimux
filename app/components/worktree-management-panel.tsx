@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
 import { createWorktree, removeWorktree } from "@/lib/api";
+import { worktreeNameIsCreatable } from "@/lib/agent-create";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { WorktreeBucket } from "@/lib/desktop-state";
 import { isTransientRequestError } from "@/lib/request-errors";
@@ -111,7 +112,7 @@ export function WorktreeManagementPanel({
             <Button
               variant="outline"
               size="sm"
-              disabled={!canAct || !trimmedName}
+              disabled={!canAct || !worktreeNameIsCreatable(name)}
               onPress={() =>
                 runAction("create", async () => {
                   const response = await createWorktree(endpoint, trimmedName, { token });

@@ -19,10 +19,12 @@ import {
   LayoutGrid,
   MessageSquare,
   Network,
+  Plus,
   Repeat2,
 } from "lucide-react-native";
 import { useSidebarListInset } from "@/lib/use-keyboard-visible";
 import { Text } from "@/components/ui/text";
+import { CreateInProjectDialog } from "@/components/CreateInProjectDialog";
 import { ProjectPicker } from "@/components/ProjectPicker";
 import { WorktreeList } from "@/components/WorktreeDashboard";
 import { useAuth } from "@/lib/auth";
@@ -274,12 +276,14 @@ const PRIMARY_NAV = [
 function SidebarModeTabs({
   mode,
   onChange,
+  onAdd,
 }: {
   mode: SidebarMode;
   onChange: (mode: SidebarMode) => void;
+  onAdd?: () => void;
 }) {
   return (
-    <View className="flex-row gap-5 border-b border-[#2a2b31] px-4">
+    <View className="flex-row items-center gap-5 border-b border-[#2a2b31] px-4">
       {(["dashboard", "views"] as const).map((tab) => {
         const active = mode === tab;
         const label = tab === "dashboard" ? "Dashboard" : "Views";
@@ -303,6 +307,20 @@ function SidebarModeTabs({
           </Pressable>
         );
       })}
+      {/* Sits in this row rather than the header above it, which is one big
+          pressable that switches project -- a nested button there competes
+          with it for the tap. */}
+      {onAdd ? (
+        <Pressable
+          onPress={onAdd}
+          accessibilityRole="button"
+          accessibilityLabel="Add a worktree or agent"
+          hitSlop={8}
+          className="ml-auto rounded-md p-1.5 hover:bg-[#232429] active:bg-[#26272d]"
+        >
+          <Plus size={16} color="#787a83" />
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -412,6 +430,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   // Fetch auth token once (auth context is stable in LOCAL_MODE; refetch is cheap).
   const { getToken } = useAuth();
   const [token, setToken] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -448,6 +467,9 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   const routeProjectStateKey = projectStateKey(pickedProjectRef);
   const desktopState = useAtomValue(desktopStateFamily(routeProjectStateKey));
   const desktopStateError = useAtomValue(desktopStateErrorFamily(routeProjectStateKey));
+  // The same buckets the tree below renders, so the dialog offers exactly the
+  // worktrees you can see.
+  const createGroups = useAtomValue(worktreeGroupsFamily(routeProjectStateKey));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const routeRelayUnavailable =
@@ -657,7 +679,11 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                 />
                 {showPrimaryNav ? (
                   <>
-                    <SidebarModeTabs mode={sidebarMode} onChange={setSidebarMode} />
+                    <SidebarModeTabs
+                      mode={sidebarMode}
+                      onChange={setSidebarMode}
+                      onAdd={() => setCreateOpen(true)}
+                    />
                     {sidebarMode === "views" ? (
                       <SidebarPrimaryNav
                         projectPath={routeProjectPath}
@@ -701,6 +727,17 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
           </ScrollView>
         </View>
       </Animated.View>
+      {/* Outside the sliding panes: a Modal renders at the root anyway, and
+          keeping it here means it survives the picker sliding over. */}
+      {createOpen && effectiveProject ? (
+        <CreateInProjectDialog
+          endpoint={endpoint}
+          token={token}
+          projectStateKey={routeProjectStateKey}
+          groups={createGroups}
+          onDismiss={() => setCreateOpen(false)}
+        />
+      ) : null}
     </View>
   );
 }

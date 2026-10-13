@@ -4,6 +4,7 @@ import type { WorktreeBucket } from "@/lib/desktop-state";
 import {
   AGENT_TOOL_CHOICES,
   CREATION_REFRESH_VIEWS,
+  canSubmitCreation,
   creatableWorktreeChoices,
   isSelectableWorktreePath,
   worktreeNameIsCreatable,
@@ -79,5 +80,32 @@ describe("what a creation changes", () => {
   it("offers the runtimes an agent can be", () => {
     expect(AGENT_TOOL_CHOICES).toContain("claude");
     expect(AGENT_TOOL_CHOICES).toContain("codex");
+  });
+});
+
+describe("when the create button does something", () => {
+  const base = { kind: "agent" as const, hasEndpoint: true, busy: false, name: "" };
+
+  // An agent needs no name: its tool and its worktree both have a default, so
+  // the button is live the moment the dialog opens.
+  it("lets an agent be launched with nothing typed", () => {
+    expect(canSubmitCreation(base)).toBe(true);
+  });
+
+  // A worktree does, and sending a blank one just earns a 400 from the route.
+  it("waits for a worktree name", () => {
+    expect(canSubmitCreation({ ...base, kind: "worktree" })).toBe(false);
+    expect(canSubmitCreation({ ...base, kind: "worktree", name: "   " })).toBe(false);
+    expect(canSubmitCreation({ ...base, kind: "worktree", name: "feat/x" })).toBe(true);
+  });
+
+  // Nothing can be created against a host that is not there, and a second tap
+  // while the first is in flight launches twice.
+  it("refuses with no host and refuses while one is in flight", () => {
+    expect(canSubmitCreation({ ...base, hasEndpoint: false })).toBe(false);
+    expect(canSubmitCreation({ ...base, busy: true })).toBe(false);
+    expect(canSubmitCreation({ ...base, kind: "worktree", name: "feat/x", busy: true })).toBe(
+      false,
+    );
   });
 });
