@@ -111,7 +111,7 @@ export function CreateInProjectDialog({
   const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
 
   const worktreeChoices = useMemo(
-    () => choicesIncludingJustCreated(creatableWorktreeChoices(groups), created),
+    () => choicesIncludingJustCreated(groups, creatableWorktreeChoices(groups), created),
     [groups, created],
   );
   // Re-read every render rather than trusted from state: a worktree can be

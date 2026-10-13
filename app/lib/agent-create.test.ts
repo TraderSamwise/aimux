@@ -65,23 +65,37 @@ describe("a worktree that was just created", () => {
   // offering it as the place to put an agent silently fell back to the main
   // checkout, which is the opposite of what was just asked for.
   it("stays a choice while it has not landed yet", () => {
-    const choices = choicesIncludingJustCreated([], { name: "feat/new", path: "/repo/wt-new" });
+    const choices = choicesIncludingJustCreated([], [], { name: "feat/new", path: "/repo/wt-new" });
     expect(choices).toHaveLength(1);
     expect(choices[0]).toMatchObject({ label: "feat/new", path: "/repo/wt-new" });
   });
 
   it("does not become a duplicate once the real bucket arrives", () => {
-    const real = creatableWorktreeChoices([
-      bucket({ key: "a", name: "feat/new", path: "/repo/wt-new" }),
-    ]);
-    const choices = choicesIncludingJustCreated(real, { name: "feat/new", path: "/repo/wt-new" });
+    const landed = [bucket({ key: "a", name: "feat/new", path: "/repo/wt-new" })];
+    const choices = choicesIncludingJustCreated(landed, creatableWorktreeChoices(landed), {
+      name: "feat/new",
+      path: "/repo/wt-new",
+    });
     expect(choices).toHaveLength(1);
     expect(choices[0].key).toBe("a");
   });
 
+  // Once its bucket has arrived, that bucket decides. A worktree that landed
+  // and is already being removed, or whose directory turned out to be missing,
+  // must not be put back on the list by the memory of having created it.
+  it("does not restore one that landed and then became ineligible", () => {
+    const removing = [bucket({ key: "a", name: "feat/new", path: "/repo/wt-new", removing: true })];
+    const choices = choicesIncludingJustCreated(removing, creatableWorktreeChoices(removing), {
+      name: "feat/new",
+      path: "/repo/wt-new",
+    });
+    expect(choices).toEqual([]);
+  });
+
   it("changes nothing when there is none", () => {
-    const real = creatableWorktreeChoices([bucket({ key: "a" })]);
-    expect(choicesIncludingJustCreated(real, null)).toEqual(real);
+    const landed = [bucket({ key: "a" })];
+    const real = creatableWorktreeChoices(landed);
+    expect(choicesIncludingJustCreated(landed, real, null)).toEqual(real);
   });
 });
 

@@ -83,15 +83,21 @@ export function removableWorktreeChoices(groups: WorktreeBucket[]): AgentWorktre
  * A worktree is `pending` for the moment between the create returning and the
  * refresh arriving, and `creatableWorktreeChoices` excludes pending buckets --
  * so offering the new worktree as the place to put an agent silently fell back
- * to the main checkout, which is the opposite of what was just asked for. It
- * stays a choice until the real bucket appears under the same path.
+ * to the main checkout, which is the opposite of what was just asked for.
+ *
+ * Only while its bucket has NOT ARRIVED. Once it has, whatever that bucket
+ * says goes: a worktree that landed and is already being removed, or whose
+ * directory turned out to be missing, must not be put back on the list by the
+ * memory of having created it.
  */
 export function choicesIncludingJustCreated(
+  groups: WorktreeBucket[],
   choices: AgentWorktreeChoice[],
   created: { name: string; path: string } | null,
 ): AgentWorktreeChoice[] {
   if (!created) return choices;
-  if (choices.some((choice) => choice.path === created.path)) return choices;
+  const arrived = groups.some((group) => group.path === created.path);
+  if (arrived) return choices;
   return [
     ...choices,
     { key: `just-created:${created.path}`, label: created.name, path: created.path },

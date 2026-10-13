@@ -464,24 +464,27 @@ export function ProjectSidebar() {
     }
   }, [effectiveProjectPath, selectedProjectPath, setShowPicker, showPicker]);
 
+  const routeProjectStateKey = projectStateKey(pickedProjectRef);
+
   // Closed whenever the project it was opened for stops being the one on
   // screen -- gone, or simply switched. The dialog keeps its form state and
   // takes whatever endpoint it is handed, so surviving a switch means the next
   // submit creates in a project the dialog was never opened for.
-  const createOpenForProjectRef = useRef<string | null>(null);
+  const createOpenForProjectRef = useRef<ProjectStateKey | null>(null);
   usePrePaintEffect(() => {
     if (!createOpen) {
       createOpenForProjectRef.current = null;
       return;
     }
     if (createOpenForProjectRef.current === null) {
-      createOpenForProjectRef.current = effectiveProjectPath ?? null;
+      createOpenForProjectRef.current = routeProjectStateKey;
       return;
     }
-    if (createOpenForProjectRef.current !== effectiveProjectPath) setCreateOpen(false);
-  }, [createOpen, effectiveProjectPath]);
-
-  const routeProjectStateKey = projectStateKey(pickedProjectRef);
+    // The state key, not the path: the same path on two machines is two
+    // different projects with two different endpoints, and a dialog that
+    // stayed open across that switch would create on the wrong host.
+    if (createOpenForProjectRef.current !== routeProjectStateKey) setCreateOpen(false);
+  }, [createOpen, routeProjectStateKey]);
   const desktopState = useAtomValue(desktopStateFamily(routeProjectStateKey));
   const desktopStateError = useAtomValue(desktopStateErrorFamily(routeProjectStateKey));
   // The same buckets the tree below renders, so the dialog offers exactly the
