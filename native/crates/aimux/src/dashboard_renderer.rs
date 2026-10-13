@@ -872,7 +872,7 @@ fn supervisor_session_row(
     let digit = digit.map(|digit| format!("{digit}.")).unwrap_or_default();
     let role = style(supervisor_role_label(session), Tone::Strong);
     let dot = format!("{} ", session_status_dot(session));
-    let identity = agent_identity(session);
+    let identity = identity_with_unread_badge(session, COL_IDENTITY);
     let status = session_status_cell(session, &derived_status_label(session));
     let time = session_time_text(session);
     let location = session
@@ -1021,8 +1021,8 @@ fn agent_row(
         .map(|digit| style(&format!("[{digit}]"), Tone::Muted))
         .unwrap_or_default();
     let dot = format!("{} ", session_status_dot(session));
-    let identity = agent_identity(session);
-    let identity_width = agent_identity_column_width(session, &identity);
+    let identity_width = agent_identity_column_width(session, &agent_identity(session));
+    let identity = identity_with_unread_badge(session, identity_width);
     let status = session_status_cell(session, &derived_status_label(session));
     let grid = grid_cols(&[
         Column {
@@ -1195,7 +1195,63 @@ fn service_row(service: &DashboardService, selected: bool, digit: Option<usize>)
     }
 }
 
-fn agent_identity(session: &DashboardSession) -> String {
+/// The unread count every surface renders.
+///
+/// `semantic` is the published answer; the flat field is the fallback for a
+/// payload old enough to carry no `semantic` block at all.
+fn unread_count(session: &DashboardSession) -> usize {
+    session
+        .semantic
+        .as_ref()
+        .map(|semantic| semantic.notifications.unread_count)
+        .unwrap_or(session.notification_unread_count)
+}
+
+/// The app's unread badge: a filled count beside the agent name, nothing at
+/// zero, `99+` past two digits. Muted for an agent that is gone, or for a
+/// notice whose agent has since moved on.
+fn unread_badge(session: &DashboardSession) -> String {
+    let count = unread_count(session);
+    if count == 0 {
+        return String::new();
+    }
+    let label = if count > 99 {
+        "99+".to_owned()
+    } else {
+        count.to_string()
+    };
+    let tone = if is_session_offline(session) || session.notification_stale {
+        Tone::Muted
+    } else {
+        Tone::Accent
+    };
+    pill(&label, tone)
+}
+
+/// The column keeps its width and the identity yields to the badge, which is
+/// what the app's row does and what keeps every row's columns lined up.
+///
+/// The parenthetical id yields first: it only disambiguates two agents of the
+/// same name, and losing it beats cutting the name down to `codex (liv`.
+fn identity_with_unread_badge(session: &DashboardSession, width: usize) -> String {
+    let (name, suffix) = agent_identity_parts(session);
+    let badge = unread_badge(session);
+    if badge.is_empty() {
+        return format!("{name}{suffix}");
+    }
+    let room = width.saturating_sub(visible_width(&badge));
+    let identity = format!("{name}{suffix}");
+    let identity = if visible_width(&identity) > room {
+        name
+    } else {
+        identity
+    };
+    format!("{}{badge}", truncate_ansi(&identity, room))
+}
+
+/// The name, and the parenthetical id that disambiguates it. Separate because
+/// the unread badge drops the parenthetical rather than truncate the name.
+fn agent_identity_parts(session: &DashboardSession) -> (String, String) {
     let label = crate::dashboard_model::agent_display_name(session);
     let prefix = format!("{}-", session.command);
     let short_id = session.id.strip_prefix(&prefix).unwrap_or(&session.id);
@@ -1212,7 +1268,12 @@ fn agent_identity(session: &DashboardSession) -> String {
     } else {
         Tone::Text
     };
-    format!("{}{}", style(&label, weight), suffix)
+    (style(&label, weight), suffix)
+}
+
+fn agent_identity(session: &DashboardSession) -> String {
+    let (name, suffix) = agent_identity_parts(session);
+    format!("{name}{suffix}")
 }
 
 fn agent_identity_column_width(session: &DashboardSession, identity: &str) -> usize {
@@ -1449,11 +1510,6 @@ fn is_session_offline(session: &DashboardSession) -> bool {
 }
 
 fn session_activity_chips(session: &DashboardSession) -> String {
-    let notification_unread = session
-        .semantic
-        .as_ref()
-        .map(|semantic| semantic.notifications.unread_count)
-        .unwrap_or(session.notification_unread_count);
     let activity_new = session
         .semantic
         .as_ref()
@@ -1465,30 +1521,7 @@ fn session_activity_chips(session: &DashboardSession) -> String {
     let thread_pending = session.thread_pending_count;
     let offline = is_session_offline(session);
     let tone = |active| if offline { ChipTone::Muted } else { active };
-    let needs_input_unread = session.notification_needs_input_unread_count;
-    let state_conveys_needs_input = matches!(
-        session
-            .semantic
-            .as_ref()
-            .map(|semantic| semantic.user.label.as_str()),
-        Some("needs_input" | "needs_response")
-    );
-    let shown_unread = notification_unread.saturating_sub(if state_conveys_needs_input {
-        needs_input_unread.min(notification_unread)
-    } else {
-        0
-    });
     let mut chips = Vec::new();
-    if shown_unread > 0 {
-        chips.push(chip(
-            &format!("{} unread", shown_unread.min(99)),
-            if session.notification_stale {
-                ChipTone::Muted
-            } else {
-                tone(ChipTone::Work)
-            },
-        ));
-    }
     if activity_new > 0 {
         chips.push(chip(
             &format!("{} unseen", activity_new.min(99)),
