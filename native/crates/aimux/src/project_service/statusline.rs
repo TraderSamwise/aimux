@@ -1040,7 +1040,10 @@ fn render_active_metadata(
         .and_then(|semantic| number_field(semantic, "activityNewCount"))
         .filter(|count| *count > 0)
     {
-        return Some(format!("new {new_count}"));
+        return Some(format!(
+            "new {}",
+            crate::project_service::session_semantics::capped_count_label(new_count)
+        ));
     }
     if let Some(status) = metadata
         .get("status")

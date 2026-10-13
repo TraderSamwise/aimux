@@ -1570,8 +1570,9 @@ fn session_activity_chips(session: &DashboardSession) -> String {
     // The badge beside the name carries the notification unread count. These
     // are the other facts the row used to pack into `thread 8/0/5` and
     // `N unseen` -- different counts, not the same one spelled twice, so they
-    // stay on the row. What changed is that each now says what it is, in the
-    // words the details pane uses for it.
+    // stay on the row. What changed is that each says what it is. Three of
+    // them use the details pane's wording; `waiting on you` does not -- the
+    // pane says `on me` and `compactHint` says `on you`.
     if waiting_on_me_count(session) > 0 {
         chips.push(chip("waiting on you", tone(ChipTone::Attention)));
     }
@@ -1608,16 +1609,21 @@ fn session_activity_chips(session: &DashboardSession) -> String {
             ChipTone::Muted,
         ));
     }
-    // Two, in the order above, and a count of what did not fit. The row also
-    // has to hold the next action and the headline, and seven chips pushed
-    // both off the end. Dropping the rest silently is the part that would be
-    // wrong: the details pane's own overflow says "{n} more" rather than just
-    // ending the list, so this says how many are not shown, and the pane has
-    // all of them.
-    let hidden = chips.len().saturating_sub(ROW_CHIP_BUDGET);
+    // Two, in the order above, and a mark if there were more. The row also has
+    // to hold the next action and the headline, and seven chips pushed both
+    // off the end. Dropping the rest in silence is the part that would be
+    // wrong, so the row says there is more without spending the width to say
+    // how much.
+    let hidden = chips.len() > ROW_CHIP_BUDGET;
     chips.truncate(ROW_CHIP_BUDGET);
-    if hidden > 0 {
-        chips.push(chip(&format!("+{hidden} more"), ChipTone::Muted));
+    if hidden {
+        // One cell, the glyph the statusline already uses for chips it could
+        // not fit. `+N more` was nine cells to save the two that `8 pending`
+        // costs over it, and it took the headline down to a bare `…` and the
+        // next action with it -- then truncated to `+2 …` itself on a 100
+        // column terminal. The count it carried was not actionable; the
+        // details pane names every one of them in words.
+        chips.push(style("\u{203a}", Tone::Muted));
     }
     chips.join(" ")
 }

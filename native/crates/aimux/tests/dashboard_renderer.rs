@@ -1086,15 +1086,13 @@ fn an_unread_badge_takes_its_room_from_the_parenthetical_not_the_name() {
     // trailing headline preview, which truncates for its own reasons -- so the
     // old negative assertion fired on `headline-clau…` and said nothing about
     // the name.
+    // This positive assertion is the whole claim. Three attempts at a negative
+    // one here were all unfireable -- with a 16-cell column and a 3-to-5 cell
+    // badge, `room` is 10 to 12 while `claude` is 6, so no truncation of the
+    // name can be produced at all. A negative that cannot fail is decoration.
     assert!(
         plain.contains("[1] claude 3 "),
         "the badge sits beside a whole name, got {plain}"
-    );
-    assert!(
-        // The producible truncations, not `claude…`: a cut lands before the
-        // final `e`, so an assertion on `claude…` could never fail.
-        !plain.contains("clau…") && !plain.contains("claud…"),
-        "the name is not cut instead, got {plain}"
     );
     assert!(plain.contains("Ready"));
     for line in frame_content_only(&result.frame).split("\r\n") {
@@ -3307,13 +3305,15 @@ fn the_thread_and_activity_counts_fall_back_to_their_flat_fields() {
     assert!(plain.contains("9 new activity"), "got {plain}");
 }
 
-/// What does not fit says so.
+/// What does not fit says so, in one cell.
 ///
-/// The row carries two chips. Dropping the rest silently was the wrong half of
-/// that trade -- `8 pending` left a row with nothing to say it had -- so the
-/// overflow is counted, the way the details pane's own `{n} more` does.
+/// The row carries two chips. Dropping the rest in silence was the wrong half
+/// of that trade -- `8 pending` left a row with nothing to say it had. A
+/// `+N more` chip was the first attempt and cost nine cells to save two, took
+/// the headline down to a bare `…`, and truncated to `+2 …` itself on a 100
+/// column terminal. One glyph says the same thing.
 #[test]
-fn chips_that_do_not_fit_are_counted_rather_than_dropped() {
+fn chips_that_do_not_fit_are_marked_rather_than_dropped() {
     let mut snapshot = snapshot_with_semantic(Some(json!({
         "user": { "label": "ready", "attention": "normal" },
         "notifications": { "unreadCount": 0 },
@@ -3335,7 +3335,9 @@ fn chips_that_do_not_fit_are_counted_rather_than_dropped() {
     // The two that matter most, then the count of what is left.
     assert!(plain.contains("waiting on you"), "got {plain}");
     assert!(plain.contains("2 threads unread"), "got {plain}");
-    assert!(plain.contains("+3 more"), "got {plain}");
+    assert!(plain.contains('\u{203a}'), "got {plain}");
+    // And not the width the counted version spent.
+    assert!(!plain.contains("more"), "got {plain}");
     // And the ones it stands for are not also on the row.
     assert!(!plain.contains("3 new activity"), "got {plain}");
     assert!(!plain.contains("4 pending"), "got {plain}");
@@ -3364,4 +3366,87 @@ fn waiting_on_you_has_no_flat_fallback_on_purpose() {
         "the badge does fall back, got {plain}"
     );
     assert!(!plain.contains("waiting on you"), "and this one does not");
+}
+
+/// The two coordination chips, which nothing covered.
+///
+/// Neither string is greppable anywhere else in the repo and the golden
+/// fixture has `workflowBlockedCount` and `workflowFamilyCount` at zero, so
+/// deleting either push, or moving either one's rank, passed the whole suite --
+/// five surviving mutations from one hole. This pins their presence and the
+/// one rank that matters: `coordination blocked` is second, so it survives the
+/// two-chip budget alongside `waiting on you`, and a family count is last.
+#[test]
+fn the_coordination_chips_render_and_keep_their_rank() {
+    let mut snapshot = snapshot_with_semantic(Some(json!({
+        "user": { "label": "ready", "attention": "normal" },
+        "notifications": { "unreadCount": 0 },
+        "presentation": { "statusLabel": "Ready", "compactHint": null, "attentionScore": 0 },
+        "waitingOnMeCount": 1
+    })));
+    for session in [
+        &mut snapshot.sessions[0],
+        &mut snapshot.worktree_groups[0].sessions[0],
+    ] {
+        session.workflow_blocked_count = 1;
+        session.workflow_family_count = 2;
+        session.thread_unread_count = 7;
+    }
+    let plain = strip_ansi(&row_frame(&snapshot));
+
+    // Blocked coordination outranks an unread count, so both of the two slots
+    // go to things that need a person.
+    let blocked = plain.find("coordination blocked").expect("blocked chip");
+    let waiting = plain.find("waiting on you").expect("waiting chip");
+    assert!(waiting < blocked, "waiting on you leads, got {plain}");
+    assert!(
+        plain.contains('\u{203a}'),
+        "and the rest is marked, got {plain}"
+    );
+    assert!(!plain.contains("7 threads unread"), "got {plain}");
+    assert!(!plain.contains("coordination 2"), "got {plain}");
+
+    // On its own, a family count does render.
+    let mut alone = snapshot_with_semantic(Some(json!({
+        "user": { "label": "ready", "attention": "normal" },
+        "notifications": { "unreadCount": 0 },
+        "presentation": { "statusLabel": "Ready", "compactHint": null, "attentionScore": 0 }
+    })));
+    for session in [
+        &mut alone.sessions[0],
+        &mut alone.worktree_groups[0].sessions[0],
+    ] {
+        // Cleared so the family count is inside the two-chip budget rather
+        // than behind the overflow mark, which is what the row does with it.
+        session.thread_unread_count = 0;
+        session.thread_pending_count = 0;
+        session.thread_waiting_on_them_count = 0;
+        session.workflow_family_count = 2;
+    }
+    let plain = strip_ansi(&row_frame(&alone));
+    assert!(plain.contains("coordination 2"), "got {plain}");
+
+    // The last two ranks are only observable when nothing above them is set,
+    // which is why swapping them survived every other gate.
+    let mut tail = snapshot_with_semantic(Some(json!({
+        "user": { "label": "ready", "attention": "normal" },
+        "notifications": { "unreadCount": 0 },
+        "presentation": { "statusLabel": "Ready", "compactHint": null, "attentionScore": 0 }
+    })));
+    for session in [
+        &mut tail.sessions[0],
+        &mut tail.worktree_groups[0].sessions[0],
+    ] {
+        session.thread_unread_count = 0;
+        session.thread_pending_count = 0;
+        session.thread_waiting_on_them_count = 4;
+        session.workflow_family_count = 3;
+    }
+    let plain = strip_ansi(&row_frame(&tail));
+    let them = plain.find("waiting on them").expect("waiting on them chip");
+    let family = plain.find("coordination 3").expect("family chip");
+    assert!(
+        them < family,
+        "waiting on them outranks a family count, got {plain}"
+    );
 }
