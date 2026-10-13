@@ -41,6 +41,7 @@ describe("a send is confirmed in every view mode", () => {
       const notice = composerSendNotice({
         awaitingEcho: true,
         error: null,
+        heldNotice: null,
         sending: false,
         transcriptVisible: chatViewVisible,
       });
@@ -60,6 +61,7 @@ describe("a send is confirmed in every view mode", () => {
       const notice = composerSendNotice({
         awaitingEcho: true,
         error: null,
+        heldNotice: null,
         sending: false,
         transcriptVisible: chatViewVisible,
       });
@@ -81,6 +83,7 @@ describe("a send is confirmed in every view mode", () => {
         composerSendNotice({
           awaitingEcho: true,
           error: null,
+          heldNotice: null,
           sending: false,
           transcriptVisible: chatViewVisible,
         }),

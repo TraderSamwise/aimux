@@ -4,6 +4,7 @@ import {
   formatLivePaneInputDeliveryNotice,
   formatLivePaneInputResponseRefusal,
   formatPostActionTranscriptRefreshResult,
+  livePaneInputDeliveryOutcome,
 } from "./input-delivery";
 
 describe("formatLivePaneInputDeliveryNotice", () => {
@@ -77,5 +78,28 @@ describe("formatLivePaneInputDeliveryNotice", () => {
 
   it("keeps successful post-action transcript refreshes quiet", () => {
     expect(formatPostActionTranscriptRefreshResult("Input sent", null)).toBeNull();
+  });
+});
+
+describe("whether a delivery notice is a failure or a wait", () => {
+  // `held` comes back with `accepted: true` -- the input is queued and the
+  // service delivers it within the 15s safety hold. It went to the same red
+  // error line as a genuine failure, so an accepted send read as a failed one.
+  it("calls a held send pending, not failed", () => {
+    expect(
+      livePaneInputDeliveryOutcome({ state: "held", reason: "visible-unsubmitted-input" }),
+    ).toBe("pending");
+  });
+
+  it("still calls a real failure failed", () => {
+    expect(livePaneInputDeliveryOutcome({ state: "failed", error: "tmux is gone" })).toBe("failed");
+    // Any future state that is neither delivered nor held is a failure until
+    // something says otherwise, which is the safe direction for this one.
+    expect(livePaneInputDeliveryOutcome({ state: "unknown-future" } as never)).toBe("failed");
+  });
+
+  it("treats a delivered send, and an absent delivery, as delivered", () => {
+    expect(livePaneInputDeliveryOutcome({ state: "delivered" })).toBe("delivered");
+    expect(livePaneInputDeliveryOutcome(undefined)).toBe("delivered");
   });
 });

@@ -1,5 +1,22 @@
 import type { LivePaneInputDelivery, LivePaneInputResponse } from "../../src/project-api-contract";
 
+/**
+ * Whether a delivery notice describes a failure or a wait.
+ *
+ * `held` comes back with `accepted: true` -- the input is queued and the
+ * project service will deliver it within the 15s safety hold. Routing it to
+ * the same red error line as `failed` told the user their send had not worked
+ * when it had, which is the wrapper lying about a child outcome.
+ */
+export type LivePaneInputDeliveryOutcome = "delivered" | "pending" | "failed";
+
+export function livePaneInputDeliveryOutcome(
+  delivery: LivePaneInputDelivery | undefined,
+): LivePaneInputDeliveryOutcome {
+  if (!delivery || delivery.state === "delivered") return "delivered";
+  return delivery.state === "held" ? "pending" : "failed";
+}
+
 export function formatLivePaneInputDeliveryNotice(
   delivery: LivePaneInputDelivery | undefined,
 ): string | null {

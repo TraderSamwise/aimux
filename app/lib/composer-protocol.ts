@@ -59,8 +59,15 @@ export interface ComposerSendNoticeInput {
   sending: boolean;
   /** A send was accepted and its echo has not come back yet. */
   awaitingEcho: boolean;
+  /** An accepted send the project service has queued rather than delivered. */
+  heldNotice: string | null;
   /** Whatever the composer is already showing as an error. */
   error: string | null;
+}
+
+export interface ComposerSendNoticeView {
+  kind: "held" | "awaiting";
+  text: string;
 }
 
 /**
@@ -69,15 +76,21 @@ export interface ComposerSendNoticeInput {
  * second claim about a fact already on screen. If the echo never comes, this
  * stays up until the ten-second timeout replaces it with the error, which is
  * the honest sequence.
+ *
+ * A held send is the exception that shows in EVERY mode: it is not a
+ * duplicate of the transcript row, it is the one thing that tells the user
+ * their input is queued behind typed text in the agent's own terminal, and
+ * what to do about it.
  */
-export function composerSendNotice(input: ComposerSendNoticeInput): string | null {
+export function composerSendNotice(input: ComposerSendNoticeInput): ComposerSendNoticeView | null {
   // An error is the louder fact and renders on its own.
   if (input.error) return null;
-  // The transcript row IS the confirmation wherever there is one.
-  if (input.transcriptVisible) return null;
+  if (input.heldNotice) return { kind: "held", text: input.heldNotice };
   // The send button carries the in-flight state.
   if (input.sending) return null;
-  return input.awaitingEcho ? COMPOSER_SEND_AWAITING_ECHO_NOTICE : null;
+  // The transcript row IS the confirmation wherever there is one.
+  if (input.transcriptVisible) return null;
+  return input.awaitingEcho ? { kind: "awaiting", text: COMPOSER_SEND_AWAITING_ECHO_NOTICE } : null;
 }
 
 const LONG_COMPOSER_ACK_MIN_SENT_CHARS = 240;

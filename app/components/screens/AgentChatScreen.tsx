@@ -44,6 +44,7 @@ import {
   ChevronDown,
   ChevronLeft,
   Check,
+  Clock,
   CircleAlert,
   Columns2,
   MessageSquareText,
@@ -125,6 +126,7 @@ import {
 } from "@/lib/composer-echo";
 import {
   formatLivePaneInputDeliveryNotice,
+  livePaneInputDeliveryOutcome,
   formatLivePaneInputResponseRefusal,
   formatPostActionTranscriptRefreshResult,
 } from "@/lib/input-delivery";
@@ -545,6 +547,9 @@ export default function ChatScreen() {
   const [sendBusy, setSendBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
+  // An accepted send the project service queued rather than delivered. Kept
+  // apart from `sendError`: the route returns it with `accepted: true`.
+  const [heldDeliveryNotice, setHeldDeliveryNotice] = useState<string | null>(null);
   const [chatChromeVisible, setChatChromeVisible] = useState(true);
   const [composerFocused, setComposerFocused] = useState(false);
   const hasHardwareKeyboard = useHasHardwareKeyboard();
@@ -1191,9 +1196,10 @@ export default function ChatScreen() {
   // exactly like one that did nothing, and the ten-second echo timeout then
   // said "Send not confirmed yet" with nothing on screen to explain it.
   const composerSendPendingEcho = acceptedComposerMessages.some((message) => !message.settled);
-  const composerSendNoticeText = composerSendNotice({
+  const composerSendNoticeView = composerSendNotice({
     awaitingEcho: composerSendPendingEcho,
     error: sendError,
+    heldNotice: heldDeliveryNotice,
     sending: sendBusy || composerAwaitingAck,
     transcriptVisible: chatViewVisible,
   });
@@ -1334,6 +1340,7 @@ export default function ChatScreen() {
       chatViewportRef.current?.showNewest();
       setSendBusy(true);
       setSendError(null);
+      setHeldDeliveryNotice(null);
       const sendStillOwnsActiveComposer = () =>
         sendOperationIdRef.current === sendOperationId &&
         activeComposerDraftKeyRef.current === sendComposerDraftKey;
@@ -1399,7 +1406,14 @@ export default function ChatScreen() {
           composerDraftTextRef.current = "";
           setPendingAttachments([]);
           setPendingComposerAck(null);
-          setSendError(deliveryNotice);
+          // `held` comes back with `accepted: true`: the input is queued and
+          // the service delivers it within the safety hold. Sending it to the
+          // red error line said the send had failed when it had not.
+          if (livePaneInputDeliveryOutcome(sendResponse.delivery) === "pending") {
+            setHeldDeliveryNotice(deliveryNotice);
+          } else {
+            setSendError(deliveryNotice);
+          }
           if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
           void refreshOutputSnapshot().catch((error) => {
             setSendError(formatPostActionTranscriptRefreshResult("Input accepted", error));
@@ -1483,6 +1497,7 @@ export default function ChatScreen() {
       sessionKey,
       setAcceptedComposerMessages,
       setPendingAttachments,
+      setHeldDeliveryNotice,
       setPendingComposerAck,
       setSendBusy,
       setSendError,
@@ -2099,14 +2114,18 @@ export default function ChatScreen() {
                             Sending...
                           </Text>
                         </View>
-                      ) : composerSendNoticeText ? (
-                        <View className="min-w-0 flex-row items-center gap-1.5">
-                          <Check size={13} color="#a1a1aa" style={{ marginTop: 1 }} />
+                      ) : composerSendNoticeView ? (
+                        <View className="min-w-0 flex-row items-start gap-1.5">
+                          {composerSendNoticeView.kind === "held" ? (
+                            <Clock size={13} color="#e0b341" style={{ marginTop: 1 }} />
+                          ) : (
+                            <Check size={13} color="#a1a1aa" style={{ marginTop: 1 }} />
+                          )}
                           <Text
                             className="min-w-0 flex-1 text-xs text-muted-foreground"
-                            numberOfLines={2}
+                            numberOfLines={3}
                           >
-                            {composerSendNoticeText}
+                            {composerSendNoticeView.text}
                           </Text>
                         </View>
                       ) : activityLabel ? (
@@ -2150,7 +2169,7 @@ export default function ChatScreen() {
       activityLabelShimmer,
       canSendMessageBase,
       composerAwaitingAck,
-      composerSendNoticeText,
+      composerSendNoticeView,
       composerDraftKey,
       composerFooterBottomPadding,
       composerKeyboardProps,

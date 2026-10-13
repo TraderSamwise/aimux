@@ -429,6 +429,7 @@ describe("what the composer says about a send that worked", () => {
     transcriptVisible: false,
     sending: false,
     awaitingEcho: false,
+    heldNotice: null,
     error: null,
   };
 
@@ -436,9 +437,10 @@ describe("what the composer says about a send that worked", () => {
   // thing that confirmed a send -- the message appearing in it -- was not on
   // screen, and a send that worked looked like one that did nothing.
   it("confirms the send where there is no transcript to show it in", () => {
-    expect(composerSendNotice({ ...base, awaitingEcho: true })).toBe(
-      COMPOSER_SEND_AWAITING_ECHO_NOTICE,
-    );
+    expect(composerSendNotice({ ...base, awaitingEcho: true })).toEqual({
+      kind: "awaiting",
+      text: COMPOSER_SEND_AWAITING_ECHO_NOTICE,
+    });
   });
 
   // Once the echo lands, the pane the user is looking at shows the message,
@@ -451,6 +453,17 @@ describe("what the composer says about a send that worked", () => {
   // beside it is noise.
   it("says nothing where the transcript already shows it", () => {
     expect(composerSendNotice({ ...base, transcriptVisible: true, awaitingEcho: true })).toBeNull();
+  });
+
+  // A queued send is the one notice that shows in every mode: it is not a
+  // duplicate of the transcript row, it is the only thing telling the user
+  // their input is waiting behind typed text in the agent's own terminal.
+  it("shows a held send everywhere, transcript or not", () => {
+    for (const transcriptVisible of [true, false]) {
+      expect(
+        composerSendNotice({ ...base, transcriptVisible, heldNotice: "Input held: because" }),
+      ).toEqual({ kind: "held", text: "Input held: because" });
+    }
   });
 
   it("yields to the louder facts", () => {
