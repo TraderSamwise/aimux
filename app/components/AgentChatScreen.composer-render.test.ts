@@ -177,3 +177,24 @@ describe("sending shows the newest output in the pane it was sent from", () => {
     expect(source.slice(mountStart, mountEnd)).toContain("ref={terminalViewportRef}");
   });
 });
+
+describe("per-conversation send state is reset when the conversation changes", () => {
+  // `heldDelivery` carries a baseline count of THIS conversation's user
+  // messages. Left behind on a switch it would be measured against another
+  // agent's transcript, stranding "Input held, not delivered yet" on a
+  // composer that never sent anything.
+  it("clears the held-send notice along with the rest", () => {
+    const source = agentChatScreenSource();
+    const resetStart = source.indexOf("activeComposerDraftKeyRef.current = composerDraftKey;");
+    expect(resetStart).toBeGreaterThanOrEqual(0);
+    const resetEnd = source.indexOf("}, [composerDraftKey, jotaiStore]);", resetStart);
+    expect(resetEnd).toBeGreaterThan(resetStart);
+    const resetSource = source.slice(resetStart, resetEnd);
+
+    // The established set, plus the one this branch added.
+    expect(resetSource).toContain("setPendingComposerAck(null)");
+    expect(resetSource).toContain("setAcceptedComposerMessages([])");
+    expect(resetSource).toContain("setSendError(null)");
+    expect(resetSource).toContain("setHeldDelivery(null)");
+  });
+});

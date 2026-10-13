@@ -781,6 +781,10 @@ export default function ChatScreen() {
     setSendBusy(false);
     sendBusyRef.current = false;
     setSendError(null);
+    // Its baseline is a count of THIS conversation's user messages, so
+    // carrying it into another agent's composer would measure it against the
+    // wrong transcript and strand the notice there.
+    setHeldDelivery(null);
   }, [composerDraftKey, jotaiStore]);
 
   useEffect(() => {
