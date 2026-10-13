@@ -5,6 +5,26 @@ Captured from the Node dashboard renderer and used as literal parity gates.
 ## Recorded divergences
 
 `dashboard-node-full-frame-v1.txt` and `dashboard-node-control-scribe-frame-v1.txt`
+were re-recorded on 2026-10-13 so the agent row stops carrying unlabelled
+unread numbers.
+
+Node drew up to seven chips on a row, and two of them answered the same
+question the unread badge now answers beside the agent name: `N unseen`, and a
+`thread 8/0/5` triple whose three digits were unread / waiting on me / waiting
+on them with nothing to say so. Sam could not read it. The count now sits in one
+badge, the details pane spells the rest out in words, and the row says
+`waiting on you` -- from the project service's own `waitingOnMeCount`, which is
+already the greater of the thread and coordination counts -- where Node read the
+two raw fields separately and put a thread waiting on you in the middle digit of
+that triple.
+
+Both frames differ by exactly those two row lines each: the `thread` chip is
+gone, `waiting on you` replaces it where someone is in fact waiting, and
+`headline-claude-0` stops being truncated to `headline-cla…` now that the chip
+is not taking its room. Nothing else changed, and this is a deliberate
+divergence from the Node capture.
+
+`dashboard-node-full-frame-v1.txt` and `dashboard-node-control-scribe-frame-v1.txt`
 were re-recorded on 2026-10-05 so the "8 pending" chip stops being red.
 
 `pendingDeliveries` counts thread messages that have not arrived yet. Node drew

@@ -725,7 +725,7 @@ fn assert_frame_fits_viewport(frame: &str, width: usize) {
 }
 
 #[test]
-fn renders_golden_worktrees_sessions_services_and_unread_chips() {
+fn renders_golden_worktrees_sessions_services_and_activity_chips() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let snapshot = &fixture.runtime_full;
@@ -764,7 +764,11 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
     assert!(plain.contains("yarn dev"));
     assert!(plain.contains("[svc] offline"));
     assert!(plain.contains("Ready"));
-    assert!(plain.contains("thread 8/0/5"));
+    // The unlabelled `thread 8/0/5` triple is gone: the badge carries the
+    // count and the row says who is waiting in words.
+    assert!(!plain.contains("thread 8/0/5"));
+    assert!(plain.contains("waiting on you"));
+    assert!(plain.contains("8 pending"));
     assert!(plain.contains("step in"));
     for line in frame_content_only(&result.frame).split("\r\n") {
         assert!(visible_width(line) <= 140);
@@ -1026,8 +1030,71 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
     assert!(plain.contains("claude (08h5sggs) Ready"));
     assert!(plain.contains("Ready"));
     assert!(plain.contains("output "));
-    assert!(plain.contains("1 unseen"));
     assert!(!plain.contains("08h5sgg…Ready"));
+}
+
+/// The badge takes its room from the parenthetical id, not from the name and
+/// not from the status cell.
+///
+/// `COL_IDENTITY` is 16, so `claude (08h5sggs)` plus a badge does not fit. The
+/// parenthetical only disambiguates two agents of the same name, so it is what
+/// yields -- cutting the name instead produced `claude (08…` and cutting
+/// nothing would have shoved `Ready` out of its column.
+#[test]
+fn an_unread_badge_takes_its_room_from_the_parenthetical_not_the_name() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    let session = &mut snapshot.sessions[0];
+    session.id = "claude-08h5sggs".into();
+    session.command = "claude".into();
+    session.label = None;
+    session.semantic = Some(
+        serde_json::from_value(json!({
+            "user": { "label": "ready", "attention": "normal" },
+            "notifications": { "unreadCount": 3 },
+            "presentation": { "statusLabel": "Ready", "compactHint": "3 unread", "attentionScore": 2 }
+        }))
+        .expect("semantic parses"),
+    );
+    snapshot.worktree_groups[0].sessions[0] = session.clone();
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 50,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-08h5sggs"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        focused_group_index: None,
+        runtime_label: None,
+        version: None,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(
+        plain.contains("claude 3 "),
+        "the badge sits beside the name"
+    );
+    // The name survives whole, and the status keeps its own column.
+    assert!(!plain.contains("clau…"));
+    assert!(!plain.contains("3 Ready"));
+    assert!(plain.contains("Ready"));
+    for line in frame_content_only(&result.frame).split("\r\n") {
+        assert!(visible_width(line) <= 140);
+    }
 }
 
 #[test]

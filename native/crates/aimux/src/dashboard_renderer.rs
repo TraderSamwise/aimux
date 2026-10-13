@@ -1509,31 +1509,32 @@ fn is_session_offline(session: &DashboardSession) -> bool {
         )
 }
 
-fn session_activity_chips(session: &DashboardSession) -> String {
-    let activity_new = session
+/// Who is waiting on you, as the project service works it out.
+///
+/// `waitingOnMeCount` is already the greater of the thread and coordination
+/// counts. The row read the two raw fields separately and showed them under
+/// different chips, so a thread waiting on you was the middle digit of
+/// `thread 8/0/5` while a coordination one got a chip that said so.
+fn waiting_on_me_count(session: &DashboardSession) -> usize {
+    session
         .semantic
         .as_ref()
-        .map(|semantic| semantic.activity_new_count)
-        .unwrap_or(session.unseen_count);
-    let thread_unread = session.thread_unread_count;
-    let waiting_on_me = session.thread_waiting_on_me_count;
-    let waiting_on_them = session.thread_waiting_on_them_count;
+        .map(|semantic| semantic.waiting_on_me_count)
+        .unwrap_or_else(|| {
+            session
+                .thread_waiting_on_me_count
+                .max(session.workflow_on_me_count)
+        })
+}
+
+fn session_activity_chips(session: &DashboardSession) -> String {
     let thread_pending = session.thread_pending_count;
     let offline = is_session_offline(session);
     let tone = |active| if offline { ChipTone::Muted } else { active };
     let mut chips = Vec::new();
-    if activity_new > 0 {
-        chips.push(chip(
-            &format!("{} unseen", activity_new.min(99)),
-            tone(ChipTone::Info),
-        ));
-    }
-    if thread_unread > 0 || waiting_on_me > 0 || waiting_on_them > 0 {
-        chips.push(chip(
-            &format!("thread {thread_unread}/{waiting_on_me}/{waiting_on_them}"),
-            ChipTone::Muted,
-        ));
-    }
+    // The unread badge beside the name carries the count now. `N unseen` and
+    // `thread 8/0/5` were two more unlabelled numbers for the same question,
+    // and the details pane spells both out with words.
     if thread_pending > 0 {
         chips.push(chip(
             &format!("{thread_pending} pending"),
@@ -1541,8 +1542,8 @@ fn session_activity_chips(session: &DashboardSession) -> String {
             tone(ChipTone::Work),
         ));
     }
-    if session.workflow_on_me_count > 0 {
-        chips.push(chip("coordination on you", tone(ChipTone::Attention)));
+    if waiting_on_me_count(session) > 0 {
+        chips.push(chip("waiting on you", tone(ChipTone::Attention)));
     }
     if session.workflow_blocked_count > 0 {
         chips.push(chip("coordination blocked", tone(ChipTone::Danger)));
