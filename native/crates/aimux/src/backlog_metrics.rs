@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -13,7 +13,7 @@ pub const SSE_AGENT_OUTPUT_BACKLOG: &str = "sse-subscribers/agent-output";
 pub const SSE_AGENT_INTERACTION_BACKLOG: &str = "sse-subscribers/agent-interaction";
 pub const SSE_SUBSCRIBER_BACKLOG_CAPACITY: usize = 64;
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BacklogMetricSnapshot {
     pub name: String,
@@ -24,7 +24,7 @@ pub struct BacklogMetricSnapshot {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum BacklogMetricStatus {
     Ok,
