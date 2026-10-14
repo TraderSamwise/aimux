@@ -3187,6 +3187,7 @@ mod tests {
         current_after: Option<usize>,
         captures: std::collections::VecDeque<Result<String, String>>,
         last_capture: Result<String, String>,
+        last_served: Result<String, String>,
         carriage_return: Result<(), String>,
         carriage_returns: usize,
         sleeps: Vec<u64>,
@@ -3198,13 +3199,14 @@ mod tests {
             Self {
                 current: true,
                 current_after: None,
+                // Two polls showing the same pane is what "settled" means;
+                // after the return, `last_capture` is the cleared composer.
                 captures: std::collections::VecDeque::from([
-                    Ok(format!("\u{203a} {draft}")),
-                    Ok(format!("\u{203a} {draft}")),
                     Ok(format!("\u{203a} {draft}")),
                     Ok(format!("\u{203a} {draft}")),
                 ]),
                 last_capture: Ok("assistant response\n\u{203a} ".to_owned()),
+                last_served: Ok(String::new()),
                 carriage_return: Ok(()),
                 carriage_returns: 0,
                 sleeps: Vec::new(),
@@ -3221,10 +3223,20 @@ mod tests {
             }
         }
 
-        fn capture(&mut self, _start_line: i64) -> Result<String, String> {
-            self.captures
+        /// Both captures in a poll read the SAME pane, at different line
+        /// ranges, so the signature changes exactly when the pane does.
+        /// Serving a fresh queue entry to each would consume two per poll and
+        /// make a changing pane impossible to script.
+        fn capture(&mut self, start_line: i64) -> Result<String, String> {
+            if start_line == SIGNATURE_CAPTURE_START_LINE {
+                return self.last_served.clone();
+            }
+            let served = self
+                .captures
                 .pop_front()
-                .unwrap_or_else(|| self.last_capture.clone())
+                .unwrap_or_else(|| self.last_capture.clone());
+            self.last_served = served.clone();
+            served
         }
 
         fn send_carriage_return(&mut self) -> Result<(), String> {
@@ -3274,6 +3286,41 @@ mod tests {
             .expect_err("the draft is still sitting there");
 
         assert!(error.contains("remained visible"), "got {error}");
+    }
+
+    /// A pane still filling in must not release the carriage return.
+    ///
+    /// The draft's words appear from the first poll while the rest of the
+    /// paste is still arriving, so presence alone says nothing. The signature
+    /// is what separates arriving from settled: counting presence submits
+    /// into a composer that does not hold the whole message yet.
+    #[test]
+    fn a_pane_still_filling_in_does_not_release_the_sync_carriage_return() {
+        let draft = "hello from the route";
+        let mut runtime = FakeSyncPromptSubmitRuntime {
+            // The draft is present every time, so only the SIGNATURE can
+            // tell a pane that is still arriving from one that has settled.
+            captures: std::collections::VecDeque::from([
+                Ok(format!("\u{203a} {draft}")),
+                Ok(format!("\u{203a} {draft} and more still arriving")),
+                Ok(format!("\u{203a} {draft} and more still arriving")),
+            ]),
+            ..FakeSyncPromptSubmitRuntime::showing(draft)
+        };
+
+        wait_for_prompt_submit_confirmed_sync(&mut runtime, draft).expect("it settles eventually");
+
+        assert_eq!(runtime.carriage_returns, 1);
+        let polls = runtime
+            .sleeps
+            .iter()
+            .filter(|millis| **millis == FIRST_POLL_MS || **millis == POLL_MS)
+            .count();
+        assert!(
+            polls >= 3,
+            "a pane that was still changing must not settle on two polls: {:?}",
+            runtime.sleeps
+        );
     }
 
     /// A pane that never shows the draft still submits rather than losing it.
