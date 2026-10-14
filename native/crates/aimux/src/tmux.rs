@@ -3080,15 +3080,22 @@ pub fn load_buffer_argv(buffer_name: &str, path: &str) -> Vec<String> {
 
 /// Paste a named buffer into a window, and delete the buffer.
 ///
-/// `-p` asks tmux to wrap the paste in bracketed-paste markers when the
-/// program in the pane has turned that mode on, which is how an agent's
-/// composer is meant to receive a multi-line message: as one block, rather
-/// than as text interleaved with newline keypresses it may act on.
+/// `-r` is the flag this cannot ship without. `paste-buffer` REPLACES every
+/// linefeed with a carriage return by default, and a carriage return is
+/// Enter: a ten-line prompt would submit ten times, one line per turn, with
+/// a blank line submitting nothing. Measured on tmux 3.7c, `a\nb\nc` arrives
+/// as `61 0d 62 0d 63` without `-r` and `61 0a 62 0a 63` with it. The old
+/// per-newline `send-keys C-j` sent LF, so `-r` is also what keeps parity.
+///
+/// `-p` wraps the paste in bracketed-paste markers when the program in the
+/// pane has turned that mode on. It does not affect the replacement, and
+/// most agent panes have the mode off, so `-p` alone fixes nothing.
 pub fn paste_buffer_argv(buffer_name: &str, window_id: &str) -> Vec<String> {
     vec![
         "paste-buffer".to_owned(),
         "-d".to_owned(),
         "-p".to_owned(),
+        "-r".to_owned(),
         "-b".to_owned(),
         buffer_name.to_owned(),
         "-t".to_owned(),
