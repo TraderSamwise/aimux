@@ -30,6 +30,11 @@ pub struct AsyncRuntimeDoctorReport {
     pub totals: AsyncRuntimeTotals,
     pub tasks: Vec<AsyncTaskSnapshot>,
     /// Most recent first, bounded by [`FAILURE_RING_CAPACITY`].
+    ///
+    /// Defaulted on read because this report crosses a process boundary: a
+    /// daemon newer than the service it is reading must render what the
+    /// service did send, not refuse the whole report over one absent field.
+    #[serde(default)]
     pub failures: Vec<AsyncTaskFailure>,
     pub backlogs: Vec<BacklogMetricSnapshot>,
 }
@@ -48,10 +53,12 @@ pub struct AsyncRuntimeTotals {
     /// Tasks that ended by panicking since this process started. A panicking
     /// task leaves the process up and missing a piece of itself, which is the
     /// shape of a service that holds its port and answers nothing.
+    #[serde(default)]
     pub failed: u64,
     /// Sync seams reached from an async task since this process started. One
     /// incident usually produces one of these AND one `failed`, which are two
     /// different facts: what was refused, and what died because of it.
+    #[serde(default)]
     pub refused_seams: u64,
 }
 
@@ -64,11 +71,13 @@ pub struct AsyncTaskFailure {
     pub id: u64,
     pub name: String,
     pub kind: AsyncTaskKind,
+    #[serde(default)]
     pub reason: AsyncTaskFailureReason,
     pub at_ms: u128,
     pub age_ms: u128,
     /// Why, when the registry knows: a refused seam names the caller. A
     /// panicking task carries none, because its payload is already on stderr.
+    #[serde(default)]
     pub detail: Option<String>,
 }
 
@@ -84,9 +93,10 @@ pub struct AsyncTaskSnapshot {
 
 /// Why a task is in the failure ring. A refused seam and the task it killed
 /// are counted apart so neither total has to be read as the other.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum AsyncTaskFailureReason {
+    #[default]
     Panicked,
     RefusedSeam,
 }
@@ -563,8 +573,7 @@ impl Drop for AsyncTaskGuard {
 /// Modules whose frames are the seam itself, never the code that asked.
 const SEAM_FRAME_MODULES: [&str; 2] = ["aimux::async_runtime", "aimux::async_subprocess"];
 /// Frames that belong to the language, the runtime or the test harness.
-const FRAME_NOISE_PREFIXES: [&str; 7] =
-    ["std::", "core::", "alloc::", "test::", "tokio", "<", "__"];
+const FRAME_NOISE_PREFIXES: [&str; 6] = ["std::", "core::", "alloc::", "test::", "tokio", "__"];
 /// Enough frames to cross a closure and name the route behind it. One frame is
 /// not enough: the first non-seam frame of a tmux call is the shared
 /// `TmuxExecFn` closure body, which is the useless location to begin with.
@@ -583,19 +592,33 @@ pub fn caller_frames_outside_the_seam(backtrace: &str) -> Option<String> {
         .filter_map(|line| line.split_once(": "))
         .filter(|(index, _)| !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit()))
         .map(|(_, symbol)| symbol.trim())
-        .filter(|symbol| {
-            !FRAME_NOISE_PREFIXES
-                .iter()
-                .any(|prefix| symbol.starts_with(prefix))
-        })
-        .filter(|symbol| {
-            !SEAM_FRAME_MODULES
-                .iter()
-                .any(|module| symbol.starts_with(module))
-        })
+        .filter(|symbol| !is_noise_frame(symbol))
         .take(CALLER_FRAMES)
         .collect::<Vec<_>>();
     (!frames.is_empty()).then(|| frames.join(" <- "))
+}
+
+/// Whether a frame is plumbing rather than a caller.
+///
+/// A `<..>` frame is usually a trait-object or closure shim, but it is also how
+/// every trait method appears: `<aimux::..Task as ..PeriodicTask>::run` names a
+/// periodic task and `<aimux::..SystemProjectServiceLauncher as ..>::launch`
+/// names a launcher. Discarding all of them dropped the one frame worth having
+/// on the routes most likely to reach a sync seam.
+fn is_noise_frame(symbol: &str) -> bool {
+    if FRAME_NOISE_PREFIXES
+        .iter()
+        .any(|prefix| symbol.starts_with(prefix))
+    {
+        return true;
+    }
+    if SEAM_FRAME_MODULES
+        .iter()
+        .any(|module| symbol.starts_with(module))
+    {
+        return true;
+    }
+    symbol.starts_with('<') && !symbol.contains("aimux")
 }
 
 fn unix_millis_now() -> u128 {
@@ -759,7 +782,9 @@ mod tests {
              at ./crates/aimux/src/tmux.rs:2510:5
    8: aimux::project_service::agents::query_live_window_ids
              at ./crates/aimux/src/project_service/agents.rs:181:9
-   9: test::__rust_begin_short_backtrace
+   9: <aimux::project_service::window_reconciliation::WindowReconciliationTask as aimux::periodic_scheduler::PeriodicTask<C>>::run
+             at ./crates/aimux/src/project_service/window_reconciliation.rs:88:9
+  10: test::__rust_begin_short_backtrace
              at /rustc/ded5c06/library/test/src/lib.rs:663:18
 ";
 
@@ -783,6 +808,26 @@ mod tests {
         assert!(
             frames.contains("tmux::exec_tmux"),
             "the dispatcher between them is part of the route: {frames}"
+        );
+    }
+
+    /// A trait method is a `<Type as Trait>::method` frame, and that is how a
+    /// periodic task or a launcher appears. Discarding every `<..>` frame as a
+    /// shim dropped the one name worth having on the routes most likely to
+    /// reach a sync seam.
+    #[test]
+    fn a_trait_impl_frame_is_a_caller_when_it_names_crate_code() {
+        let frames =
+            caller_frames_outside_the_seam(CAPTURED_BACKTRACE).expect("the route is nameable");
+
+        assert!(
+            frames.contains("WindowReconciliationTask"),
+            "a periodic task dispatched through Box<dyn PeriodicTask> must still \
+             be named: {frames}"
+        );
+        assert!(
+            !frames.contains("boxed::Box"),
+            "a `<..>` frame that names no crate code is still a shim: {frames}"
         );
     }
 
