@@ -49,6 +49,9 @@ use crate::daemon::scheduler::{
     daemon_scheduler_handle, spawn_daemon_scheduler,
 };
 use crate::daemon::server::{DaemonHttpRequest, handle_daemon_http_request};
+use crate::daemon::services_doctor::{
+    ServiceProbeFailure, ServicesDoctorReport, ServicesDoctorRuntime, build_services_doctor_report,
+};
 use crate::daemon::stability_doctor::{
     StabilityDoctorReport, build_stability_doctor_report_with_live_scheduler,
 };
@@ -109,8 +112,9 @@ use crate::lifecycle_orphans::{
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, ProjectEntry, compute_project_id};
 use crate::process_inspector::{
-    ProcessArgsEntry, ProjectServiceProcessIdentity, is_aimux_project_service_process_args,
-    is_current_native_aimux_project_service_process, list_process_args, try_list_process_args,
+    ProcessArgsEntry, ProjectServiceProcessIdentity, is_aimux_project_service_process,
+    is_aimux_project_service_process_args, is_current_native_aimux_project_service_process,
+    list_process_args, try_list_process_args,
 };
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, try_list_registered_desktop_projects};
@@ -411,6 +415,43 @@ pub trait ProjectServiceProcessVerifier: Send + Sync {
 
 pub trait ProjectServiceHealthProbe: Send + Sync {
     fn is_ready(&self, endpoint: &MetadataApiEndpoint, pid: i32) -> bool;
+    /// The same question, keeping why it failed.
+    ///
+    /// The probe used to discard the error, so a service that accepted the
+    /// connection and answered nothing, one that was never listening, and one
+    /// answering for a different pid were the same `false` -- and the user got
+    /// "not ready" for all three. Defaulted so a test fake can still implement
+    /// `is_ready` alone.
+    fn diagnose(
+        &self,
+        endpoint: &MetadataApiEndpoint,
+        pid: i32,
+    ) -> Result<(), ProjectServiceProbeFailure> {
+        if self.is_ready(endpoint, pid) {
+            Ok(())
+        } else {
+            Err(ProjectServiceProbeFailure {
+                reason: "the probe reported not ready".to_owned(),
+                port_accepted: false,
+            })
+        }
+    }
+    /// The patient budget, with the reason kept. This is the probe that
+    /// separates a wedge from a service merely starved of CPU.
+    fn diagnose_patiently(
+        &self,
+        endpoint: &MetadataApiEndpoint,
+        pid: i32,
+    ) -> Result<(), ProjectServiceProbeFailure> {
+        if self.is_ready_patiently(endpoint, pid) {
+            Ok(())
+        } else {
+            Err(ProjectServiceProbeFailure {
+                reason: "the patient probe reported not ready".to_owned(),
+                port_accepted: false,
+            })
+        }
+    }
     /// The same question with a timeout a loaded machine can still meet.
     /// `is_ready` allows 500ms, which a busy service misses while being
     /// perfectly alive; a wedged one is silent however long you wait.
@@ -423,7 +464,7 @@ pub trait ProjectServiceHealthProbe: Send + Sync {
 /// one must be long enough that a service merely starved of CPU answers;
 /// making them equal is what lets load read as a wedge.
 const PROJECT_SERVICE_PROBE_TIMEOUT_MS: u64 = 500;
-const PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS: u64 = 5_000;
+pub const PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS: u64 = 5_000;
 
 /// Compile-time, because a last word that waits no longer than the routine
 /// probe cannot tell a loaded service from a wedged one, and that mistake
@@ -515,11 +556,23 @@ fn project_service_health_wait_budget_ms(startup_timeout_ms: u64) -> u64 {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProjectServiceHealthWaitFailure {
-    EndpointMissing { path: PathBuf },
-    EndpointLoadFailed { error: MetadataEndpointLoadError },
-    EndpointPidMismatch { expected_pid: i32, actual_pid: i32 },
-    HealthProbeNotReady { endpoint: MetadataApiEndpoint },
-    ProcessExited { exit_status: Option<String> },
+    EndpointMissing {
+        path: PathBuf,
+    },
+    EndpointLoadFailed {
+        error: MetadataEndpointLoadError,
+    },
+    EndpointPidMismatch {
+        expected_pid: i32,
+        actual_pid: i32,
+    },
+    HealthProbeNotReady {
+        endpoint: MetadataApiEndpoint,
+        failure: ProjectServiceProbeFailure,
+    },
+    ProcessExited {
+        exit_status: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -528,20 +581,188 @@ enum ProjectServiceHealthWait {
     NotReady(ProjectServiceHealthWaitFailure),
 }
 
+/// A failed `/health` probe: why, and whether anything accepted the connection.
+///
+/// `port_accepted` is kept as a fact rather than inferred from the wording,
+/// because the two cases lead to opposite conclusions -- a process holding the
+/// port and refusing to answer, versus no listener at all -- and a message
+/// that guesses wrong points at the wrong thing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectServiceProbeFailure {
+    pub reason: String,
+    pub port_accepted: bool,
+}
+
+/// What a failed `/health` probe means, in words that say whether anyone is
+/// holding the port.
+///
+/// A raw OS error is not an answer: "Connection reset by peer (os error 54)"
+/// and "Connection refused" look alike to a reader and mean opposite things --
+/// a process that holds the port and will not answer, versus no process at
+/// all. The first is the wedge and the second is a service that is simply
+/// gone. Measured against a real loopback socket: closing right after accept
+/// reports a reset on the write, and closing after reading the request reports
+/// zero bytes read.
+fn describe_probe_failure(error: CoreCommandTransportError) -> ProjectServiceProbeFailure {
+    let (reason, port_accepted) = match &error {
+        CoreCommandTransportError::Io(io_error) => match io_error.kind() {
+            io::ErrorKind::ConnectionRefused => (
+                "nothing is listening on that port (connection refused)".to_owned(),
+                false,
+            ),
+            io::ErrorKind::ConnectionReset | io::ErrorKind::BrokenPipe => (
+                format!(
+                    "the connection was accepted and then reset without an answer ({io_error})"
+                ),
+                true,
+            ),
+            _ => (format!("the port could not be reached ({io_error})"), false),
+        },
+        // The variant carries no phase, and the retry turns a connect timeout
+        // into this too -- but on loopback that still means the port is held:
+        // with nothing listening the kernel refuses instantly rather than
+        // hanging, and this probe refuses any non-loopback address.
+        CoreCommandTransportError::Timeout { timeout_ms } => (
+            format!("the connection was accepted and nothing was answered within {timeout_ms}ms"),
+            true,
+        ),
+        // The operation names which half failed, and only a connect that never
+        // succeeded means nothing accepted anything.
+        CoreCommandTransportError::TransientIoExhausted {
+            operation, source, ..
+        } => (
+            format!("the {operation} kept failing ({source})"),
+            *operation != "connect",
+        ),
+        // Prefixed so every held-but-silent outcome says "accepted", whichever
+        // half of the wedge's race happened: closing right after accept fails
+        // the write with a reset, and closing after the request is read comes
+        // back here with "closed the connection without answering".
+        CoreCommandTransportError::InvalidHttpResponse(detail) => (
+            format!("the connection was accepted but the answer was unusable: {detail}"),
+            true,
+        ),
+        // Both of these had to come back from a connection: bytes were read
+        // and failed to parse, or the service answered an error. Reporting
+        // either as "nothing is listening" would send someone looking for a
+        // dead service while a wedged one holds the port.
+        CoreCommandTransportError::Json(error) => (
+            format!("the connection was accepted but the answer was not JSON ({error})"),
+            true,
+        ),
+        CoreCommandTransportError::DaemonRequest { status, message } => {
+            (format!("health answered HTTP {status}: {message}"), true)
+        }
+        // The rest never reached a socket: no daemon configured, a bad URL, an
+        // ensure that failed before dialling.
+        _ => (error.to_string(), false),
+    };
+    ProjectServiceProbeFailure {
+        reason,
+        port_accepted,
+    }
+}
+
+/// A service that answered, just not the answer wanted: the port was
+/// certainly accepted.
+fn answered_but_wrong(reason: String) -> ProjectServiceProbeFailure {
+    ProjectServiceProbeFailure {
+        reason,
+        port_accepted: true,
+    }
+}
+
+impl ServicesDoctorRuntime for RealDaemonRuntime {
+    fn registered_project_roots(&mut self) -> Result<Vec<String>, String> {
+        // Not `unwrap_or_default()`: a registry that cannot be read is not an
+        // empty fleet, and reporting "no projects" about an unreadable
+        // registry is the failure this check exists to end.
+        Ok(self
+            .resolver
+            .list_projects()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|entry| entry.repo_root)
+            .collect())
+    }
+
+    fn endpoint_for(&mut self, project_root: &str) -> Result<Option<MetadataApiEndpoint>, String> {
+        let mut resolver = self.resolver.clone();
+        let project_state_dir = resolver.project_state_dir_for(project_root);
+        load_metadata_endpoint_result(&project_state_dir).map_err(|error| error.to_string())
+    }
+
+    fn pid_is_this_projects_service(&mut self, pid: i32, project_root: &str) -> bool {
+        // Deliberately NOT `is_live_native_project_service`: that also requires
+        // the service's argv[0] to equal the asking daemon's own binary, and
+        // installs are version-stamped (`~/.aimux/native/<version>/...`). A
+        // service up for days is almost always from an earlier install than the
+        // daemon now asking about it -- which is exactly the service most
+        // likely to be wedged, so the strict check would answer "not ours" and
+        // the wedge would go unnamed.
+        //
+        // Identity here is the pair the daemon supervisor already uses:
+        // started under this AIMUX_HOME, and running as this project's service.
+        self.project_service_process_verifier
+            .belongs_to_aimux_home(pid, &self.resolver.clone().global_aimux_dir())
+            && is_aimux_project_service_process(
+                pid,
+                &ProjectServiceProcessIdentity {
+                    project_id: Some(compute_project_id(Path::new(project_root))),
+                    project_root: Some(project_root.to_owned()),
+                },
+            )
+    }
+
+    fn probe_patiently(
+        &mut self,
+        endpoint: &MetadataApiEndpoint,
+    ) -> Result<(), ServiceProbeFailure> {
+        self.project_service_health_probe
+            .diagnose_patiently(endpoint, endpoint.pid)
+            .map_err(|failure| ServiceProbeFailure {
+                reason: failure.reason,
+                port_accepted: failure.port_accepted,
+            })
+    }
+}
+
 struct SystemProjectServiceHealthProbe;
 
 impl ProjectServiceHealthProbe for SystemProjectServiceHealthProbe {
     fn is_ready_patiently(&self, endpoint: &MetadataApiEndpoint, pid: i32) -> bool {
         self.probe(endpoint, pid, PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS)
+            .is_ok()
     }
 
     fn is_ready(&self, endpoint: &MetadataApiEndpoint, pid: i32) -> bool {
+        self.diagnose(endpoint, pid).is_ok()
+    }
+
+    fn diagnose(
+        &self,
+        endpoint: &MetadataApiEndpoint,
+        pid: i32,
+    ) -> Result<(), ProjectServiceProbeFailure> {
         self.probe(endpoint, pid, PROJECT_SERVICE_PROBE_TIMEOUT_MS)
+    }
+
+    fn diagnose_patiently(
+        &self,
+        endpoint: &MetadataApiEndpoint,
+        pid: i32,
+    ) -> Result<(), ProjectServiceProbeFailure> {
+        self.probe(endpoint, pid, PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS)
     }
 }
 
 impl SystemProjectServiceHealthProbe {
-    fn probe(&self, endpoint: &MetadataApiEndpoint, pid: i32, timeout_ms: u64) -> bool {
+    fn probe(
+        &self,
+        endpoint: &MetadataApiEndpoint,
+        pid: i32,
+        timeout_ms: u64,
+    ) -> Result<(), ProjectServiceProbeFailure> {
         let request = DaemonJsonRequest {
             url: format!(
                 "http://{}:{}{}",
@@ -554,12 +775,32 @@ impl SystemProjectServiceHealthProbe {
             body: None,
             timeout_ms: Some(timeout_ms),
         };
-        let Ok(response) = execute_loopback_json_request(&request) else {
-            return false;
-        };
-        (200..300).contains(&response.status)
-            && response.json.get("ok").and_then(Value::as_bool) == Some(true)
-            && response.json.get("pid").and_then(Value::as_i64) == Some(i64::from(pid))
+        // The transport already words every failure precisely -- a refused
+        // connection, a reply that is not HTTP, and the wedge's own shape,
+        // "closed the connection without answering (no bytes read)". Throwing
+        // that away is what left the user with a bare timeout.
+        let response = execute_loopback_json_request(&request).map_err(describe_probe_failure)?;
+        if !(200..300).contains(&response.status) {
+            return Err(answered_but_wrong(format!(
+                "health answered HTTP {}",
+                response.status
+            )));
+        }
+        if response.json.get("ok").and_then(Value::as_bool) != Some(true) {
+            return Err(answered_but_wrong(
+                "health answered without ok:true".to_owned(),
+            ));
+        }
+        let answered_pid = response.json.get("pid").and_then(Value::as_i64);
+        if answered_pid != Some(i64::from(pid)) {
+            return Err(answered_but_wrong(match answered_pid {
+                Some(answered_pid) => {
+                    format!("health answered for pid {answered_pid}, not pid {pid}")
+                }
+                None => "health answered without a pid".to_owned(),
+            }));
+        }
+        Ok(())
     }
 }
 
@@ -1587,7 +1828,7 @@ impl RealDaemonRuntime {
         // under load: `/health` builds scheduler diagnostics, so its latency
         // tracks contention. A service starved of CPU misses 500ms every time
         // and is indistinguishable from silence until something waits longer.
-        let ProjectServiceHealthWaitFailure::HealthProbeNotReady { endpoint } = failure else {
+        let ProjectServiceHealthWaitFailure::HealthProbeNotReady { endpoint, .. } = failure else {
             return false;
         };
         !self
@@ -1722,10 +1963,13 @@ impl RealDaemonRuntime {
                     }
                 }
                 Ok(Some(endpoint)) => {
-                    if self.project_service_health_probe.is_ready(&endpoint, pid) {
-                        return ProjectServiceHealthWait::Ready(endpoint);
+                    match self.project_service_health_probe.diagnose(&endpoint, pid) {
+                        Ok(()) => return ProjectServiceHealthWait::Ready(endpoint),
+                        Err(failure) => ProjectServiceHealthWaitFailure::HealthProbeNotReady {
+                            endpoint,
+                            failure,
+                        },
                     }
-                    ProjectServiceHealthWaitFailure::HealthProbeNotReady { endpoint }
                 }
                 Ok(None) => ProjectServiceHealthWaitFailure::EndpointMissing {
                     path: metadata_endpoint_path(project_state_dir),
@@ -1784,12 +2028,31 @@ impl RealDaemonRuntime {
             } => format!(
                 "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): metadata endpoint pid {actual_pid} != expected {expected_pid}"
             ),
-            ProjectServiceHealthWaitFailure::HealthProbeNotReady { endpoint } => format!(
-                "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): /health probe not ready at http://{}:{} after {}ms",
-                endpoint.host,
-                endpoint.port,
-                project_service_health_wait_budget_ms(self.project_service_startup_timeout_ms)
-            ),
+            // The old message named the symptom and stopped there, so finding
+            // the wedge behind it took a thread sample. Everything added here
+            // the daemon already knew: why the last probe failed, and that the
+            // pid was alive -- the loop proves that before it gives up.
+            //
+            // It stops short of a verdict on purpose. Telling a wedge from a
+            // service merely starved of CPU takes a patient probe this path
+            // does not run, and the old message's sin was saying more than it
+            // knew, not saying less.
+            ProjectServiceHealthWaitFailure::HealthProbeNotReady { endpoint, failure } => {
+                let holding = if failure.port_accepted {
+                    format!("pid {pid} was alive and holding that port, and did not answer")
+                } else {
+                    format!(
+                        "pid {pid} was alive but nothing accepted a connection on that port, so its listener is gone rather than busy"
+                    )
+                };
+                format!(
+                    "project service health wait failed for {project_root} (projectId {project_id}, pid {pid}): /health probe not ready at http://{}:{} after {}ms; last probe: {}; {holding}; run `aimux doctor services` to tell a wedged service from a slow one",
+                    endpoint.host,
+                    endpoint.port,
+                    project_service_health_wait_budget_ms(self.project_service_startup_timeout_ms),
+                    failure.reason
+                )
+            }
             ProjectServiceHealthWaitFailure::ProcessExited { exit_status } => {
                 let mut resolver = self.resolver.clone();
                 let project_state_dir = resolver.project_state_dir_for(project_root);
@@ -4190,6 +4453,10 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         window_id: Option<&str>,
     ) -> Result<(Value, String), String> {
         system_tmux_doctor_report(&mut self.resolver, project_root, session_name, window_id)
+    }
+
+    fn doctor_services_report(&mut self) -> Result<ServicesDoctorReport, String> {
+        Ok(build_services_doctor_report(self))
     }
 
     fn doctor_stability_report(
@@ -7591,6 +7858,10 @@ mod tests {
                 pid,
                 updated_at: "now".to_owned(),
             },
+            failure: ProjectServiceProbeFailure {
+                reason: "the probe reported not ready".to_owned(),
+                port_accepted: false,
+            },
         }
     }
 
@@ -7713,6 +7984,10 @@ mod tests {
                         pid: 91_020,
                         updated_at: "now".to_owned(),
                     },
+                    failure: ProjectServiceProbeFailure {
+                        reason: "the probe reported not ready".to_owned(),
+                        port_accepted: false,
+                    },
                 }
             )
         );
@@ -7749,6 +8024,618 @@ mod tests {
         );
         assert!(message.contains("metadata endpoint missing"));
         assert!(!message.contains("timed out after"));
+        fixture.cleanup();
+    }
+
+    /// Serve one loopback connection however `respond` says, and hand back the
+    /// endpoint pointing at it. A real socket, because the production probe is
+    /// otherwise reachable from no test at all -- and a fake probe cannot
+    /// prove that the real one keeps the transport's wording.
+    fn probe_endpoint_serving(respond: Option<&'static str>) -> (MetadataApiEndpoint, u16) {
+        probe_endpoint_answering("200 OK", respond)
+    }
+
+    fn probe_endpoint_answering(
+        status: &'static str,
+        respond: Option<&'static str>,
+    ) -> (MetadataApiEndpoint, u16) {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept()
+                && let Some(body) = respond
+            {
+                use std::io::Write;
+                let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                let _ = stream.flush();
+            }
+            // Dropping without writing is the wedge's shape: the connection is
+            // accepted and nothing is answered.
+        });
+        (
+            MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port,
+                pid: 4_242,
+                updated_at: "now".to_owned(),
+            },
+            port,
+        )
+    }
+
+    #[test]
+    fn the_real_probe_says_a_port_was_accepted_and_answered_nothing() {
+        let (endpoint, _) = probe_endpoint_serving(None);
+
+        let reason = SystemProjectServiceHealthProbe
+            .diagnose(&endpoint, 4_242)
+            .expect_err("a silent socket is not healthy")
+            .reason;
+
+        assert!(
+            reason.contains("accepted") && !reason.contains("connection refused"),
+            "a held-but-silent port must not read like an empty one: {reason}"
+        );
+        assert!(
+            !reason.contains("the probe reported not ready"),
+            "the generic default must not stand in for a real reason: {reason}"
+        );
+    }
+
+    /// The other half of the wedge's shape: the request is read, then the
+    /// connection closes with no reply at all. Measured separately from the
+    /// reset case because the transport words them differently and only one of
+    /// them is the zero-bytes path.
+    #[test]
+    fn the_real_probe_says_a_request_was_read_and_never_answered() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                use std::io::Read;
+                let mut scratch = [0_u8; 1024];
+                let _ = stream.read(&mut scratch);
+            }
+        });
+        let endpoint = MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port,
+            pid: 4_242,
+            updated_at: "now".to_owned(),
+        };
+
+        let reason = SystemProjectServiceHealthProbe
+            .diagnose(&endpoint, 4_242)
+            .expect_err("a request that is never answered is not healthy")
+            .reason;
+
+        assert!(
+            reason.contains("accepted") && !reason.contains("nothing is listening"),
+            "something was listening -- it just did not answer: {reason}"
+        );
+        assert!(
+            reason.contains("without answering"),
+            "and the transport's own wording for zero bytes survives: {reason}"
+        );
+        assert!(
+            !reason.contains("the probe reported not ready"),
+            "the generic default must not stand in for a real reason: {reason}"
+        );
+    }
+
+    /// Refused and reset are the two answers that must never blur: no process
+    /// at all, versus a process holding the port and not answering. The second
+    /// is the wedge.
+    ///
+    /// Driven as a pure mapping rather than through a closed socket, because a
+    /// freed port is fair game for any parallel test to bind -- which is
+    /// exactly how the socket version of this flaked.
+    #[test]
+    fn a_refused_port_and_a_reset_connection_are_different_answers() {
+        let refused = describe_probe_failure(CoreCommandTransportError::Io(io::Error::from(
+            io::ErrorKind::ConnectionRefused,
+        )));
+        let reset = describe_probe_failure(CoreCommandTransportError::Io(io::Error::from(
+            io::ErrorKind::ConnectionReset,
+        )));
+        assert!(
+            !refused.port_accepted,
+            "a refused port accepted nothing, and the message must not guess that from wording"
+        );
+        assert!(reset.port_accepted, "a reset means the port was accepted");
+        let refused = refused.reason;
+        let reset = reset.reason;
+
+        assert!(
+            refused.contains("nothing is listening"),
+            "an empty port must say so: {refused}"
+        );
+        assert!(
+            !refused.contains("accepted"),
+            "and must not claim anyone accepted anything: {refused}"
+        );
+        assert!(
+            reset.contains("accepted") && !reset.contains("nothing is listening"),
+            "a reset means someone held the port: {reset}"
+        );
+    }
+
+    /// Every other failure the transport can report has to arrive as words,
+    /// never as a bare OS error and never as the generic default.
+    #[test]
+    fn every_probe_failure_arrives_as_an_explanation() {
+        let timed_out =
+            describe_probe_failure(CoreCommandTransportError::Timeout { timeout_ms: 500 });
+        assert!(
+            timed_out.port_accepted,
+            "a timeout means something accepted the connection"
+        );
+        let timed_out = timed_out.reason;
+        let exhausted = describe_probe_failure(CoreCommandTransportError::TransientIoExhausted {
+            operation: "connect",
+            attempts: 3,
+            timeout_ms: 500,
+            source: io::Error::from(io::ErrorKind::WouldBlock),
+        });
+        assert!(
+            !exhausted.port_accepted,
+            "a connect that never succeeded accepted nothing"
+        );
+        let read_exhausted =
+            describe_probe_failure(CoreCommandTransportError::TransientIoExhausted {
+                operation: "read",
+                attempts: 3,
+                timeout_ms: 500,
+                source: io::Error::from(io::ErrorKind::WouldBlock),
+            });
+        assert!(
+            read_exhausted.port_accepted,
+            "a read that kept failing had a connection to read from: {}",
+            read_exhausted.reason
+        );
+        let exhausted = exhausted.reason;
+        let unusable = describe_probe_failure(CoreCommandTransportError::InvalidHttpResponse(
+            "the service closed the connection without answering (no bytes read)".to_owned(),
+        ));
+        assert!(
+            unusable.port_accepted,
+            "an unusable answer still came from a held port"
+        );
+        let unusable = unusable.reason;
+
+        assert!(
+            timed_out.contains("accepted") && timed_out.contains("500ms"),
+            "{timed_out}"
+        );
+        assert!(exhausted.contains("connect"), "{exhausted}");
+        assert!(
+            unusable.contains("accepted") && unusable.contains("without answering"),
+            "the wedge's own wording must survive: {unusable}"
+        );
+        let not_json = describe_probe_failure(CoreCommandTransportError::Json(
+            serde_json::from_str::<Value>("{oops").expect_err("not json"),
+        ));
+        let answered_error = describe_probe_failure(CoreCommandTransportError::DaemonRequest {
+            status: 503,
+            message: "starting".to_owned(),
+        });
+        assert!(
+            not_json.port_accepted,
+            "bytes that failed to parse had to come from a connection: {}",
+            not_json.reason
+        );
+        assert!(
+            answered_error.port_accepted,
+            "a service that answered an error still answered: {}",
+            answered_error.reason
+        );
+        assert!(
+            answered_error.reason.contains("503"),
+            "{}",
+            answered_error.reason
+        );
+        // And the inverse: a failure that never reached a socket is not an
+        // accepted connection.
+        let no_daemon = describe_probe_failure(CoreCommandTransportError::InvalidDaemonUrl(
+            "not a url".to_owned(),
+        ));
+        assert!(
+            !no_daemon.port_accepted,
+            "a bad URL never dialled anything: {}",
+            no_daemon.reason
+        );
+
+        for reason in [&timed_out, &exhausted, &unusable] {
+            assert!(
+                !reason.contains("the probe reported not ready"),
+                "the generic default must not stand in for a real reason: {reason}"
+            );
+        }
+    }
+
+    /// A service that answers 500 is answering, and is not healthy. The helper
+    /// used to hardcode 200, so this check had no case at all.
+    #[test]
+    fn the_real_probe_refuses_a_non_success_status() {
+        let (endpoint, _) = probe_endpoint_answering(
+            "500 Internal Server Error",
+            Some(r#"{"ok":true,"pid":4242}"#),
+        );
+
+        let failure = SystemProjectServiceHealthProbe
+            .diagnose(&endpoint, 4_242)
+            .expect_err("a 500 is not healthy");
+
+        assert!(failure.reason.contains("500"), "{}", failure.reason);
+        assert!(
+            failure.port_accepted,
+            "it answered, so the port was certainly accepted"
+        );
+    }
+
+    /// `/health` reporting `ok:false` about itself is not health.
+    #[test]
+    fn the_real_probe_refuses_an_answer_that_is_not_ok() {
+        let (endpoint, _) = probe_endpoint_serving(Some(r#"{"ok":false,"pid":4242}"#));
+
+        let failure = SystemProjectServiceHealthProbe
+            .diagnose(&endpoint, 4_242)
+            .expect_err("ok:false is not healthy");
+
+        assert!(failure.reason.contains("ok:true"), "{}", failure.reason);
+        assert!(failure.port_accepted);
+    }
+
+    #[test]
+    fn the_real_probe_says_which_pid_answered() {
+        let (endpoint, _) = probe_endpoint_serving(Some(r#"{"ok":true,"pid":999}"#));
+
+        let reason = SystemProjectServiceHealthProbe
+            .diagnose(&endpoint, 4_242)
+            .expect_err("another service's pid is not this one")
+            .reason;
+
+        assert!(
+            reason.contains("pid 999") && reason.contains("not pid 4242"),
+            "both pids belong in the answer: {reason}"
+        );
+    }
+
+    /// The inverse: a service that answers properly is healthy.
+    #[test]
+    fn the_real_probe_accepts_a_healthy_answer() {
+        let (endpoint, _) = probe_endpoint_serving(Some(r#"{"ok":true,"pid":4242}"#));
+
+        assert_eq!(
+            SystemProjectServiceHealthProbe.diagnose(&endpoint, 4_242),
+            Ok(())
+        );
+    }
+
+    /// The doctor's identity check must stay the LOOSE one.
+    ///
+    /// `is_live_native_project_service` also demands the service's argv[0]
+    /// equal the asking daemon's own binary, and installs are
+    /// version-stamped, so it answers "not ours" for any service from an
+    /// earlier install -- precisely the long-lived one most likely to be
+    /// wedged. Driving the real implementation would take a live project
+    /// service, so the choice of predicate is pinned at the source, the way
+    /// this crate already pins the logging opt-in's position.
+    #[test]
+    fn the_services_doctor_identity_check_does_not_require_the_daemons_own_binary() {
+        let source = include_str!("runtime.rs");
+        let start = source
+            .find("fn pid_is_this_projects_service")
+            .expect("the doctor's identity check is still here");
+        let body = source[start..]
+            .split_once("\n    }\n")
+            .expect("the function closes")
+            .0
+            .lines()
+            // Comments mention the predicate this must NOT use, including the
+            // one explaining why.
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            body.contains("is_aimux_project_service_process("),
+            "the loose predicate is the one that recognises an older install"
+        );
+        assert!(
+            !body.contains("is_live_native_project_service"),
+            "the strict predicate would miss every service from an earlier install"
+        );
+        assert!(
+            body.contains("belongs_to_aimux_home"),
+            "and it must still refuse another home's process"
+        );
+    }
+
+    /// The real runtime answers this route, rather than falling through to
+    /// the trait default.
+    ///
+    /// `DaemonOperationsTextRuntime::doctor_services_report` defaults to an
+    /// `Err("services doctor is unavailable")`, so deleting the real
+    /// implementation still compiles and the route still 500s politely --
+    /// invisible to every test that drives the report through a fake.
+    #[test]
+    fn the_real_runtime_answers_the_services_doctor_route() {
+        let fixture = restart_service_fixture("services-doctor-real-report");
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(91_502)),
+            Arc::new(RestartTestProcessVerifier::current_native([91_502])),
+            0,
+        );
+
+        let report = DaemonOperationsTextRuntime::doctor_services_report(&mut runtime)
+            .expect("the real runtime builds its own report");
+
+        // An isolated home has no registered projects, which is an answer --
+        // and specifically not the default's error.
+        assert_eq!(report.totals.unknown, 0);
+        assert!(report.services.is_empty());
+        fixture.cleanup();
+    }
+
+    /// The services doctor probes with the PATIENT budget on the real
+    /// runtime, not the 500ms one.
+    ///
+    /// `/health` builds scheduler diagnostics, so its latency tracks
+    /// contention: a short probe reports a service merely starved of CPU as
+    /// wedged, which is the false positive the whole check exists to avoid.
+    /// Driven through the real `ServicesDoctorRuntime` impl, because the
+    /// report's own tests use a fake and cannot see which budget it asked for.
+    #[test]
+    fn the_services_doctor_probes_patiently_on_the_real_runtime() {
+        let fixture = restart_service_fixture("services-doctor-patient");
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(91_500)),
+            Arc::new(RestartTestProcessVerifier::current_native([91_500])),
+            0,
+        )
+        // Silent to the quick probe, answers the patient one.
+        .with_project_service_health_probe(Arc::new(SlowButHealthyProbe));
+
+        let answered = ServicesDoctorRuntime::probe_patiently(
+            &mut runtime,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_990,
+                pid: 91_500,
+                updated_at: "now".to_owned(),
+            },
+        );
+
+        assert_eq!(
+            answered,
+            Ok(()),
+            "a service under load must not be reported as wedged"
+        );
+        fixture.cleanup();
+    }
+
+    /// A registry that cannot be read is not an empty fleet. Reporting "no
+    /// projects" about an unreadable registry is the failure this check exists
+    /// to end, so the real impl must not swallow it.
+    #[test]
+    fn the_services_doctor_reports_an_unreadable_registry_on_the_real_runtime() {
+        let fixture = restart_service_fixture("services-doctor-bad-registry");
+        let registry = fixture.resolver.clone().projects_registry_path();
+        std::fs::create_dir_all(registry.parent().expect("registry parent")).expect("registry dir");
+        std::fs::write(&registry, r#"{"projects":5}"#).expect("write a wrong-shaped registry");
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(91_501)),
+            Arc::new(RestartTestProcessVerifier::current_native([91_501])),
+            0,
+        );
+
+        let roots = ServicesDoctorRuntime::registered_project_roots(&mut runtime);
+
+        assert!(
+            roots.is_err(),
+            "an unreadable registry must not read as zero projects, got {roots:?}"
+        );
+        fixture.cleanup();
+    }
+
+    /// A probe reporting that nothing was listening at all.
+    struct RefusedHealthProbe;
+
+    impl ProjectServiceHealthProbe for RefusedHealthProbe {
+        fn is_ready(&self, _endpoint: &MetadataApiEndpoint, _pid: i32) -> bool {
+            false
+        }
+
+        fn diagnose(
+            &self,
+            _endpoint: &MetadataApiEndpoint,
+            _pid: i32,
+        ) -> Result<(), ProjectServiceProbeFailure> {
+            Err(ProjectServiceProbeFailure {
+                reason: "nothing is listening on that port (connection refused)".to_owned(),
+                port_accepted: false,
+            })
+        }
+    }
+
+    /// A probe that answers with a reason, the way the real one now does.
+    struct DiagnosingHealthProbe {
+        reason: &'static str,
+    }
+
+    impl ProjectServiceHealthProbe for DiagnosingHealthProbe {
+        fn is_ready(&self, _endpoint: &MetadataApiEndpoint, _pid: i32) -> bool {
+            false
+        }
+
+        fn diagnose(
+            &self,
+            _endpoint: &MetadataApiEndpoint,
+            _pid: i32,
+        ) -> Result<(), ProjectServiceProbeFailure> {
+            Err(ProjectServiceProbeFailure {
+                reason: self.reason.to_owned(),
+                port_accepted: true,
+            })
+        }
+    }
+
+    /// Finding the wedge behind this message took a thread sample. The daemon
+    /// already knew both missing facts: why the last probe failed, and that
+    /// the pid is alive -- the wait loop proves that before it gives up.
+    #[test]
+    fn a_health_timeout_names_the_probe_failure_and_who_held_the_port() {
+        let fixture = restart_service_fixture("wait-health-names-cause");
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&fixture.project_root);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 43_444,
+                pid: 78_486,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        // The incident's own wording, which the transport produces for a
+        // socket that accepts and then closes without answering.
+        let wedge = "the service closed the connection without answering (no bytes read)";
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(78_486)),
+            Arc::new(RestartTestProcessVerifier::current_native([78_486])),
+            0,
+        )
+        .with_project_service_health_probe(Arc::new(DiagnosingHealthProbe { reason: wedge }));
+
+        let ProjectServiceHealthWait::NotReady(failure) =
+            runtime.wait_for_live_project_service(&state_dir, 78_486)
+        else {
+            panic!("a silent service is not ready");
+        };
+        let message = runtime.project_service_health_wait_failure_message(
+            &fixture.project_root,
+            "tealstreet-next-208154504245",
+            78_486,
+            failure,
+        );
+
+        assert!(
+            message.contains("/health probe not ready"),
+            "the symptom still has to be there: {message}"
+        );
+        assert!(
+            message.contains(wedge),
+            "the probe's own reason must reach the user: {message}"
+        );
+        assert!(
+            message.contains("pid 78486 was alive and holding that port"),
+            "and the fact that separates this from an empty port: {message}"
+        );
+        assert!(
+            message.contains("aimux doctor services"),
+            "and where the verdict comes from: {message}"
+        );
+        // It must not claim a verdict this path cannot reach: telling a wedge
+        // from a service starved of CPU takes a patient probe, and the old
+        // message's sin was saying more than it knew.
+        assert!(
+            !message.contains("is the fix") && !message.contains("wedged rather than starting"),
+            "no verdict without a patient probe: {message}"
+        );
+        fixture.cleanup();
+    }
+
+    /// The inverse reason: nothing accepted the connection, so the message
+    /// must not say a process was holding the port.
+    #[test]
+    fn a_refused_port_is_not_reported_as_a_held_one() {
+        let fixture = restart_service_fixture("wait-health-refused");
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&fixture.project_root);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 43_445,
+                pid: 78_487,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(78_487)),
+            Arc::new(RestartTestProcessVerifier::current_native([78_487])),
+            0,
+        )
+        .with_project_service_health_probe(Arc::new(RefusedHealthProbe));
+
+        let ProjectServiceHealthWait::NotReady(failure) =
+            runtime.wait_for_live_project_service(&state_dir, 78_487)
+        else {
+            panic!("a refused port is not ready");
+        };
+        let message = runtime.project_service_health_wait_failure_message(
+            &fixture.project_root,
+            "project-a",
+            78_487,
+            failure,
+        );
+
+        assert!(
+            message.contains("nothing accepted a connection on that port"),
+            "an empty port must say so: {message}"
+        );
+        assert!(
+            !message.contains("holding that port"),
+            "and must not claim a process was holding it: {message}"
+        );
+        fixture.cleanup();
+    }
+
+    /// The inverse: a failure that is NOT a silent port must not claim one.
+    #[test]
+    fn a_missing_endpoint_does_not_claim_a_held_port() {
+        let fixture = restart_service_fixture("wait-health-no-false-wedge");
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(91_122)),
+            Arc::new(RestartTestProcessVerifier::current_native([91_122])),
+            0,
+        );
+
+        let message = runtime.project_service_health_wait_failure_message(
+            &fixture.project_root,
+            "project-a",
+            91_122,
+            ProjectServiceHealthWaitFailure::EndpointMissing {
+                path: fixture.project_root.clone().into(),
+            },
+        );
+
+        assert!(message.contains("metadata endpoint missing"));
+        assert!(
+            !message.contains("is the fix") && !message.contains("holding that port"),
+            "nothing here proves a port is held: {message}"
+        );
         fixture.cleanup();
     }
 

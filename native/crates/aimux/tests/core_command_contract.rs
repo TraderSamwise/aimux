@@ -13,6 +13,7 @@ fn core_api_routes_match_the_typescript_contract() {
         ("doctorTmuxText", "/core/doctor/tmux-text"),
         ("doctorTasksText", "/core/doctor/tasks-text"),
         ("doctorStabilityText", "/core/doctor/stability-text"),
+        ("doctorServicesText", "/core/doctor/services-text"),
         ("doctorVersionsText", "/core/doctor/versions-text"),
         ("doctorDiskText", "/core/doctor/disk-text"),
         ("dashboardReloadText", "/core/dashboard-reload-text"),

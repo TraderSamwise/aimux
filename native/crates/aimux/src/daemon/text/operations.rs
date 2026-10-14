@@ -10,6 +10,7 @@ use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, boolean_param, string_param, text_error,
     text_or_json_lines,
 };
+use crate::daemon::services_doctor::{ServicesDoctorReport, render_services_doctor_report};
 use crate::daemon::stability_doctor::{StabilityDoctorReport, render_stability_doctor_report};
 use crate::daemon::text::params::ProjectServiceJsonResult;
 use crate::daemon_supervisor::acquire_runtime_restart_permit;
@@ -253,6 +254,12 @@ pub trait DaemonOperationsTextRuntime {
         let _ = project_root;
         Err("stability doctor is unavailable".into())
     }
+    /// Every registered project's service, probed. Fleet-wide on purpose: the
+    /// wedge this exists for was found by asking one project, and the other
+    /// six on the same build and the same age were healthy.
+    fn doctor_services_report(&mut self) -> Result<ServicesDoctorReport, String> {
+        Err("services doctor is unavailable".into())
+    }
     fn doctor_coherence_report(
         &mut self,
         project_root: &str,
@@ -326,6 +333,9 @@ pub fn route_operations_text_request(
     }
     if method == "GET" && pathname == CORE_API_ROUTES.doctor_tasks_text {
         return Some(doctor_tasks_text_route(runtime, &route_url, body));
+    }
+    if method == "GET" && pathname == CORE_API_ROUTES.doctor_services_text {
+        return Some(doctor_services_text_route(runtime, &route_url));
     }
     if method == "GET" && pathname == CORE_API_ROUTES.doctor_stability_text {
         return Some(doctor_stability_text_route(runtime, &route_url, body));
@@ -500,6 +510,23 @@ pub fn doctor_coherence_text_route(
             text_or_json_lines(
                 route_url,
                 coherence_report_json(&report),
+                &split_rendered_report_lines(&text),
+            )
+        }
+        Err(error) => text_error(500, format!("Error: {error}")),
+    }
+}
+
+pub fn doctor_services_text_route(
+    runtime: &mut impl DaemonOperationsTextRuntime,
+    route_url: &DaemonRouteUrl,
+) -> DaemonRouteResponse {
+    match runtime.doctor_services_report() {
+        Ok(report) => {
+            let text = render_services_doctor_report(&report);
+            text_or_json_lines(
+                route_url,
+                json!(report),
                 &split_rendered_report_lines(&text),
             )
         }

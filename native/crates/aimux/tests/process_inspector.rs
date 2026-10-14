@@ -59,6 +59,48 @@ fn project_service_process_identity_matches_type_script_conditions() {
     ));
 }
 
+/// The services doctor must still recognise a service from an EARLIER install.
+///
+/// Installs are version-stamped (`~/.aimux/native/<version>/...`), so a
+/// service that has been up for days almost never shares a binary path with
+/// the daemon now asking about it -- and that is exactly the service most
+/// likely to be wedged. The strict "is it my own binary" predicate answers no
+/// for it, which is why the doctor uses the loose one.
+#[test]
+fn a_service_from_an_earlier_install_is_still_this_projects_service() {
+    let expected = ProjectServiceProcessIdentity {
+        project_id: Some("project-1".into()),
+        project_root: Some("/repo".into()),
+    };
+    let older_install = "/Users/sam/.aimux/native/local-94d85381/native/darwin-arm64/aimux \
+         __project-service-internal --project-id project-1 --project-root /repo";
+    let asking_daemon =
+        std::path::Path::new("/Users/sam/.aimux/native/0.1.68/native/darwin-arm64/aimux");
+
+    assert!(
+        is_aimux_project_service_process_args(older_install, None, &expected),
+        "the doctor's predicate must recognise an older install's service"
+    );
+    assert!(
+        !is_current_native_aimux_project_service_process_args(
+            older_install,
+            None,
+            &expected,
+            asking_daemon
+        ),
+        "and the strict predicate must NOT -- which is the whole reason the \
+         doctor cannot use it"
+    );
+    // The inverse: another project's service is not this one, whichever
+    // predicate asks.
+    assert!(!is_aimux_project_service_process_args(
+        "/Users/sam/.aimux/native/local-94d85381/native/darwin-arm64/aimux \
+         __project-service-internal --project-id project-2 --project-root /other",
+        None,
+        &expected
+    ));
+}
+
 #[test]
 fn project_service_identity_falls_back_to_cwd_for_legacy_processes() {
     let cwd = std::env::current_dir().expect("current dir");
