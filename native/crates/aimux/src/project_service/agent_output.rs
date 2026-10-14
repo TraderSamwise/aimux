@@ -3178,6 +3178,214 @@ mod tests {
         assert_eq!(runtime.submit_prompts, vec!["hello agent"]);
     }
 
+    /// The sync submit loop, which both production sync runtimes use and
+    /// which nothing covered: the cases below used to be asserted against a
+    /// third copy of this loop in `agent_prompt_delivery` that no production
+    /// path called, which is how a defect in the real one could ship green.
+    struct FakeSyncPromptSubmitRuntime {
+        current: bool,
+        current_after: Option<usize>,
+        captures: std::collections::VecDeque<Result<String, String>>,
+        last_capture: Result<String, String>,
+        carriage_return: Result<(), String>,
+        carriage_returns: usize,
+        sleeps: Vec<u64>,
+        sleep_budget: Option<usize>,
+    }
+
+    impl FakeSyncPromptSubmitRuntime {
+        fn showing(draft: &str) -> Self {
+            Self {
+                current: true,
+                current_after: None,
+                captures: std::collections::VecDeque::from([
+                    Ok(format!("\u{203a} {draft}")),
+                    Ok(format!("\u{203a} {draft}")),
+                    Ok(format!("\u{203a} {draft}")),
+                    Ok(format!("\u{203a} {draft}")),
+                ]),
+                last_capture: Ok("assistant response\n\u{203a} ".to_owned()),
+                carriage_return: Ok(()),
+                carriage_returns: 0,
+                sleeps: Vec::new(),
+                sleep_budget: None,
+            }
+        }
+    }
+
+    impl SyncPromptSubmitRuntime for FakeSyncPromptSubmitRuntime {
+        fn is_current(&mut self) -> bool {
+            match self.current_after {
+                Some(after) if self.sleeps.len() > after => false,
+                _ => self.current,
+            }
+        }
+
+        fn capture(&mut self, _start_line: i64) -> Result<String, String> {
+            self.captures
+                .pop_front()
+                .unwrap_or_else(|| self.last_capture.clone())
+        }
+
+        fn send_carriage_return(&mut self) -> Result<(), String> {
+            self.carriage_returns += 1;
+            self.carriage_return.clone()
+        }
+
+        fn sleep(&mut self, millis: u64) -> bool {
+            self.sleeps.push(millis);
+            match self.sleep_budget {
+                Some(budget) => self.sleeps.len() <= budget,
+                None => true,
+            }
+        }
+    }
+
+    /// The carriage return waits for the draft to render and stop changing.
+    #[test]
+    fn the_sync_submit_waits_for_the_draft_to_settle_then_sends_once() {
+        let mut runtime = FakeSyncPromptSubmitRuntime::showing("hello from the route");
+
+        wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
+            .expect("the draft settles and the composer clears");
+
+        assert_eq!(runtime.carriage_returns, 1, "exactly one carriage return");
+        assert_eq!(
+            runtime.sleeps.first(),
+            Some(&FIRST_POLL_MS),
+            "the first poll is the short one"
+        );
+        assert!(
+            runtime.sleeps.contains(&SETTLE_BEFORE_SUBMIT_MS),
+            "it settles before submitting: {:?}",
+            runtime.sleeps
+        );
+    }
+
+    /// A draft still in the composer after the return is a failed submit.
+    #[test]
+    fn a_draft_left_in_the_composer_fails_the_sync_submit() {
+        let mut runtime = FakeSyncPromptSubmitRuntime {
+            last_capture: Ok("\u{203a} hello from the route".to_owned()),
+            ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
+        };
+
+        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
+            .expect_err("the draft is still sitting there");
+
+        assert!(error.contains("remained visible"), "got {error}");
+    }
+
+    /// A pane that never shows the draft still submits rather than losing it.
+    #[test]
+    fn a_pane_that_never_renders_still_submits_the_prompt() {
+        let mut runtime = FakeSyncPromptSubmitRuntime {
+            captures: std::collections::VecDeque::new(),
+            last_capture: Ok("\u{203a} ".to_owned()),
+            ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
+        };
+
+        wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
+            .expect("an unrendered draft is still submitted");
+
+        assert_eq!(runtime.carriage_returns, 1);
+    }
+
+    /// A superseded wait never fires a return into whatever is on screen now.
+    #[test]
+    fn a_superseded_sync_submit_never_fires_a_carriage_return() {
+        let mut runtime = FakeSyncPromptSubmitRuntime {
+            current: false,
+            ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
+        };
+
+        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
+            .expect_err("a superseded submit is not a delivery");
+
+        assert!(error.contains("superseded"), "got {error}");
+        assert_eq!(runtime.carriage_returns, 0, "no stray carriage return");
+    }
+
+    /// Superseded AFTER the draft settled is still no carriage return.
+    #[test]
+    fn a_sync_submit_superseded_after_the_draft_settled_still_never_fires() {
+        let mut runtime = FakeSyncPromptSubmitRuntime {
+            current_after: Some(2),
+            ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
+        };
+
+        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
+            .expect_err("a superseded submit is not a delivery");
+
+        assert!(error.contains("superseded"), "got {error}");
+        assert_eq!(runtime.carriage_returns, 0);
+    }
+
+    /// A capture that fails is an error, not an empty pane.
+    #[test]
+    fn a_failed_capture_fails_the_sync_submit_rather_than_reading_as_empty() {
+        let mut runtime = FakeSyncPromptSubmitRuntime {
+            captures: std::collections::VecDeque::from([Err("capture-pane refused".to_owned())]),
+            ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
+        };
+
+        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
+            .expect_err("a capture failure is not an empty composer");
+
+        assert!(error.contains("capture-pane refused"), "got {error}");
+        assert_eq!(runtime.carriage_returns, 0);
+    }
+
+    /// A carriage return that does not land is reported, not assumed.
+    #[test]
+    fn a_carriage_return_that_does_not_land_fails_the_sync_submit() {
+        let mut runtime = FakeSyncPromptSubmitRuntime {
+            carriage_return: Err("send-keys refused".to_owned()),
+            ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
+        };
+
+        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
+            .expect_err("a refused carriage return is not a submit");
+
+        assert!(error.contains("send-keys refused"), "got {error}");
+    }
+
+    /// Running out of deadline AFTER the return is reported too.
+    ///
+    /// The carriage return has gone by then, so the outcome is unknown rather
+    /// than failed -- and an unknown outcome has to say so instead of being
+    /// reported as a delivery.
+    #[test]
+    fn a_sync_submit_out_of_deadline_after_the_return_says_it_could_not_verify() {
+        let mut runtime = FakeSyncPromptSubmitRuntime {
+            // The two polls and the settle are allowed; the post-return wait
+            // is the one that runs out.
+            sleep_budget: Some(3),
+            ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
+        };
+
+        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
+            .expect_err("an unverifiable submit is not a confirmed one");
+
+        assert!(error.contains("before verification"), "got {error}");
+        assert_eq!(runtime.carriage_returns, 1, "the return had already gone");
+    }
+
+    /// Running out of deadline mid-wait is reported, not submitted blind.
+    #[test]
+    fn a_sync_submit_out_of_deadline_says_so_rather_than_pressing_enter() {
+        let mut runtime = FakeSyncPromptSubmitRuntime {
+            sleep_budget: Some(0),
+            ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
+        };
+
+        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
+            .expect_err("an expired deadline is not a submit");
+
+        assert!(error.contains("timed out"), "got {error}");
+        assert_eq!(runtime.carriage_returns, 0, "no blind carriage return");
+    }
+
     struct FakeAsyncPromptSubmitRuntime {
         current: bool,
         captures: std::collections::VecDeque<Result<String, String>>,
