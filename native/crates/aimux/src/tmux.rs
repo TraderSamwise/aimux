@@ -3033,6 +3033,262 @@ pub fn send_client_carriage_return_argv(client_tty: &str, window_id: &str) -> Ve
     ]
 }
 
+/// Load a file into a named tmux buffer.
+///
+/// The text goes through a FILE rather than argv on purpose: `send-keys -l --`
+/// carries its text as an argument, which is why it had to be chunked at 4000
+/// bytes, and chunking is what lost the head of a long message. A buffer has
+/// no such ceiling.
+pub fn load_buffer_argv(buffer_name: &str, path: &str) -> Vec<String> {
+    vec![
+        "load-buffer".to_owned(),
+        "-b".to_owned(),
+        buffer_name.to_owned(),
+        path.to_owned(),
+    ]
+}
+
+/// Paste a named buffer into a window, and delete the buffer.
+///
+/// `-r` is the flag this cannot ship without. `paste-buffer` REPLACES every
+/// linefeed with a carriage return by default, and a carriage return is
+/// Enter: a ten-line prompt would submit ten times, one line per turn, with
+/// a blank line submitting nothing. Measured on tmux 3.7c, `a\nb\nc` arrives
+/// as `61 0d 62 0d 63` without `-r` and `61 0a 62 0a 63` with it. The old
+/// per-newline `send-keys C-j` sent LF, so `-r` is also what keeps parity.
+///
+/// `-p` wraps the paste in bracketed-paste markers when the program in the
+/// pane has turned that mode on. It does not affect the replacement, and
+/// most agent panes have the mode off, so `-p` alone fixes nothing.
+pub fn paste_buffer_argv(buffer_name: &str, window_id: &str) -> Vec<String> {
+    vec![
+        "paste-buffer".to_owned(),
+        "-d".to_owned(),
+        "-p".to_owned(),
+        "-r".to_owned(),
+        "-b".to_owned(),
+        buffer_name.to_owned(),
+        "-t".to_owned(),
+        window_id.to_owned(),
+    ]
+}
+
+/// Drop a buffer that a failed paste may have left behind.
+pub fn delete_buffer_argv(buffer_name: &str) -> Vec<String> {
+    vec![
+        "delete-buffer".to_owned(),
+        "-b".to_owned(),
+        buffer_name.to_owned(),
+    ]
+}
+
+/// A buffer name no other send can collide with.
+pub fn prompt_buffer_name(window_id: &str) -> String {
+    static PASTE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = PASTE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let sanitized: String = window_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    format!("aimux-prompt-{sanitized}-{}-{sequence}", std::process::id())
+}
+
+/// A prompt staged on disk for `load-buffer`, plus the one delivery order.
+///
+/// Created with 0600 and `create_new`, in a temp dir that may be world
+/// writable: the staged bytes are a user's message, and a planted path must
+/// fail the delivery rather than be written through.
+pub struct StagedPrompt {
+    buffer_name: String,
+    path: PathBuf,
+}
+
+impl StagedPrompt {
+    pub fn write(window_id: &str, text: &str) -> Result<Self, String> {
+        let buffer_name = prompt_buffer_name(window_id);
+        let path = std::env::temp_dir().join(&buffer_name);
+        write_new_private_file(&path, text.as_bytes())
+            .map_err(|error| format!("staging prompt for paste failed: {error}"))?;
+        Ok(Self { buffer_name, path })
+    }
+
+    pub fn load_argv(&self) -> Vec<String> {
+        load_buffer_argv(&self.buffer_name, &self.path.to_string_lossy())
+    }
+
+    pub fn paste_argv(&self, window_id: &str) -> Vec<String> {
+        paste_buffer_argv(&self.buffer_name, window_id)
+    }
+
+    pub fn delete_argv(&self) -> Vec<String> {
+        delete_buffer_argv(&self.buffer_name)
+    }
+
+    pub fn buffer_name(&self) -> &str {
+        &self.buffer_name
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The staging file is of no further use once tmux has read it, and the
+    /// prompt is a user's message, so it does not linger in the temp dir.
+    pub fn discard_file(&self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn write_new_private_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(crate::secure_permissions::PRIVATE_FILE_MODE);
+    }
+    let mut file = options.open(path)?;
+    write_all_or_remove(path, &mut file, data)
+}
+
+/// Write the whole prompt, or leave nothing at `path`.
+///
+/// The `create_new` open has already created the file, so a failed write -- a
+/// full disk, say -- would otherwise leave part of a user's prompt in the temp
+/// dir with no `StagedPrompt` in existence to discard it. Split out from the
+/// open so the failure is reachable from a test.
+fn write_all_or_remove(
+    path: &Path,
+    writer: &mut impl std::io::Write,
+    data: &[u8],
+) -> std::io::Result<()> {
+    match writer.write_all(data) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = std::fs::remove_file(path);
+            Err(error)
+        }
+    }
+}
+
+/// Which step of a staged paste an executor is being asked to run.
+///
+/// `Cleanup` runs after a failure and is best effort, so an executor working
+/// to a deadline must give it its own small budget rather than whatever is
+/// left: a paste that failed BY running out of time would otherwise leave the
+/// user's prompt sitting in the tmux server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StagedPromptStep {
+    Load,
+    Paste,
+    Cleanup,
+}
+
+/// The steps of a staged paste, in the order every executor runs them.
+///
+/// Load reads the file into a named buffer, the file is dropped as soon as
+/// tmux has read it, and the buffer is deleted by hand only when the paste
+/// never ran -- `paste-buffer -d` drops it otherwise. Two executors drive
+/// this, the project service's sync runtime and its async twin, and
+/// `the_sync_and_async_executors_emit_the_same_argv` compares them against
+/// each other rather than testing each alone.
+pub fn deliver_staged_prompt(
+    window_id: &str,
+    text: &str,
+    mut run: impl FnMut(StagedPromptStep, Vec<String>, String) -> Result<(), String>,
+) -> Result<(), String> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    let staged = StagedPrompt::write(window_id, text)?;
+    let loaded = run(
+        StagedPromptStep::Load,
+        staged.load_argv(),
+        format!("tmux load-buffer failed for {window_id}"),
+    );
+    staged.discard_file();
+    // A load that FAILED may still have created the buffer -- a timeout says
+    // nothing about what the server did -- so cleanup runs on both failures,
+    // not just the paste's. A named buffer is exempt from `buffer-limit`, so
+    // one left behind holds the whole prompt until the server restarts.
+    let outcome = match loaded {
+        Err(error) => Err(error),
+        Ok(()) => run(
+            StagedPromptStep::Paste,
+            staged.paste_argv(window_id),
+            format!("tmux paste-buffer failed for {window_id}"),
+        ),
+    };
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = run(
+                StagedPromptStep::Cleanup,
+                staged.delete_argv(),
+                format!("tmux delete-buffer failed for {window_id}"),
+            );
+            Err(error)
+        }
+    }
+}
+
+/// `deliver_staged_prompt` for an executor whose runner is async.
+///
+/// The ordering is the same, and the two are compared argv for argv by
+/// `the_sync_and_async_executors_emit_the_same_argv`, so a change made to one
+/// and not the other fails rather than drifting apart.
+pub async fn deliver_staged_prompt_async<Run, Fut>(
+    window_id: &str,
+    text: &str,
+    mut run: Run,
+) -> Result<(), String>
+where
+    Run: FnMut(StagedPromptStep, Vec<String>, String) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    if text.is_empty() {
+        return Ok(());
+    }
+    let staged = StagedPrompt::write(window_id, text)?;
+    let loaded = run(
+        StagedPromptStep::Load,
+        staged.load_argv(),
+        format!("tmux load-buffer failed for {window_id}"),
+    )
+    .await;
+    staged.discard_file();
+    // Same order as the sync executor, including cleanup after a failed load.
+    let outcome = match loaded {
+        Err(error) => Err(error),
+        Ok(()) => {
+            run(
+                StagedPromptStep::Paste,
+                staged.paste_argv(window_id),
+                format!("tmux paste-buffer failed for {window_id}"),
+            )
+            .await
+        }
+    };
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = run(
+                StagedPromptStep::Cleanup,
+                staged.delete_argv(),
+                format!("tmux delete-buffer failed for {window_id}"),
+            )
+            .await;
+            Err(error)
+        }
+    }
+}
+
 pub fn send_carriage_return_argv(window_id: &str) -> Vec<String> {
     vec![
         "send-keys".to_owned(),
@@ -4201,4 +4457,323 @@ mod tests {
 
     #[cfg(not(unix))]
     fn make_executable(_path: &Path) {}
+}
+
+#[cfg(test)]
+mod staged_prompt_tests {
+    use super::{
+        StagedPrompt, StagedPromptStep, deliver_staged_prompt, deliver_staged_prompt_async,
+    };
+    use std::cell::RefCell;
+
+    /// Longer than the chunk the old path cut on, because a prompt that fits
+    /// in one chunk cannot show truncation.
+    fn long_numbered_list() -> String {
+        let prompt = (1..=80)
+            .map(|index| {
+                format!(
+                    "{index}. item number {index}, with enough text on the line to be a real one"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            prompt.len() > super::TMUX_SEND_TEXT_CHUNK_BYTES,
+            "the gate prompt must exceed the old chunk size, got {}",
+            prompt.len()
+        );
+        prompt
+    }
+
+    #[derive(Default)]
+    struct Recorder {
+        calls: Vec<Vec<String>>,
+        steps: Vec<&'static str>,
+        loaded_bytes: Option<Vec<u8>>,
+        loaded_path: Option<String>,
+        fail_on: Option<String>,
+    }
+
+    impl Recorder {
+        fn run(&mut self, step: StagedPromptStep, argv: Vec<String>) -> Result<(), String> {
+            self.steps.push(match step {
+                StagedPromptStep::Load => "load",
+                StagedPromptStep::Paste => "paste",
+                StagedPromptStep::Cleanup => "cleanup",
+            });
+            if argv.first().map(String::as_str) == Some("load-buffer") {
+                let path = argv.last().cloned().unwrap_or_default();
+                self.loaded_bytes = std::fs::read(&path).ok();
+                self.loaded_path = Some(path);
+            }
+            let verb = argv.first().cloned().unwrap_or_default();
+            self.calls.push(argv);
+            if self.fail_on.as_deref() == Some(verb.as_str()) {
+                return Err(format!("{verb} refused"));
+            }
+            Ok(())
+        }
+
+        fn verbs(&self) -> Vec<&str> {
+            self.calls
+                .iter()
+                .map(|argv| argv.first().map(String::as_str).unwrap_or(""))
+                .collect()
+        }
+    }
+
+    fn deliver(text: &str, fail_on: Option<&str>) -> (Recorder, Result<(), String>) {
+        let recorder = RefCell::new(Recorder {
+            fail_on: fail_on.map(str::to_owned),
+            ..Recorder::default()
+        });
+        let outcome = deliver_staged_prompt("@1", text, |step, argv, message| {
+            recorder
+                .borrow_mut()
+                .run(step, argv)
+                .map_err(|error| format!("{message}: {error}"))
+        });
+        (recorder.into_inner(), outcome)
+    }
+
+    /// The whole point: one load, one paste, whatever the length.
+    #[test]
+    fn a_prompt_crosses_as_one_load_and_one_bracketed_paste() {
+        let prompt = long_numbered_list();
+        let (recorder, outcome) = deliver(&prompt, None);
+
+        outcome.expect("the prompt is delivered");
+        assert_eq!(recorder.verbs(), vec!["load-buffer", "paste-buffer"]);
+        let buffer_name = recorder.calls[0][2].clone();
+        assert_eq!(
+            recorder.calls[0],
+            vec![
+                "load-buffer".to_owned(),
+                "-b".to_owned(),
+                buffer_name.clone(),
+                recorder.loaded_path.clone().expect("a staged path"),
+            ]
+        );
+        // `-p` brackets the paste so a composer takes it as one block, `-d`
+        // drops the buffer once it has run, `-t` names the window.
+        assert_eq!(
+            recorder.calls[1],
+            vec![
+                "paste-buffer".to_owned(),
+                "-d".to_owned(),
+                "-p".to_owned(),
+                "-r".to_owned(),
+                "-b".to_owned(),
+                buffer_name,
+                "-t".to_owned(),
+                "@1".to_owned(),
+            ]
+        );
+    }
+
+    /// The reported bug was a LOST HEAD, so the bytes tmux reads are checked
+    /// against the prompt rather than only counted.
+    #[test]
+    fn the_staged_file_holds_the_prompt_byte_for_byte() {
+        let prompt = long_numbered_list();
+        let (recorder, outcome) = deliver(&prompt, None);
+
+        outcome.expect("the prompt is delivered");
+        let staged = String::from_utf8(recorder.loaded_bytes.expect("tmux reads a staged file"))
+            .expect("utf8");
+        assert_eq!(staged, prompt, "the staged bytes must be the whole prompt");
+        // Named ends, because what Sam saw was a message that began at item 12.
+        assert!(
+            staged.starts_with("1. item number 1,"),
+            "the head must survive"
+        );
+        assert!(staged.ends_with("be a real one"), "the tail must survive");
+    }
+
+    #[test]
+    fn the_staged_file_is_gone_once_tmux_has_read_it() {
+        let (recorder, outcome) = deliver("hello", None);
+
+        outcome.expect("delivered");
+        assert_staged_file_gone(&recorder);
+    }
+
+    fn assert_staged_file_gone(recorder: &Recorder) {
+        let path = recorder.loaded_path.clone().expect("a staged path");
+        assert!(
+            !std::path::Path::new(&path).exists(),
+            "a user's prompt must not linger in the temp dir: {path}"
+        );
+    }
+
+    #[test]
+    fn a_failed_load_names_the_failure_and_never_pastes() {
+        let (recorder, outcome) = deliver("hello", Some("load-buffer"));
+
+        let error = outcome.expect_err("a failed load is not a delivery");
+        assert!(
+            error.contains("load-buffer"),
+            "the error must name the step that failed, got {error}"
+        );
+        // No paste, but the buffer is dropped anyway: a failed load says
+        // nothing about whether the server created it.
+        assert_eq!(recorder.verbs(), vec!["load-buffer", "delete-buffer"]);
+        assert_eq!(recorder.steps, vec!["load", "cleanup"]);
+        let path = recorder.loaded_path.expect("a staged path");
+        assert!(
+            !std::path::Path::new(&path).exists(),
+            "the staging file goes even when the load fails"
+        );
+    }
+
+    #[test]
+    fn a_failed_paste_drops_the_buffer_and_surfaces_the_error() {
+        let (recorder, outcome) = deliver("hello", Some("paste-buffer"));
+
+        let error = outcome.expect_err("a failed paste is not a delivery");
+        assert!(error.contains("paste-buffer"), "got {error}");
+        // `paste-buffer -d` only drops the buffer once the paste runs, so a
+        // failure has to drop it by hand or the buffer leaks per attempt.
+        assert_eq!(
+            recorder.verbs(),
+            vec!["load-buffer", "paste-buffer", "delete-buffer"]
+        );
+        // Named as cleanup, not as another step: the async executor budgets it
+        // separately because the paste may have failed BY running out of time,
+        // and a buffer left behind holds the user's prompt.
+        assert_eq!(recorder.steps, vec!["load", "paste", "cleanup"]);
+    }
+
+    #[test]
+    fn an_empty_prompt_stages_nothing() {
+        let (recorder, outcome) = deliver("", None);
+
+        outcome.expect("nothing to deliver");
+        assert!(recorder.calls.is_empty());
+    }
+
+    /// The staged bytes are a user's message in a temp dir that may be shared.
+    #[cfg(unix)]
+    #[test]
+    fn the_staged_file_is_private_and_refuses_a_planted_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let staged = StagedPrompt::write("@1", "secret prompt").expect("staged");
+        let mode = std::fs::metadata(staged.path())
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "a prompt must not be world readable");
+        // `create_new` means an existing path is an error, not a target to
+        // write through -- which is what makes a planted symlink safe.
+        let again = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(staged.path());
+        assert!(again.is_err(), "the staging write must not clobber");
+        staged.discard_file();
+    }
+
+    /// A write that fails after the file exists must not leave it behind.
+    #[test]
+    fn a_failed_staging_write_leaves_nothing_behind() {
+        struct RefusingWriter;
+        impl std::io::Write for RefusingWriter {
+            fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::StorageFull,
+                    "no space left on device",
+                ))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let path = std::env::temp_dir().join(format!(
+            "aimux-staging-write-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("a clock")
+                .as_nanos()
+        ));
+        std::fs::write(&path, b"partly written prompt").expect("the open already created it");
+
+        let outcome = super::write_all_or_remove(&path, &mut RefusingWriter, b"prompt");
+
+        assert!(outcome.is_err(), "a refused write is not a success");
+        assert!(
+            !path.exists(),
+            "a user's prompt must not be left behind at {}",
+            path.display()
+        );
+    }
+
+    async fn deliver_async(text: &str, fail_on: Option<&str>) -> (Recorder, Result<(), String>) {
+        let recorder = RefCell::new(Recorder {
+            fail_on: fail_on.map(str::to_owned),
+            ..Recorder::default()
+        });
+        let outcome = deliver_staged_prompt_async("@1", text, |step, argv, message| {
+            let recorder = &recorder;
+            async move {
+                recorder
+                    .borrow_mut()
+                    .run(step, argv)
+                    .map_err(|error| format!("{message}: {error}"))
+            }
+        })
+        .await;
+        (recorder.into_inner(), outcome)
+    }
+
+    /// Two executors, one order. A change to one that is not made to the
+    /// other fails here rather than drifting apart silently -- and it is run
+    /// at every point the delivery can fail, because an executor that keeps
+    /// going after a failed load only shows up on that case.
+    #[tokio::test]
+    async fn the_sync_and_async_executors_emit_the_same_argv() {
+        let prompt = long_numbered_list();
+        for fail_on in [None, Some("load-buffer"), Some("paste-buffer")] {
+            let (sync_recorder, sync_outcome) = deliver(&prompt, fail_on);
+            let (async_recorder, async_outcome) = deliver_async(&prompt, fail_on).await;
+
+            assert_eq!(
+                sync_outcome.is_err(),
+                async_outcome.is_err(),
+                "{fail_on:?}: one executor delivered and the other did not"
+            );
+            assert_eq!(
+                sync_recorder.verbs(),
+                async_recorder.verbs(),
+                "{fail_on:?}: the executors ran different tmux commands"
+            );
+            assert_eq!(sync_recorder.steps, async_recorder.steps, "{fail_on:?}");
+            assert_eq!(
+                sync_recorder.loaded_bytes, async_recorder.loaded_bytes,
+                "{fail_on:?}: both executors stage the same bytes"
+            );
+            assert_staged_file_gone(&sync_recorder);
+            assert_staged_file_gone(&async_recorder);
+            // Only the buffer name differs, because it is unique per paste.
+            let strip = |calls: &[Vec<String>]| -> Vec<Vec<String>> {
+                calls
+                    .iter()
+                    .map(|argv| {
+                        argv.iter()
+                            .filter(|part| !part.contains("aimux-prompt-"))
+                            .cloned()
+                            .collect()
+                    })
+                    .collect()
+            };
+            assert_eq!(
+                strip(&sync_recorder.calls),
+                strip(&async_recorder.calls),
+                "{fail_on:?}"
+            );
+        }
+    }
 }

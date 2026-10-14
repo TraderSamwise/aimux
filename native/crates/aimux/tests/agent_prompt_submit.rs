@@ -211,16 +211,40 @@ fn a_codex_pasted_content_marker_counts_as_the_draft() {
 // off `aimux input` and onto `task assign`, which starts no turn at all.
 #[test]
 fn a_lingering_paste_marker_does_not_read_as_an_unsubmitted_prompt() {
-    let marker_only = "› [Pasted Content 3434 chars]";
+    // Every wording measured against a real pane: Codex 0.159.2 first, then
+    // Claude Code 2.1.285, which words it differently and was therefore
+    // invisible to this check -- so a long prompt to a claude pane had no
+    // visible draft on any poll, and Enter went out unverified or not at all.
+    for marker_only in [
+        "› [Pasted Content 3434 chars]",
+        "› [Pasted text #1 +11 lines]",
+        "› [Pasted text #2]",
+    ] {
+        assert!(
+            composer_still_contains_prompt_draft(marker_only, DRAFT),
+            "before submit the marker is the only sign the paste landed: {marker_only}"
+        );
+        assert!(
+            !composer_still_holds_prompt_text(marker_only, DRAFT),
+            "after submit it is not evidence the prompt is still sitting: {marker_only}"
+        );
+    }
+}
 
-    assert!(
-        composer_still_contains_prompt_draft(marker_only, DRAFT),
-        "before submit the marker is the only sign the paste landed"
-    );
-    assert!(
-        !composer_still_holds_prompt_text(marker_only, DRAFT),
-        "after submit the marker is not evidence the prompt is still sitting there"
-    );
+/// The marker is a composer's own word for collapsed content, not any
+/// bracketed line, or a prompt that merely mentions pasting would verify.
+#[test]
+fn an_unrelated_bracketed_line_is_not_a_paste_marker() {
+    for not_a_marker in [
+        "› [Running 3 checks]",
+        "› paste the key here",
+        "› [pastedcontent]",
+    ] {
+        assert!(
+            !composer_still_contains_prompt_draft(not_a_marker, DRAFT),
+            "{not_a_marker} is not evidence a paste landed"
+        );
+    }
 }
 
 #[test]

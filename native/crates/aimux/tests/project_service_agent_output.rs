@@ -127,6 +127,14 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
         Ok(())
     }
 
+    fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        self.actions.push(FakeRuntimeAction::Text(
+            window_id.to_owned(),
+            text.to_owned(),
+        ));
+        Ok(())
+    }
+
     fn send_key(&mut self, window_id: &str, key: &str) -> Result<(), String> {
         self.actions
             .push(FakeRuntimeAction::Key(window_id.to_owned(), key.to_owned()));
@@ -178,6 +186,10 @@ impl AgentOutputCaptureRuntime for FakeActivityRuntime {
     }
 
     fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        self.inner.send_text(window_id, text)
+    }
+
+    fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
         self.inner.send_text(window_id, text)
     }
 
@@ -2112,6 +2124,75 @@ fn shared_guest_input_is_limited_to_live_pane_shared_session() {
     cleanup(project);
 }
 
+/// What a user's own multi-line message does on the two input routes.
+///
+/// It is FLATTENED, not carried: `normalize_submitted_prompt` collapses any
+/// whitespace run holding a line break to one space before delivery. The
+/// paste can carry newlines -- internal pokes rely on that -- so it is worth
+/// being plain that a user's are gone by the time it runs, and worth pinning
+/// that flattening never becomes dropping: the reported bug was a message
+/// that arrived starting at item 12, so both ends are named here.
+#[test]
+fn a_users_multiline_message_is_flattened_but_never_shortened() {
+    let project = temp_project("multiline-user-input");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime::default();
+    let message = (1..=12)
+        .map(|index| format!("{index}. item number {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    for route in [routes::agents::INPUT, routes::live_pane::INPUT] {
+        let response = route_agent_output_request_with_runtime(
+            &context,
+            "POST",
+            route,
+            Some(&json!({ "sessionId": "codex-1", "text": message })),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, 200, "{route}");
+    }
+
+    let delivered: Vec<&String> = runtime
+        .actions
+        .iter()
+        .filter_map(|action| match action {
+            FakeRuntimeAction::Text(_, text) => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        delivered.len(),
+        2,
+        "one delivery per route: {:?}",
+        delivered
+    );
+    for text in delivered {
+        assert!(
+            !text.contains('\n'),
+            "normalize_submitted_prompt flattens a user's newlines: {text}"
+        );
+        assert!(
+            text.starts_with("1. item number 1"),
+            "the head must survive"
+        );
+        assert!(
+            text.ends_with("12. item number 12"),
+            "the tail must survive"
+        );
+        for index in 1..=12 {
+            assert!(
+                text.contains(&format!("{index}. item number {index}")),
+                "item {index} is missing from {text}"
+            );
+        }
+    }
+    cleanup(project);
+}
+
 #[test]
 fn agent_input_prepends_prompt_context_for_both_input_routes() {
     let project = temp_project("prompt-context-input");
@@ -2316,14 +2397,14 @@ fn queued_duplicate_loop_checks_are_delivered_once() {
     assert_eq!(
         runtime.inner.actions,
         vec![
+            // One delivery, newlines and all. This used to be three separate
+            // sends with a `C-j` keypress between each -- a three-line prompt
+            // became five execs, and a twelve-item list became dozens, typed
+            // into a composer that redraws between them.
             FakeRuntimeAction::Text(
                 "@1".into(),
-                "[aimux loop check] Runtime-exchange/worklist work visible to the project service is waiting while loop capacity is idle.".into()
+                "[aimux loop check] Runtime-exchange/worklist work visible to the project service is waiting while loop capacity is idle.\n- worklist item\n... and 50 more".into()
             ),
-            FakeRuntimeAction::Key("@1".into(), "C-j".into()),
-            FakeRuntimeAction::Text("@1".into(), "- worklist item".into()),
-            FakeRuntimeAction::Key("@1".into(), "C-j".into()),
-            FakeRuntimeAction::Text("@1".into(), "... and 50 more".into()),
             FakeRuntimeAction::CarriageReturn("@1".into()),
         ],
         "duplicate generated loop-check prompts must collapse before delivery"

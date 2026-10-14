@@ -4,18 +4,19 @@ use aimux::tmux::{
     MANAGED_TMUX_TERMINAL_FEATURES, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxCommandSpec,
     append_session_option_argv, attach_session_argv, build_default_root_mouse_bindings_config,
     build_default_root_mouse_bindings_install_config, capture_pane_argv, clear_history_argv,
-    is_dashboard_window_name, is_meta_dashboard_window_name, is_tmux_client_session_for_host,
-    is_tmux_client_session_name, kill_session_argv, kill_window_argv, legacy_project_session_name,
-    link_window_argv, list_clients_argv, list_windows_argv, modified_enter_binding_argv,
-    move_window_argv, new_dashboard_window_argv, new_session_argv, new_window_argv,
-    packed_argv_bytes, project_client_session_name, project_session, refresh_status_argv,
-    rename_session_argv, resize_window_argv, respawn_window_argv, select_window_argv,
-    send_carriage_return_argv, send_client_carriage_return_argv, send_client_enter_argv,
-    send_enter_argv, send_escape_argv, send_focus_in_argv, send_key_argv, send_modified_enter_argv,
-    send_text_argv, session_window_id_target, session_window_target, set_session_option_argv,
-    should_install_modified_enter_binding, split_text_for_tmux_send_keys, start_pane_pipe_argv,
-    stop_pane_pipe_argv, swap_window_argv, switch_client_argv, switch_client_to_target_argv,
-    unlink_window_argv,
+    delete_buffer_argv, is_dashboard_window_name, is_meta_dashboard_window_name,
+    is_tmux_client_session_for_host, is_tmux_client_session_name, kill_session_argv,
+    kill_window_argv, legacy_project_session_name, link_window_argv, list_clients_argv,
+    list_windows_argv, load_buffer_argv, modified_enter_binding_argv, move_window_argv,
+    new_dashboard_window_argv, new_session_argv, new_window_argv, packed_argv_bytes,
+    paste_buffer_argv, project_client_session_name, project_session, prompt_buffer_name,
+    refresh_status_argv, rename_session_argv, resize_window_argv, respawn_window_argv,
+    select_window_argv, send_carriage_return_argv, send_client_carriage_return_argv,
+    send_client_enter_argv, send_enter_argv, send_escape_argv, send_focus_in_argv, send_key_argv,
+    send_modified_enter_argv, send_text_argv, session_window_id_target, session_window_target,
+    set_session_option_argv, should_install_modified_enter_binding, split_text_for_tmux_send_keys,
+    start_pane_pipe_argv, stop_pane_pipe_argv, swap_window_argv, switch_client_argv,
+    switch_client_to_target_argv, unlink_window_argv,
 };
 use serde_json::Value;
 
@@ -297,6 +298,51 @@ fn normalize_mouse_bindings_install_config(config: &str) -> String {
         &format!("'{}'", current_exe.to_string_lossy()),
         "'<AIMUX_BIN>'",
     )
+}
+
+/// A prompt crosses as a buffer paste, and the flags are the whole contract.
+///
+/// Nothing asserted this argv when the paste went in, and the missing `-r`
+/// turned every newline into Enter: a ten-line loop-check poke submitted ten
+/// times. `a\nb\nc` reaches the pty as `61 0d 62 0d 63` without it.
+#[test]
+fn a_prompt_paste_keeps_linefeeds_as_linefeeds() {
+    assert_eq!(
+        load_buffer_argv("aimux-prompt-1", "/tmp/aimux-prompt-1"),
+        ["load-buffer", "-b", "aimux-prompt-1", "/tmp/aimux-prompt-1"]
+    );
+    assert_eq!(
+        paste_buffer_argv("aimux-prompt-1", "@3"),
+        [
+            "paste-buffer",
+            "-d",
+            "-p",
+            "-r",
+            "-b",
+            "aimux-prompt-1",
+            "-t",
+            "@3"
+        ]
+    );
+    assert_eq!(
+        delete_buffer_argv("aimux-prompt-1"),
+        ["delete-buffer", "-b", "aimux-prompt-1"]
+    );
+}
+
+/// The buffer name is also a filename in a shared temp dir.
+#[test]
+fn a_prompt_buffer_name_is_unique_and_safe_as_a_filename() {
+    assert_ne!(prompt_buffer_name("@1"), prompt_buffer_name("@1"));
+    let name = prompt_buffer_name("@1; rm -rf /");
+    assert!(
+        name.starts_with("aimux-prompt-"),
+        "unexpected shape: {name}"
+    );
+    assert!(
+        !name.contains('/') && !name.contains(';') && !name.contains(' '),
+        "a buffer name is also a temp filename: {name}"
+    );
 }
 
 #[test]

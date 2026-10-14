@@ -60,6 +60,18 @@ enum PasteMarker {
     Ignored,
 }
 
+/// What a composer shows instead of a pasted prompt, in every wording we have
+/// measured, lowercased by `normalize_words`.
+///
+/// Claude Code 2.1.285 renders `[Pasted text #1 +11 lines]` and collapses at
+/// about six lines or a thousand characters; Codex 0.159.2 renders
+/// `[Pasted Content 1354 chars]`. Matching the full word "content" saw only
+/// Codex, so on a Claude pane the draft was invisible to every poll: the loop
+/// ran all its attempts and then submitted unverified, or ran out of deadline
+/// and never pressed Enter at all, leaving the message in the composer while
+/// the route reported a timeout. The prefix is the part both share.
+const PASTE_MARKER_PREFIX: &str = "[pasted ";
+
 fn text_contains_prompt_draft(text: &str, draft: &str, paste_marker: PasteMarker) -> bool {
     let normalized_pane = normalize_words(text);
     let normalized_draft = normalize_words(draft);
@@ -67,7 +79,7 @@ fn text_contains_prompt_draft(text: &str, draft: &str, paste_marker: PasteMarker
         return false;
     }
     if normalized_pane.contains(&normalized_draft)
-        || (paste_marker == PasteMarker::Counts && normalized_pane.contains("[pasted content"))
+        || (paste_marker == PasteMarker::Counts && normalized_pane.contains(PASTE_MARKER_PREFIX))
     {
         return true;
     }

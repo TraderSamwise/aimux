@@ -19,9 +19,9 @@ use crate::runtime_topology::{
 };
 use crate::tmux::TmuxRuntimeManager;
 use crate::tmux::{
-    CapturePaneOptions, TMUX_RUNTIME_OWNER_OPTION, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxTarget,
-    WINDOW_TARGET_FORMAT, capture_pane_argv, resize_window_argv, send_carriage_return_argv,
-    send_escape_argv, send_key_argv, send_text_argv, split_text_for_tmux_send_keys,
+    CapturePaneOptions, StagedPromptStep, TMUX_RUNTIME_OWNER_OPTION, TmuxTarget,
+    WINDOW_TARGET_FORMAT, capture_pane_argv, deliver_staged_prompt, deliver_staged_prompt_async,
+    resize_window_argv, send_carriage_return_argv, send_escape_argv, send_key_argv, send_text_argv,
     try_tmux_command_from_env,
 };
 use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
@@ -121,6 +121,11 @@ pub trait AgentOutputCaptureRuntime {
     }
 
     fn send_text(&mut self, _window_id: &str, _text: &str) -> Result<(), String> {
+        Err("agent input not supported by this service".into())
+    }
+
+    /// Deliver a whole prompt in one paste. See `paste_prompt_with`.
+    fn paste_text(&mut self, _window_id: &str, _text: &str) -> Result<(), String> {
         Err("agent input not supported by this service".into())
     }
 
@@ -298,6 +303,12 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
         .map(|_| ())
     }
 
+    fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        deliver_staged_prompt(window_id, text, |_step, argv, message| {
+            run_tmux_argv(argv, message).map(|_| ())
+        })
+    }
+
     fn submit_prompt(&mut self, window_id: &str, draft: &str) -> Result<(), String> {
         let mut runtime = SystemSyncPromptSubmitRuntime {
             window_id: window_id.to_owned(),
@@ -357,6 +368,29 @@ fn canonicalize_project_root(path: impl AsRef<Path>) -> String {
 pub struct BoundedAgentOutputCaptureRuntime {
     deadline: Instant,
     cancelled: Arc<AtomicBool>,
+}
+
+/// A paste that failed still has a buffer to drop, and the failure may BE
+/// the deadline, so cleanup is bounded on its own rather than on what is left.
+const PASTE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How long a staged-paste step gets on an executor that works to a deadline.
+///
+/// Both deadline-bound executors ask this -- the bounded sync runtime and the
+/// async route -- because the answer is the whole point: cleanup runs BECAUSE
+/// something failed, and the something is usually the deadline or a cancel, so
+/// taking `remaining` for it means never running the `delete-buffer` at all and
+/// leaving the user's prompt in the tmux server. The bounded runtime did
+/// exactly that until `the_cleanup_step_is_budgeted_even_past_the_deadline`
+/// pinned it.
+fn staged_paste_timeout(
+    step: StagedPromptStep,
+    remaining: Result<Duration, String>,
+) -> Result<Duration, String> {
+    match step {
+        StagedPromptStep::Cleanup => Ok(PASTE_CLEANUP_TIMEOUT),
+        StagedPromptStep::Load | StagedPromptStep::Paste => remaining,
+    }
 }
 
 impl BoundedAgentOutputCaptureRuntime {
@@ -425,6 +459,13 @@ impl AgentOutputCaptureRuntime for BoundedAgentOutputCaptureRuntime {
             format!("tmux send carriage return failed for {window_id}"),
         )
         .map(|_| ())
+    }
+
+    fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        deliver_staged_prompt(window_id, text, |step, argv, message| {
+            let timeout = staged_paste_timeout(step, self.remaining())?;
+            run_tmux_argv_with_timeout(argv, message, timeout).map(|_| ())
+        })
     }
 
     fn submit_prompt(&mut self, window_id: &str, draft: &str) -> Result<(), String> {
@@ -1546,21 +1587,15 @@ fn input_live_pane_route(
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
-    let input_text = match remote_actor
-        .as_ref()
-        .filter(|actor| actor.role == RemoteActorRole::Guest)
-        .and_then(|actor| shared_chat_remote_actor_prompt(actor, &text))
-        .or_else(|| shared_chat_body_actor_prompt(body, &text))
-    {
-        Some(value) => value,
-        None => text,
-    };
-    let formatted_text = format_agent_input_with_attachments(&input_text, &attachments);
     let project_state_dir = context.project_state_dir();
-    let prompt_context = get_prompt_context_text(&project_state_dir, &session_id);
-    let contextualized_text =
-        compose_with_prompt_context(&formatted_text, prompt_context.as_deref());
-    let prompt = normalize_submitted_prompt(&contextualized_text);
+    let prompt = compose_prompt_for_delivery(PromptForDelivery {
+        attachments: &attachments,
+        body,
+        project_state_dir: &project_state_dir,
+        remote_actor: remote_actor.as_ref(),
+        session_id: &session_id,
+        text,
+    });
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();
     let activity = if force {
@@ -1652,6 +1687,43 @@ fn agent_loop_watch(context: &ProjectServiceRequestContext, session_id: &str) ->
         .and_then(Value::as_bool)
         .unwrap_or(false);
     json!({ "known": true, "watched": watched })
+}
+
+struct PromptForDelivery<'a> {
+    attachments: &'a [Value],
+    body: &'a Value,
+    project_state_dir: &'a std::path::Path,
+    remote_actor: Option<&'a RemoteActor>,
+    session_id: &'a str,
+    text: String,
+}
+
+/// The text a prompt actually arrives as, derived once.
+///
+/// Both input routes -- the sync one and the async one the HTTP server uses
+/// -- had their own copy of these four steps. A copy is how a change lands on
+/// one route and not the other, and only one of the two is reachable from a
+/// test, so a defect on the async side could not be caught at all.
+///
+/// Note the last step: `normalize_submitted_prompt` collapses any whitespace
+/// run containing a line break to a single space, so a user's newlines do not
+/// survive this. `a_users_multiline_message_is_flattened_but_never_shortened`
+/// pins that, and pins that flattening never turns into dropping.
+fn compose_prompt_for_delivery(input: PromptForDelivery<'_>) -> String {
+    let input_text = match input
+        .remote_actor
+        .filter(|actor| actor.role == RemoteActorRole::Guest)
+        .and_then(|actor| shared_chat_remote_actor_prompt(actor, &input.text))
+        .or_else(|| shared_chat_body_actor_prompt(input.body, &input.text))
+    {
+        Some(value) => value,
+        None => input.text,
+    };
+    let formatted_text = format_agent_input_with_attachments(&input_text, input.attachments);
+    let prompt_context = get_prompt_context_text(input.project_state_dir, input.session_id);
+    let contextualized_text =
+        compose_with_prompt_context(&formatted_text, prompt_context.as_deref());
+    normalize_submitted_prompt(&contextualized_text)
 }
 
 fn agent_input_turn_semantics() -> Value {
@@ -1911,21 +1983,15 @@ async fn input_live_pane_route_async(
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
-    let input_text = match remote_actor
-        .as_ref()
-        .filter(|actor| actor.role == RemoteActorRole::Guest)
-        .and_then(|actor| shared_chat_remote_actor_prompt(actor, &text))
-        .or_else(|| shared_chat_body_actor_prompt(body, &text))
-    {
-        Some(value) => value,
-        None => text,
-    };
-    let formatted_text = format_agent_input_with_attachments(&input_text, &attachments);
     let project_state_dir = context.project_state_dir();
-    let prompt_context = get_prompt_context_text(&project_state_dir, &session_id);
-    let contextualized_text =
-        compose_with_prompt_context(&formatted_text, prompt_context.as_deref());
-    let prompt = normalize_submitted_prompt(&contextualized_text);
+    let prompt = compose_prompt_for_delivery(PromptForDelivery {
+        attachments: &attachments,
+        body,
+        project_state_dir: &project_state_dir,
+        remote_actor: remote_actor.as_ref(),
+        session_id: &session_id,
+        text,
+    });
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();
     let activity = if force {
@@ -2082,26 +2148,22 @@ fn resolve_session_tool(topology: &Value, session_id: &str) -> Option<String> {
         })
 }
 
+/// Deliver a whole prompt to a window's composer.
+///
+/// This used to walk the text character by character, flushing a `send-keys`
+/// exec for each 4000-byte run and a separate `C-j` exec for every newline. A
+/// twelve-item list was therefore dozens of processes typed into a composer
+/// that redraws between them, sharing one deadline -- and when something
+/// cleared the composer partway, the head of the message was gone and the
+/// tail was submitted without a word. Sam saw a message arrive at item 12.
+///
+/// `deliver_staged_prompt` is one load and one paste whatever the length.
 pub(super) fn send_prompt_to_tmux(
     runtime: &mut impl AgentOutputCaptureRuntime,
     window_id: &str,
     text: &str,
 ) -> Result<(), String> {
-    let mut pending = String::new();
-    for character in text.chars() {
-        match character {
-            '\r' => {
-                flush_tmux_text(runtime, window_id, &mut pending)?;
-                runtime.send_carriage_return(window_id)?;
-            }
-            '\n' => {
-                flush_tmux_text(runtime, window_id, &mut pending)?;
-                runtime.send_key(window_id, "C-j")?;
-            }
-            value => pending.push(value),
-        }
-    }
-    flush_tmux_text(runtime, window_id, &mut pending)
+    runtime.paste_text(window_id, text)
 }
 
 pub(super) fn deliver_prompt_to_tmux_for_tool(
@@ -2116,22 +2178,6 @@ pub(super) fn deliver_prompt_to_tmux_for_tool(
         PromptSubmitMode::AgentComposer => runtime.submit_prompt(window_id, prompt),
     }
 }
-
-fn flush_tmux_text(
-    runtime: &mut impl AgentOutputCaptureRuntime,
-    window_id: &str,
-    pending: &mut String,
-) -> Result<(), String> {
-    if pending.is_empty() {
-        return Ok(());
-    }
-    for chunk in split_text_for_tmux_send_keys(pending, TMUX_SEND_TEXT_CHUNK_BYTES) {
-        runtime.send_text(window_id, &chunk)?;
-    }
-    pending.clear();
-    Ok(())
-}
-
 fn remote_actor_from_headers(
     headers: &std::collections::BTreeMap<String, String>,
 ) -> Option<RemoteActor> {
@@ -2525,51 +2571,13 @@ async fn send_prompt_to_tmux_async(
     text: &str,
     deadline: Instant,
 ) -> Result<(), String> {
-    let mut pending = String::new();
-    for character in text.chars() {
-        match character {
-            '\r' => {
-                flush_tmux_text_async(window_id, &mut pending, deadline).await?;
-                run_tmux_argv_with_timeout_async(
-                    send_carriage_return_argv(window_id),
-                    format!("tmux send carriage return failed for {window_id}"),
-                    remaining_until(deadline)?,
-                )
-                .await?;
-            }
-            '\n' => {
-                flush_tmux_text_async(window_id, &mut pending, deadline).await?;
-                run_tmux_argv_with_timeout_async(
-                    send_key_argv(window_id, "C-j"),
-                    format!("tmux send-keys C-j failed for {window_id}"),
-                    remaining_until(deadline)?,
-                )
-                .await?;
-            }
-            value => pending.push(value),
-        }
-    }
-    flush_tmux_text_async(window_id, &mut pending, deadline).await
-}
-
-async fn flush_tmux_text_async(
-    window_id: &str,
-    pending: &mut String,
-    deadline: Instant,
-) -> Result<(), String> {
-    if pending.is_empty() {
-        return Ok(());
-    }
-    for chunk in split_text_for_tmux_send_keys(pending, TMUX_SEND_TEXT_CHUNK_BYTES) {
-        run_tmux_argv_with_timeout_async(
-            send_text_argv(window_id, &chunk),
-            format!("tmux send-keys text failed for {window_id}"),
-            remaining_until(deadline)?,
-        )
-        .await?;
-    }
-    pending.clear();
-    Ok(())
+    deliver_staged_prompt_async(window_id, text, |step, argv, message| async move {
+        let timeout = staged_paste_timeout(step, remaining_until(deadline))?;
+        run_tmux_argv_with_timeout_async(argv, message, timeout)
+            .await
+            .map(|_| ())
+    })
+    .await
 }
 
 async fn wait_for_prompt_submit_async(
@@ -3073,6 +3081,11 @@ mod tests {
             Ok(())
         }
 
+        fn paste_text(&mut self, _window_id: &str, text: &str) -> Result<(), String> {
+            self.text_sends.push(text.to_owned());
+            Ok(())
+        }
+
         fn send_key(&mut self, _window_id: &str, key: &str) -> Result<(), String> {
             self.key_sends.push(key.to_owned());
             Ok(())
@@ -3087,6 +3100,83 @@ mod tests {
             self.submit_prompts.push(draft.to_owned());
             Ok(())
         }
+    }
+
+    /// A long numbered list arrives whole, in one delivery.
+    ///
+    /// The bug Sam reported: a twelve-item list reached the agent starting at
+    /// item 12, items 1-11 simply gone, no warning. This path walked the text
+    /// character by character, flushing a `send-keys` exec for every
+    /// 4000-byte run and a separate `C-j` exec for every newline -- so that
+    /// message was dozens of processes typed into a composer that redraws
+    /// between them, and whatever cleared the composer partway took the head
+    /// of the message with it. The tail was submitted as if it were the
+    /// whole thing.
+    ///
+    /// Under the old path this is 12 sends and 11 keypresses, and every
+    /// assertion below fails.
+    /// Cleanup gets a budget even when the deadline is what failed.
+    ///
+    /// Both deadline-bound executors take their step budget from
+    /// `staged_paste_timeout`. The bounded runtime used to take `remaining()`
+    /// for every step, and `remaining()` fails once the deadline passes or the
+    /// request is cancelled -- so the `delete-buffer` never ran and the named
+    /// buffer, holding the whole prompt, stayed in the tmux server.
+    #[test]
+    fn the_cleanup_step_is_budgeted_even_past_the_deadline() {
+        let expired = || Err("agent output request timed out".to_owned());
+
+        assert_eq!(
+            staged_paste_timeout(StagedPromptStep::Cleanup, expired()),
+            Ok(PASTE_CLEANUP_TIMEOUT),
+            "cleanup runs BECAUSE something failed, and that something is often the deadline"
+        );
+        for step in [StagedPromptStep::Load, StagedPromptStep::Paste] {
+            assert!(
+                staged_paste_timeout(step, expired()).is_err(),
+                "{step:?} must still honour the deadline"
+            );
+        }
+        let remaining = Duration::from_millis(250);
+        assert_eq!(
+            staged_paste_timeout(StagedPromptStep::Load, Ok(remaining)),
+            Ok(remaining),
+            "a live deadline is passed through untouched"
+        );
+    }
+
+    #[test]
+    fn a_long_multiline_prompt_crosses_in_one_delivery() {
+        let prompt = (1..=12)
+            .map(|index| format!("{index}. item number {index} with enough text to be a real line"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut runtime = FakeAgentInputRuntime::default();
+
+        deliver_prompt_to_tmux_for_tool(&mut runtime, "@1", &prompt, Some("claude"))
+            .expect("the prompt is delivered");
+
+        assert_eq!(
+            runtime.text_sends.len(),
+            1,
+            "a multi-line prompt must cross in one delivery, got {:?}",
+            runtime.text_sends
+        );
+        assert_eq!(
+            runtime.text_sends[0], prompt,
+            "the delivered text must be the whole prompt"
+        );
+        assert!(
+            runtime.text_sends[0].starts_with("1. item number 1"),
+            "the head must survive"
+        );
+        // Newlines travel inside the paste. Sending them as keypresses is what
+        // turned one message into dozens of execs.
+        assert!(
+            runtime.key_sends.is_empty(),
+            "no per-newline keypresses, got {:?}",
+            runtime.key_sends
+        );
     }
 
     #[test]
