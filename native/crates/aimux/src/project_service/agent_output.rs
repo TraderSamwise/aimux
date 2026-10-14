@@ -2581,19 +2581,24 @@ pub(super) async fn deliver_prompt_to_tmux_async_for_tool(
     tool: Option<&str>,
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
-    // Same baseline as the sync path: a marker already in the composer is not
-    // evidence that this paste landed. A failed read is `None`.
-    let before = composer_before_paste_async(window_id, deadline).await;
-    send_prompt_to_tmux_async(window_id, prompt, deadline).await?;
     match prompt_submit_mode_for_tool(tool) {
-        PromptSubmitMode::DirectShell => run_tmux_argv_with_timeout_async(
-            send_carriage_return_argv(window_id),
-            format!("tmux send carriage return failed for {window_id}"),
-            remaining_until(deadline)?,
-        )
-        .await
-        .map(|_| ()),
+        PromptSubmitMode::DirectShell => {
+            send_prompt_to_tmux_async(window_id, prompt, deadline).await?;
+            run_tmux_argv_with_timeout_async(
+                send_carriage_return_argv(window_id),
+                format!("tmux send carriage return failed for {window_id}"),
+                remaining_until(deadline)?,
+            )
+            .await
+            .map(|_| ())
+        }
         PromptSubmitMode::AgentComposer => {
+            // Same baseline as the sync path, and inside this arm for the same
+            // reason: a shell route has no submit wait to spend it on, and a
+            // `capture-pane` that stalls would eat the deadline the paste
+            // still needs. A failed read is `None`.
+            let before = composer_before_paste_async(window_id, deadline).await;
+            send_prompt_to_tmux_async(window_id, prompt, deadline).await?;
             wait_for_prompt_submit_async(window_id, prompt, deadline, before.as_deref()).await
         }
     }
