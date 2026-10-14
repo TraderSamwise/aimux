@@ -3117,6 +3117,17 @@ fn prompt_buffer_name_from(window_id: &str, pid: u32, sequence: u64, nanos: u128
     format!("aimux-prompt-{sanitized}-{pid}-{nanos}-{sequence}")
 }
 
+/// Why a prompt could not be staged, naming the file it could not write.
+///
+/// Without the path the message was `staging prompt for paste failed: File
+/// exists (os error 17)`, which names neither the file nor its directory.
+fn staging_error(path: &Path, error: &std::io::Error) -> String {
+    format!(
+        "staging prompt for paste failed at {}: {error}",
+        path.display()
+    )
+}
+
 /// A prompt staged on disk for `load-buffer`, plus the one delivery order.
 ///
 /// Created with 0600 and `create_new`, in a temp dir that may be world
@@ -3129,22 +3140,32 @@ pub struct StagedPrompt {
 
 impl StagedPrompt {
     pub fn write(window_id: &str, text: &str) -> Result<Self, String> {
-        let buffer_name = prompt_buffer_name(window_id);
-        let path = std::env::temp_dir().join(&buffer_name);
-        Self::write_at(buffer_name, path, text)
+        Self::write_with_names(text, || prompt_buffer_name(window_id))
     }
 
-    /// The path is in the error because without it the message was
-    /// `staging prompt for paste failed: File exists (os error 17)`, which
-    /// names neither the file nor the directory it is in.
-    fn write_at(buffer_name: String, path: PathBuf, text: &str) -> Result<Self, String> {
-        write_new_private_file(&path, text.as_bytes()).map_err(|error| {
-            format!(
-                "staging prompt for paste failed at {}: {error}",
-                path.display()
-            )
-        })?;
-        Ok(Self { buffer_name, path })
+    /// Stage the prompt, taking a fresh name if the first is already taken.
+    ///
+    /// A clock reading is not a uniqueness source. A process killed with
+    /// SIGKILL runs no destructor, so its staging file stays; a later process
+    /// with a recycled pid and a repeated clock value can generate that same
+    /// name, and `create_new` then refuses it. Without a retry that refusal
+    /// failed the delivery outright, and would keep failing. A different name
+    /// is the recovery, so the refusal is only fatal when it keeps happening.
+    fn write_with_names(text: &str, mut next_name: impl FnMut() -> String) -> Result<Self, String> {
+        const NAME_ATTEMPTS: usize = 4;
+        let mut taken = None;
+        for _ in 0..NAME_ATTEMPTS {
+            let buffer_name = next_name();
+            let path = std::env::temp_dir().join(&buffer_name);
+            match write_new_private_file(&path, text.as_bytes()) {
+                Ok(()) => return Ok(Self { buffer_name, path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    taken = Some(staging_error(&path, &error));
+                }
+                Err(error) => return Err(staging_error(&path, &error)),
+            }
+        }
+        Err(taken.unwrap_or_else(|| "staging prompt for paste failed: no name tried".to_owned()))
     }
 
     pub fn load_argv(&self) -> Vec<String> {
@@ -4692,33 +4713,95 @@ mod staged_prompt_tests {
         );
     }
 
-    /// `File exists (os error 17)` on its own named neither file nor directory.
+    /// A leftover from a killed process must not break the next delivery.
+    #[test]
+    fn a_taken_name_is_retried_rather_than_failing_the_delivery() {
+        let stale = staging_path("stale");
+        let fresh = staging_path("fresh");
+        std::fs::write(&stale, b"left behind by a killed process")
+            .expect("pre-create the stale one");
+        std::fs::remove_file(&fresh).ok();
+        let mut names = vec![
+            fresh.file_name().unwrap().to_string_lossy().into_owned(),
+            stale.file_name().unwrap().to_string_lossy().into_owned(),
+        ];
+
+        let staged = StagedPrompt::write_with_names("a user's message", || {
+            names.pop().expect("a name per attempt")
+        })
+        .expect("the second name is free");
+
+        assert_eq!(staged.path(), fresh, "it must move on to the free name");
+        assert_eq!(
+            std::fs::read(&stale).expect("the stale file is still there"),
+            b"left behind by a killed process",
+            "a name we did not take must not be written through"
+        );
+        drop(staged);
+        std::fs::remove_file(&stale).ok();
+    }
+
+    /// A real failure is not a name collision, and is not retried.
+    ///
+    /// Only `AlreadyExists` means "try another name". Retrying anything else
+    /// -- a permissions failure, a full disk -- hides the real cause behind
+    /// four attempts at the same outcome.
+    #[test]
+    fn a_real_staging_failure_fails_on_the_first_attempt() {
+        let missing = staging_path("no-such-dir").join("staged-prompt");
+        let mut attempts = 0u32;
+
+        let error = match StagedPrompt::write_with_names("a user's message", || {
+            attempts += 1;
+            missing
+                .strip_prefix(std::env::temp_dir())
+                .expect("under the temp dir")
+                .to_string_lossy()
+                .into_owned()
+        }) {
+            Ok(_) => panic!("a missing directory is not a success"),
+            Err(error) => error,
+        };
+
+        assert_eq!(attempts, 1, "a real error must not be retried");
+        assert!(
+            error.contains(&missing.display().to_string()),
+            "the error must name the path, got {error}"
+        );
+    }
+
+    /// When every name is taken, say which file could not be written.
     #[test]
     fn a_refused_staging_write_names_the_path() {
-        let path = std::env::temp_dir().join(format!(
-            "aimux-staged-collision-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("a clock")
-                .as_nanos()
-        ));
-        std::fs::write(&path, b"someone got here first").expect("pre-create the path");
+        let taken = staging_path("taken");
+        std::fs::write(&taken, b"someone got here first").expect("pre-create the path");
+        let name = taken.file_name().unwrap().to_string_lossy().into_owned();
 
-        let error = match StagedPrompt::write_at(
-            "aimux-staged-collision".to_owned(),
-            path.clone(),
-            "a user's message",
-        ) {
+        let error = match StagedPrompt::write_with_names("a user's message", || name.clone()) {
             Ok(_) => panic!("create_new must refuse an existing path"),
             Err(error) => error,
         };
 
         assert!(
-            error.contains(&path.display().to_string()),
+            error.contains(&taken.display().to_string()),
             "the error must name the path, got {error}"
         );
-        std::fs::remove_file(&path).ok();
+        assert_eq!(
+            std::fs::read(&taken).expect("untouched"),
+            b"someone got here first"
+        );
+        std::fs::remove_file(&taken).ok();
+    }
+
+    fn staging_path(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "aimux-staged-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("a clock")
+                .as_nanos()
+        ))
     }
 
     fn assert_staged_file_gone(recorder: &Recorder) {
