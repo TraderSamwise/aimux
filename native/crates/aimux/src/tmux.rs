@@ -3192,12 +3192,19 @@ pub fn deliver_staged_prompt(
         format!("tmux load-buffer failed for {window_id}"),
     );
     staged.discard_file();
-    loaded?;
-    match run(
-        StagedPromptStep::Paste,
-        staged.paste_argv(window_id),
-        format!("tmux paste-buffer failed for {window_id}"),
-    ) {
+    // A load that FAILED may still have created the buffer -- a timeout says
+    // nothing about what the server did -- so cleanup runs on both failures,
+    // not just the paste's. A named buffer is exempt from `buffer-limit`, so
+    // one left behind holds the whole prompt until the server restarts.
+    let outcome = match loaded {
+        Err(error) => Err(error),
+        Ok(()) => run(
+            StagedPromptStep::Paste,
+            staged.paste_argv(window_id),
+            format!("tmux paste-buffer failed for {window_id}"),
+        ),
+    };
+    match outcome {
         Ok(()) => Ok(()),
         Err(error) => {
             let _ = run(
@@ -3235,14 +3242,19 @@ where
     )
     .await;
     staged.discard_file();
-    loaded?;
-    match run(
-        StagedPromptStep::Paste,
-        staged.paste_argv(window_id),
-        format!("tmux paste-buffer failed for {window_id}"),
-    )
-    .await
-    {
+    // Same order as the sync executor, including cleanup after a failed load.
+    let outcome = match loaded {
+        Err(error) => Err(error),
+        Ok(()) => {
+            run(
+                StagedPromptStep::Paste,
+                staged.paste_argv(window_id),
+                format!("tmux paste-buffer failed for {window_id}"),
+            )
+            .await
+        }
+    };
+    match outcome {
         Ok(()) => Ok(()),
         Err(error) => {
             let _ = run(
@@ -4582,7 +4594,10 @@ mod staged_prompt_tests {
             error.contains("load-buffer"),
             "the error must name the step that failed, got {error}"
         );
-        assert_eq!(recorder.verbs(), vec!["load-buffer"]);
+        // No paste, but the buffer is dropped anyway: a failed load says
+        // nothing about whether the server created it.
+        assert_eq!(recorder.verbs(), vec!["load-buffer", "delete-buffer"]);
+        assert_eq!(recorder.steps, vec!["load", "cleanup"]);
         let path = recorder.loaded_path.expect("a staged path");
         assert!(
             !std::path::Path::new(&path).exists(),
