@@ -219,6 +219,7 @@ impl AsyncCommand {
         self
     }
 
+    #[track_caller]
     pub fn output(&mut self) -> Result<Output, AsyncCommandError> {
         let name = command_task_name("subprocess", &self.program_display());
         self.output_timeout(name, DEFAULT_COMMAND_TIMEOUT)
@@ -228,6 +229,7 @@ impl AsyncCommand {
         self.output_timeout_async(DEFAULT_COMMAND_TIMEOUT).await
     }
 
+    #[track_caller]
     pub fn output_timeout(
         &mut self,
         name: impl Into<String>,
@@ -244,6 +246,7 @@ impl AsyncCommand {
         run_output(self, timeout).await
     }
 
+    #[track_caller]
     pub fn status(&mut self) -> Result<ExitStatus, AsyncCommandError> {
         let name = command_task_name("subprocess", &self.program_display());
         self.status_timeout(name, DEFAULT_COMMAND_TIMEOUT)
@@ -259,6 +262,7 @@ impl AsyncCommand {
     /// it — a tmux attach, a `switch-client` that hands the terminal over. The
     /// 30s default is right for a query and catastrophic here: it ends the
     /// session out from under whoever is looking at it.
+    #[track_caller]
     pub fn status_unbounded(
         &mut self,
         name: impl Into<String>,
@@ -267,6 +271,7 @@ impl AsyncCommand {
         block_on_named(name, run_status_unbounded(self))
     }
 
+    #[track_caller]
     pub fn status_timeout(
         &mut self,
         name: impl Into<String>,
@@ -283,6 +288,7 @@ impl AsyncCommand {
         run_status(self, timeout).await
     }
 
+    #[track_caller]
     pub fn spawn_detached(&mut self, name: impl Into<String>) -> Result<u32, AsyncCommandError> {
         // aimux-async-seam: permanent - detached launch bridge for sync long-lived process launchers; helper disables kill_on_drop
         block_on_named(name, run_spawn_detached(self))
