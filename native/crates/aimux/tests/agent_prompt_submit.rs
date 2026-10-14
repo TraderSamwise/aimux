@@ -5,7 +5,7 @@
 //! there, against the two runtimes production actually uses.
 
 use aimux::agent_prompt_delivery::{
-    composer_still_contains_prompt_draft, composer_still_holds_prompt_text, current_composer_text,
+    composer_shows_pasted_draft, composer_still_holds_prompt_text, current_composer_text,
     prompt_draft_signature,
 };
 
@@ -15,11 +15,12 @@ const DRAFT: &str = "Aimux task Run: aimux task show t1 and report the mutation 
 fn a_codex_pasted_content_marker_counts_as_the_draft() {
     // Codex never shows a long paste, only its marker, so matching on the text
     // alone would time out and submit five seconds late.
-    assert!(composer_still_contains_prompt_draft(
+    assert!(composer_shows_pasted_draft(
         "› [Pasted Content 3434 chars]",
-        DRAFT
+        DRAFT,
+        None
     ));
-    assert!(!composer_still_contains_prompt_draft("› ", DRAFT));
+    assert!(!composer_shows_pasted_draft("› ", DRAFT, None));
 }
 
 // The paste marker is evidence BEFORE the carriage return and noise after it:
@@ -38,7 +39,7 @@ fn a_lingering_paste_marker_does_not_read_as_an_unsubmitted_prompt() {
         "› [Pasted text #2]",
     ] {
         assert!(
-            composer_still_contains_prompt_draft(marker_only, DRAFT),
+            composer_shows_pasted_draft(marker_only, DRAFT, None),
             "before submit the marker is the only sign the paste landed: {marker_only}"
         );
         assert!(
@@ -46,6 +47,42 @@ fn a_lingering_paste_marker_does_not_read_as_an_unsubmitted_prompt() {
             "after submit it is not evidence the prompt is still sitting: {marker_only}"
         );
     }
+}
+
+/// A marker that was ALREADY there is not evidence this paste landed.
+///
+/// Both delivery loops keep a prompt and retry it after a load or paste
+/// error. Without a baseline the retry saw the previous attempt's marker,
+/// counted it as the new draft, and released the carriage return for whatever
+/// the composer actually held -- stale or partial.
+#[test]
+fn a_marker_from_a_previous_attempt_is_not_evidence_of_this_paste() {
+    let marker = "\u{203a} [Pasted text #1 +11 lines]";
+
+    assert!(
+        !composer_shows_pasted_draft(marker, DRAFT, Some(marker)),
+        "the composer did not change, so nothing was pasted"
+    );
+    assert!(
+        composer_shows_pasted_draft("\u{203a} [Pasted text #2 +11 lines]", DRAFT, Some(marker)),
+        "a different marker is a new paste"
+    );
+    assert!(
+        composer_shows_pasted_draft(marker, DRAFT, Some("\u{203a} ")),
+        "a marker where the composer was empty is a new paste"
+    );
+    assert!(
+        composer_shows_pasted_draft(marker, DRAFT, None),
+        "with no baseline a marker still counts, as it did before"
+    );
+}
+
+/// The draft's own text needs no baseline: it is the draft.
+#[test]
+fn the_drafts_own_text_counts_whatever_was_there_before() {
+    let showing = format!("\u{203a} {DRAFT}");
+
+    assert!(composer_shows_pasted_draft(&showing, DRAFT, Some(&showing)));
 }
 
 /// The marker is a composer's own word for collapsed content, not any
@@ -58,7 +95,7 @@ fn an_unrelated_bracketed_line_is_not_a_paste_marker() {
         "› [pastedcontent]",
     ] {
         assert!(
-            !composer_still_contains_prompt_draft(not_a_marker, DRAFT),
+            !composer_shows_pasted_draft(not_a_marker, DRAFT, None),
             "{not_a_marker} is not evidence a paste landed"
         );
     }
@@ -79,14 +116,12 @@ fn only_the_current_composer_region_verifies_submit_clearance() {
     let echoed_after_submit = format!("› {DRAFT}\n• Working\n› ");
     let stuck_in_composer = format!("assistant output\n› {DRAFT}");
 
-    assert!(!composer_still_contains_prompt_draft(
+    assert!(!composer_shows_pasted_draft(
         &echoed_after_submit,
-        DRAFT
+        DRAFT,
+        None
     ));
-    assert!(composer_still_contains_prompt_draft(
-        &stuck_in_composer,
-        DRAFT
-    ));
+    assert!(composer_shows_pasted_draft(&stuck_in_composer, DRAFT, None));
 }
 
 #[test]

@@ -1626,7 +1626,12 @@ impl AgentOutputCaptureRuntime for FixtureAgentInputRuntime {
         Ok(())
     }
 
-    fn submit_prompt(&mut self, window_id: &str, _draft: &str) -> Result<(), String> {
+    fn submit_prompt(
+        &mut self,
+        window_id: &str,
+        _draft: &str,
+        _before: Option<&str>,
+    ) -> Result<(), String> {
         self.send_carriage_return(window_id)?;
         match self.submit_outcome {
             FixtureSubmitOutcome::Landed => Ok(()),

@@ -22,9 +22,36 @@ pub const VERIFY_AFTER_SUBMIT_MS: u64 = 700;
 /// Node sliced the signature to its last 240 characters.
 const SIGNATURE_CHARS: usize = 240;
 
-pub fn composer_still_contains_prompt_draft(pane: &str, draft: &str) -> bool {
-    current_composer_text(pane)
-        .is_some_and(|composer| text_contains_prompt_draft(&composer, draft, PasteMarker::Counts))
+/// Whether the composer shows the draft we just pasted.
+///
+/// `before` is the composer as it looked BEFORE this paste, and it is what
+/// makes a marker usable as evidence. Both delivery loops keep a prompt and
+/// retry it after a load or paste error, so a marker left by the previous
+/// attempt was satisfying the retry's check and releasing the carriage return
+/// for whatever was actually in the composer -- stale or partial. A marker
+/// that was already there says nothing about this attempt.
+///
+/// `None` means the pre-paste composer could not be read, which is not the
+/// same as "there was nothing there": with no baseline a marker counts, as it
+/// did before, because refusing to submit on an unreadable pane would fail
+/// deliveries that are fine.
+pub fn composer_shows_pasted_draft(pane: &str, draft: &str, before: Option<&str>) -> bool {
+    let Some(composer) = current_composer_text(pane) else {
+        return false;
+    };
+    if text_contains_prompt_draft(&composer, draft, PasteMarker::Ignored) {
+        return true;
+    }
+    // Normalized, because the wordings are capitalised differently and
+    // PASTE_MARKER_PREFIX is lowercase.
+    let normalized = normalize_words(&composer);
+    if !normalized.contains(PASTE_MARKER_PREFIX) {
+        return false;
+    }
+    match before.and_then(current_composer_text) {
+        Some(baseline) => normalize_words(&baseline) != normalized,
+        None => true,
+    }
 }
 
 /// The same question asked AFTER a carriage return, where the paste marker is
