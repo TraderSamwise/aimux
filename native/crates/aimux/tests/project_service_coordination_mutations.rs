@@ -56,19 +56,6 @@ impl AgentOutputCaptureRuntime for FakeDeliveryRuntime {
         Ok(())
     }
 
-    fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
-        if self.fail_text_for_window.as_deref() == Some(window_id) {
-            return Err(format!(
-                "tmux send-keys text failed for {window_id}: injected failure"
-            ));
-        }
-        self.actions.push(FakeRuntimeAction::Text(
-            window_id.to_owned(),
-            text.to_owned(),
-        ));
-        Ok(())
-    }
-
     /// A prompt is delivered as a buffer paste, so the injected failure is
     /// one the paste path can actually produce. The previous wording named
     /// `send-keys`, which no prompt has gone through since the paste landed.

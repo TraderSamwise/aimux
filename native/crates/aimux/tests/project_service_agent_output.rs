@@ -119,14 +119,6 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
         Ok(())
     }
 
-    fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
-        self.actions.push(FakeRuntimeAction::Text(
-            window_id.to_owned(),
-            text.to_owned(),
-        ));
-        Ok(())
-    }
-
     fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
         self.actions.push(FakeRuntimeAction::Text(
             window_id.to_owned(),
@@ -185,12 +177,8 @@ impl AgentOutputCaptureRuntime for FakeActivityRuntime {
         self.inner.resize_window(window_id, cols, rows)
     }
 
-    fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
-        self.inner.send_text(window_id, text)
-    }
-
     fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
-        self.inner.send_text(window_id, text)
+        self.inner.paste_text(window_id, text)
     }
 
     fn send_key(&mut self, window_id: &str, key: &str) -> Result<(), String> {

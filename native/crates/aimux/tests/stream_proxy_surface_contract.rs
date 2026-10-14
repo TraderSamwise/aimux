@@ -1603,14 +1603,6 @@ impl AgentOutputCaptureRuntime for FixtureAgentInputRuntime {
         Ok(String::new())
     }
 
-    fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
-        self.actions.push(FixtureInputAction::Text {
-            window_id: window_id.to_owned(),
-            text: text.to_owned(),
-        });
-        Ok(())
-    }
-
     fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
         self.actions.push(FixtureInputAction::Text {
             window_id: window_id.to_owned(),

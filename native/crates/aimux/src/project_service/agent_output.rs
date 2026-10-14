@@ -21,7 +21,7 @@ use crate::tmux::TmuxRuntimeManager;
 use crate::tmux::{
     CapturePaneOptions, StagedPromptStep, TMUX_RUNTIME_OWNER_OPTION, TmuxTarget,
     WINDOW_TARGET_FORMAT, capture_pane_argv, deliver_staged_prompt, deliver_staged_prompt_async,
-    resize_window_argv, send_carriage_return_argv, send_escape_argv, send_key_argv, send_text_argv,
+    resize_window_argv, send_carriage_return_argv, send_escape_argv, send_key_argv,
     try_tmux_command_from_env,
 };
 use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
@@ -118,10 +118,6 @@ pub trait AgentOutputCaptureRuntime {
 
     fn resize_window(&mut self, _window_id: &str, _cols: i64, _rows: i64) -> Result<(), String> {
         Err("live pane resize not supported by this service".into())
-    }
-
-    fn send_text(&mut self, _window_id: &str, _text: &str) -> Result<(), String> {
-        Err("agent input not supported by this service".into())
     }
 
     /// Deliver a whole prompt in one paste. See `paste_prompt_with`.
@@ -279,14 +275,6 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
         .map(|_| ())
     }
 
-    fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
-        run_tmux_argv(
-            send_text_argv(window_id, text),
-            format!("tmux send-keys text failed for {window_id}"),
-        )
-        .map(|_| ())
-    }
-
     fn send_key(&mut self, window_id: &str, key: &str) -> Result<(), String> {
         run_tmux_argv(
             send_key_argv(window_id, key),
@@ -433,14 +421,6 @@ impl AgentOutputCaptureRuntime for BoundedAgentOutputCaptureRuntime {
         self.run_tmux_argv(
             resize_window_argv(window_id, cols, rows),
             format!("tmux resize-window failed for {window_id}"),
-        )
-        .map(|_| ())
-    }
-
-    fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
-        self.run_tmux_argv(
-            send_text_argv(window_id, text),
-            format!("tmux send-keys text failed for {window_id}"),
         )
         .map(|_| ())
     }
@@ -3074,11 +3054,6 @@ mod tests {
             _options: CapturePaneOptions,
         ) -> Result<String, String> {
             Ok(String::new())
-        }
-
-        fn send_text(&mut self, _window_id: &str, text: &str) -> Result<(), String> {
-            self.text_sends.push(text.to_owned());
-            Ok(())
         }
 
         fn paste_text(&mut self, _window_id: &str, text: &str) -> Result<(), String> {
