@@ -11,6 +11,7 @@ use aimux::async_runtime::{
     render_doctor_tasks_report, spawn_blocking_named, spawn_named,
 };
 use aimux::async_subprocess::AsyncCommand;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 /// The panic payload of a task that refused a sync seam, as a string.
@@ -174,4 +175,50 @@ fn a_refused_seam_is_recorded_with_the_caller_location() {
         render_doctor_tasks_report(&doctor_tasks_report()).contains(&detail),
         "aimux doctor must show the refusal"
     );
+}
+
+/// A blocking task that has not started yet is still a task.
+///
+/// Registering inside the spawned closure looks equivalent and is not: a task
+/// queued behind a saturated blocking pool then appears nowhere -- neither
+/// live nor failed -- which is the one moment someone reads this surface to
+/// find out why nothing is moving. The pool here holds exactly one thread, so
+/// the queued closure provably cannot have run.
+#[test]
+fn a_blocking_task_queued_behind_a_saturated_pool_is_already_visible() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .max_blocking_threads(1)
+        .build()
+        .expect("a one-thread blocking pool");
+    let _entered = runtime.enter();
+    let (occupied, pool_is_busy) = mpsc::channel::<()>();
+    let (release, released) = mpsc::channel::<()>();
+    runtime.handle().spawn_blocking(move || {
+        occupied.send(()).expect("the test is still listening");
+        let _ = released.recv();
+    });
+    pool_is_busy
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the only pool thread is occupied");
+
+    let name = "test:queued-blocking";
+    let queued = spawn_blocking_named(name, || 1);
+
+    assert!(
+        doctor_tasks_report()
+            .tasks
+            .iter()
+            .any(|task| task.name == name),
+        "a blocking task waiting for the pool must still be visible"
+    );
+
+    release
+        .send(())
+        .expect("the occupying task is still waiting");
+    let value = runtime
+        // aimux-async-seam: test - sync test drains the task it queued
+        .block_on(queued)
+        .expect("the queued closure runs once the pool frees up");
+    assert_eq!(value, 1);
 }

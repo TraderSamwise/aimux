@@ -198,13 +198,22 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
-    let name = name.into();
+    // Registered here, not inside the closure: a blocking task queued behind a
+    // saturated pool has not started yet, and that is exactly when someone
+    // reads this surface to find out why nothing is moving.
+    // Registered here, not inside the closure: a blocking task queued behind a
+    // saturated pool has not started yet, and that is exactly when someone
+    // reads this surface to find out why nothing is moving.
+    let guard = registry().register(name.into(), AsyncTaskKind::Blocking);
     let runtime_handle = Handle::try_current()
         .ok()
         .unwrap_or_else(|| process_runtime().handle().clone());
     let blocking_handle = runtime_handle.clone();
     runtime_handle.spawn_blocking(move || {
-        let guard = registry().register(name, AsyncTaskKind::Blocking);
+        // Dropped on the pool thread after `with_blocking_runtime_handle`
+        // resumes the unwind, so a panicking closure is recorded.
+        // Dropped on the pool thread after `with_blocking_runtime_handle`
+        // resumes the unwind, so a panicking closure is recorded.
         let _guard = guard;
         with_blocking_runtime_handle(blocking_handle, closure)
     })
