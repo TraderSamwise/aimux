@@ -1,7 +1,7 @@
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{
     DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS, SETTLE_BEFORE_SUBMIT_MS,
-    SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS, composer_still_contains_prompt_draft,
+    SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS, composer_shows_pasted_draft,
     composer_still_holds_prompt_text, prompt_draft_signature,
 };
 #[cfg(test)]
@@ -135,7 +135,24 @@ pub trait AgentOutputCaptureRuntime {
 
     /// Submit a prompt that was just pasted. `draft` is what to look for on
     /// screen while waiting for the paste to render.
-    fn submit_prompt(&mut self, window_id: &str, _draft: &str) -> Result<(), String> {
+    /// The composer as it looks right now, for use as a pre-paste baseline.
+    ///
+    /// `None` means "not known", which is what a service that cannot read the
+    /// pane should say -- and what a test double that does not model a
+    /// composer says. `composer_shows_pasted_draft` treats an unknown
+    /// baseline the way it behaved before there was one.
+    fn composer_snapshot(&mut self, _window_id: &str) -> Option<String> {
+        None
+    }
+
+    /// `before` is the composer as it looked before the paste; see
+    /// `composer_shows_pasted_draft` for why a marker needs it.
+    fn submit_prompt(
+        &mut self,
+        window_id: &str,
+        _draft: &str,
+        _before: Option<&str>,
+    ) -> Result<(), String> {
         self.send_carriage_return(window_id)
     }
 
@@ -216,6 +233,17 @@ impl<T: AgentOutputCaptureRuntime> TmuxMetadataSyncRuntime for T {
 pub struct SystemAgentOutputCaptureRuntime;
 
 impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
+    fn composer_snapshot(&mut self, window_id: &str) -> Option<String> {
+        self.capture_pane(
+            window_id,
+            CapturePaneOptions {
+                start_line: Some(DRAFT_CAPTURE_START_LINE),
+                ..CapturePaneOptions::default()
+            },
+        )
+        .ok()
+    }
+
     fn verify_target_runtime(
         &mut self,
         target: &TmuxTarget,
@@ -297,13 +325,18 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
         })
     }
 
-    fn submit_prompt(&mut self, window_id: &str, draft: &str) -> Result<(), String> {
+    fn submit_prompt(
+        &mut self,
+        window_id: &str,
+        draft: &str,
+        before: Option<&str>,
+    ) -> Result<(), String> {
         let mut runtime = SystemSyncPromptSubmitRuntime {
             window_id: window_id.to_owned(),
             generation: claim_submit_generation(window_id),
             deadline: Instant::now() + AGENT_INPUT_ROUTE_TIMEOUT,
         };
-        wait_for_prompt_submit_confirmed_sync(&mut runtime, draft)
+        wait_for_prompt_submit_confirmed_sync(&mut runtime, draft, before)
     }
 
     fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
@@ -406,6 +439,17 @@ impl BoundedAgentOutputCaptureRuntime {
 }
 
 impl AgentOutputCaptureRuntime for BoundedAgentOutputCaptureRuntime {
+    fn composer_snapshot(&mut self, window_id: &str) -> Option<String> {
+        self.capture_pane(
+            window_id,
+            CapturePaneOptions {
+                start_line: Some(DRAFT_CAPTURE_START_LINE),
+                ..CapturePaneOptions::default()
+            },
+        )
+        .ok()
+    }
+
     fn capture_pane(
         &mut self,
         window_id: &str,
@@ -448,14 +492,19 @@ impl AgentOutputCaptureRuntime for BoundedAgentOutputCaptureRuntime {
         })
     }
 
-    fn submit_prompt(&mut self, window_id: &str, draft: &str) -> Result<(), String> {
+    fn submit_prompt(
+        &mut self,
+        window_id: &str,
+        draft: &str,
+        before: Option<&str>,
+    ) -> Result<(), String> {
         let mut runtime = BoundedPromptSubmitRuntime {
             window_id: window_id.to_owned(),
             generation: claim_submit_generation(window_id),
             deadline: self.deadline,
             cancelled: Arc::clone(&self.cancelled),
         };
-        wait_for_prompt_submit_confirmed_sync(&mut runtime, draft)
+        wait_for_prompt_submit_confirmed_sync(&mut runtime, draft, before)
     }
 
     fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
@@ -2152,10 +2201,19 @@ pub(super) fn deliver_prompt_to_tmux_for_tool(
     prompt: &str,
     tool: Option<&str>,
 ) -> Result<(), String> {
-    send_prompt_to_tmux(runtime, window_id, prompt)?;
     match prompt_submit_mode_for_tool(tool) {
-        PromptSubmitMode::DirectShell => runtime.send_carriage_return(window_id),
-        PromptSubmitMode::AgentComposer => runtime.submit_prompt(window_id, prompt),
+        PromptSubmitMode::DirectShell => {
+            send_prompt_to_tmux(runtime, window_id, prompt)?;
+            runtime.send_carriage_return(window_id)
+        }
+        PromptSubmitMode::AgentComposer => {
+            // Read the composer BEFORE the paste: a marker already sitting
+            // there is not evidence that THIS paste landed. Only the composer
+            // path can use a baseline, so only it pays for one.
+            let before = runtime.composer_snapshot(window_id);
+            send_prompt_to_tmux(runtime, window_id, prompt)?;
+            runtime.submit_prompt(window_id, prompt, before.as_deref())
+        }
     }
 }
 fn remote_actor_from_headers(
@@ -2523,19 +2581,46 @@ pub(super) async fn deliver_prompt_to_tmux_async_for_tool(
     tool: Option<&str>,
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
-    send_prompt_to_tmux_async(window_id, prompt, deadline).await?;
     match prompt_submit_mode_for_tool(tool) {
-        PromptSubmitMode::DirectShell => run_tmux_argv_with_timeout_async(
-            send_carriage_return_argv(window_id),
-            format!("tmux send carriage return failed for {window_id}"),
-            remaining_until(deadline)?,
-        )
-        .await
-        .map(|_| ()),
+        PromptSubmitMode::DirectShell => {
+            send_prompt_to_tmux_async(window_id, prompt, deadline).await?;
+            run_tmux_argv_with_timeout_async(
+                send_carriage_return_argv(window_id),
+                format!("tmux send carriage return failed for {window_id}"),
+                remaining_until(deadline)?,
+            )
+            .await
+            .map(|_| ())
+        }
         PromptSubmitMode::AgentComposer => {
-            wait_for_prompt_submit_async(window_id, prompt, deadline).await
+            // Same baseline as the sync path, and inside this arm for the same
+            // reason: a shell route has no submit wait to spend it on, and a
+            // `capture-pane` that stalls would eat the deadline the paste
+            // still needs. A failed read is `None`.
+            let before = composer_before_paste_async(window_id, deadline).await;
+            send_prompt_to_tmux_async(window_id, prompt, deadline).await?;
+            wait_for_prompt_submit_async(window_id, prompt, deadline, before.as_deref()).await
         }
     }
+}
+
+async fn composer_before_paste_async(window_id: &str, deadline: Instant) -> Option<String> {
+    let argv = capture_pane_argv(
+        window_id,
+        CapturePaneOptions {
+            start_line: Some(DRAFT_CAPTURE_START_LINE),
+            ..CapturePaneOptions::default()
+        },
+    );
+    let timeout = remaining_until(deadline).ok()?;
+    run_tmux_argv_with_timeout_async(
+        argv,
+        format!("tmux capture-pane failed for {window_id}"),
+        timeout,
+    )
+    .await
+    .ok()
+    .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn prompt_submit_mode_for_tool(tool: Option<&str>) -> PromptSubmitMode {
@@ -2564,18 +2649,20 @@ async fn wait_for_prompt_submit_async(
     window_id: &str,
     draft: &str,
     deadline: Instant,
+    before: Option<&str>,
 ) -> Result<(), String> {
     let mut runtime = SystemAsyncPromptSubmitRuntime {
         window_id: window_id.to_owned(),
         generation: claim_submit_generation(window_id),
         deadline,
     };
-    wait_for_prompt_submit_with_runtime_async(&mut runtime, draft).await
+    wait_for_prompt_submit_with_runtime_async(&mut runtime, draft, before).await
 }
 
 async fn wait_for_prompt_submit_with_runtime_async(
     runtime: &mut dyn AsyncPromptSubmitRuntime,
     draft: &str,
+    before: Option<&str>,
 ) -> Result<(), String> {
     let mut visible_count = 0u32;
     let mut last_signature = String::new();
@@ -2596,7 +2683,7 @@ async fn wait_for_prompt_submit_with_runtime_async(
             .map_err(|error| {
                 format!("agent input submit verification failed before submit: {error}")
             })?;
-        let still_draft = composer_still_contains_prompt_draft(&pane, draft);
+        let still_draft = composer_shows_pasted_draft(&pane, draft, before);
         let signature = if still_draft {
             runtime
                 .capture(SIGNATURE_CAPTURE_START_LINE)
@@ -2776,6 +2863,7 @@ trait SyncPromptSubmitRuntime {
 fn wait_for_prompt_submit_confirmed_sync(
     runtime: &mut dyn SyncPromptSubmitRuntime,
     draft: &str,
+    before: Option<&str>,
 ) -> Result<(), String> {
     let mut visible_count = 0u32;
     let mut last_signature = String::new();
@@ -2790,7 +2878,7 @@ fn wait_for_prompt_submit_confirmed_sync(
         let pane = runtime.capture(DRAFT_CAPTURE_START_LINE).map_err(|error| {
             format!("agent input submit verification failed before submit: {error}")
         })?;
-        let still_draft = composer_still_contains_prompt_draft(&pane, draft);
+        let still_draft = composer_shows_pasted_draft(&pane, draft, before);
         let signature = if still_draft {
             prompt_draft_signature(&runtime.capture(SIGNATURE_CAPTURE_START_LINE).map_err(
                 |error| {
@@ -3045,6 +3133,11 @@ mod tests {
         key_sends: Vec<String>,
         carriage_returns: usize,
         submit_prompts: Vec<String>,
+        /// What the composer held when the delivery asked, and the baseline
+        /// it then handed to the submit -- recorded so the ORDER is checkable.
+        composer: Option<String>,
+        asked_for_composer_before_sending: Option<bool>,
+        submitted_baseline: Option<Option<String>>,
     }
 
     impl AgentOutputCaptureRuntime for FakeAgentInputRuntime {
@@ -3071,7 +3164,18 @@ mod tests {
             Ok(())
         }
 
-        fn submit_prompt(&mut self, _window_id: &str, draft: &str) -> Result<(), String> {
+        fn composer_snapshot(&mut self, _window_id: &str) -> Option<String> {
+            self.asked_for_composer_before_sending = Some(self.text_sends.is_empty());
+            self.composer.clone()
+        }
+
+        fn submit_prompt(
+            &mut self,
+            _window_id: &str,
+            draft: &str,
+            before: Option<&str>,
+        ) -> Result<(), String> {
+            self.submitted_baseline = Some(before.map(str::to_owned));
             self.submit_prompts.push(draft.to_owned());
             Ok(())
         }
@@ -3118,6 +3222,46 @@ mod tests {
             Ok(remaining),
             "a live deadline is passed through untouched"
         );
+    }
+
+    /// The delivery must ask for the baseline BEFORE it pastes.
+    ///
+    /// Asking after would snapshot the pane the paste just changed, which is
+    /// no baseline at all, and handing the submit `None` would quietly put
+    /// the stale-marker hole back.
+    #[test]
+    fn the_composer_is_read_before_the_paste_and_handed_to_the_submit() {
+        let marker = "\u{203a} [Pasted text #1 +11 lines]";
+        let mut runtime = FakeAgentInputRuntime {
+            composer: Some(marker.to_owned()),
+            ..FakeAgentInputRuntime::default()
+        };
+
+        deliver_prompt_to_tmux_for_tool(&mut runtime, "@1", "a prompt", Some("claude"))
+            .expect("delivered");
+
+        assert_eq!(
+            runtime.asked_for_composer_before_sending,
+            Some(true),
+            "the baseline has to be read before the paste, not after"
+        );
+        assert_eq!(
+            runtime.submitted_baseline,
+            Some(Some(marker.to_owned())),
+            "what was read must be what the submit is given"
+        );
+    }
+
+    /// A shell pane has no composer and no submit wait, so it pays nothing.
+    #[test]
+    fn a_shell_delivery_does_not_read_the_composer_at_all() {
+        let mut runtime = FakeAgentInputRuntime::default();
+
+        deliver_prompt_to_tmux_for_tool(&mut runtime, "@1", "echo hi", Some("shell"))
+            .expect("delivered");
+
+        assert_eq!(runtime.asked_for_composer_before_sending, None);
+        assert_eq!(runtime.carriage_returns, 1);
     }
 
     #[test]
@@ -3258,7 +3402,7 @@ mod tests {
     fn the_sync_submit_waits_for_the_draft_to_settle_then_sends_once() {
         let mut runtime = FakeSyncPromptSubmitRuntime::showing("hello from the route");
 
-        wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
+        wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route", None)
             .expect("the draft settles and the composer clears");
 
         assert_eq!(runtime.carriage_returns, 1, "exactly one carriage return");
@@ -3282,10 +3426,95 @@ mod tests {
             ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
         };
 
-        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
-            .expect_err("the draft is still sitting there");
+        let error =
+            wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route", None)
+                .expect_err("the draft is still sitting there");
 
         assert!(error.contains("remained visible"), "got {error}");
+    }
+
+    /// The async loop must use the baseline too, not just be handed one.
+    #[test]
+    fn a_stale_marker_does_not_settle_the_async_submit() {
+        let draft = "hello from the route";
+        let marker = "\u{203a} [Pasted text #1 +11 lines]";
+        let mut runtime = FakeAsyncPromptSubmitRuntime {
+            captures: std::collections::VecDeque::new(),
+            ..FakeAsyncPromptSubmitRuntime::successful(draft)
+        };
+        runtime.captures.push_back(Ok(marker.to_owned()));
+        runtime.captures.push_back(Ok(marker.to_owned()));
+        runtime.captures.push_back(Ok(marker.to_owned()));
+        runtime.captures.push_back(Ok(marker.to_owned()));
+        runtime.captures.push_back(Ok(marker.to_owned()));
+
+        // aimux-async-seam: test - agent output unit test drives async submit verification
+        crate::async_runtime::block_on_named("agent-output:test-stale-marker", async {
+            wait_for_prompt_submit_with_runtime_async(&mut runtime, draft, Some(marker)).await
+        })
+        .expect("it still submits rather than losing the prompt");
+
+        assert!(
+            runtime.sleeps.len() > 4,
+            "a stale marker must not settle on two polls: {:?}",
+            runtime.sleeps
+        );
+    }
+
+    /// The LOOP must use the baseline, not merely be handed one.
+    ///
+    /// With a stale marker and a baseline that matches it, nothing settles:
+    /// the loop polls to its limit instead of releasing the return on the
+    /// second poll. Passing the baseline and then ignoring it looks identical
+    /// without this.
+    #[test]
+    fn a_stale_marker_does_not_settle_the_sync_submit() {
+        let draft = "hello from the route";
+        let marker = "\u{203a} [Pasted text #1 +11 lines]";
+        let mut runtime = FakeSyncPromptSubmitRuntime {
+            captures: std::collections::VecDeque::new(),
+            last_capture: Ok(marker.to_owned()),
+            ..FakeSyncPromptSubmitRuntime::showing(draft)
+        };
+
+        // The marker is all there is, and it was there before the paste.
+        wait_for_prompt_submit_confirmed_sync(&mut runtime, draft, Some(marker))
+            .expect("it still submits at the end rather than losing the prompt");
+
+        let polls = runtime
+            .sleeps
+            .iter()
+            .filter(|millis| **millis == FIRST_POLL_MS || **millis == POLL_MS)
+            .count();
+        assert_eq!(
+            polls, MAX_POLL_ATTEMPTS as usize,
+            "a stale marker must never settle: {:?}",
+            runtime.sleeps
+        );
+    }
+
+    /// The same pane WITHOUT a baseline settles on the second poll, which is
+    /// what makes the test above about the baseline and not about the pane.
+    #[test]
+    fn the_same_marker_with_no_baseline_settles_as_it_always_did() {
+        let draft = "hello from the route";
+        let marker = "\u{203a} [Pasted text #1 +11 lines]";
+        let mut runtime = FakeSyncPromptSubmitRuntime {
+            captures: std::collections::VecDeque::from([
+                Ok(marker.to_owned()),
+                Ok(marker.to_owned()),
+            ]),
+            ..FakeSyncPromptSubmitRuntime::showing(draft)
+        };
+
+        wait_for_prompt_submit_confirmed_sync(&mut runtime, draft, None).expect("it settles");
+
+        let polls = runtime
+            .sleeps
+            .iter()
+            .filter(|millis| **millis == FIRST_POLL_MS || **millis == POLL_MS)
+            .count();
+        assert_eq!(polls, 2, "with no baseline the marker is evidence");
     }
 
     /// A pane still filling in must not release the carriage return.
@@ -3308,7 +3537,8 @@ mod tests {
             ..FakeSyncPromptSubmitRuntime::showing(draft)
         };
 
-        wait_for_prompt_submit_confirmed_sync(&mut runtime, draft).expect("it settles eventually");
+        wait_for_prompt_submit_confirmed_sync(&mut runtime, draft, None)
+            .expect("it settles eventually");
 
         assert_eq!(runtime.carriage_returns, 1);
         let polls = runtime
@@ -3332,7 +3562,7 @@ mod tests {
             ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
         };
 
-        wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
+        wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route", None)
             .expect("an unrendered draft is still submitted");
 
         assert_eq!(runtime.carriage_returns, 1);
@@ -3346,8 +3576,9 @@ mod tests {
             ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
         };
 
-        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
-            .expect_err("a superseded submit is not a delivery");
+        let error =
+            wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route", None)
+                .expect_err("a superseded submit is not a delivery");
 
         assert!(error.contains("superseded"), "got {error}");
         assert_eq!(runtime.carriage_returns, 0, "no stray carriage return");
@@ -3361,8 +3592,9 @@ mod tests {
             ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
         };
 
-        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
-            .expect_err("a superseded submit is not a delivery");
+        let error =
+            wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route", None)
+                .expect_err("a superseded submit is not a delivery");
 
         assert!(error.contains("superseded"), "got {error}");
         assert_eq!(runtime.carriage_returns, 0);
@@ -3376,8 +3608,9 @@ mod tests {
             ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
         };
 
-        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
-            .expect_err("a capture failure is not an empty composer");
+        let error =
+            wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route", None)
+                .expect_err("a capture failure is not an empty composer");
 
         assert!(error.contains("capture-pane refused"), "got {error}");
         assert_eq!(runtime.carriage_returns, 0);
@@ -3391,8 +3624,9 @@ mod tests {
             ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
         };
 
-        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
-            .expect_err("a refused carriage return is not a submit");
+        let error =
+            wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route", None)
+                .expect_err("a refused carriage return is not a submit");
 
         assert!(error.contains("send-keys refused"), "got {error}");
     }
@@ -3411,8 +3645,9 @@ mod tests {
             ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
         };
 
-        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
-            .expect_err("an unverifiable submit is not a confirmed one");
+        let error =
+            wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route", None)
+                .expect_err("an unverifiable submit is not a confirmed one");
 
         assert!(error.contains("before verification"), "got {error}");
         assert_eq!(runtime.carriage_returns, 1, "the return had already gone");
@@ -3426,8 +3661,9 @@ mod tests {
             ..FakeSyncPromptSubmitRuntime::showing("hello from the route")
         };
 
-        let error = wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route")
-            .expect_err("an expired deadline is not a submit");
+        let error =
+            wait_for_prompt_submit_confirmed_sync(&mut runtime, "hello from the route", None)
+                .expect_err("an expired deadline is not a submit");
 
         assert!(error.contains("timed out"), "got {error}");
         assert_eq!(runtime.carriage_returns, 0, "no blind carriage return");
@@ -3499,7 +3735,7 @@ mod tests {
 
         // aimux-async-seam: test - agent output unit test drives async submit verification
         crate::async_runtime::block_on_named("agent-output:test-submit-success", async {
-            wait_for_prompt_submit_with_runtime_async(&mut runtime, "hello from route")
+            wait_for_prompt_submit_with_runtime_async(&mut runtime, "hello from route", None)
                 .await
                 .expect("submit verified");
         });
@@ -3523,7 +3759,7 @@ mod tests {
 
         // aimux-async-seam: test - agent output unit test drives async submit verification
         crate::async_runtime::block_on_named("agent-output:test-submit-transcript-echo", async {
-            wait_for_prompt_submit_with_runtime_async(&mut runtime, "echoed draft")
+            wait_for_prompt_submit_with_runtime_async(&mut runtime, "echoed draft", None)
                 .await
                 .expect("submit echo verified");
         });
@@ -3551,7 +3787,7 @@ mod tests {
 
         // aimux-async-seam: test - agent output unit test drives async submit verification
         crate::async_runtime::block_on_named("agent-output:test-submit-stale-echo", async {
-            wait_for_prompt_submit_with_runtime_async(&mut runtime, "stale async draft")
+            wait_for_prompt_submit_with_runtime_async(&mut runtime, "stale async draft", None)
                 .await
                 .expect("submit ignored stale transcript echo");
         });
@@ -3584,7 +3820,7 @@ mod tests {
         let error = {
             // aimux-async-seam: test - agent output unit test drives async submit verification
             crate::async_runtime::block_on_named("agent-output:test-submit-send-failure", async {
-                wait_for_prompt_submit_with_runtime_async(&mut runtime, "stuck draft")
+                wait_for_prompt_submit_with_runtime_async(&mut runtime, "stuck draft", None)
                     .await
                     .expect_err("submit send failure must not be accepted")
             })
@@ -3617,7 +3853,7 @@ mod tests {
             crate::async_runtime::block_on_named(
                 "agent-output:test-submit-capture-failure",
                 async {
-                    wait_for_prompt_submit_with_runtime_async(&mut runtime, "verify draft")
+                    wait_for_prompt_submit_with_runtime_async(&mut runtime, "verify draft", None)
                         .await
                         .expect_err("verification capture failure must not be accepted")
                 },

@@ -139,7 +139,12 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
         self.send_carriage_return_result.clone().unwrap_or(Ok(()))
     }
 
-    fn submit_prompt(&mut self, window_id: &str, _draft: &str) -> Result<(), String> {
+    fn submit_prompt(
+        &mut self,
+        window_id: &str,
+        _draft: &str,
+        _before: Option<&str>,
+    ) -> Result<(), String> {
         self.send_carriage_return(window_id)?;
         match self.submit_outcome {
             FakeSubmitOutcome::Landed => Ok(()),
@@ -189,8 +194,13 @@ impl AgentOutputCaptureRuntime for FakeActivityRuntime {
         self.inner.send_carriage_return(window_id)
     }
 
-    fn submit_prompt(&mut self, window_id: &str, draft: &str) -> Result<(), String> {
-        self.inner.submit_prompt(window_id, draft)
+    fn submit_prompt(
+        &mut self,
+        window_id: &str,
+        draft: &str,
+        before: Option<&str>,
+    ) -> Result<(), String> {
+        self.inner.submit_prompt(window_id, draft, before)
     }
 
     fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
