@@ -1605,6 +1605,38 @@ fn migration_commands_plan_native_local_actions() {
     );
 }
 
+/// `aimux doctor services` has to be CLASSIFIED, not just handled.
+///
+/// The branch that builds this route shipped unreachable once: the enclosing
+/// match arm's subcommand list omitted "services", so the help advertised a
+/// command that errored and the health-wait message told people to run it.
+/// Nothing caught that, because the contract test pins the route constant and
+/// the route test pins the handler -- neither of them the CLI's own list.
+#[test]
+fn doctor_services_command_plans_the_native_text_route() {
+    let services = classify_core_cli(&["doctor", "services"], &context(true, true))
+        .expect("doctor services must be a recognized command");
+
+    assert_eq!(services.operation, CoreCliOperation::DoctorServices);
+    assert_eq!(
+        services.action,
+        CoreCliAction::TextRoute {
+            path: "/core/doctor/services-text".into(),
+            body: None,
+        }
+    );
+
+    let json = classify_core_cli(&["doctor", "services", "--json"], &context(true, true))
+        .expect("doctor services --json must be a recognized command");
+    assert_eq!(
+        json.action,
+        CoreCliAction::TextRoute {
+            path: "/core/doctor/services-text?json=1".into(),
+            body: None,
+        }
+    );
+}
+
 #[test]
 fn doctor_disk_and_tmux_commands_plan_native_text_routes() {
     let disk = classify_core_cli_with_project_resolver(

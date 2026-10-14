@@ -2319,7 +2319,7 @@ where
         (
             "doctor",
             "coherence" | "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "stability"
-            | "installs" | "notifications",
+            | "services" | "installs" | "notifications",
         ) => {
             let parsed = parse_core_doctor_args(&args).expect("eligible doctor must parse");
             if parsed.subcommand == "disk" {

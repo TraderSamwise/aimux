@@ -145,6 +145,37 @@ fn daemon_route_url_and_param_helpers_match_typescript_rules() {
     );
 }
 
+/// Every `doctor` text route is a local-CLI verb, so the list that 403s
+/// everything else has to carry all of them.
+///
+/// Written as a sweep rather than one assertion per route because the thing
+/// that goes wrong is a NEW doctor route forgetting this list: a single
+/// membership check cannot notice the one nobody added.
+#[test]
+fn every_doctor_text_route_is_a_local_cli_route() {
+    let missing = CORE_API_ROUTES
+        .entries()
+        .into_iter()
+        .filter(|(key, _)| key.starts_with("doctor"))
+        .filter(|(_, path)| !local_cli_text_routes().contains(path))
+        .collect::<Vec<_>>();
+
+    assert!(
+        missing.is_empty(),
+        "these doctor routes would be refused for the local CLI: {missing:?}"
+    );
+    // And the inverse, so the sweep cannot pass by finding nothing to check.
+    assert!(
+        CORE_API_ROUTES
+            .entries()
+            .iter()
+            .filter(|(key, _)| key.starts_with("doctor"))
+            .count()
+            >= 9,
+        "the sweep must actually see the doctor routes"
+    );
+}
+
 #[test]
 fn text_routes_and_auth_routes_are_grouped_for_daemon_split() {
     assert!(local_auth_routes().contains(&CORE_API_ROUTES.login_text));

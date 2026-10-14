@@ -53,7 +53,7 @@ pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArg
     let subcommand = match args.get(1).map(AsRef::as_ref) {
         Some(
             "coherence" | "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "stability"
-            | "installs" | "notifications",
+            | "services" | "installs" | "notifications",
         ) => args[1].as_ref().to_owned(),
         _ => return None,
     };
@@ -874,7 +874,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
             Some("doctor"),
             Some(
                 "coherence" | "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "stability"
-                | "installs" | "notifications",
+                | "services" | "installs" | "notifications",
             ),
         ) => parse_core_doctor_args(args).is_some(),
         (Some("metadata"), _) => parse_core_metadata_args(args).is_some(),

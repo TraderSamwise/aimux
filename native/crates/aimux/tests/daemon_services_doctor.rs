@@ -16,7 +16,7 @@ use aimux::daemon_state::MetadataApiEndpoint;
 struct FakeServices {
     roots: Result<Vec<String>, String>,
     endpoint: Option<Result<Option<MetadataApiEndpoint>, String>>,
-    alive: bool,
+    identified: bool,
     probe: Option<Result<(), ServiceProbeFailure>>,
 }
 
@@ -25,7 +25,7 @@ impl Default for FakeServices {
         Self {
             roots: Ok(Vec::new()),
             endpoint: None,
-            alive: false,
+            identified: false,
             probe: None,
         }
     }
@@ -42,8 +42,8 @@ impl ServicesDoctorRuntime for FakeServices {
             .unwrap_or(Ok(Some(endpoint_at(43_444, 78_486))))
     }
 
-    fn is_pid_alive(&mut self, _pid: i32) -> bool {
-        self.alive
+    fn pid_is_this_projects_service(&mut self, _pid: i32, _project_root: &str) -> bool {
+        self.identified
     }
 
     fn probe_patiently(
@@ -79,7 +79,7 @@ fn silent_but_held() -> Option<Result<(), ServiceProbeFailure>> {
 fn a_live_process_holding_a_silent_port_is_reported_as_wedged() {
     let mut runtime = FakeServices {
         roots: one_project(),
-        alive: true,
+        identified: true,
         probe: silent_but_held(),
         ..FakeServices::default()
     };
@@ -105,7 +105,7 @@ fn a_live_process_holding_a_silent_port_is_reported_as_wedged() {
 fn a_live_process_with_a_refused_port_is_not_wedged() {
     let mut runtime = FakeServices {
         roots: one_project(),
-        alive: true,
+        identified: true,
         probe: Some(Err(ServiceProbeFailure {
             reason: "nothing is listening on that port (connection refused)".to_owned(),
             port_accepted: false,
@@ -125,12 +125,14 @@ fn a_live_process_with_a_refused_port_is_not_wedged() {
     assert!(!text.contains("WEDGED"), "{text}");
 }
 
-/// A silent port whose process is gone is a stale endpoint, not a wedge.
+/// A silent port whose pid is no longer this project's service -- gone, or
+/// recycled to something else -- is a stale endpoint, not a wedge. Advising a
+/// kill there would point at an unrelated program.
 #[test]
-fn a_dead_process_is_never_wedged() {
+fn an_unidentified_pid_is_never_wedged() {
     let mut runtime = FakeServices {
         roots: one_project(),
-        alive: false,
+        identified: false,
         probe: silent_but_held(),
         ..FakeServices::default()
     };
@@ -140,7 +142,14 @@ fn a_dead_process_is_never_wedged() {
     assert_eq!(report.totals.wedged, 0);
     assert_eq!(report.totals.not_listening, 1);
     let text = render_services_doctor_report(&report);
-    assert!(text.contains("no longer running"), "{text}");
+    assert!(
+        text.contains("not running as this project's service any more"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("killing pid"),
+        "an unidentified pid must never be named as a kill target: {text}"
+    );
 }
 
 /// The inverse that matters most: a healthy service must never be named.
@@ -148,7 +157,7 @@ fn a_dead_process_is_never_wedged() {
 fn a_service_that_answers_is_reported_as_answered() {
     let mut runtime = FakeServices {
         roots: one_project(),
-        alive: true,
+        identified: true,
         probe: Some(Ok(())),
         ..FakeServices::default()
     };
@@ -249,7 +258,7 @@ fn a_wedged_service_is_named_among_healthy_ones() {
             )))
         }
 
-        fn is_pid_alive(&mut self, _pid: i32) -> bool {
+        fn pid_is_this_projects_service(&mut self, _pid: i32, _project_root: &str) -> bool {
             true
         }
 

@@ -1,6 +1,9 @@
 use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::daemon::http::DaemonResponseBody;
 use aimux::daemon::routing::DaemonRouteResponse;
+use aimux::daemon::services_doctor::{
+    ServiceHealth, ServiceVerdict, ServicesDoctorReport, ServicesDoctorTotals,
+};
 use aimux::daemon::stability_doctor::{
     StabilityDoctorReport, StabilityReason, StabilityReasonSeverity, StabilityVerdict,
 };
@@ -141,6 +144,32 @@ impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
             json!({ "ok": true, "projectRoot": project_root }),
             "Tmux Doctor\n  ok".into(),
         ))
+    }
+
+    fn doctor_services_report(&mut self) -> Result<ServicesDoctorReport, String> {
+        self.calls.push(Call::simple("services"));
+        Ok(ServicesDoctorReport {
+            totals: ServicesDoctorTotals {
+                answered: 1,
+                wedged: 1,
+                not_listening: 0,
+                unknown: 0,
+            },
+            services: vec![
+                ServiceHealth {
+                    project_root: "/healthy".into(),
+                    endpoint: None,
+                    verdict: ServiceVerdict::Answered,
+                    detail: String::new(),
+                },
+                ServiceHealth {
+                    project_root: "/wedged".into(),
+                    endpoint: None,
+                    verdict: ServiceVerdict::Wedged { pid: 78_486 },
+                    detail: "pid 78486 is alive and holding that port".into(),
+                },
+            ],
+        })
     }
 
     fn doctor_stability_report(
@@ -727,6 +756,45 @@ fn doctor_tasks_text_and_json_routes_render_runtime_task_registry() {
             .any(|task| task["name"] == task_name)
     );
     handle.abort();
+}
+
+/// The route exists, is reachable, and renders. Nothing pinned this before:
+/// the contract test pins the route CONSTANT, which a handler that never fires
+/// satisfies just as well.
+#[test]
+fn doctor_services_text_and_json_routes_render_every_service() {
+    let mut runtime = FakeOperationsRuntime::default();
+
+    let text = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        CORE_API_ROUTES.doctor_services_text,
+        None,
+    )
+    .expect("services route");
+
+    assert_eq!(text.status, 200);
+    let body = text_body(text);
+    assert!(body.contains("Project Services\n"), "{body}");
+    assert!(body.contains("answered: 1 wedged: 1"), "{body}");
+    assert!(body.contains("/wedged"), "{body}");
+    assert!(
+        body.contains("pid 78486 is alive and holding that port"),
+        "{body}"
+    );
+    assert_eq!(runtime.calls[0].name, "services");
+
+    let json = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?json=1", CORE_API_ROUTES.doctor_services_text),
+        None,
+    )
+    .expect("services json route");
+    let report = json_text(json);
+    assert_eq!(report["totals"]["wedged"], json!(1));
+    assert_eq!(report["services"][1]["verdict"]["kind"], json!("wedged"));
+    assert_eq!(report["services"][1]["verdict"]["pid"], json!(78_486));
 }
 
 #[test]

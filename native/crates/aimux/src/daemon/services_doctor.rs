@@ -69,7 +69,16 @@ pub trait ServicesDoctorRuntime {
     /// `Ok(None)` means the service has no endpoint recorded; `Err` means the
     /// record could not be read, which is a different answer.
     fn endpoint_for(&mut self, project_root: &str) -> Result<Option<MetadataApiEndpoint>, String>;
-    fn is_pid_alive(&mut self, pid: i32) -> bool;
+    /// Whether this pid is still running AND still looks like THIS project's
+    /// aimux service.
+    ///
+    /// Liveness alone is not enough to advise a kill. A recorded endpoint
+    /// outlives its process, pids are recycled, and the daemon's own
+    /// escalation already refuses to signal anything it cannot identify --
+    /// `belongs_to_aimux_home` plus the service's own argv. Naming a kill
+    /// against an unidentified pid would point someone at an unrelated
+    /// program.
+    fn pid_is_this_projects_service(&mut self, pid: i32, project_root: &str) -> bool;
     /// `Ok(())` when `/health` answered for this endpoint's pid within the
     /// patient budget, otherwise why not and whether anything accepted the
     /// connection. Patient on purpose: `/health` builds scheduler
@@ -152,10 +161,11 @@ fn inspect_service(
         Err(failure) => failure,
     };
     let pid = endpoint.pid;
-    let alive = runtime.is_pid_alive(pid);
-    // Both halves have to hold: a process that is gone cannot be wedged, and a
-    // port nobody accepted on is not being held.
-    let verdict = if alive && failure.port_accepted {
+    let identified = runtime.pid_is_this_projects_service(pid, &project_root);
+    // All three have to hold before anyone is told to kill something: the
+    // process must still be there, it must still be THIS project's service,
+    // and something must have accepted the connection.
+    let verdict = if identified && failure.port_accepted {
         ServiceVerdict::Wedged { pid }
     } else {
         ServiceVerdict::NotListening {
@@ -164,15 +174,15 @@ fn inspect_service(
     };
     let detail = match &verdict {
         ServiceVerdict::Wedged { pid } => format!(
-            "pid {pid} is alive and holding that port but did not answer a {PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS}ms probe: {}; killing pid {pid} is the fix",
+            "pid {pid} is this project's service, is holding that port, and did not answer a {PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS}ms probe: {}; killing pid {pid} is the fix",
             failure.reason
         ),
-        _ if alive => format!(
-            "pid {pid} is alive but nothing accepted a connection on that port: {}; its listener is gone, so restarting the service is the fix",
+        _ if identified => format!(
+            "pid {pid} is this project's service but nothing accepted a connection on that port: {}; its listener is gone, so restarting the service is the fix",
             failure.reason
         ),
         _ => format!(
-            "pid {pid} is no longer running: {}; the recorded endpoint is stale",
+            "pid {pid} is not running as this project's service any more: {}; the recorded endpoint is stale, so restarting the service is the fix",
             failure.reason
         ),
     };

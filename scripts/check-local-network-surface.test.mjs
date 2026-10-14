@@ -42,6 +42,57 @@ afterEach(() => {
 });
 
 describe("local network surface checker", () => {
+  // A Rust `'` is a lifetime far more often than a quote. Reading `&'static
+  // str` as an open quote swallowed everything to the next apostrophe, so a
+  // file with an ODD number of them stopped having its `#[cfg(test)]` items
+  // stripped -- and a test-only spawn was then reported as unclassified
+  // production surface. Found on a real branch, where adding two
+  // `&'static str` test helpers failed this gate in CI.
+  it("strips a test item whose lifetimes hide an opening brace", () => {
+    // A Rust `'` is a lifetime far more often than a quote. Reading `<'a>` as
+    // an open quote made the span to the next apostrophe invisible, and that
+    // span holds an unmatched `{` -- so the test item appeared to close at the
+    // first inner `}` and everything after it survived stripping. A test-only
+    // spawn was then reported as unclassified production surface. Found on a
+    // real branch, where adding `&'static str` test helpers to
+    // daemon/runtime.rs failed this gate in CI while `yarn verify` stayed
+    // green locally, because the local gate only checks this file exists.
+    const root = makeFixture(
+      [
+        "#[cfg(test)]",
+        "mod tests {",
+        "    fn label<'a>(value: &str) { let _: Option<&'static str> = None; let _ = value; }",
+        "    #[cfg(unix)]",
+        "    #[test]",
+        "    fn spawns_a_shell() {",
+        '        let _ = std::process::Command::new("sh");',
+        "    }",
+        "}",
+        "pub fn production() {}",
+      ].join("\n"),
+    );
+
+    const result = runCheck(root);
+
+    expect(result.stderr).not.toContain("unclassified process spawn site");
+    expect(result.status).toBe(0);
+  });
+
+  it("still sees a real spawn outside a test item", () => {
+    const root = makeFixture(
+      [
+        "fn launch() {",
+        "    let _ = std::process::Command::new(\"sh\");",
+        "}",
+      ].join("\n"),
+    );
+
+    const result = runCheck(root);
+
+    expect(result.stderr).toContain("unclassified process spawn site");
+    expect(result.status).toBe(1);
+  });
+
   it("refuses package identity skips against the real repository", () => {
     const direct = spawnSync(process.execPath, [script, "--skip-package-identity-check"], {
       cwd: repoRoot,

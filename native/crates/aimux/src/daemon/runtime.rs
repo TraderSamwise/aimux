@@ -617,6 +617,10 @@ fn describe_probe_failure(error: CoreCommandTransportError) -> ProjectServicePro
             ),
             _ => (format!("the port could not be reached ({io_error})"), false),
         },
+        // The variant carries no phase, and the retry turns a connect timeout
+        // into this too -- but on loopback that still means the port is held:
+        // with nothing listening the kernel refuses instantly rather than
+        // hanging, and this probe refuses any non-loopback address.
         CoreCommandTransportError::Timeout { timeout_ms } => (
             format!("the connection was accepted and nothing was answered within {timeout_ms}ms"),
             true,
@@ -637,6 +641,19 @@ fn describe_probe_failure(error: CoreCommandTransportError) -> ProjectServicePro
             format!("the connection was accepted but the answer was unusable: {detail}"),
             true,
         ),
+        // Both of these had to come back from a connection: bytes were read
+        // and failed to parse, or the service answered an error. Reporting
+        // either as "nothing is listening" would send someone looking for a
+        // dead service while a wedged one holds the port.
+        CoreCommandTransportError::Json(error) => (
+            format!("the connection was accepted but the answer was not JSON ({error})"),
+            true,
+        ),
+        CoreCommandTransportError::DaemonRequest { status, message } => {
+            (format!("health answered HTTP {status}: {message}"), true)
+        }
+        // The rest never reached a socket: no daemon configured, a bad URL, an
+        // ensure that failed before dialling.
         _ => (error.to_string(), false),
     };
     ProjectServiceProbeFailure {
@@ -674,8 +691,24 @@ impl ServicesDoctorRuntime for RealDaemonRuntime {
         load_metadata_endpoint_result(&project_state_dir).map_err(|error| error.to_string())
     }
 
-    fn is_pid_alive(&mut self, pid: i32) -> bool {
-        self.project_service_process_verifier.is_live(pid)
+    fn pid_is_this_projects_service(&mut self, pid: i32, project_root: &str) -> bool {
+        // The same two questions the daemon's own kill escalation asks, in the
+        // same order: is it ours, and is it this project's service.
+        self.project_service_process_verifier
+            .belongs_to_aimux_home(pid, &self.resolver.clone().global_aimux_dir())
+            && self
+                .project_service_process_verifier
+                .is_live_native_project_service(&ProjectServiceState {
+                    project_id: compute_project_id(Path::new(project_root)),
+                    project_root: project_root.to_owned(),
+                    pid,
+                    started_at: String::new(),
+                    updated_at: String::new(),
+                    status: None,
+                    restart_count: None,
+                    last_restart_at: None,
+                    last_exit: None,
+                })
     }
 
     fn probe_patiently(
@@ -7996,6 +8029,13 @@ mod tests {
     /// otherwise reachable from no test at all -- and a fake probe cannot
     /// prove that the real one keeps the transport's wording.
     fn probe_endpoint_serving(respond: Option<&'static str>) -> (MetadataApiEndpoint, u16) {
+        probe_endpoint_answering("200 OK", respond)
+    }
+
+    fn probe_endpoint_answering(
+        status: &'static str,
+        respond: Option<&'static str>,
+    ) -> (MetadataApiEndpoint, u16) {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
         let port = listener.local_addr().expect("local addr").port();
         std::thread::spawn(move || {
@@ -8005,7 +8045,7 @@ mod tests {
                 use std::io::Write;
                 let _ = stream.write_all(
                         format!(
-                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                             body.len()
                         )
                         .as_bytes(),
@@ -8144,6 +8184,18 @@ mod tests {
             !exhausted.port_accepted,
             "a connect that never succeeded accepted nothing"
         );
+        let read_exhausted =
+            describe_probe_failure(CoreCommandTransportError::TransientIoExhausted {
+                operation: "read",
+                attempts: 3,
+                timeout_ms: 500,
+                source: io::Error::from(io::ErrorKind::WouldBlock),
+            });
+        assert!(
+            read_exhausted.port_accepted,
+            "a read that kept failing had a connection to read from: {}",
+            read_exhausted.reason
+        );
         let exhausted = exhausted.reason;
         let unusable = describe_probe_failure(CoreCommandTransportError::InvalidHttpResponse(
             "the service closed the connection without answering (no bytes read)".to_owned(),
@@ -8163,12 +8215,78 @@ mod tests {
             unusable.contains("accepted") && unusable.contains("without answering"),
             "the wedge's own wording must survive: {unusable}"
         );
+        let not_json = describe_probe_failure(CoreCommandTransportError::Json(
+            serde_json::from_str::<Value>("{oops").expect_err("not json"),
+        ));
+        let answered_error = describe_probe_failure(CoreCommandTransportError::DaemonRequest {
+            status: 503,
+            message: "starting".to_owned(),
+        });
+        assert!(
+            not_json.port_accepted,
+            "bytes that failed to parse had to come from a connection: {}",
+            not_json.reason
+        );
+        assert!(
+            answered_error.port_accepted,
+            "a service that answered an error still answered: {}",
+            answered_error.reason
+        );
+        assert!(
+            answered_error.reason.contains("503"),
+            "{}",
+            answered_error.reason
+        );
+        // And the inverse: a failure that never reached a socket is not an
+        // accepted connection.
+        let no_daemon = describe_probe_failure(CoreCommandTransportError::InvalidDaemonUrl(
+            "not a url".to_owned(),
+        ));
+        assert!(
+            !no_daemon.port_accepted,
+            "a bad URL never dialled anything: {}",
+            no_daemon.reason
+        );
+
         for reason in [&timed_out, &exhausted, &unusable] {
             assert!(
                 !reason.contains("the probe reported not ready"),
                 "the generic default must not stand in for a real reason: {reason}"
             );
         }
+    }
+
+    /// A service that answers 500 is answering, and is not healthy. The helper
+    /// used to hardcode 200, so this check had no case at all.
+    #[test]
+    fn the_real_probe_refuses_a_non_success_status() {
+        let (endpoint, _) = probe_endpoint_answering(
+            "500 Internal Server Error",
+            Some(r#"{"ok":true,"pid":4242}"#),
+        );
+
+        let failure = SystemProjectServiceHealthProbe
+            .diagnose(&endpoint, 4_242)
+            .expect_err("a 500 is not healthy");
+
+        assert!(failure.reason.contains("500"), "{}", failure.reason);
+        assert!(
+            failure.port_accepted,
+            "it answered, so the port was certainly accepted"
+        );
+    }
+
+    /// `/health` reporting `ok:false` about itself is not health.
+    #[test]
+    fn the_real_probe_refuses_an_answer_that_is_not_ok() {
+        let (endpoint, _) = probe_endpoint_serving(Some(r#"{"ok":false,"pid":4242}"#));
+
+        let failure = SystemProjectServiceHealthProbe
+            .diagnose(&endpoint, 4_242)
+            .expect_err("ok:false is not healthy");
+
+        assert!(failure.reason.contains("ok:true"), "{}", failure.reason);
+        assert!(failure.port_accepted);
     }
 
     #[test]
@@ -8195,6 +8313,34 @@ mod tests {
             SystemProjectServiceHealthProbe.diagnose(&endpoint, 4_242),
             Ok(())
         );
+    }
+
+    /// The real runtime answers this route, rather than falling through to
+    /// the trait default.
+    ///
+    /// `DaemonOperationsTextRuntime::doctor_services_report` defaults to an
+    /// `Err("services doctor is unavailable")`, so deleting the real
+    /// implementation still compiles and the route still 500s politely --
+    /// invisible to every test that drives the report through a fake.
+    #[test]
+    fn the_real_runtime_answers_the_services_doctor_route() {
+        let fixture = restart_service_fixture("services-doctor-real-report");
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(91_502)),
+            Arc::new(RestartTestProcessVerifier::current_native([91_502])),
+            0,
+        );
+
+        let report = DaemonOperationsTextRuntime::doctor_services_report(&mut runtime)
+            .expect("the real runtime builds its own report");
+
+        // An isolated home has no registered projects, which is an answer --
+        // and specifically not the default's error.
+        assert_eq!(report.totals.unknown, 0);
+        assert!(report.services.is_empty());
+        fixture.cleanup();
     }
 
     /// The services doctor probes with the PATIENT budget on the real

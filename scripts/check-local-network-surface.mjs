@@ -725,6 +725,23 @@ function normalizeSpawnMarker(value) {
   return value.replace(/\s+/g, " ").trim();
 }
 
+/// Whether this `'` opens a char literal rather than a lifetime.
+///
+/// `'a'`, `'\n'` and `'\u{1f600}'` all close; `'static` and `'_` do not. The
+/// scan is bounded because a char literal cannot be long.
+function isCharLiteral(text, index) {
+  const limit = Math.min(text.length, index + 12);
+  for (let scan = index + 1; scan < limit; scan += 1) {
+    if (text[scan] === "\\") {
+      scan += 1;
+      continue;
+    }
+    if (text[scan] === "'") return true;
+    if (text[scan] === "\n") return false;
+  }
+  return false;
+}
+
 function matchingBraceIndex(text, openIndex) {
   let depth = 0;
   let stringQuote = null;
@@ -764,8 +781,17 @@ function matchingBraceIndex(text, openIndex) {
       index += 1;
       continue;
     }
-    if (char === '"' || char === "'" || char === "`") {
+    if (char === '"' || char === "`") {
       stringQuote = char;
+      continue;
+    }
+    // A Rust `'` is usually a lifetime, not a quote. Treating `&'static str`
+    // as an open quote swallowed everything to the next apostrophe, so a file
+    // with an odd number of them stopped having its `#[cfg(test)]` items
+    // stripped and leaked test-only spawns into this gate. A char literal
+    // closes within a few characters; a lifetime never does.
+    if (char === "'") {
+      if (isCharLiteral(text, index)) stringQuote = char;
       continue;
     }
     if (char === "{") depth += 1;
