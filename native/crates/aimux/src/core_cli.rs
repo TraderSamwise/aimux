@@ -150,6 +150,7 @@ pub enum CoreCliOperation {
     DoctorTmux,
     DoctorTasks,
     DoctorCoherence,
+    DoctorServices,
     DoctorStability,
     DoctorInstalls,
     DoctorNotifications,
@@ -2379,6 +2380,19 @@ where
                 }
                 (
                     CoreCliOperation::DoctorCoherence,
+                    CoreCliAction::TextRoute { path, body: None },
+                    CoreCliFallback::None,
+                )
+            } else if parsed.subcommand == "services" {
+                // Fleet-wide, so it takes no project: the wedge this exists
+                // for was found by asking one project while six others on the
+                // same build and the same age were healthy.
+                let mut path = CORE_API_ROUTES.doctor_services_text.to_owned();
+                if parsed.json {
+                    path.push_str("?json=1");
+                }
+                (
+                    CoreCliOperation::DoctorServices,
                     CoreCliAction::TextRoute { path, body: None },
                     CoreCliFallback::None,
                 )

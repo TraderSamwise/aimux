@@ -39,6 +39,7 @@ daemon_projects
 daemon_router
 daemon_scribe
 daemon_server
+daemon_services_doctor
 daemon_state
 daemon_status
 daemon_team
