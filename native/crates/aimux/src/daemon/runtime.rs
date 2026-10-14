@@ -112,8 +112,9 @@ use crate::lifecycle_orphans::{
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, ProjectEntry, compute_project_id};
 use crate::process_inspector::{
-    ProcessArgsEntry, ProjectServiceProcessIdentity, is_aimux_project_service_process_args,
-    is_current_native_aimux_project_service_process, list_process_args, try_list_process_args,
+    ProcessArgsEntry, ProjectServiceProcessIdentity, is_aimux_project_service_process,
+    is_aimux_project_service_process_args, is_current_native_aimux_project_service_process,
+    list_process_args, try_list_process_args,
 };
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, try_list_registered_desktop_projects};
@@ -692,23 +693,25 @@ impl ServicesDoctorRuntime for RealDaemonRuntime {
     }
 
     fn pid_is_this_projects_service(&mut self, pid: i32, project_root: &str) -> bool {
-        // The same two questions the daemon's own kill escalation asks, in the
-        // same order: is it ours, and is it this project's service.
+        // Deliberately NOT `is_live_native_project_service`: that also requires
+        // the service's argv[0] to equal the asking daemon's own binary, and
+        // installs are version-stamped (`~/.aimux/native/<version>/...`). A
+        // service up for days is almost always from an earlier install than the
+        // daemon now asking about it -- which is exactly the service most
+        // likely to be wedged, so the strict check would answer "not ours" and
+        // the wedge would go unnamed.
+        //
+        // Identity here is the pair the daemon supervisor already uses:
+        // started under this AIMUX_HOME, and running as this project's service.
         self.project_service_process_verifier
             .belongs_to_aimux_home(pid, &self.resolver.clone().global_aimux_dir())
-            && self
-                .project_service_process_verifier
-                .is_live_native_project_service(&ProjectServiceState {
-                    project_id: compute_project_id(Path::new(project_root)),
-                    project_root: project_root.to_owned(),
-                    pid,
-                    started_at: String::new(),
-                    updated_at: String::new(),
-                    status: None,
-                    restart_count: None,
-                    last_restart_at: None,
-                    last_exit: None,
-                })
+            && is_aimux_project_service_process(
+                pid,
+                &ProjectServiceProcessIdentity {
+                    project_id: Some(compute_project_id(Path::new(project_root))),
+                    project_root: Some(project_root.to_owned()),
+                },
+            )
     }
 
     fn probe_patiently(
@@ -8312,6 +8315,46 @@ mod tests {
         assert_eq!(
             SystemProjectServiceHealthProbe.diagnose(&endpoint, 4_242),
             Ok(())
+        );
+    }
+
+    /// The doctor's identity check must stay the LOOSE one.
+    ///
+    /// `is_live_native_project_service` also demands the service's argv[0]
+    /// equal the asking daemon's own binary, and installs are
+    /// version-stamped, so it answers "not ours" for any service from an
+    /// earlier install -- precisely the long-lived one most likely to be
+    /// wedged. Driving the real implementation would take a live project
+    /// service, so the choice of predicate is pinned at the source, the way
+    /// this crate already pins the logging opt-in's position.
+    #[test]
+    fn the_services_doctor_identity_check_does_not_require_the_daemons_own_binary() {
+        let source = include_str!("runtime.rs");
+        let start = source
+            .find("fn pid_is_this_projects_service")
+            .expect("the doctor's identity check is still here");
+        let body = source[start..]
+            .split_once("\n    }\n")
+            .expect("the function closes")
+            .0
+            .lines()
+            // Comments mention the predicate this must NOT use, including the
+            // one explaining why.
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            body.contains("is_aimux_project_service_process("),
+            "the loose predicate is the one that recognises an older install"
+        );
+        assert!(
+            !body.contains("is_live_native_project_service"),
+            "the strict predicate would miss every service from an earlier install"
+        );
+        assert!(
+            body.contains("belongs_to_aimux_home"),
+            "and it must still refuse another home's process"
         );
     }
 
