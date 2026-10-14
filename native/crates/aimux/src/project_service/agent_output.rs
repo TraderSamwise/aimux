@@ -19,8 +19,8 @@ use crate::runtime_topology::{
 };
 use crate::tmux::TmuxRuntimeManager;
 use crate::tmux::{
-    CapturePaneOptions, TMUX_RUNTIME_OWNER_OPTION, TmuxTarget, WINDOW_TARGET_FORMAT,
-    capture_pane_argv, delete_buffer_argv, load_buffer_argv, paste_buffer_argv, prompt_buffer_name,
+    CapturePaneOptions, StagedPromptStep, TMUX_RUNTIME_OWNER_OPTION, TmuxTarget,
+    WINDOW_TARGET_FORMAT, capture_pane_argv, deliver_staged_prompt, deliver_staged_prompt_async,
     resize_window_argv, send_carriage_return_argv, send_escape_argv, send_key_argv, send_text_argv,
     try_tmux_command_from_env,
 };
@@ -304,7 +304,7 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
     }
 
     fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
-        paste_prompt_with(window_id, text, |argv, message| {
+        deliver_staged_prompt(window_id, text, |_step, argv, message| {
             run_tmux_argv(argv, message).map(|_| ())
         })
     }
@@ -439,7 +439,7 @@ impl AgentOutputCaptureRuntime for BoundedAgentOutputCaptureRuntime {
     }
 
     fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
-        paste_prompt_with(window_id, text, |argv, message| {
+        deliver_staged_prompt(window_id, text, |_step, argv, message| {
             self.run_tmux_argv(argv, message).map(|_| ())
         })
     }
@@ -2099,80 +2099,16 @@ fn resolve_session_tool(topology: &Value, session_id: &str) -> Option<String> {
         })
 }
 
-/// A prompt staged on disk, ready to load into a tmux buffer.
+/// Deliver a whole prompt to a window's composer.
 ///
-/// `send_prompt_to_tmux` used to walk the text character by character,
-/// flushing a `send-keys` exec for each 4000-byte run and a separate `C-j`
-/// exec for every newline. A twelve-item list was therefore dozens of
-/// processes typed into a composer that redraws between them, sharing one
-/// deadline -- and when something cleared the composer partway, the head of
-/// the message was gone and the tail was submitted without a word. Sam saw a
-/// message arrive starting at item 12.
+/// This used to walk the text character by character, flushing a `send-keys`
+/// exec for each 4000-byte run and a separate `C-j` exec for every newline. A
+/// twelve-item list was therefore dozens of processes typed into a composer
+/// that redraws between them, sharing one deadline -- and when something
+/// cleared the composer partway, the head of the message was gone and the
+/// tail was submitted without a word. Sam saw a message arrive at item 12.
 ///
-/// A buffer paste is one load and one paste whatever the length. There is no
-/// window in the middle, and the text never passes through argv, which is the
-/// only reason it had to be chunked.
-struct StagedPrompt {
-    buffer_name: String,
-    path: std::path::PathBuf,
-}
-
-impl StagedPrompt {
-    fn write(window_id: &str, text: &str) -> Result<Self, String> {
-        let buffer_name = prompt_buffer_name(window_id);
-        let path = std::env::temp_dir().join(&buffer_name);
-        std::fs::write(&path, text.as_bytes())
-            .map_err(|error| format!("staging prompt for paste failed: {error}"))?;
-        Ok(Self { buffer_name, path })
-    }
-
-    fn load_argv(&self) -> Vec<String> {
-        load_buffer_argv(&self.buffer_name, &self.path.to_string_lossy())
-    }
-
-    fn paste_argv(&self, window_id: &str) -> Vec<String> {
-        paste_buffer_argv(&self.buffer_name, window_id)
-    }
-
-    fn delete_argv(&self) -> Vec<String> {
-        delete_buffer_argv(&self.buffer_name)
-    }
-
-    /// The staging file is of no further use once tmux has read it, and the
-    /// prompt is a user's message, so it does not linger in the temp dir.
-    fn discard_file(&self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-fn paste_prompt_with(
-    window_id: &str,
-    text: &str,
-    mut run: impl FnMut(Vec<String>, String) -> Result<(), String>,
-) -> Result<(), String> {
-    if text.is_empty() {
-        return Ok(());
-    }
-    let staged = StagedPrompt::write(window_id, text)?;
-    let loaded = run(
-        staged.load_argv(),
-        format!("tmux load-buffer failed for {window_id}"),
-    );
-    staged.discard_file();
-    loaded?;
-    // `paste-buffer -d` drops the buffer, but only once the paste runs.
-    match run(
-        staged.paste_argv(window_id),
-        format!("tmux paste-buffer failed for {window_id}"),
-    ) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let _ = run(staged.delete_argv(), String::new());
-            Err(error)
-        }
-    }
-}
-
+/// `deliver_staged_prompt` is one load and one paste whatever the length.
 pub(super) fn send_prompt_to_tmux(
     runtime: &mut impl AgentOutputCaptureRuntime,
     window_id: &str,
@@ -2581,44 +2517,30 @@ fn prompt_submit_mode_for_tool(tool: Option<&str>) -> PromptSubmitMode {
     }
 }
 
+/// A paste that failed still has a buffer to drop, and the failure may BE
+/// the deadline, so cleanup is bounded on its own rather than on what is left.
+const PASTE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
+
 async fn send_prompt_to_tmux_async(
     window_id: &str,
     text: &str,
     deadline: Instant,
 ) -> Result<(), String> {
-    if text.is_empty() {
-        return Ok(());
-    }
-    let staged = StagedPrompt::write(window_id, text)?;
-    let loaded = run_tmux_argv_with_timeout_async(
-        staged.load_argv(),
-        format!("tmux load-buffer failed for {window_id}"),
-        remaining_until(deadline)?,
-    )
-    .await;
-    staged.discard_file();
-    loaded?;
-    match run_tmux_argv_with_timeout_async(
-        staged.paste_argv(window_id),
-        format!("tmux paste-buffer failed for {window_id}"),
-        remaining_until(deadline)?,
-    )
+    deliver_staged_prompt_async(window_id, text, |step, argv, message| async move {
+        // Cleanup runs because something failed, and "something" includes the
+        // deadline passing -- so it gets its own budget or the buffer, holding
+        // the user's prompt, is left in the tmux server.
+        let timeout = match step {
+            StagedPromptStep::Cleanup => PASTE_CLEANUP_TIMEOUT,
+            _ => remaining_until(deadline)?,
+        };
+        run_tmux_argv_with_timeout_async(argv, message, timeout)
+            .await
+            .map(|_| ())
+    })
     .await
-    {
-        Ok(_) => Ok(()),
-        Err(error) => {
-            if let Ok(remaining) = remaining_until(deadline) {
-                let _ = run_tmux_argv_with_timeout_async(
-                    staged.delete_argv(),
-                    String::new(),
-                    remaining,
-                )
-                .await;
-            }
-            Err(error)
-        }
-    }
 }
+
 async fn wait_for_prompt_submit_async(
     window_id: &str,
     draft: &str,

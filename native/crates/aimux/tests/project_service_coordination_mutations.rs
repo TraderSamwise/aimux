@@ -69,10 +69,13 @@ impl AgentOutputCaptureRuntime for FakeDeliveryRuntime {
         Ok(())
     }
 
+    /// A prompt is delivered as a buffer paste, so the injected failure is
+    /// one the paste path can actually produce. The previous wording named
+    /// `send-keys`, which no prompt has gone through since the paste landed.
     fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
         if self.fail_text_for_window.as_deref() == Some(window_id) {
             return Err(format!(
-                "tmux send-keys text failed for {window_id}: injected failure"
+                "tmux load-buffer failed for {window_id}: injected failure"
             ));
         }
         self.actions.push(FakeRuntimeAction::Text(
@@ -1023,7 +1026,7 @@ fn thread_send_reports_child_tmux_delivery_error() {
     let error = sent.body["error"].as_str().unwrap();
     assert!(error.contains("codex-two"));
     assert!(error.contains("@two"));
-    assert!(error.contains("tmux send-keys text failed for @two: injected failure"));
+    assert!(error.contains("tmux load-buffer failed for @two: injected failure"));
     assert!(text_sent_to(&runtime, "@one").contains("Please inspect this."));
     let exchange = read_exchange(&state_dir);
     let message_id = sent.body["message"]["id"].as_str().unwrap();
