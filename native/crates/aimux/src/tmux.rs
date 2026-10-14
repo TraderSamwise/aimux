@@ -3146,7 +3146,6 @@ impl StagedPrompt {
 }
 
 fn write_new_private_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -3154,7 +3153,28 @@ fn write_new_private_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(crate::secure_permissions::PRIVATE_FILE_MODE);
     }
-    options.open(path)?.write_all(data)
+    let mut file = options.open(path)?;
+    write_all_or_remove(path, &mut file, data)
+}
+
+/// Write the whole prompt, or leave nothing at `path`.
+///
+/// The `create_new` open has already created the file, so a failed write -- a
+/// full disk, say -- would otherwise leave part of a user's prompt in the temp
+/// dir with no `StagedPrompt` in existence to discard it. Split out from the
+/// open so the failure is reachable from a test.
+fn write_all_or_remove(
+    path: &Path,
+    writer: &mut impl std::io::Write,
+    data: &[u8],
+) -> std::io::Result<()> {
+    match writer.write_all(data) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = std::fs::remove_file(path);
+            Err(error)
+        }
+    }
 }
 
 /// Which step of a staged paste an executor is being asked to run.
@@ -3163,6 +3183,7 @@ fn write_new_private_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// to a deadline must give it its own small budget rather than whatever is
 /// left: a paste that failed BY running out of time would otherwise leave the
 /// user's prompt sitting in the tmux server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StagedPromptStep {
     Load,
     Paste,
@@ -4652,6 +4673,42 @@ mod staged_prompt_tests {
             .open(staged.path());
         assert!(again.is_err(), "the staging write must not clobber");
         staged.discard_file();
+    }
+
+    /// A write that fails after the file exists must not leave it behind.
+    #[test]
+    fn a_failed_staging_write_leaves_nothing_behind() {
+        struct RefusingWriter;
+        impl std::io::Write for RefusingWriter {
+            fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::StorageFull,
+                    "no space left on device",
+                ))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let path = std::env::temp_dir().join(format!(
+            "aimux-staging-write-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("a clock")
+                .as_nanos()
+        ));
+        std::fs::write(&path, b"partly written prompt").expect("the open already created it");
+
+        let outcome = super::write_all_or_remove(&path, &mut RefusingWriter, b"prompt");
+
+        assert!(outcome.is_err(), "a refused write is not a success");
+        assert!(
+            !path.exists(),
+            "a user's prompt must not be left behind at {}",
+            path.display()
+        );
     }
 
     async fn deliver_async(text: &str, fail_on: Option<&str>) -> (Recorder, Result<(), String>) {

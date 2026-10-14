@@ -370,6 +370,29 @@ pub struct BoundedAgentOutputCaptureRuntime {
     cancelled: Arc<AtomicBool>,
 }
 
+/// A paste that failed still has a buffer to drop, and the failure may BE
+/// the deadline, so cleanup is bounded on its own rather than on what is left.
+const PASTE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How long a staged-paste step gets on an executor that works to a deadline.
+///
+/// Both deadline-bound executors ask this -- the bounded sync runtime and the
+/// async route -- because the answer is the whole point: cleanup runs BECAUSE
+/// something failed, and the something is usually the deadline or a cancel, so
+/// taking `remaining` for it means never running the `delete-buffer` at all and
+/// leaving the user's prompt in the tmux server. The bounded runtime did
+/// exactly that until `the_cleanup_step_is_budgeted_even_past_the_deadline`
+/// pinned it.
+fn staged_paste_timeout(
+    step: StagedPromptStep,
+    remaining: Result<Duration, String>,
+) -> Result<Duration, String> {
+    match step {
+        StagedPromptStep::Cleanup => Ok(PASTE_CLEANUP_TIMEOUT),
+        StagedPromptStep::Load | StagedPromptStep::Paste => remaining,
+    }
+}
+
 impl BoundedAgentOutputCaptureRuntime {
     pub fn new(deadline: Instant, cancelled: Arc<AtomicBool>) -> Self {
         Self {
@@ -439,8 +462,9 @@ impl AgentOutputCaptureRuntime for BoundedAgentOutputCaptureRuntime {
     }
 
     fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
-        deliver_staged_prompt(window_id, text, |_step, argv, message| {
-            self.run_tmux_argv(argv, message).map(|_| ())
+        deliver_staged_prompt(window_id, text, |step, argv, message| {
+            let timeout = staged_paste_timeout(step, self.remaining())?;
+            run_tmux_argv_with_timeout(argv, message, timeout).map(|_| ())
         })
     }
 
@@ -2542,23 +2566,13 @@ fn prompt_submit_mode_for_tool(tool: Option<&str>) -> PromptSubmitMode {
     }
 }
 
-/// A paste that failed still has a buffer to drop, and the failure may BE
-/// the deadline, so cleanup is bounded on its own rather than on what is left.
-const PASTE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
-
 async fn send_prompt_to_tmux_async(
     window_id: &str,
     text: &str,
     deadline: Instant,
 ) -> Result<(), String> {
     deliver_staged_prompt_async(window_id, text, |step, argv, message| async move {
-        // Cleanup runs because something failed, and "something" includes the
-        // deadline passing -- so it gets its own budget or the buffer, holding
-        // the user's prompt, is left in the tmux server.
-        let timeout = match step {
-            StagedPromptStep::Cleanup => PASTE_CLEANUP_TIMEOUT,
-            _ => remaining_until(deadline)?,
-        };
+        let timeout = staged_paste_timeout(step, remaining_until(deadline))?;
         run_tmux_argv_with_timeout_async(argv, message, timeout)
             .await
             .map(|_| ())
@@ -3101,6 +3115,36 @@ mod tests {
     ///
     /// Under the old path this is 12 sends and 11 keypresses, and every
     /// assertion below fails.
+    /// Cleanup gets a budget even when the deadline is what failed.
+    ///
+    /// Both deadline-bound executors take their step budget from
+    /// `staged_paste_timeout`. The bounded runtime used to take `remaining()`
+    /// for every step, and `remaining()` fails once the deadline passes or the
+    /// request is cancelled -- so the `delete-buffer` never ran and the named
+    /// buffer, holding the whole prompt, stayed in the tmux server.
+    #[test]
+    fn the_cleanup_step_is_budgeted_even_past_the_deadline() {
+        let expired = || Err("agent output request timed out".to_owned());
+
+        assert_eq!(
+            staged_paste_timeout(StagedPromptStep::Cleanup, expired()),
+            Ok(PASTE_CLEANUP_TIMEOUT),
+            "cleanup runs BECAUSE something failed, and that something is often the deadline"
+        );
+        for step in [StagedPromptStep::Load, StagedPromptStep::Paste] {
+            assert!(
+                staged_paste_timeout(step, expired()).is_err(),
+                "{step:?} must still honour the deadline"
+            );
+        }
+        let remaining = Duration::from_millis(250);
+        assert_eq!(
+            staged_paste_timeout(StagedPromptStep::Load, Ok(remaining)),
+            Ok(remaining),
+            "a live deadline is passed through untouched"
+        );
+    }
+
     #[test]
     fn a_long_multiline_prompt_crosses_in_one_delivery() {
         let prompt = (1..=12)
