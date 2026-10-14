@@ -1563,21 +1563,15 @@ fn input_live_pane_route(
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
-    let input_text = match remote_actor
-        .as_ref()
-        .filter(|actor| actor.role == RemoteActorRole::Guest)
-        .and_then(|actor| shared_chat_remote_actor_prompt(actor, &text))
-        .or_else(|| shared_chat_body_actor_prompt(body, &text))
-    {
-        Some(value) => value,
-        None => text,
-    };
-    let formatted_text = format_agent_input_with_attachments(&input_text, &attachments);
     let project_state_dir = context.project_state_dir();
-    let prompt_context = get_prompt_context_text(&project_state_dir, &session_id);
-    let contextualized_text =
-        compose_with_prompt_context(&formatted_text, prompt_context.as_deref());
-    let prompt = normalize_submitted_prompt(&contextualized_text);
+    let prompt = compose_prompt_for_delivery(PromptForDelivery {
+        attachments: &attachments,
+        body,
+        project_state_dir: &project_state_dir,
+        remote_actor: remote_actor.as_ref(),
+        session_id: &session_id,
+        text,
+    });
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();
     let activity = if force {
@@ -1669,6 +1663,43 @@ fn agent_loop_watch(context: &ProjectServiceRequestContext, session_id: &str) ->
         .and_then(Value::as_bool)
         .unwrap_or(false);
     json!({ "known": true, "watched": watched })
+}
+
+struct PromptForDelivery<'a> {
+    attachments: &'a [Value],
+    body: &'a Value,
+    project_state_dir: &'a std::path::Path,
+    remote_actor: Option<&'a RemoteActor>,
+    session_id: &'a str,
+    text: String,
+}
+
+/// The text a prompt actually arrives as, derived once.
+///
+/// Both input routes -- the sync one and the async one the HTTP server uses
+/// -- had their own copy of these four steps. A copy is how a change lands on
+/// one route and not the other, and only one of the two is reachable from a
+/// test, so a defect on the async side could not be caught at all.
+///
+/// Note the last step: `normalize_submitted_prompt` collapses any whitespace
+/// run containing a line break to a single space, so a user's newlines do not
+/// survive this. `a_users_multiline_message_is_flattened_but_never_shortened`
+/// pins that, and pins that flattening never turns into dropping.
+fn compose_prompt_for_delivery(input: PromptForDelivery<'_>) -> String {
+    let input_text = match input
+        .remote_actor
+        .filter(|actor| actor.role == RemoteActorRole::Guest)
+        .and_then(|actor| shared_chat_remote_actor_prompt(actor, &input.text))
+        .or_else(|| shared_chat_body_actor_prompt(input.body, &input.text))
+    {
+        Some(value) => value,
+        None => input.text,
+    };
+    let formatted_text = format_agent_input_with_attachments(&input_text, input.attachments);
+    let prompt_context = get_prompt_context_text(input.project_state_dir, input.session_id);
+    let contextualized_text =
+        compose_with_prompt_context(&formatted_text, prompt_context.as_deref());
+    normalize_submitted_prompt(&contextualized_text)
 }
 
 fn agent_input_turn_semantics() -> Value {
@@ -1928,21 +1959,15 @@ async fn input_live_pane_route_async(
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
-    let input_text = match remote_actor
-        .as_ref()
-        .filter(|actor| actor.role == RemoteActorRole::Guest)
-        .and_then(|actor| shared_chat_remote_actor_prompt(actor, &text))
-        .or_else(|| shared_chat_body_actor_prompt(body, &text))
-    {
-        Some(value) => value,
-        None => text,
-    };
-    let formatted_text = format_agent_input_with_attachments(&input_text, &attachments);
     let project_state_dir = context.project_state_dir();
-    let prompt_context = get_prompt_context_text(&project_state_dir, &session_id);
-    let contextualized_text =
-        compose_with_prompt_context(&formatted_text, prompt_context.as_deref());
-    let prompt = normalize_submitted_prompt(&contextualized_text);
+    let prompt = compose_prompt_for_delivery(PromptForDelivery {
+        attachments: &attachments,
+        body,
+        project_state_dir: &project_state_dir,
+        remote_actor: remote_actor.as_ref(),
+        session_id: &session_id,
+        text,
+    });
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();
     let activity = if force {

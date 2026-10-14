@@ -2124,6 +2124,75 @@ fn shared_guest_input_is_limited_to_live_pane_shared_session() {
     cleanup(project);
 }
 
+/// What a user's own multi-line message does on the two input routes.
+///
+/// It is FLATTENED, not carried: `normalize_submitted_prompt` collapses any
+/// whitespace run holding a line break to one space before delivery. The
+/// paste can carry newlines -- internal pokes rely on that -- so it is worth
+/// being plain that a user's are gone by the time it runs, and worth pinning
+/// that flattening never becomes dropping: the reported bug was a message
+/// that arrived starting at item 12, so both ends are named here.
+#[test]
+fn a_users_multiline_message_is_flattened_but_never_shortened() {
+    let project = temp_project("multiline-user-input");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime::default();
+    let message = (1..=12)
+        .map(|index| format!("{index}. item number {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    for route in [routes::agents::INPUT, routes::live_pane::INPUT] {
+        let response = route_agent_output_request_with_runtime(
+            &context,
+            "POST",
+            route,
+            Some(&json!({ "sessionId": "codex-1", "text": message })),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, 200, "{route}");
+    }
+
+    let delivered: Vec<&String> = runtime
+        .actions
+        .iter()
+        .filter_map(|action| match action {
+            FakeRuntimeAction::Text(_, text) => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        delivered.len(),
+        2,
+        "one delivery per route: {:?}",
+        delivered
+    );
+    for text in delivered {
+        assert!(
+            !text.contains('\n'),
+            "normalize_submitted_prompt flattens a user's newlines: {text}"
+        );
+        assert!(
+            text.starts_with("1. item number 1"),
+            "the head must survive"
+        );
+        assert!(
+            text.ends_with("12. item number 12"),
+            "the tail must survive"
+        );
+        for index in 1..=12 {
+            assert!(
+                text.contains(&format!("{index}. item number {index}")),
+                "item {index} is missing from {text}"
+            );
+        }
+    }
+    cleanup(project);
+}
+
 #[test]
 fn agent_input_prepends_prompt_context_for_both_input_routes() {
     let project = temp_project("prompt-context-input");
