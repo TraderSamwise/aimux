@@ -3443,6 +3443,7 @@ mod tests {
         runtime.captures.push_back(Ok(marker.to_owned()));
         runtime.captures.push_back(Ok(marker.to_owned()));
 
+        // aimux-async-seam: test - agent output unit test drives async submit verification
         crate::async_runtime::block_on_named("agent-output:test-stale-marker", async {
             wait_for_prompt_submit_with_runtime_async(&mut runtime, draft, Some(marker)).await
         })
