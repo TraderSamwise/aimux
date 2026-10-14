@@ -12,6 +12,9 @@ use tokio::runtime::{Builder, Handle, Runtime};
 use tokio::task::JoinHandle;
 
 pub const ASYNC_RUNTIME_WORKER_THREADS: usize = 2;
+/// Enough to see a repeating failure without letting a panic loop grow the
+/// registry without bound.
+pub const FAILURE_RING_CAPACITY: usize = 32;
 
 static PROCESS_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 static TASK_REGISTRY: OnceLock<AsyncTaskRegistry> = OnceLock::new();
@@ -26,6 +29,8 @@ pub struct AsyncRuntimeDoctorReport {
     pub runtime: AsyncRuntimeState,
     pub totals: AsyncRuntimeTotals,
     pub tasks: Vec<AsyncTaskSnapshot>,
+    /// Most recent first, bounded by [`FAILURE_RING_CAPACITY`].
+    pub failures: Vec<AsyncTaskFailure>,
     pub backlogs: Vec<BacklogMetricSnapshot>,
 }
 
@@ -40,6 +45,26 @@ pub struct AsyncRuntimeState {
 #[serde(rename_all = "camelCase")]
 pub struct AsyncRuntimeTotals {
     pub live: usize,
+    /// Tasks that ended by panicking since this process started. A panicking
+    /// task leaves the process up and missing a piece of itself, which is the
+    /// shape of a service that holds its port and answers nothing.
+    pub failed: u64,
+}
+
+/// A task that did not return. Kept because nothing else records it: a panic
+/// in a spawned task whose `JoinHandle` is dropped is reported to no one, and
+/// the only trace was a line in a 632KB stdio log.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AsyncTaskFailure {
+    pub id: u64,
+    pub name: String,
+    pub kind: AsyncTaskKind,
+    pub at_ms: u128,
+    pub age_ms: u128,
+    /// Why, when the registry knows: a refused seam names the caller. A
+    /// panicking task carries none, because its payload is already on stderr.
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -104,11 +129,24 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    let guard = registry().register(name.into(), AsyncTaskKind::Async);
-    process_runtime().spawn(async move {
+    process_runtime().spawn(registered(name.into(), AsyncTaskKind::Async, future))
+}
+
+/// Hold the registration for as long as the future runs.
+///
+/// The guard's `Drop` is the only seam that works here: `catch_unwind` cannot
+/// span an `.await`, and the futures-util equivalent is behind an optional
+/// feature that local builds do not enable.
+fn registered<F: Future>(
+    name: String,
+    kind: AsyncTaskKind,
+    future: F,
+) -> impl Future<Output = F::Output> {
+    let guard = registry().register(name, kind);
+    async move {
         let _guard = guard;
         future.await
-    })
+    }
 }
 
 /// Transitional sync/async seam for Phase 1 subprocess callers. Delete these
@@ -124,30 +162,33 @@ where
 {
     let name = name.into();
     let caller = std::panic::Location::caller();
-    let guard = registry().register(name.clone(), AsyncTaskKind::Async);
-    let future = async move {
-        let _guard = guard;
-        future.await
-    };
+    // Name the caller: a task name like `subprocess:tmux` says only that some
+    // task did this, and the offending line still has to be found by reading
+    // the source. 632KB of a project service's log was this one panic with no
+    // way to tell which route produced it.
+    if is_async_worker_context() {
+        registry().record_failure(
+            &name,
+            AsyncTaskKind::Async,
+            Some(format!(
+                "block_on_named refused from an async task at {}:{}",
+                caller.file(),
+                caller.line()
+            )),
+        );
+        panic!(
+            "block_on_named({name}) was called from an async task at {}:{}; move this caller to async or spawn_blocking_named",
+            caller.file(),
+            caller.line()
+        );
+    }
+    let future = registered(name, AsyncTaskKind::Async, future);
     if let Some(handle) = blocking_runtime_handle() {
         // aimux-async-seam: permanent - bridge execution from registered blocking-pool handle
         return handle.block_on(future);
     }
-    match Handle::try_current() {
-        // Name the caller: a task name like `subprocess:tmux` says only that
-        // some task did this, and the offending line still has to be found by
-        // reading the source. 632KB of a project service's log was this one
-        // panic with no way to tell which route produced it.
-        Ok(_) => {
-            panic!(
-                "block_on_named({name}) was called from an async task at {}:{}; move this caller to async or spawn_blocking_named",
-                caller.file(),
-                caller.line()
-            )
-        }
-        // aimux-async-seam: permanent - process-entry bridge when no async runtime is entered
-        Err(_) => process_runtime().block_on(future),
-    }
+    // aimux-async-seam: permanent - process-entry bridge when no async runtime is entered
+    process_runtime().block_on(future)
 }
 
 /// Use only for blocking OS/process/filesystem seams during the async cutover.
@@ -157,12 +198,13 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
-    let guard = registry().register(name.into(), AsyncTaskKind::Blocking);
+    let name = name.into();
     let runtime_handle = Handle::try_current()
         .ok()
         .unwrap_or_else(|| process_runtime().handle().clone());
     let blocking_handle = runtime_handle.clone();
     runtime_handle.spawn_blocking(move || {
+        let guard = registry().register(name, AsyncTaskKind::Blocking);
         let _guard = guard;
         with_blocking_runtime_handle(blocking_handle, closure)
     })
@@ -190,6 +232,7 @@ fn with_blocking_runtime_handle<R>(handle: Handle, closure: impl FnOnce() -> R) 
 
 pub fn doctor_tasks_report() -> AsyncRuntimeDoctorReport {
     let tasks = registry().snapshot();
+    let (failed, failures) = registry().failure_snapshot();
     #[cfg(not(feature = "remote-control"))]
     let backlogs = backlog_snapshots();
     #[cfg(feature = "remote-control")]
@@ -205,8 +248,12 @@ pub fn doctor_tasks_report() -> AsyncRuntimeDoctorReport {
             initialized: PROCESS_RUNTIME.get().is_some(),
             worker_threads: ASYNC_RUNTIME_WORKER_THREADS,
         },
-        totals: AsyncRuntimeTotals { live: tasks.len() },
+        totals: AsyncRuntimeTotals {
+            live: tasks.len(),
+            failed,
+        },
         tasks,
+        failures,
         backlogs,
     }
 }
@@ -220,6 +267,7 @@ pub fn render_doctor_tasks_report(report: &AsyncRuntimeDoctorReport) -> String {
         ),
         format!("  worker threads: {}", report.runtime.worker_threads),
         format!("  live tasks: {}", report.totals.live),
+        format!("  failed tasks: {}", report.totals.failed),
     ];
     for task in &report.tasks {
         lines.push(format!(
@@ -229,6 +277,24 @@ pub fn render_doctor_tasks_report(report: &AsyncRuntimeDoctorReport) -> String {
             name = task.name,
             age_ms = task.age_ms
         ));
+    }
+    if !report.failures.is_empty() {
+        lines.push(String::new());
+        lines.push("Task Failures".to_owned());
+        for failure in &report.failures {
+            let detail = failure
+                .detail
+                .as_deref()
+                .map(|detail| format!(" {detail}"))
+                .unwrap_or_default();
+            lines.push(format!(
+                "  #{id} {kind} {name} ran={age_ms}ms{detail}",
+                id = failure.id,
+                kind = failure.kind.label(),
+                name = failure.name,
+                age_ms = failure.age_ms
+            ));
+        }
     }
     if !report.backlogs.is_empty() {
         lines.push(String::new());
@@ -269,6 +335,13 @@ fn registry() -> &'static AsyncTaskRegistry {
 struct AsyncTaskRegistry {
     next_id: AtomicU64,
     tasks: Mutex<BTreeMap<u64, AsyncTaskRecord>>,
+    failures: Mutex<FailureRing>,
+}
+
+#[derive(Debug, Default)]
+struct FailureRing {
+    total: u64,
+    recent: std::collections::VecDeque<AsyncTaskFailure>,
 }
 
 impl AsyncTaskRegistry {
@@ -287,9 +360,61 @@ impl AsyncTaskRegistry {
         AsyncTaskGuard { id }
     }
 
-    fn unregister(&self, id: u64) {
+    /// `panicking` is read from the dropping thread, so a task that unwinds is
+    /// recorded even when nobody holds its `JoinHandle` -- which is the case
+    /// that left a dead serve task invisible.
+    fn unregister(&self, id: u64, panicking: bool) {
         let mut tasks = self.tasks.lock().unwrap_or_else(|error| error.into_inner());
-        tasks.remove(&id);
+        let removed = tasks.remove(&id);
+        drop(tasks);
+        if !panicking {
+            return;
+        }
+        let Some(record) = removed else {
+            return;
+        };
+        self.push_failure(AsyncTaskFailure {
+            id,
+            name: record.name,
+            kind: record.kind,
+            at_ms: unix_millis_now(),
+            age_ms: record.started.elapsed().as_millis(),
+            detail: None,
+        });
+    }
+
+    /// A failure with no live registration behind it: the seam refusal, which
+    /// never got as far as running.
+    fn record_failure(&self, name: &str, kind: AsyncTaskKind, detail: Option<String>) {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        self.push_failure(AsyncTaskFailure {
+            id,
+            name: name.to_owned(),
+            kind,
+            at_ms: unix_millis_now(),
+            age_ms: 0,
+            detail,
+        });
+    }
+
+    fn push_failure(&self, failure: AsyncTaskFailure) {
+        let mut ring = self
+            .failures
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        ring.total += 1;
+        ring.recent.push_front(failure);
+        while ring.recent.len() > FAILURE_RING_CAPACITY {
+            ring.recent.pop_back();
+        }
+    }
+
+    fn failure_snapshot(&self) -> (u64, Vec<AsyncTaskFailure>) {
+        let ring = self
+            .failures
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        (ring.total, ring.recent.iter().cloned().collect())
     }
 
     fn snapshot(&self) -> Vec<AsyncTaskSnapshot> {
@@ -326,8 +451,15 @@ struct AsyncTaskGuard {
 
 impl Drop for AsyncTaskGuard {
     fn drop(&mut self) {
-        registry().unregister(self.id);
+        registry().unregister(self.id, std::thread::panicking());
     }
+}
+
+fn unix_millis_now() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 impl AsyncTaskKind {
