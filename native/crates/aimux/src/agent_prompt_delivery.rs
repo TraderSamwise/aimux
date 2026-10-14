@@ -22,23 +22,6 @@ pub const VERIFY_AFTER_SUBMIT_MS: u64 = 700;
 /// Node sliced the signature to its last 240 characters.
 const SIGNATURE_CHARS: usize = 240;
 
-pub trait PromptSubmitRuntime {
-    /// False once this window belongs to a newer submit, so a superseded wait
-    /// never fires a stray carriage return into whatever is on screen now.
-    fn is_current(&mut self) -> bool;
-    fn capture(&mut self, start_line: i64) -> Option<String>;
-    fn send_carriage_return(&mut self);
-    fn sleep(&mut self, millis: u64);
-}
-
-/// Whether the pane still shows the draft we pasted.
-///
-/// Codex collapses a long paste to `› [Pasted Content 3434 chars]`, so the text
-/// itself is never on screen — the marker stands in for it.
-pub fn pane_still_contains_prompt_draft(pane: &str, draft: &str) -> bool {
-    text_contains_prompt_draft(pane, draft, PasteMarker::Counts)
-}
-
 pub fn composer_still_contains_prompt_draft(pane: &str, draft: &str) -> bool {
     current_composer_text(pane)
         .is_some_and(|composer| text_contains_prompt_draft(&composer, draft, PasteMarker::Counts))
@@ -169,61 +152,6 @@ pub fn prompt_draft_signature(pane: &str) -> String {
         return normalized;
     }
     normalized.chars().skip(total - SIGNATURE_CHARS).collect()
-}
-
-/// Wait for the pasted draft to render and settle, then submit it.
-///
-/// The returned value is ADVISORY — it says whether the draft left the pane,
-/// and a Codex transcript keeps showing `[Pasted Content …]` after a successful
-/// send, so `false` is routine. Never retry or re-send a carriage return on it.
-pub fn wait_for_prompt_submit(runtime: &mut dyn PromptSubmitRuntime, draft: &str) -> bool {
-    let mut visible_count = 0u32;
-    let mut last_signature = String::new();
-
-    for attempt in 1..=MAX_POLL_ATTEMPTS {
-        runtime.sleep(if attempt == 1 { FIRST_POLL_MS } else { POLL_MS });
-        if !runtime.is_current() {
-            return false;
-        }
-        let pane = runtime
-            .capture(DRAFT_CAPTURE_START_LINE)
-            .unwrap_or_default();
-        let still_draft = composer_still_contains_prompt_draft(&pane, draft);
-        let signature = if still_draft {
-            runtime
-                .capture(SIGNATURE_CAPTURE_START_LINE)
-                .map(|pane| prompt_draft_signature(&pane))
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
-        visible_count = if still_draft && !signature.is_empty() && signature == last_signature {
-            visible_count + 1
-        } else if still_draft {
-            1
-        } else {
-            0
-        };
-        last_signature = signature;
-        if visible_count >= 2 {
-            return submit(runtime, draft);
-        }
-    }
-
-    submit(runtime, draft)
-}
-
-fn submit(runtime: &mut dyn PromptSubmitRuntime, draft: &str) -> bool {
-    runtime.sleep(SETTLE_BEFORE_SUBMIT_MS);
-    if !runtime.is_current() {
-        return false;
-    }
-    runtime.send_carriage_return();
-    runtime.sleep(VERIFY_AFTER_SUBMIT_MS);
-    let pane = runtime
-        .capture(DRAFT_CAPTURE_START_LINE)
-        .unwrap_or_default();
-    !composer_still_holds_prompt_text(&pane, draft)
 }
 
 fn normalize_words(value: &str) -> String {

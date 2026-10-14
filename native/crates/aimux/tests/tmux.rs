@@ -1,8 +1,8 @@
 use aimux::tmux::{
     AIMUX_MODIFIED_ENTER_COMMAND, AIMUX_MODIFIED_ENTER_FILTER, AIMUX_STALE_MODIFIED_ENTER_COMMAND,
     CapturePaneOptions, MANAGED_TMUX_AGENT_WINDOW_OPTIONS, MANAGED_TMUX_SESSION_OPTIONS,
-    MANAGED_TMUX_TERMINAL_FEATURES, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxCommandSpec,
-    append_session_option_argv, attach_session_argv, build_default_root_mouse_bindings_config,
+    MANAGED_TMUX_TERMINAL_FEATURES, TmuxCommandSpec, append_session_option_argv,
+    attach_session_argv, build_default_root_mouse_bindings_config,
     build_default_root_mouse_bindings_install_config, capture_pane_argv, clear_history_argv,
     delete_buffer_argv, is_dashboard_window_name, is_meta_dashboard_window_name,
     is_tmux_client_session_for_host, is_tmux_client_session_name, kill_session_argv,
@@ -13,10 +13,10 @@ use aimux::tmux::{
     refresh_status_argv, rename_session_argv, resize_window_argv, respawn_window_argv,
     select_window_argv, send_carriage_return_argv, send_client_carriage_return_argv,
     send_client_enter_argv, send_enter_argv, send_escape_argv, send_focus_in_argv, send_key_argv,
-    send_modified_enter_argv, send_text_argv, session_window_id_target, session_window_target,
-    set_session_option_argv, should_install_modified_enter_binding, split_text_for_tmux_send_keys,
-    start_pane_pipe_argv, stop_pane_pipe_argv, swap_window_argv, switch_client_argv,
-    switch_client_to_target_argv, unlink_window_argv,
+    send_modified_enter_argv, session_window_id_target, session_window_target,
+    set_session_option_argv, should_install_modified_enter_binding, start_pane_pipe_argv,
+    stop_pane_pipe_argv, swap_window_argv, switch_client_argv, switch_client_to_target_argv,
+    unlink_window_argv,
 };
 use serde_json::Value;
 
@@ -214,24 +214,7 @@ fn mirrors_session_and_window_naming_contracts() {
 }
 
 #[test]
-fn mirrors_text_chunking_options_and_mouse_bindings() {
-    let text = format!(
-        "{}🙂{}",
-        "a".repeat(TMUX_SEND_TEXT_CHUNK_BYTES - 1),
-        "b".repeat(20)
-    );
-    let chunks = split_text_for_tmux_send_keys(&text, TMUX_SEND_TEXT_CHUNK_BYTES);
-    assert_eq!(chunks.len(), 2);
-    assert_eq!(chunks.concat(), text);
-    assert!(
-        chunks
-            .iter()
-            .all(|chunk| chunk.len() <= TMUX_SEND_TEXT_CHUNK_BYTES)
-    );
-    assert_eq!(
-        split_text_for_tmux_send_keys("", TMUX_SEND_TEXT_CHUNK_BYTES),
-        Vec::<String>::new()
-    );
+fn mirrors_argv_packing_options_and_mouse_bindings() {
     assert_eq!(packed_argv_bytes(&["tmux".to_owned(), "🙂".to_owned()]), 10);
 
     assert_eq!(MANAGED_TMUX_SESSION_OPTIONS.prefix, "C-a");
@@ -348,32 +331,6 @@ fn a_prompt_buffer_name_is_unique_and_safe_as_a_filename() {
 #[test]
 fn mirrors_remaining_low_level_command_vectors() {
     assert_eq!(stop_pane_pipe_argv("@3"), ["pipe-pane", "-t", "@3"]);
-    assert_eq!(
-        send_text_argv("@3", "hello"),
-        ["send-keys", "-t", "@3", "-l", "--", "hello"]
-    );
-    assert_eq!(
-        send_text_argv("@3", "-leading hyphen stays literal"),
-        [
-            "send-keys",
-            "-t",
-            "@3",
-            "-l",
-            "--",
-            "-leading hyphen stays literal"
-        ]
-    );
-    assert_eq!(
-        send_text_argv("@3", "-- -X cancel is user text, not tmux options"),
-        [
-            "send-keys",
-            "-t",
-            "@3",
-            "-l",
-            "--",
-            "-- -X cancel is user text, not tmux options"
-        ]
-    );
     assert_eq!(send_enter_argv("@3"), ["send-keys", "-t", "@3", "Enter"]);
     assert_eq!(
         send_client_enter_argv("/dev/ttys001"),

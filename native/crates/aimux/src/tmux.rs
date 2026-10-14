@@ -23,6 +23,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// The argv cap a prompt used to be chunked on, kept as the number the
+/// byte-for-byte staging gate measures against: a gate prompt shorter than
+/// this cannot show the truncation that chunking caused.
 pub const TMUX_SEND_TEXT_CHUNK_BYTES: usize = 4_000;
 pub const TMUX_CAPTURE_TARGET_TIMEOUT: Duration = Duration::from_secs(2);
 pub const LIVE_WINDOW_INDEX_FORMAT: &str = "#{window_id}\t#{session_name}";
@@ -1134,16 +1137,6 @@ impl TmuxRuntimeManager {
     ) -> Result<(), String> {
         self.exec_owned(resize_window_argv(&target.window_id, cols, rows), None)
             .map(|_| ())
-    }
-
-    pub fn send_text(&mut self, target: &TmuxTarget, text: &str) -> Result<(), String> {
-        if text.is_empty() {
-            return Ok(());
-        }
-        for chunk in split_text_for_tmux_send_keys(text, TMUX_SEND_TEXT_CHUNK_BYTES) {
-            self.exec_owned(send_text_argv(&target.window_id, &chunk), None)?;
-        }
-        Ok(())
     }
 
     pub fn send_enter(&mut self, target: &TmuxTarget) -> Result<(), String> {
@@ -2733,30 +2726,6 @@ pub fn session_window_id_target(session_name: &str, window_id: &str) -> String {
     format!("{session_name}:{window_id}")
 }
 
-pub fn split_text_for_tmux_send_keys(text: &str, max_bytes: usize) -> Vec<String> {
-    if text.is_empty() {
-        return Vec::new();
-    }
-
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-    let mut current_bytes = 0;
-    for character in text.chars() {
-        let character_bytes = character.len_utf8();
-        if !current.is_empty() && current_bytes + character_bytes > max_bytes {
-            chunks.push(current);
-            current = String::new();
-            current_bytes = 0;
-        }
-        current.push(character);
-        current_bytes += character_bytes;
-    }
-    if !current.is_empty() {
-        chunks.push(current);
-    }
-    chunks
-}
-
 pub fn packed_argv_bytes(argv: &[String]) -> usize {
     argv.iter().map(|arg| arg.len() + 1).sum()
 }
@@ -2988,17 +2957,6 @@ pub fn resize_window_argv(window_id: &str, cols: i64, rows: i64) -> Vec<String> 
         cols.to_string(),
         "-y".to_owned(),
         rows.to_string(),
-    ]
-}
-
-pub fn send_text_argv(window_id: &str, text: &str) -> Vec<String> {
-    vec![
-        "send-keys".to_owned(),
-        "-t".to_owned(),
-        window_id.to_owned(),
-        "-l".to_owned(),
-        "--".to_owned(),
-        text.to_owned(),
     ]
 }
 

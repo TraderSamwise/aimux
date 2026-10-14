@@ -600,59 +600,6 @@ fn respawns_window_with_command_cwd() {
 }
 
 #[test]
-fn sends_text_in_chunks_and_skips_empty_text() {
-    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
-    let calls_for_exec = calls.clone();
-    let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
-        calls_for_exec.borrow_mut().push(args.to_vec());
-        Ok(String::new())
-    });
-    let text = format!("{}🙂{}", "a".repeat(3999), "b".repeat(20));
-
-    manager.send_text(&target(), "").expect("empty send");
-    manager.send_text(&target(), &text).expect("send text");
-
-    assert_eq!(calls.borrow().len(), 2);
-    assert_eq!(
-        calls.borrow()[0][..5],
-        ["send-keys", "-t", "@9", "-l", "--"]
-    );
-    assert_eq!(
-        calls.borrow()[1][..5],
-        ["send-keys", "-t", "@9", "-l", "--"]
-    );
-    assert_eq!(
-        format!("{}{}", calls.borrow()[0][5], calls.borrow()[1][5]),
-        text
-    );
-}
-
-#[test]
-fn send_text_delivers_leading_hyphen_payloads_as_literal_text() {
-    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
-    let calls_for_exec = calls.clone();
-    let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
-        calls_for_exec.borrow_mut().push(args.to_vec());
-        Ok(String::new())
-    });
-    let text = "-flag-looking first line\n-- -X cancel stays text";
-
-    manager.send_text(&target(), text).expect("send text");
-
-    assert_eq!(
-        calls.borrow()[0],
-        vec![
-            "send-keys",
-            "-t",
-            "@9",
-            "-l",
-            "--",
-            "-flag-looking first line\n-- -X cancel stays text"
-        ]
-    );
-}
-
-#[test]
 fn writes_window_metadata_and_agent_policy_options() {
     let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
     let calls_for_exec = calls.clone();
