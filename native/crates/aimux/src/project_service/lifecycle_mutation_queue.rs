@@ -425,6 +425,7 @@ impl LifecycleMutationQueue {
     /// that says which route did it is the outcome `block_on_named` already
     /// gives every other blocking seam in this crate; async callers want
     /// [`Self::begin_async`].
+    #[track_caller]
     pub fn begin(
         &self,
         transition: Option<LifecycleTransitionInput>,

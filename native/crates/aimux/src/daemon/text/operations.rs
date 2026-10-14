@@ -1,4 +1,6 @@
-use crate::async_runtime::{doctor_tasks_report, render_doctor_tasks_report};
+use crate::async_runtime::{
+    AsyncRuntimeDoctorReport, doctor_tasks_report, render_doctor_tasks_report,
+};
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_text::{render_core_dashboard_reload_lines, render_core_runtime_restart_lines};
 use crate::daemon::coherence_doctor::{
@@ -432,14 +434,33 @@ pub fn doctor_tasks_text_route(
         return match runtime.get_project_service_json(&project_root, project_routes::DIAGNOSTICS) {
             ProjectServiceJsonResult::Ok { json, .. } => {
                 match project_scheduler_health_from_diagnostics(&json) {
-                    Ok(scheduler) => text_or_json_lines(
-                        route_url,
-                        json!({
-                            "projectRoot": project_root,
-                            "scheduler": scheduler,
-                        }),
-                        &render_project_scheduler_health_lines(&project_root, &scheduler),
-                    ),
+                    Ok(scheduler) => {
+                        let async_runtime = project_async_runtime_from_diagnostics(&json);
+                        let mut lines =
+                            render_project_scheduler_health_lines(&project_root, &scheduler);
+                        lines.push(String::new());
+                        match &async_runtime {
+                            // The same renderer the daemon's own report uses,
+                            // so the two surfaces cannot word this differently.
+                            Ok(report) => lines.extend(split_rendered_report_lines(
+                                &render_doctor_tasks_report(report),
+                            )),
+                            Err(error) => {
+                                lines.push("Async Runtime Tasks".to_owned());
+                                lines.push(format!("  unavailable: {error}"));
+                            }
+                        }
+                        text_or_json_lines(
+                            route_url,
+                            json!({
+                                "projectRoot": project_root,
+                                "scheduler": scheduler,
+                                "asyncRuntime": async_runtime.as_ref().ok(),
+                                "asyncRuntimeError": async_runtime.as_ref().err(),
+                            }),
+                            &lines,
+                        )
+                    }
                     Err(error) => {
                         let lines = vec![format!("Error: {error}")];
                         text_or_json_lines(
@@ -529,6 +550,28 @@ fn project_scheduler_health_from_diagnostics(diagnostics: &Value) -> Result<Valu
         return Err("project diagnostics scheduler health is unreadable".to_owned());
     }
     Ok(scheduler.clone())
+}
+
+/// The service's own async runtime, as the service reported it.
+///
+/// Three outcomes, kept apart: a build that does not report this at all, a
+/// payload that cannot be read, and a report. Collapsing the first two into an
+/// empty report would say "no tasks have died here" about a service that was
+/// never asked.
+fn project_async_runtime_from_diagnostics(
+    diagnostics: &Value,
+) -> Result<AsyncRuntimeDoctorReport, String> {
+    let async_runtime = match diagnostics.get("asyncRuntime") {
+        // An explicit null is the same answer as a missing key: the service
+        // did not report this. Reading either as an empty report would say
+        // "nothing died here" about a service that was never asked.
+        Some(Value::Null) | None => {
+            return Err("this project service build does not report its async runtime".to_owned());
+        }
+        Some(value) => value,
+    };
+    serde_json::from_value(async_runtime.clone())
+        .map_err(|error| format!("project async runtime report is unreadable: {error}"))
 }
 
 fn render_project_scheduler_health_lines(project_root: &str, scheduler: &Value) -> Vec<String> {

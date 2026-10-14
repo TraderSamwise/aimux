@@ -25,6 +25,11 @@
       "file": "native/crates/aimux/tests/support/mod.rs",
       "function": "drop",
       "reason": "The restore half of the isolated-runtime harness, under the same held lock."
+    },
+    {
+      "file": "native/crates/aimux/tests/async_runtime_failure_totals.rs",
+      "function": "isolated_log_path",
+      "reason": "log_lifecycle_always resolves its path from the environment inside the call under test, so there is no seam to state the home through. This binary holds a single test by design -- it fills the bounded failure ring, which would evict a sibling's record -- so the sibling reader this gate protects against does not exist. Adding a second test here must come with a lock or a different home."
     }
   ]
 }

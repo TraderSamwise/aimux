@@ -60,6 +60,9 @@ struct FakeOperationsRuntime {
     fail: Option<&'static str>,
     restart_failures: i64,
     record_prepare: bool,
+    /// An older service build reports no async runtime at all, which is a
+    /// different answer from reporting an empty one.
+    omit_async_runtime: bool,
 }
 
 impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
@@ -231,6 +234,27 @@ impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
                 json!({
                     "ok": true,
                     "projectRoot": project_root,
+                    "asyncRuntime": (!self.omit_async_runtime).then(|| json!({
+                        "runtime": { "initialized": true, "workerThreads": 2 },
+                        "totals": { "live": 1, "failed": 4, "refusedSeams": 2 },
+                        "tasks": [{
+                            "id": 7,
+                            "name": "project-service:serve",
+                            "kind": "async",
+                            "startedAtMs": 1000,
+                            "ageMs": 2000
+                        }],
+                        "failures": [{
+                            "id": 9,
+                            "name": "project-service:http-serve",
+                            "kind": "async",
+                            "reason": "refused-seam",
+                            "atMs": 3000,
+                            "ageMs": 40,
+                            "detail": "block_on_named refused from an async task at crates/aimux/src/project_service/agents.rs:181"
+                        }],
+                        "backlogs": []
+                    })),
                     "scheduler": {
                         "ok": true,
                         "periodicTasks": [{
@@ -778,6 +802,101 @@ fn doctor_tasks_project_route_renders_project_scheduler_health() {
     assert_eq!(
         report["scheduler"]["periodicTasks"][0]["name"],
         json!("loop-watcher")
+    );
+}
+
+/// The ring that records a dead task lives in the process that died, and
+/// `aimux doctor tasks` runs in the daemon. Without this the only process that
+/// knows a serve task panicked is the one that can no longer be asked.
+#[test]
+fn doctor_tasks_project_route_surfaces_the_services_own_dead_tasks() {
+    let mut runtime = FakeOperationsRuntime::default();
+
+    let text = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?projectRoot=/repo", CORE_API_ROUTES.doctor_tasks_text),
+        None,
+    )
+    .expect("tasks project route");
+    let body = text_body(text);
+
+    assert!(body.contains("Project Scheduler Tasks\n"));
+    assert!(body.contains("failed tasks: 4"));
+    assert!(body.contains("Task Failures"));
+    assert!(body.contains("project-service:http-serve"));
+    assert!(
+        body.contains("crates/aimux/src/project_service/agents.rs:181"),
+        "the refusal's caller must reach the operator, got:\n{body}"
+    );
+}
+
+/// One renderer, two surfaces: the daemon's own task report and a project
+/// service's must be worded by the same code, or they drift.
+#[test]
+fn a_services_task_report_is_rendered_by_the_same_code_as_the_daemons() {
+    let mut runtime = FakeOperationsRuntime::default();
+
+    let json = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!(
+            "{}?projectRoot=/repo&json=1",
+            CORE_API_ROUTES.doctor_tasks_text
+        ),
+        None,
+    )
+    .expect("tasks project json route");
+    let report = json_text(json);
+    let parsed: aimux::async_runtime::AsyncRuntimeDoctorReport =
+        serde_json::from_value(report["asyncRuntime"].clone())
+            .expect("the route echoes a readable report");
+    assert_eq!(report["asyncRuntimeError"], json!(null));
+
+    let mut runtime = FakeOperationsRuntime::default();
+    let text = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?projectRoot=/repo", CORE_API_ROUTES.doctor_tasks_text),
+        None,
+    )
+    .expect("tasks project route");
+    let body = text_body(text);
+
+    for line in aimux::async_runtime::render_doctor_tasks_report(&parsed).lines() {
+        assert!(
+            body.contains(line),
+            "the project surface must render {line:?} exactly as the daemon surface does"
+        );
+    }
+}
+
+/// A build that does not report its async runtime has not told us that nothing
+/// died there. Absence and an empty report are different answers.
+#[test]
+fn a_service_that_cannot_report_its_async_runtime_says_so() {
+    let mut runtime = FakeOperationsRuntime {
+        omit_async_runtime: true,
+        ..FakeOperationsRuntime::default()
+    };
+
+    let text = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?projectRoot=/repo", CORE_API_ROUTES.doctor_tasks_text),
+        None,
+    )
+    .expect("tasks project route");
+    let body = text_body(text);
+
+    assert!(body.contains("Project Scheduler Tasks\n"));
+    assert!(
+        body.contains("does not report its async runtime"),
+        "silence must not read as a healthy runtime, got:\n{body}"
+    );
+    assert!(
+        !body.contains("failed tasks: 0"),
+        "an unasked service must not be reported as having lost nothing, got:\n{body}"
     );
 }
 

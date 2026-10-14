@@ -30,6 +30,26 @@ fn health_route_matches_project_service_contract_shape() {
     );
 }
 
+/// The daemon renders this; the service is the only thing that can produce it.
+/// Deleting the key leaves the daemon reporting "this build does not report its
+/// async runtime" about a build that does, so the producer needs its own gate.
+#[test]
+fn diagnostics_route_reports_the_services_own_async_runtime() {
+    let project = temp_project("diagnostics-async-runtime");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_read_request(&context, "GET", routes::DIAGNOSTICS).expect("diagnostics");
+
+    let report: aimux::async_runtime::AsyncRuntimeDoctorReport =
+        serde_json::from_value(response.body["asyncRuntime"].clone())
+            .expect("the payload carries a readable async runtime report");
+    assert_eq!(
+        report.runtime.worker_threads,
+        aimux::async_runtime::ASYNC_RUNTIME_WORKER_THREADS
+    );
+}
+
 #[test]
 fn diagnostics_route_reports_resources_and_runtime_exchange() {
     let project = temp_project("diagnostics");

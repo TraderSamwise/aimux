@@ -58,6 +58,10 @@ pub fn route_read_request(
                 "agentOutputReads": context.output_metrics.snapshot(),
                 "scheduler": context.scheduler.diagnostics_json(),
                 "runtimeExchange": inspect_runtime_exchange_store(runtime_exchange_path(context.project_state_dir())),
+                // The service's own async runtime, including the tasks that
+                // died. Without this the only process that knows a serve task
+                // panicked is the one that can no longer be asked.
+                "asyncRuntime": crate::async_runtime::doctor_tasks_report(),
             }),
         ));
     }
