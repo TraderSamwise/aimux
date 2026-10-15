@@ -127,14 +127,10 @@ describe("AgentChatScreen composer render contract", () => {
   // about the keyboard's contentInset, so it lands short by exactly the inset and
   // the live prompt stays behind the keyboard. The pane has to track the inset
   // and scroll to the offset that really shows the last line.
-  it("scrolls the terminal past the keyboard inset rather than to the plain end", () => {
-    const terminalSource = componentSource(agentChatScreenSource(), "AgentTerminalOutputPane");
-
-    expect(terminalSource).toContain("onContentInsetChange={handleTerminalContentInsetChange}");
-    expect(terminalSource).toContain("chatScrollTargetForEnd(terminalGeometryRef.current)");
-    expect(terminalSource).toContain("scrollRef.current?.scrollTo({ animated: command.animated");
-    expect(terminalSource).toContain("bottomInset: terminalGeometryRef.current.bottomInset");
-  });
+  // The terminal's own inset-aware scrolling moved to
+  // `AgentChatScreen.scroll-end.test.ts`, which asserts a superset of what was
+  // here and asserts it for BOTH panes at once. Two files asserting the same
+  // line is the second place it has to be kept in step.
 });
 
 /**
