@@ -135,11 +135,12 @@ import {
 import {
   chatCommandForContentChange,
   chatCommandForInitialLayout,
+  chatScrollCommandRunsWhileUnpinned,
+  chatScrollEndOffset,
   chatCommandForKeyboardChange,
   chatCommandForNavigationFocus,
   chatChromeAfterUserScroll,
   chatPolicyAfterNavigationFocus,
-  chatScrollTargetForEnd,
   chatPolicyAfterUserScroll,
   createChatScrollChromeState,
   createChatScrollPolicy,
@@ -147,6 +148,7 @@ import {
   type ChatScrollCommand,
   type ChatScrollMetrics,
   type ChatScrollPolicy,
+  type ChatScrollReason,
 } from "@/lib/chat-scroll-policy";
 import {
   chatVisibleTranscriptForLiveChange,
@@ -3075,6 +3077,7 @@ const AgentTerminalOutputPane = React.memo(
       const terminalScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
       const terminalScrollChromeRef = useRef<ChatScrollChromeState>(createChatScrollChromeState());
       const terminalScrollFrameRef = useRef<number | null>(null);
+      const terminalScrollPendingCommandReasonRef = useRef<ChatScrollReason | null>(null);
       const terminalInitialLayoutKeyRef = useRef<string | null>(null);
       // `scrollToEnd` targets `contentHeight - viewportHeight` and knows nothing
       // about the keyboard's contentInset, so with the keyboard up it lands short by
@@ -3098,6 +3101,7 @@ const AgentTerminalOutputPane = React.memo(
         if (terminalScrollFrameRef.current === null) return;
         cancelAnimationFrame(terminalScrollFrameRef.current);
         terminalScrollFrameRef.current = null;
+        terminalScrollPendingCommandReasonRef.current = null;
       }, []);
 
       useEffect(() => {
@@ -3112,20 +3116,21 @@ const AgentTerminalOutputPane = React.memo(
         (command: ChatScrollCommand) => {
           if (command.kind === "none") return;
           cancelPendingTerminalScroll();
+          terminalScrollPendingCommandReasonRef.current = command.reason;
           terminalScrollFrameRef.current = requestAnimationFrame(() => {
             terminalScrollFrameRef.current = null;
+            terminalScrollPendingCommandReasonRef.current = null;
             if (
-              command.reason !== "initial" &&
-              command.reason !== "navigation" &&
+              !chatScrollCommandRunsWhileUnpinned(command.reason) &&
               terminalScrollPolicyRef.current.intent !== "pinned"
             ) {
               return;
             }
-            const target = chatScrollTargetForEnd(terminalGeometryRef.current);
-            if (target > 0) {
-              scrollRef.current?.scrollTo({ animated: command.animated, y: target });
-            } else {
+            const target = chatScrollEndOffset(terminalGeometryRef.current);
+            if (target === null) {
               scrollRef.current?.scrollToEnd({ animated: command.animated });
+            } else {
+              scrollRef.current?.scrollTo({ animated: command.animated, y: target });
             }
           });
         },
@@ -3224,7 +3229,10 @@ const AgentTerminalOutputPane = React.memo(
             policy: terminalScrollPolicyRef.current,
           });
           const nextPolicy = nextScroll.policy;
-          if (nextPolicy.intent === "reading") {
+          if (
+            nextPolicy.intent === "reading" &&
+            !chatScrollCommandRunsWhileUnpinned(terminalScrollPendingCommandReasonRef.current)
+          ) {
             cancelPendingTerminalScroll();
           }
           terminalScrollPolicyRef.current = nextPolicy;
@@ -3367,6 +3375,7 @@ const AgentChatSessionViewport = React.memo(
       >(() => liveChatTranscript);
       const chatScrollRef = useRef<ChatScrollHandle | null>(null);
       const chatScrollMetricsRef = useRef<ChatScrollMetrics>({
+        bottomInset: 0,
         contentHeight: 0,
         offsetY: 0,
         viewportHeight: 0,
@@ -3374,7 +3383,7 @@ const AgentChatSessionViewport = React.memo(
       const chatScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
       const chatScrollChromeRef = useRef<ChatScrollChromeState>(createChatScrollChromeState());
       const chatScrollFrameRef = useRef<number | null>(null);
-      const chatScrollPendingCommandReasonRef = useRef<string | null>(null);
+      const chatScrollPendingCommandReasonRef = useRef<ChatScrollReason | null>(null);
       const liveChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
       const visibleChatTranscriptRef =
         useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
@@ -3450,13 +3459,23 @@ const AgentChatSessionViewport = React.memo(
             chatScrollFrameRef.current = null;
             chatScrollPendingCommandReasonRef.current = null;
             if (
-              command.reason !== "initial" &&
-              command.reason !== "navigation" &&
+              !chatScrollCommandRunsWhileUnpinned(command.reason) &&
               chatScrollPolicyRef.current.intent !== "pinned"
             ) {
               return;
             }
-            chatScrollRef.current?.scrollToEnd({ animated: command.animated });
+            // `scrollToEnd` targets `contentHeight - viewportHeight` and knows
+            // nothing about the bottom contentInset the composer reserve and the
+            // keyboard add, so it lands short by exactly that -- and the next
+            // scroll event then reads as scrollback and freezes the pane. The
+            // terminal pane next door already scrolls to the real end; this is
+            // the same helper, so both agree about where the end is.
+            const target = chatScrollEndOffset(chatScrollMetricsRef.current);
+            if (target === null) {
+              chatScrollRef.current?.scrollToEnd({ animated: command.animated });
+            } else {
+              chatScrollRef.current?.scrollTo({ animated: command.animated, y: target });
+            }
           });
         },
         [cancelPendingChatScroll],
@@ -3491,7 +3510,13 @@ const AgentChatSessionViewport = React.memo(
 
       useFocusEffect(
         useCallback(() => {
-          chatInitialLayoutKeyRef.current = agentKey;
+          // Cleared, not claimed: the first layout after focus is the only
+          // moment the pane has been measured, and claiming the key here made
+          // `handleChatLayout` take the content branch instead -- so the
+          // landing happened before `onLayout`, `onContentSizeChange` and the
+          // library's inset callback had said anything, and `scrollToEnd` was
+          // the only thing left to land it. The terminal pane clears it.
+          chatInitialLayoutKeyRef.current = null;
           chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
           chatScrollChromeRef.current = createChatScrollChromeState();
           resetNewMessageBadge();
@@ -3509,7 +3534,6 @@ const AgentChatSessionViewport = React.memo(
           executeChatScrollCommand,
           onChromeVisibleChange,
           resetNewMessageBadge,
-          agentKey,
           showLiveChatTranscript,
         ]),
       );
@@ -3547,9 +3571,20 @@ const AgentChatSessionViewport = React.memo(
         [executeChatScrollCommand],
       );
 
+      // Android does not report the keyboard-driven inset in the scroll event, so
+      // the library hands it over here instead -- the same reason the terminal
+      // pane takes it this way.
+      const handleChatContentInsetChange = useCallback((insets: { bottom: number }) => {
+        chatScrollMetricsRef.current = {
+          ...chatScrollMetricsRef.current,
+          bottomInset: insets.bottom,
+        };
+      }, []);
+
       const handleChatScroll = useCallback(
         (event: NativeSyntheticEvent<NativeScrollEvent>) => {
           const metrics: ChatScrollMetrics = {
+            bottomInset: chatScrollMetricsRef.current.bottomInset,
             contentHeight: event.nativeEvent.contentSize.height,
             offsetY: event.nativeEvent.contentOffset.y,
             viewportHeight: event.nativeEvent.layoutMeasurement.height,
@@ -3557,7 +3592,16 @@ const AgentChatSessionViewport = React.memo(
           chatScrollMetricsRef.current = metrics;
           const previousIntent = chatScrollPolicyRef.current.intent;
           const nextPolicy = chatPolicyAfterUserScroll(chatScrollPolicyRef.current, metrics);
-          if (nextPolicy.intent === "reading") {
+          // A still-queued `initial` or `navigation` scroll survives: it is what
+          // puts the reader at the newest message, and the frame it is waiting
+          // on would have run it -- its own guard lets those two through
+          // whatever the intent says. This only covers the queued frame; a
+          // scroll already issued is past saving, which is why where the end
+          // is matters more than this.
+          if (
+            nextPolicy.intent === "reading" &&
+            !chatScrollCommandRunsWhileUnpinned(chatScrollPendingCommandReasonRef.current)
+          ) {
             cancelPendingChatScroll();
           }
           chatScrollPolicyRef.current = nextPolicy;
@@ -3631,6 +3675,7 @@ const AgentChatSessionViewport = React.memo(
         <View className="flex-1 bg-background">
           <AgentChatTranscript
             messages={visibleMessages}
+            onContentInsetChange={handleChatContentInsetChange}
             onContentSizeChange={handleChatContentSizeChange}
             onLayout={handleChatLayout}
             onRetryTranscriptLoad={onRetryTranscriptLoad}
@@ -3667,6 +3712,7 @@ type AgentChatTranscriptProps = {
   bottomContentInset: number;
   dividerWidth: number;
   messages: readonly ChatMessage[];
+  onContentInsetChange: (insets: { bottom: number }) => void;
   onContentSizeChange: (contentWidth: number, contentHeight: number) => void;
   onLayout: (event: LayoutChangeEvent) => void;
   onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
@@ -3684,6 +3730,7 @@ const AgentChatTranscript = React.memo(
       bottomContentInset,
       dividerWidth,
       messages,
+      onContentInsetChange,
       onContentSizeChange,
       onLayout,
       onRetryTranscriptLoad,
@@ -3748,6 +3795,7 @@ const AgentChatTranscript = React.memo(
           keyboardDismissMode="interactive"
           keyboardLiftBehavior="whenAtEnd"
           keyboardShouldPersistTaps="handled"
+          onContentInsetChange={onContentInsetChange}
           onContentSizeChange={onContentSizeChange}
           onLayout={onLayout}
           onScroll={onScroll}

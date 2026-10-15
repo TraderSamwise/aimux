@@ -11,10 +11,13 @@ import {
   chatScrollTargetForEnd,
   chatPolicyAfterNavigationFocus,
   chatPolicyAfterUserScroll,
+  chatScrollCommandRunsWhileUnpinned,
+  chatScrollEndOffset,
   chatScrollDirection,
   createChatScrollChromeState,
   createChatScrollPolicy,
   isChatPinnedToEnd,
+  type ChatScrollReason,
 } from "./chat-scroll-policy";
 
 describe("chat scroll policy", () => {
@@ -162,6 +165,91 @@ describe("chat scroll policy", () => {
 // past the content. Scrolling to `contentHeight - viewportHeight` then lands
 // short by exactly the inset, which is why the newest terminal output sat behind
 // the keyboard while the pane believed it was pinned to the end.
+describe("where to scroll to reach the newest content", () => {
+  // The dangerous case, and the reason this returns null rather than a number:
+  // a freshly mounted pane is zero everywhere, and the library reports the
+  // keyboard and composer inset through its own callback, which can arrive
+  // before the first layout. A pane that trusted `target > 0` then scrolled to
+  // the INSET -- a couple of hundred points from the TOP of the history.
+  it("has no answer before the pane has been measured", () => {
+    expect(
+      chatScrollEndOffset({ bottomInset: 200, contentHeight: 0, offsetY: 0, viewportHeight: 0 }),
+    ).toBeNull();
+    expect(
+      chatScrollEndOffset({ bottomInset: 200, contentHeight: 4000, offsetY: 0, viewportHeight: 0 }),
+    ).toBeNull();
+    expect(
+      chatScrollEndOffset({ bottomInset: 200, contentHeight: 0, offsetY: 0, viewportHeight: 300 }),
+    ).toBeNull();
+  });
+
+  it("is the inset-aware end once it has", () => {
+    expect(
+      chatScrollEndOffset({
+        bottomInset: 200,
+        contentHeight: 4000,
+        offsetY: 0,
+        viewportHeight: 300,
+      }),
+    ).toBe(3900);
+    expect(chatScrollEndOffset({ contentHeight: 4000, offsetY: 0, viewportHeight: 300 })).toBe(
+      3700,
+    );
+  });
+
+  // Content shorter than the viewport has nothing to scroll, and the native
+  // command handles it without being told a number.
+  it("has no answer when the content fits", () => {
+    expect(chatScrollEndOffset({ contentHeight: 200, offsetY: 0, viewportHeight: 300 })).toBeNull();
+  });
+});
+
+describe("a landing scroll outranks the reader's position", () => {
+  // `initial` and `navigation` are how a pane opens on the newest message, so
+  // they run whatever the intent says. `content` and `keyboard` are offers the
+  // reader refuses by scrolling up. Stated as a total table so a new reason
+  // has to be classified rather than quietly joining the second group.
+  const RUNS = {
+    content: false,
+    initial: true,
+    keyboard: false,
+    navigation: true,
+  } as const satisfies Record<ChatScrollReason, boolean>;
+
+  it("runs only the commands that put the reader at the end", () => {
+    for (const [reason, expected] of Object.entries(RUNS)) {
+      expect(chatScrollCommandRunsWhileUnpinned(reason as ChatScrollReason), reason).toBe(expected);
+    }
+  });
+
+  // Nothing queued is nothing to protect: a pane with no command in flight
+  // cancels as it always did.
+  it("protects nothing when no command is in flight", () => {
+    expect(chatScrollCommandRunsWhileUnpinned(null)).toBe(false);
+  });
+
+  // The whole point, in the geometry that caused it: a composer reserve of 200
+  // means the content's end is 200px short of the scrollable end, so a pane
+  // that scrolled to the former reads as 200px of scrollback -- past the 20px
+  // threshold -- and freezes.
+  it("calls a pane that scrolled to the content's end unpinned, and the real end pinned", () => {
+    const geometry = { bottomInset: 200, contentHeight: 4000, viewportHeight: 300 };
+    const contentEnd = geometry.contentHeight - geometry.viewportHeight;
+    expect(chatScrollTargetForEnd({ ...geometry, offsetY: 0 })).toBe(contentEnd + 200);
+    expect(isChatPinnedToEnd({ ...geometry, offsetY: contentEnd })).toBe(false);
+    expect(isChatPinnedToEnd({ ...geometry, offsetY: contentEnd + 200 })).toBe(true);
+    expect(
+      chatPolicyAfterUserScroll(createChatScrollPolicy(), { ...geometry, offsetY: contentEnd }),
+    ).toEqual({ intent: "reading" });
+    expect(
+      chatPolicyAfterUserScroll(createChatScrollPolicy(), {
+        ...geometry,
+        offsetY: contentEnd + 200,
+      }),
+    ).toEqual({ intent: "pinned" });
+  });
+});
+
 describe("the end of the content with a keyboard inset", () => {
   const geometry = { contentHeight: 1000, offsetY: 0, viewportHeight: 300 };
 
