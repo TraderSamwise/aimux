@@ -32,8 +32,30 @@ export function relayLandingSignal(configured: boolean, status: RelayStatus): Re
   // the status when one was configured.
   if (!configured) return "available";
   if (status === "connected") return "available";
+  if (isRelayAnswerPendingForLanding(status)) return "unknown";
   if (isRelayUnavailableForProjectDiscovery(status)) return "unavailable";
   return "unknown";
+}
+
+/**
+ * Whether this status is a relay that has not answered YET, as opposed to one
+ * that has answered no.
+ *
+ * `isRelayUnavailableForProjectDiscovery` answers a different question -- it
+ * decides whether the project surface shows unavailable copy -- and two
+ * genuinely different questions get two answers. For landing, a relay that
+ * could not be reached and a fleet whose daemon is down are both things that
+ * fix themselves: a cold cellular launch can fail three handshakes, and a
+ * daemon comes back up. Treating either as a settled "no backend" sent a user
+ * with shared chats straight to someone else's chats, and the redirect
+ * unmounts the landing screen, so the relay connecting a second later had
+ * nothing left to re-decide.
+ *
+ * `auth_failed` and `client_storage_error` are not on this list on purpose:
+ * waiting does not fix wrong credentials or broken local storage.
+ */
+export function isRelayAnswerPendingForLanding(status: RelayStatus): boolean {
+  return status === "daemon_offline" || status === "relay_unavailable";
 }
 
 export type OwnBackendSignal = "present" | "absent" | "unknown";

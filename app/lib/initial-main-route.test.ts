@@ -126,9 +126,32 @@ describe("ownBackendSignal", () => {
 
   // `knownMachinesAtom` deliberately remembers machines that have gone away,
   // so a count alone must not outvote the relay.
-  it("is absent when the relay is unreachable, whatever machines are remembered", () => {
-    expect(ownBackendSignal(true, "daemon_offline", 3)).toBe("absent");
+  it("is absent when the relay has settled a no, whatever machines are remembered", () => {
     expect(ownBackendSignal(true, "auth_failed", 3)).toBe("absent");
+    expect(ownBackendSignal(true, "client_storage_error", 3)).toBe("absent");
+  });
+
+  // The whole point of this item: a could-not-ask error and a settled no are
+  // different answers, and only the second one may send anyone to the shared
+  // list -- that redirect unmounts the landing screen and cannot be undone.
+  it("is unknown while a retryable failure might still clear", () => {
+    expect(ownBackendSignal(true, "daemon_offline", 3)).toBe("unknown");
+    expect(ownBackendSignal(true, "daemon_offline", 0)).toBe("unknown");
+    expect(ownBackendSignal(true, "relay_unavailable", 0)).toBe("unknown");
+  });
+
+  // And an expired wait on one of those lands on the user's own surface, which
+  // carries its own copy, rather than on someone else's chats.
+  it("expires a retryable failure into the user's own surface", () => {
+    expect(
+      initialMainRoute({
+        isSignedIn: true,
+        realSharedChatCount: 3,
+        sharesHydrated: true,
+        ownBackend: ownBackendSignal(true, "relay_unavailable", 0),
+        waitExpired: true,
+      }),
+    ).toBe("project");
   });
 
   it("is unknown while the relay has not answered", () => {
@@ -149,14 +172,23 @@ describe("relayLandingSignal", () => {
   // Every member, so a new `RelayStatus` has to be classified rather than
   // falling into "unknown" and holding the landing screen on a spinner.
   const SIGNALS = {
+    // Waiting does not fix wrong credentials or broken local storage, so these
+    // two are the only settled no.
     auth_failed: "unavailable",
     client_storage_error: "unavailable",
     connected: "available",
     connecting: "unknown",
-    daemon_offline: "unavailable",
+    // Both fix themselves: a daemon comes back up, and a cold cellular launch
+    // can fail three handshakes before the relay answers. Reading either as a
+    // settled "no backend" sent a user with shared chats to someone else's
+    // chats, and the redirect unmounts the landing screen, so the relay
+    // connecting a second later had nothing left to re-decide.
+    daemon_offline: "unknown",
+    relay_unavailable: "unknown",
+    // Approval is a fact about THIS device, and `ownBackendSignal` answers
+    // "present" for it before ever consulting this.
     device_pending: "unavailable",
     disconnected: "unknown",
-    relay_unavailable: "unavailable",
   } as const satisfies Record<RelayStatus, RelayLandingSignal>;
 
   it("reads a configured relay's own answer, and waits when it has not given one", () => {
