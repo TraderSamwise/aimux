@@ -73,8 +73,23 @@ fn project_service_sigterm_clears_endpoint_and_expose_socket_artifacts() {
     // own path so a lifecycle event lands in one place whichever process
     // emitted it.
     let log = resolver.daemon_log_path();
-    wait_for_log_line(&log, "health watchdog armed");
-    wait_for_log_line(&log, "shutdown escalation armed");
+    wait_for_log_record(&log, "shutdown escalation armed", None);
+    // Not just the words: the SAME record must name the port THIS service
+    // bound. The daemon log is shared by every process under one AIMUX_HOME,
+    // and the listener-published line already carries this port, so asserting
+    // the two strings separately pinned nothing.
+    let endpoint = fs::read_to_string(metadata_endpoint_path(&project_state_dir))
+        .expect("read the service's own endpoint");
+    let port = serde_json::from_str::<serde_json::Value>(&endpoint)
+        .expect("endpoint json")
+        .get("port")
+        .and_then(serde_json::Value::as_u64)
+        .expect("the endpoint names a port");
+    wait_for_log_record(
+        &log,
+        "health watchdog armed",
+        Some(&format!("\"port\":{port}")),
+    );
 
     signal_pid(service.id(), libc::SIGTERM);
     wait_for_child_exit(&mut service, "project service");
@@ -97,19 +112,27 @@ fn project_service_sigterm_clears_endpoint_and_expose_socket_artifacts() {
     );
 }
 
-fn wait_for_log_line(path: impl AsRef<Path>, needle: &str) {
+/// Wait for ONE log record containing `needle`, and `also` when given.
+///
+/// One record, not one file: separate `contains` checks over the whole log
+/// are satisfied by two unrelated lines.
+fn wait_for_log_record(path: impl AsRef<Path>, needle: &str, also: Option<&str>) {
     let path = path.as_ref();
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
-        if fs::read_to_string(path)
-            .map(|text| text.contains(needle))
-            .unwrap_or(false)
-        {
+        let found = fs::read_to_string(path)
+            .map(|text| {
+                text.lines().any(|line| {
+                    line.contains(needle) && also.is_none_or(|also| line.contains(also))
+                })
+            })
+            .unwrap_or(false);
+        if found {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "the running project service never logged {needle:?} to {}",
+            "the running project service never logged {needle:?} with {also:?} to {}",
             path.display()
         );
         std::thread::sleep(Duration::from_millis(50));
