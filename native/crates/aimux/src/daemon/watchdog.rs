@@ -93,8 +93,8 @@ pub fn probe_health_within(host: &str, port: u16, timeout: Duration) -> Result<(
     let target: std::net::SocketAddr = address
         .parse()
         .map_err(|error| format!("bad probe address {address}: {error}"))?;
-    // The daemon only ever listens on loopback, and this probe must never
-    // become a way to reach anything else.
+    // Every process this probes listens on loopback only, and the probe must
+    // never become a way to reach anything else.
     if !target.ip().is_loopback() {
         return Err(format!(
             "refusing to probe a non-loopback address: {address}"
@@ -123,7 +123,7 @@ pub fn probe_health_within(host: &str, port: u16, timeout: Duration) -> Result<(
         .map_err(|error| format!("no response: {error}"))?;
     let _ = stream.shutdown(Shutdown::Both);
     if read == 0 {
-        return Err("the daemon accepted the connection and answered nothing".to_owned());
+        return Err("the connection was accepted and nothing was answered".to_owned());
     }
     let head = String::from_utf8_lossy(&response);
     if head.starts_with("HTTP/1.1 200") || head.starts_with("HTTP/1.0 200") {
