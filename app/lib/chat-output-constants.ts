@@ -98,3 +98,16 @@ export function chatHistorySeedStartLine(storedStartLine: number | undefined): n
 export function chatHistoryPagingAllowed(consecutiveFailures: number): boolean {
   return consecutiveFailures < CHAT_HISTORY_PAGE_FAILURE_LIMIT;
 }
+
+/**
+ * Whether the reader has moved far enough from the top to be asking again.
+ *
+ * The failure brake counts within one gesture. Without this it counted
+ * forever: a service down for a moment left the pager refusing for the rest of
+ * the session, and the only ways back were changing agent or backgrounding the
+ * app -- neither of which a reader trying again would think to do. Scrolling
+ * away and back is what trying again looks like.
+ */
+export function chatHistoryPagingRetryable(metrics: ChatOutputHistoryScrollMetrics): boolean {
+  return metrics.offsetY > CHAT_OUTPUT_HISTORY_PAGE_TOP_THRESHOLD_PX * 2;
+}

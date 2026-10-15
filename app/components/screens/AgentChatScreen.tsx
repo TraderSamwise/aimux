@@ -162,6 +162,7 @@ import {
   CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
   chatHistoryPageOutcome,
   chatHistoryPagingAllowed,
+  chatHistoryPagingRetryable,
   chatHistorySeedStartLine,
   chatOutputHistoryStartLineForScroll,
 } from "@/lib/chat-output-constants";
@@ -1132,6 +1133,10 @@ export default function ChatScreen() {
 
   const requestChatHistoryPage = useCallback(
     (metrics: ChatScrollMetrics) => {
+      // The brake counts within one gesture. Scrolling away from the top and
+      // back is what trying again looks like, and without this a service down
+      // for a moment left the pager refusing for the rest of the session.
+      if (chatHistoryPagingRetryable(metrics)) chatHistoryFailuresRef.current = 0;
       const nextStartLine = chatOutputHistoryStartLineForScroll({
         // The ref, not the state: `.finally` clears the pending guard in the
         // same microtask chain, before React commits the new cursor. A scroll

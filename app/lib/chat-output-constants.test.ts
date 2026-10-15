@@ -6,9 +6,11 @@ import {
   CHAT_OUTPUT_CAPTURE_START_LINE,
   CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE,
   CHAT_HISTORY_PAGE_FAILURE_LIMIT,
+  CHAT_OUTPUT_HISTORY_PAGE_TOP_THRESHOLD_PX,
   CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
   chatHistoryPageOutcome,
   chatHistoryPagingAllowed,
+  chatHistoryPagingRetryable,
   chatHistorySeedStartLine,
   chatOutputHistoryStartLineForScroll,
   nextChatOutputCaptureStartLine,
@@ -234,5 +236,31 @@ describe("a page that arrives without a start line", () => {
       kind: "advanced",
       startLine: nextChatOutputCaptureStartLine(CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE),
     });
+  });
+});
+
+describe("the brake counts within one gesture", () => {
+  it("does not clear while the reader is still at the top", () => {
+    // Clearing here would make the brake meaningless: the pager is called on
+    // every scroll event, and at the top they keep coming.
+    expect(
+      chatHistoryPagingRetryable({ contentHeight: 2_000, offsetY: 0, viewportHeight: 800 }),
+    ).toBe(false);
+    expect(
+      chatHistoryPagingRetryable({
+        contentHeight: 2_000,
+        offsetY: CHAT_OUTPUT_HISTORY_PAGE_TOP_THRESHOLD_PX,
+        viewportHeight: 800,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears once the reader has moved away and can come back", () => {
+    // Without this the brake counted forever: a service down for a moment left
+    // the pager refusing for the rest of the session, and the only ways back
+    // were changing agent or backgrounding the app.
+    expect(
+      chatHistoryPagingRetryable({ contentHeight: 4_000, offsetY: 900, viewportHeight: 800 }),
+    ).toBe(true);
   });
 });
