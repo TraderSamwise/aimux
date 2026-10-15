@@ -234,11 +234,11 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   },
   {
     path: "native/crates/aimux/src/git_delivery.rs",
-    marker: 'Command::new("git")',
-    count: 7,
-    command: "git",
+    marker: "AsyncCommand::new(program);",
+    command:
+      "git, resolved once per process to an absolute path by program_lookup rather than spawned by name",
     argv:
-      "literal delivery-verification args, plus cat-file --batch-check and hash-object --stdin-paths, which take their per-file specs on stdin so the invocation count stops scaling with the number of changed files",
+      "literal delivery-verification args, plus cat-file --batch-check and hash-object --stdin-paths, which take their per-file specs on stdin so the invocation count stops scaling with the number of changed files; every call is bounded by GIT_COMMAND_TIMEOUT and the child is killed on expiry",
     input:
       "repo paths/refs supplied by delivery checker; the two batch calls take their per-file specs on STDIN rather than argv, one line per spec, and paths that cannot ride that protocol fall back to a single-path invocation",
   },
