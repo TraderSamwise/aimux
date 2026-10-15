@@ -9,6 +9,7 @@ import {
   CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
   chatHistoryPageOutcome,
   chatHistoryPagingAllowed,
+  chatHistorySeedStartLine,
   chatOutputHistoryStartLineForScroll,
   nextChatOutputCaptureStartLine,
 } from "./chat-output-constants";
@@ -185,5 +186,53 @@ describe("a page that races the live stream", () => {
         appliedStartLine: undefined,
       }),
     ).toEqual({ kind: "not-served" });
+  });
+});
+
+describe("seeding a re-entered chat's cursor", () => {
+  it("starts at the live window when the store holds nothing", () => {
+    expect(chatHistorySeedStartLine(undefined)).toBe(CHAT_OUTPUT_CAPTURE_START_LINE);
+  });
+
+  it("picks up where the stored transcript left off", () => {
+    expect(chatHistorySeedStartLine(-640)).toBe(-640);
+  });
+
+  it("always leaves one page of room to ask", () => {
+    // Seeding to the floor makes the pager a dead end:
+    // `chatOutputHistoryStartLineForScroll` declines when there is nothing
+    // deeper, and the floor notice needs a page THIS mount was given -- so
+    // scrolling up would do nothing and say nothing. The stored line can also
+    // outlive the pane it described, so it is never taken as final.
+    const seeded = chatHistorySeedStartLine(CHAT_OUTPUT_MAX_CAPTURE_START_LINE);
+    expect(seeded).toBeGreaterThan(CHAT_OUTPUT_MAX_CAPTURE_START_LINE);
+    expect(
+      chatOutputHistoryStartLineForScroll({
+        currentStartLine: seeded,
+        metrics: { contentHeight: 2_000, offsetY: 0, viewportHeight: 800 },
+      }),
+    ).not.toBeNull();
+  });
+
+  it("never seeds shallower than the live window", () => {
+    expect(chatHistorySeedStartLine(-10)).toBe(CHAT_OUTPUT_CAPTURE_START_LINE);
+  });
+});
+
+describe("a page that arrives without a start line", () => {
+  it("is still a page, because the field is optional in the contract", () => {
+    // The store writes `undefined` for it and keeps the messages, so reading
+    // that as "nothing arrived" stopped paging on a page already on screen --
+    // worse than the bug being fixed. The call site falls back to the line it
+    // asked for, which is the best information available.
+    expect(
+      chatHistoryPageOutcome({
+        currentStartLine: CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE,
+        appliedStartLine: nextChatOutputCaptureStartLine(CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE),
+      }),
+    ).toEqual({
+      kind: "advanced",
+      startLine: nextChatOutputCaptureStartLine(CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE),
+    });
   });
 });

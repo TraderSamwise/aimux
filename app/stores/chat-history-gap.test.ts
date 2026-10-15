@@ -48,7 +48,7 @@ describe("returning from the background", () => {
     // The cursor has to move with it, or the next scroll up asks for a
     // shallower window than the one just stored and pages back to it -- but
     // only once the page is here, which is what the shared applier decides.
-    expect(effect).toContain("applyChatHistoryPageOutcome(served)");
+    expect(effect).toContain("applyChatHistoryPageOutcome(");
     // A deeper start line than the stored one is what takes the wholesale
     // replace branch, so it must not be the live default.
     expect(effect).not.toContain("CHAT_OUTPUT_CAPTURE_START_LINE,");

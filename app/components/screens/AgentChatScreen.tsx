@@ -162,6 +162,7 @@ import {
   CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
   chatHistoryPageOutcome,
   chatHistoryPagingAllowed,
+  chatHistorySeedStartLine,
   chatOutputHistoryStartLineForScroll,
 } from "@/lib/chat-output-constants";
 import {
@@ -717,9 +718,6 @@ export default function ChatScreen() {
     width: chatSplitWidth,
   });
   const agentOutputFeedMode = agentOutputModeForVisiblePane({ terminalViewVisible });
-  const [chatOutputHistoryStartLine, setChatOutputHistoryStartLine] = useState(
-    CHAT_OUTPUT_CAPTURE_START_LINE,
-  );
   const [chatHistoryFloorReached, setChatHistoryFloorReached] = useState(false);
   // Set only where a page actually arrived, so the two paths that move the
   // cursor without fetching cannot make the view claim it reached a floor.
@@ -727,8 +725,10 @@ export default function ChatScreen() {
   // Consecutive pages that were never served. Holding the cursor still removes
   // the brake the old bug accidentally provided.
   const chatHistoryFailuresRef = useRef(0);
-  // Mirrors the cursor so a resolved page can read it without an impure
-  // updater, the way the pending start line already does.
+  // The cursor itself. A ref rather than state because nothing renders from
+  // it -- the transcript comes from the store and the pager passes its own
+  // start line -- and because a resolved page must read it without an impure
+  // React updater. It was state, written by three paths and read by none.
   const chatOutputHistoryStartLineRef = useRef(CHAT_OUTPUT_CAPTURE_START_LINE);
   const [pendingChatOutputHistoryStartLine, setPendingChatOutputHistoryStartLine] = useState<
     number | null
@@ -762,14 +762,10 @@ export default function ChatScreen() {
     // on screen, cursor and transcript agree.
     const stored = jotaiStore.get(transcriptStartLineFamily(agentKey));
     const hasTranscript = jotaiStore.get(transcriptFamily(agentKey)).length > 0;
-    const seeded =
-      hasTranscript && typeof stored === "number"
-        ? Math.min(stored, CHAT_OUTPUT_CAPTURE_START_LINE)
-        : CHAT_OUTPUT_CAPTURE_START_LINE;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- each route/session re-seeds its paging cursor
-    setChatOutputHistoryStartLine(seeded);
+    const seeded = chatHistorySeedStartLine(hasTranscript ? stored : undefined);
     chatOutputHistoryStartLineRef.current = seeded;
     chatHistoryFailuresRef.current = 0;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- each route/session clears its own floor notice
     setChatHistoryFloorReached(false);
     // Not a page THIS mount was given, so the floor notice still has to earn
     // itself: a seeded cursor says only that something was stored before.
@@ -1105,7 +1101,6 @@ export default function ChatScreen() {
       return;
     }
     chatOutputHistoryStartLineRef.current = outcome.startLine;
-    setChatOutputHistoryStartLine(outcome.startLine);
   }, []);
 
   const wasAppVisibleRef = useRef(appVisible);
@@ -1118,15 +1113,19 @@ export default function ChatScreen() {
     // only once the page is actually here. It used to move before this request
     // resolved, and on a resume with no endpoint it moved for a request that
     // was never sent.
+    let arrived = false;
     let served: number | undefined;
     void refreshOutputSnapshot("history", {
       startLine: CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
       onSnapshotApplied: (startLine) => {
+        arrived = true;
         served = startLine;
       },
     })
       .then(() => {
-        applyChatHistoryPageOutcome(served);
+        applyChatHistoryPageOutcome(
+          arrived ? (served ?? CHAT_OUTPUT_MAX_CAPTURE_START_LINE) : undefined,
+        );
       })
       .catch(() => {});
   }, [appVisible, applyChatHistoryPageOutcome, refreshOutputSnapshot]);
@@ -1134,7 +1133,13 @@ export default function ChatScreen() {
   const requestChatHistoryPage = useCallback(
     (metrics: ChatScrollMetrics) => {
       const nextStartLine = chatOutputHistoryStartLineForScroll({
-        currentStartLine: chatOutputHistoryStartLine,
+        // The ref, not the state: `.finally` clears the pending guard in the
+        // same microtask chain, before React commits the new cursor. A scroll
+        // queued at the top then re-computed the SAME window from a stale
+        // closure, was served it, and the applier -- which reads the ref --
+        // called that "no deeper history" and stuck the floor notice on a chat
+        // with plenty left.
+        currentStartLine: chatOutputHistoryStartLineRef.current,
         enabled:
           chatViewVisible &&
           heartbeatReady &&
@@ -1147,7 +1152,7 @@ export default function ChatScreen() {
       if (nextStartLine === null) {
         if (
           chatHistoryAtFloor({
-            currentStartLine: chatOutputHistoryStartLine,
+            currentStartLine: chatOutputHistoryStartLineRef.current,
             metrics,
             pagedAtLeastOnce: chatHistoryPagedRef.current,
           })
@@ -1158,15 +1163,22 @@ export default function ChatScreen() {
       }
       pendingChatOutputHistoryStartLineRef.current = nextStartLine;
       setPendingChatOutputHistoryStartLine(nextStartLine);
+      // Three outcomes, not two. The callback fires only when a snapshot was
+      // applied, so never firing means nothing arrived. Firing with no start
+      // line means a page DID arrive without one -- the field is optional in
+      // the contract -- and treating that as nothing would stop paging on a
+      // page already on screen.
+      let arrived = false;
       let served: number | undefined;
       void refreshOutputSnapshot("history", {
         startLine: nextStartLine,
         onSnapshotApplied: (startLine) => {
+          arrived = true;
           served = startLine;
         },
       })
         .then(() => {
-          applyChatHistoryPageOutcome(served);
+          applyChatHistoryPageOutcome(arrived ? (served ?? nextStartLine) : undefined);
         })
         .catch(() => {
           // History paging is opportunistic; the live feed and explicit Retry
@@ -1184,7 +1196,6 @@ export default function ChatScreen() {
     },
     [
       applyChatHistoryPageOutcome,
-      chatOutputHistoryStartLine,
       chatViewVisible,
       heartbeatReady,
       pendingChatOutputHistoryStartLine,

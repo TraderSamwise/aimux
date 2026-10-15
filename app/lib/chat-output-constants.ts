@@ -76,6 +76,23 @@ export function chatHistoryPageOutcome({
 }
 
 /**
+ * Where a re-entered chat's cursor starts, given what the store already holds.
+ *
+ * Seeding from the stored transcript stops a re-entered session re-walking
+ * windows it already has. But seeding all the way to the floor makes the pager
+ * a dead end: `chatOutputHistoryStartLineForScroll` declines once there is
+ * nothing deeper to ask for, and `chatHistoryAtFloor` needs a page THIS mount
+ * was given -- so scrolling up would do nothing and say nothing. The stored
+ * line can also outlive the pane it described, so it always leaves one page of
+ * room to ask and let the service answer.
+ */
+export function chatHistorySeedStartLine(storedStartLine: number | undefined): number {
+  if (storedStartLine === undefined) return CHAT_OUTPUT_CAPTURE_START_LINE;
+  const deepestSeed = CHAT_OUTPUT_MAX_CAPTURE_START_LINE + CHAT_OUTPUT_HISTORY_PAGE_LINES;
+  return Math.min(CHAT_OUTPUT_CAPTURE_START_LINE, Math.max(storedStartLine, deepestSeed));
+}
+
+/**
  * Whether the pager should keep asking after this many failures in a row.
  */
 export function chatHistoryPagingAllowed(consecutiveFailures: number): boolean {

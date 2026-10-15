@@ -23,18 +23,21 @@ function occurrences(pattern: string): number {
 }
 
 describe("the chat history cursor has one decision", () => {
-  it("is only ever set by the agent reset and the shared applier", () => {
-    // Three writers, and the test says which: the per-agent reset seeds it,
-    // the applier moves it, and the ref mirrors it. Anything else is a fourth
-    // path that can move it without a page.
-    expect(occurrences("setChatOutputHistoryStartLine(")).toBe(2);
+  it("is only ever written by the agent reset and the shared applier", () => {
+    // Two writers, and the test says which: the per-agent reset seeds it and
+    // the applier moves it. Anything else is a third path that can move it
+    // without a page.
     expect(occurrences("chatOutputHistoryStartLineRef.current =")).toBe(2);
+    // And it is a ref, not state: nothing renders from it, so state meant
+    // three writers and no readers.
+    expect(screenSource).not.toContain("setChatOutputHistoryStartLine");
   });
 
   it("decides what a page meant in exactly one place", () => {
     expect(occurrences("chatHistoryPageOutcome({")).toBe(1);
     // And both paging paths call that one place.
-    expect(occurrences("applyChatHistoryPageOutcome(served)")).toBe(2);
+    // Two call sites, and the declaration does not match this pattern.
+    expect(occurrences("applyChatHistoryPageOutcome(")).toBe(2);
     // And each one takes the line the feed served, not one read back from the
     // store, which a live stream event can have cleared by then.
     expect(occurrences("onSnapshotApplied: (startLine) => {")).toBe(2);
@@ -46,6 +49,24 @@ describe("the chat history cursor has one decision", () => {
     // was served.
     expect(screenSource).not.toContain("Math.min(current, nextStartLine)");
     expect(screenSource).not.toContain("Math.min(current, CHAT_OUTPUT_MAX_CAPTURE_START_LINE)");
+  });
+
+  it("asks and decides against the same value", () => {
+    // The pending guard clears in the same microtask chain as the fetch, before
+    // React commits the new cursor. Computing the next page from the STATE
+    // while deciding the outcome against the REF meant a queued scroll
+    // re-requested the same window, was served it, and that read as "no deeper
+    // history" -- a sticky floor notice on a chat with plenty left.
+    expect(occurrences("currentStartLine: chatOutputHistoryStartLineRef.current")).toBe(3);
+    expect(screenSource).not.toContain("currentStartLine: chatOutputHistoryStartLine,");
+  });
+
+  it("treats a page with no start line as a page", () => {
+    // The field is optional in the contract and the store writes undefined for
+    // it, so "arrived" has to be its own fact rather than inferred from the
+    // value.
+    expect(occurrences("arrived = true;")).toBe(2);
+    expect(occurrences("arrived ? (served ??")).toBe(2);
   });
 
   it("keeps a brake on the pager", () => {
