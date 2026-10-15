@@ -369,7 +369,19 @@ pub fn doctor_versions_text_route(
     runtime: &mut impl DaemonOperationsTextRuntime,
     route_url: &DaemonRouteUrl,
 ) -> DaemonRouteResponse {
-    match runtime.doctor_versions_report() {
+    doctor_versions_text_response(route_url, runtime.doctor_versions_report())
+}
+
+/// One renderer for the versions report, whoever built it.
+///
+/// The daemon serves this route from a fast path that snapshots under the lock
+/// and builds the report with it released; this route serves it from a runtime
+/// it already holds. Both must answer identically, so neither formats its own.
+pub fn doctor_versions_text_response(
+    route_url: &DaemonRouteUrl,
+    report: Result<(Value, String), String>,
+) -> DaemonRouteResponse {
+    match report {
         Ok((report, text)) => {
             text_or_json_lines(route_url, report, &split_rendered_report_lines(&text))
         }

@@ -231,7 +231,7 @@ fn project_root_field(body: &Value) -> Option<&str> {
     None
 }
 
-fn has_origin_header(headers: &BTreeMap<String, String>) -> bool {
+pub(crate) fn has_origin_header(headers: &BTreeMap<String, String>) -> bool {
     headers.contains_key("origin") || headers.contains_key("Origin")
 }
 

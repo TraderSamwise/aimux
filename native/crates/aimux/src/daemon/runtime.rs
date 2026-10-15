@@ -1215,6 +1215,52 @@ impl RealDaemonRuntime {
         }
     }
 
+    /// Read, under the lock, everything the versions report will need.
+    ///
+    /// No git, no health probe, no tmux: the provider is carried, not called.
+    fn doctor_versions_snapshot(&self) -> DoctorVersionsSnapshot {
+        let generated_at = now_iso();
+        let state = self.daemon_state();
+        DoctorVersionsSnapshot {
+            project_read: DaemonProjectReadSnapshot {
+                resolver: self.resolver.clone(),
+                project_service_process_verifier: Arc::clone(
+                    &self.project_service_process_verifier,
+                ),
+            },
+            resolver: self.resolver.clone(),
+            runtime_coherence_tmux_provider: Arc::clone(&self.runtime_coherence_tmux_provider),
+            daemon_projects: state
+                .projects
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+            daemon_state_project_count: state.projects.len(),
+            daemon_info: serde_json::to_value(self.current_daemon_info(&generated_at))
+                .unwrap_or(Value::Null),
+            expected_project_service: self.project_service_info(),
+            // Read at `generated_at`, where it used to be read after the scan.
+            // Everything in this snapshot is as of that stamp, and a relay
+            // that connects during a twenty-second scan is better reported as
+            // it was when the report was stamped than as a state no other
+            // line in the report agrees with.
+            relay: self.relay_status(),
+            // Reported, not resolved. Calling `machine_identity()` here would
+            // let a diagnostic be the first thing to establish the identity --
+            // and, on a home it cannot write, cache an ephemeral id that every
+            // later connect then uses.
+            #[cfg(feature = "remote-control")]
+            machine: self.machine_identity_report(),
+            generated_at,
+            daemon_pid: self.info.pid,
+            aimux_home: self
+                .resolver
+                .global_aimux_dir()
+                .to_string_lossy()
+                .into_owned(),
+        }
+    }
+
     pub fn with_runtime_coherence_tmux_provider(
         mut self,
         provider: Arc<dyn Fn() -> RuntimeCoherenceTmux + Send + Sync>,
@@ -2624,6 +2670,37 @@ fn daemon_project_read_snapshot(
     }
 }
 
+/// Everything the versions report needs from the daemon, read under the lock
+/// and nothing else.
+///
+/// The report's own work is git, HTTP health probes and a tmux inventory --
+/// other processes, every one of them. Doing that while holding the runtime
+/// mutex is what let one stuck `index.lock` block every other daemon request
+/// until `kill -9` (2026-10-11). This is the shape `/projects` already uses:
+/// take what is needed, let go, then go and ask.
+pub struct DoctorVersionsSnapshot {
+    project_read: DaemonProjectReadSnapshot,
+    resolver: PathResolver,
+    runtime_coherence_tmux_provider: Arc<dyn Fn() -> RuntimeCoherenceTmux + Send + Sync>,
+    daemon_projects: Vec<(String, Value)>,
+    daemon_state_project_count: usize,
+    daemon_info: Value,
+    expected_project_service: Value,
+    relay: Value,
+    #[cfg(feature = "remote-control")]
+    machine: Value,
+    generated_at: String,
+    daemon_pid: i32,
+    aimux_home: String,
+}
+
+fn daemon_doctor_versions_snapshot(
+    runtime: &Arc<Mutex<RealDaemonRuntime>>,
+) -> DoctorVersionsSnapshot {
+    let runtime = runtime.lock().expect("daemon runtime mutex poisoned");
+    runtime.doctor_versions_snapshot()
+}
+
 #[derive(Debug)]
 struct ProjectsRouteRead {
     projects: Vec<ProjectsRouteProject>,
@@ -2845,6 +2922,50 @@ pub fn handle_daemon_runtime_request_with_mutex(
                     .unwrap_or_else(|| {
                         DaemonRouteResponse::json(404, json!({ "ok": false, "error": "not found" }))
                     })
+            },
+        );
+    }
+    // The versions report asks git, the project services and tmux about
+    // themselves, and holding the runtime mutex across that is what let one
+    // stuck checkout block every other daemon request until `kill -9`
+    // (2026-10-11).
+    //
+    // Local callers only, which is the whole population of this route: it is
+    // in `local_cli_text_routes`, so the router refuses any request carrying a
+    // remote actor or an `Origin` header. That refusal lives on the route, not
+    // in the access decision, so a fast path that answered those callers would
+    // be serving the report to someone the daemon turns away -- and a parity
+    // test caught exactly that. Anyone this condition excludes takes the
+    // locked path and is refused there, by the one copy of the rule.
+    if request.method == "GET"
+        && pathname == crate::core_command_contract::CORE_API_ROUTES.doctor_versions_text
+        && parse_remote_actor(&request.headers).is_none()
+        && !crate::daemon::router::has_origin_header(&request.headers)
+    {
+        let runtime = Arc::clone(runtime);
+        return handle_daemon_http_request(
+            request,
+            |method, path, body, headers| {
+                build_daemon_route_context(method, path, body, headers.clone(), &[])
+            },
+            |_, path, _, context, _| {
+                if let Some(access) = &context.access_decision
+                    && !access.ok
+                {
+                    return DaemonRouteResponse::json(
+                        access.status.unwrap_or(403),
+                        json!({
+                            "ok": false,
+                            "error": access.error.as_deref().unwrap_or("remote access denied")
+                        }),
+                    );
+                }
+                let snapshot = daemon_doctor_versions_snapshot(&runtime);
+                // The lock is gone by here, which is the whole point.
+                crate::daemon::text::operations::doctor_versions_text_response(
+                    &DaemonRouteUrl::parse(path),
+                    build_doctor_versions_report(snapshot),
+                )
             },
         );
     }
@@ -4288,6 +4409,118 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
     }
 }
 
+/// The versions report, built from a snapshot and nothing else.
+///
+/// A free function on purpose: the work here is git, HTTP health probes and a
+/// tmux inventory, and it must not be able to reach for the runtime mutex
+/// again. Holding that lock across this is what let one stuck `index.lock`
+/// block every other daemon request until `kill -9` on 2026-10-11.
+pub fn build_doctor_versions_report(
+    snapshot: DoctorVersionsSnapshot,
+) -> Result<(Value, String), String> {
+    let DoctorVersionsSnapshot {
+        project_read: project_read_snapshot,
+        mut resolver,
+        runtime_coherence_tmux_provider,
+        daemon_projects,
+        daemon_state_project_count,
+        daemon_info,
+        expected_project_service,
+        relay,
+        #[cfg(feature = "remote-control")]
+        machine,
+        generated_at,
+        daemon_pid,
+        aimux_home,
+    } = snapshot;
+    let project_read = read_projects_for_route_from_snapshot(&project_read_snapshot, None)?;
+    let project_read_errors = project_read.read_errors;
+    let projects = project_read.projects;
+    let service_alive = projects
+        .iter()
+        .filter(|project| project.service_alive)
+        .count();
+    let cli_launch = get_aimux_current_cli_identity(AimuxCliLaunchOptions::default());
+    let process_list_result = try_list_process_args();
+    let (process_list, process_inventory_error) = match process_list_result {
+        Ok(processes) => (processes, None),
+        Err(error) => (Vec::new(), Some(error)),
+    };
+    let daemon_process_inventory =
+        daemon_process_inventory_report(&process_list, Some(daemon_pid), Some(&aimux_home));
+    let mut report = build_runtime_coherence_report_with_resolver(
+        RuntimeCoherenceInput {
+            generated_at: generated_at.clone(),
+            cli_version: read_aimux_runtime_version(),
+            build_profile: read_aimux_build_profile_from_package_root(package_root()),
+            build_variant: read_aimux_runtime_build_variant(),
+            cli_launch: aimux_cli_launch_json(cli_launch),
+            expected_project_service: expected_project_service.clone(),
+            expected_runtime_owner: get_runtime_owner_id(),
+            daemon_info: Some(daemon_info),
+            daemon_projects: daemon_projects.into_iter().collect(),
+            endpoints: project_endpoints_by_root(&projects),
+            health: project_service_health_by_endpoint(
+                &projects,
+                &expected_project_service,
+                &mut resolver,
+            ),
+            tmux: (runtime_coherence_tmux_provider)(),
+            dashboard_build_stamps: dashboard_expected_build_stamps(&projects),
+            process_args: process_args_by_pid(&process_list),
+            process_list: process_list_json(process_list),
+        },
+        &mut resolver,
+    );
+    if let Value::Object(object) = &mut report {
+        object.insert("expectedServiceManifest".into(), expected_project_service);
+        object.insert("daemonProcessInventory".into(), daemon_process_inventory);
+        if let Some(error) = process_inventory_error {
+            object.insert("processInventoryError".into(), json!(error));
+        }
+        object.insert("projectCount".into(), json!(projects.len()));
+        object.insert("serviceAliveCount".into(), json!(service_alive));
+        if !project_read_errors.is_empty() {
+            object.insert("projectReadErrors".into(), json!(project_read_errors));
+        }
+        object.insert(
+            "daemonStateProjectCount".into(),
+            json!(daemon_state_project_count),
+        );
+        object.insert("catalogProjects".into(), json!(projects));
+        object.insert("relay".into(), relay);
+        #[cfg(feature = "remote-control")]
+        {
+            // Reported, not resolved. Calling `machine_identity()` here
+            // would let a diagnostic be the first thing to establish the
+            // identity -- and, on a home it cannot write, cache an
+            // ephemeral id that every later connect then uses.
+            object.insert("machine".into(), machine);
+        }
+    }
+    let mut text = render_runtime_coherence_report(&report);
+    // A `~/.aimux` copied to a second host carries its machine id, and two
+    // daemons claiming one id is invisible from either side -- so the id
+    // has to be readable somewhere.
+    if let Some(machine) = report.get("machine") {
+        let line = match machine["source"].as_str() {
+            Some("unnamed") => "machine: not named yet".to_owned(),
+            Some("unreadable") => format!(
+                "machine: could not be read -- {}",
+                machine["error"].as_str().unwrap_or("unknown error")
+            ),
+            _ => format!(
+                "machine: {} ({})",
+                machine["name"].as_str().unwrap_or("?"),
+                machine["id"].as_str().unwrap_or("?"),
+            ),
+        };
+        text.push_str(&format!("\n{line}\n"));
+    }
+    text.push_str(&render_daemon_process_inventory_for_doctor(&report));
+    Ok((report, text))
+}
+
 impl DaemonOperationsTextRuntime for RealDaemonRuntime {
     fn now_iso(&self) -> String {
         now_iso()
@@ -4311,116 +4544,7 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
     }
 
     fn doctor_versions_report(&mut self) -> Result<(Value, String), String> {
-        let generated_at = now_iso();
-        let project_read = read_projects_for_route_from_snapshot(
-            &DaemonProjectReadSnapshot {
-                resolver: self.resolver.clone(),
-                project_service_process_verifier: Arc::clone(
-                    &self.project_service_process_verifier,
-                ),
-            },
-            None,
-        )?;
-        let project_read_errors = project_read.read_errors;
-        let projects = project_read.projects;
-        let service_alive = projects
-            .iter()
-            .filter(|project| project.service_alive)
-            .count();
-        let state = self.daemon_state();
-        let cli_launch = get_aimux_current_cli_identity(AimuxCliLaunchOptions::default());
-        let process_list_result = try_list_process_args();
-        let (process_list, process_inventory_error) = match process_list_result {
-            Ok(processes) => (processes, None),
-            Err(error) => (Vec::new(), Some(error)),
-        };
-        let expected_project_service = self.project_service_info();
-        let mut resolver = self.resolver.clone();
-        let aimux_home = self
-            .resolver
-            .global_aimux_dir()
-            .to_string_lossy()
-            .into_owned();
-        let daemon_process_inventory =
-            daemon_process_inventory_report(&process_list, Some(self.info.pid), Some(&aimux_home));
-        let mut report = build_runtime_coherence_report_with_resolver(
-            RuntimeCoherenceInput {
-                generated_at: generated_at.clone(),
-                cli_version: read_aimux_runtime_version(),
-                build_profile: read_aimux_build_profile_from_package_root(package_root()),
-                build_variant: read_aimux_runtime_build_variant(),
-                cli_launch: aimux_cli_launch_json(cli_launch),
-                expected_project_service: expected_project_service.clone(),
-                expected_runtime_owner: get_runtime_owner_id(),
-                daemon_info: Some(
-                    serde_json::to_value(self.current_daemon_info(&generated_at))
-                        .unwrap_or(Value::Null),
-                ),
-                daemon_projects: state
-                    .projects
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .collect(),
-                endpoints: project_endpoints_by_root(&projects),
-                health: project_service_health_by_endpoint(
-                    &projects,
-                    &expected_project_service,
-                    &mut resolver,
-                ),
-                tmux: (self.runtime_coherence_tmux_provider)(),
-                dashboard_build_stamps: dashboard_expected_build_stamps(&projects),
-                process_args: process_args_by_pid(&process_list),
-                process_list: process_list_json(process_list),
-            },
-            &mut resolver,
-        );
-        if let Value::Object(object) = &mut report {
-            object.insert("expectedServiceManifest".into(), expected_project_service);
-            object.insert("daemonProcessInventory".into(), daemon_process_inventory);
-            if let Some(error) = process_inventory_error {
-                object.insert("processInventoryError".into(), json!(error));
-            }
-            object.insert("projectCount".into(), json!(projects.len()));
-            object.insert("serviceAliveCount".into(), json!(service_alive));
-            if !project_read_errors.is_empty() {
-                object.insert("projectReadErrors".into(), json!(project_read_errors));
-            }
-            object.insert(
-                "daemonStateProjectCount".into(),
-                json!(state.projects.len()),
-            );
-            object.insert("catalogProjects".into(), json!(projects));
-            object.insert("relay".into(), self.relay_status());
-            #[cfg(feature = "remote-control")]
-            {
-                // Reported, not resolved. Calling `machine_identity()` here
-                // would let a diagnostic be the first thing to establish the
-                // identity -- and, on a home it cannot write, cache an
-                // ephemeral id that every later connect then uses.
-                object.insert("machine".into(), self.machine_identity_report());
-            }
-        }
-        let mut text = render_runtime_coherence_report(&report);
-        // A `~/.aimux` copied to a second host carries its machine id, and two
-        // daemons claiming one id is invisible from either side -- so the id
-        // has to be readable somewhere.
-        if let Some(machine) = report.get("machine") {
-            let line = match machine["source"].as_str() {
-                Some("unnamed") => "machine: not named yet".to_owned(),
-                Some("unreadable") => format!(
-                    "machine: could not be read -- {}",
-                    machine["error"].as_str().unwrap_or("unknown error")
-                ),
-                _ => format!(
-                    "machine: {} ({})",
-                    machine["name"].as_str().unwrap_or("?"),
-                    machine["id"].as_str().unwrap_or("?"),
-                ),
-            };
-            text.push_str(&format!("\n{line}\n"));
-        }
-        text.push_str(&render_daemon_process_inventory_for_doctor(&report));
-        Ok((report, text))
+        build_doctor_versions_report(self.doctor_versions_snapshot())
     }
 
     fn doctor_disk_report(
