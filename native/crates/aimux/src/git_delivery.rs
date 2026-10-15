@@ -1,7 +1,66 @@
 use std::fmt::{self, Display, Formatter};
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Output;
+use std::time::Duration;
+
+use crate::async_subprocess::{AsyncCommand, command_task_name};
+
+/// How long any one `git` call in this module may take before it is killed and
+/// reported.
+///
+/// The daemon's coherence report calls in here, and an unbounded `git` there
+/// held the global runtime mutex for as long as the child lived: a stuck
+/// `index.lock` or an unresponsive filesystem blocked every other daemon
+/// request, and on 2026-10-11 only `kill -9` ended it. The number is the
+/// subprocess default this repo already uses rather than a new one; the only
+/// measured figure in this module is 842ms for a 34,990-entry status scan, so
+/// it is tens of times the worst case anyone has seen.
+pub const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn git_command(cwd: &str, args: &[&str]) -> AsyncCommand {
+    let mut command = AsyncCommand::new("git");
+    command.arg("-C").arg(cwd).args(args);
+    command
+}
+
+fn git_task_name(args: &[&str]) -> String {
+    let subcommand = args
+        .iter()
+        .copied()
+        .find(|arg| !arg.starts_with('-'))
+        .unwrap_or("git");
+    command_task_name("git-delivery", subcommand)
+}
+
+fn git_failure(cwd: &str, args: &[&str], message: impl Into<String>) -> GitDeliveryError {
+    GitDeliveryError::GitCommand {
+        cwd: cwd.into(),
+        args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        message: message.into().into_boxed_str(),
+    }
+}
+
+/// Run `git` with a deadline, naming the call that failed.
+///
+/// A non-zero exit is an answer and comes back as `Ok`; only a spawn failure
+/// or the deadline is an error, so a caller that treats a failed exit as
+/// "absent" cannot also swallow a wedged child.
+fn git_run(cwd: &str, args: &[&str], budget: Duration) -> Result<Output, GitDeliveryError> {
+    git_command(cwd, args)
+        .output_timeout(git_task_name(args), budget)
+        .map_err(|error| git_failure(cwd, args, error.to_string()))
+}
+
+fn git_run_with_stdin(
+    cwd: &str,
+    args: &[&str],
+    payload: Vec<u8>,
+    budget: Duration,
+) -> Result<Output, GitDeliveryError> {
+    git_command(cwd, args)
+        .output_timeout_with_stdin(git_task_name(args), budget, payload)
+        .map_err(|error| git_failure(cwd, args, error.to_string()))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitDeliveryCheck {
@@ -126,34 +185,35 @@ pub fn verify_git_delivery(
     target_project_root: &str,
     target_ref: &str,
 ) -> Result<GitDeliveryCheck, GitDeliveryError> {
+    verify_git_delivery_within(cwd, target_project_root, target_ref, GIT_COMMAND_TIMEOUT)
+}
+
+/// `verify_git_delivery` with the deadline named, so a test can watch a budget
+/// run out instead of waiting for a real `git` to hang.
+pub fn verify_git_delivery_within(
+    cwd: &str,
+    target_project_root: &str,
+    target_ref: &str,
+    budget: Duration,
+) -> Result<GitDeliveryCheck, GitDeliveryError> {
     let target_ref = target_ref.trim();
     let target_ref = if target_ref.is_empty() {
         "HEAD"
     } else {
         target_ref
     };
-    let head_sha = git_output(cwd, &["rev-parse", "--verify", "HEAD"])?;
-    let source_repo = git_output(cwd, &["rev-parse", "--show-toplevel"])?;
-    let source_common_dir = git_common_dir(cwd)?;
-    let target_common_dir = git_common_dir(target_project_root)?;
+    let head_sha = git_output(cwd, &["rev-parse", "--verify", "HEAD"], budget)?;
+    let source_repo = git_output(cwd, &["rev-parse", "--show-toplevel"], budget)?;
+    let source_common_dir = git_common_dir(cwd, budget)?;
+    let target_common_dir = git_common_dir(target_project_root, budget)?;
     let shares_object_store = canonical_equal(&source_common_dir, &target_common_dir);
-    let ancestry = Command::new("git")
-        .arg("-C")
-        .arg(target_project_root)
-        .args(["merge-base", "--is-ancestor", &head_sha, target_ref])
-        .output()
-        .map_err(|error| GitDeliveryError::GitCommand {
-            cwd: target_project_root.into(),
-            args: vec![
-                "merge-base".into(),
-                "--is-ancestor".into(),
-                head_sha.clone(),
-                target_ref.to_owned(),
-            ],
-            message: error.to_string().into_boxed_str(),
-        })?;
+    let ancestry = git_run(
+        target_project_root,
+        &["merge-base", "--is-ancestor", &head_sha, target_ref],
+        budget,
+    )?;
     if ancestry.status.success() {
-        let target_checkout = inspect_git_checkout_coherence(target_project_root)?;
+        let target_checkout = inspect_git_checkout_coherence_within(target_project_root, budget)?;
         if target_checkout.status == GitCheckoutCoherenceStatus::Stale {
             return Err(GitDeliveryError::StaleTargetCheckout {
                 target_project_root: target_project_root.into(),
@@ -207,15 +267,33 @@ pub fn verify_git_delivery(
 }
 
 pub fn git_current_branch(repo: &str) -> Result<String, GitDeliveryError> {
-    git_output(repo, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+    git_output(
+        repo,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+        GIT_COMMAND_TIMEOUT,
+    )
 }
 
 pub fn inspect_git_checkout_coherence(
     repo: &str,
 ) -> Result<GitCheckoutCoherence, GitDeliveryError> {
-    let repo_root = git_output(repo, &["rev-parse", "--show-toplevel"])?;
-    let head_sha = git_output(repo, &["rev-parse", "--verify", "HEAD"])?;
-    let status_entries = git_status_entries(&repo_root)?;
+    inspect_git_checkout_coherence_within(repo, GIT_COMMAND_TIMEOUT)
+}
+
+/// `inspect_git_checkout_coherence` with the deadline named.
+///
+/// The budget is per child, not per scan: a checkout with several stale-base
+/// candidates makes a dozen calls, and the whole scan can take a multiple of
+/// it. That is deliberate -- no single call may hang, and the caller decides
+/// how long it is willing to spend in total. The daemon's answer to the total
+/// is to hold no lock while it asks.
+pub fn inspect_git_checkout_coherence_within(
+    repo: &str,
+    budget: Duration,
+) -> Result<GitCheckoutCoherence, GitDeliveryError> {
+    let repo_root = git_output(repo, &["rev-parse", "--show-toplevel"], budget)?;
+    let head_sha = git_output(repo, &["rev-parse", "--verify", "HEAD"], budget)?;
+    let status_entries = git_status_entries(&repo_root, budget)?;
     if status_entries.is_empty() {
         return Ok(GitCheckoutCoherence {
             repo: repo_root,
@@ -226,7 +304,7 @@ pub fn inspect_git_checkout_coherence(
         });
     }
 
-    let stale_candidates = stale_base_candidates(&repo_root, &head_sha)?;
+    let stale_candidates = stale_base_candidates(&repo_root, &head_sha, budget)?;
     let mut files = Vec::new();
     let mut stale_base = None;
     // Comparable entries only, resolved once for every candidate rather than
@@ -247,16 +325,16 @@ pub fn inspect_git_checkout_coherence(
     } else {
         Vec::new()
     };
-    let stale_head_blobs = tree_blobs(&repo_root, "HEAD", &comparable_paths)?;
-    let stale_index_blobs = index_blobs(&repo_root, &comparable_paths)?;
-    let stale_worktree_blobs = worktree_blobs(&repo_root, &comparable_paths)?;
+    let stale_head_blobs = tree_blobs(&repo_root, "HEAD", &comparable_paths, budget)?;
+    let stale_index_blobs = index_blobs(&repo_root, &comparable_paths, budget)?;
+    let stale_worktree_blobs = worktree_blobs(&repo_root, &comparable_paths, budget)?;
     for candidate in stale_candidates {
         if !comparable_explains_everything {
             break;
         }
         let mut candidate_files = Vec::new();
         let mut all_match = true;
-        let base_blobs = tree_blobs(&repo_root, &candidate, &comparable_paths)?;
+        let base_blobs = tree_blobs(&repo_root, &candidate, &comparable_paths, budget)?;
         for (index, entry) in comparable.iter().enumerate() {
             let head_blob = stale_head_blobs[index].clone();
             let base_blob = base_blobs[index].clone();
@@ -300,9 +378,9 @@ pub fn inspect_git_checkout_coherence(
         .filter(|entry| entry.index_status != '?')
         .map(|entry| entry.path.clone())
         .collect();
-    let head_blobs = tree_blobs(&repo_root, "HEAD", &tracked)?;
-    let index_blobs = index_blobs(&repo_root, &tracked)?;
-    let worktree_blobs = worktree_blobs(&repo_root, &tracked)?;
+    let head_blobs = tree_blobs(&repo_root, "HEAD", &tracked, budget)?;
+    let index_blobs = index_blobs(&repo_root, &tracked, budget)?;
+    let worktree_blobs = worktree_blobs(&repo_root, &tracked, budget)?;
     let mut answered = 0usize;
     let files = status_entries
         .into_iter()
@@ -339,8 +417,8 @@ pub fn inspect_git_checkout_coherence(
     })
 }
 
-fn git_common_dir(cwd: &str) -> Result<String, GitDeliveryError> {
-    let raw = git_output(cwd, &["rev-parse", "--git-common-dir"])?;
+fn git_common_dir(cwd: &str, budget: Duration) -> Result<String, GitDeliveryError> {
+    let raw = git_output(cwd, &["rev-parse", "--git-common-dir"], budget)?;
     let path = PathBuf::from(raw.trim());
     let resolved = if path.is_absolute() {
         path
@@ -350,32 +428,22 @@ fn git_common_dir(cwd: &str) -> Result<String, GitDeliveryError> {
     Ok(resolved.to_string_lossy().into_owned())
 }
 
-fn git_output(cwd: &str, args: &[&str]) -> Result<String, GitDeliveryError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(args)
-        .output()
-        .map_err(|error| GitDeliveryError::GitCommand {
-            cwd: cwd.into(),
-            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
-            message: error.to_string().into_boxed_str(),
-        })?;
+fn git_output(cwd: &str, args: &[&str], budget: Duration) -> Result<String, GitDeliveryError> {
+    let output = git_run(cwd, args, budget)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        return Err(GitDeliveryError::GitCommand {
-            cwd: cwd.into(),
-            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
-            message: if !stderr.is_empty() {
+        return Err(git_failure(
+            cwd,
+            args,
+            if !stderr.is_empty() {
                 stderr
             } else if !stdout.is_empty() {
                 stdout
             } else {
                 format!("exited with {}", output.status)
-            }
-            .into_boxed_str(),
-        });
+            },
+        ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
@@ -387,39 +455,31 @@ struct GitStatusEntry {
     path: String,
 }
 
-fn git_status_entries(repo: &str) -> Result<Vec<GitStatusEntry>, GitDeliveryError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        // Not `--untracked-files=all`: the per-file detail fed nothing but a
-        // count, and collapsing untracked directories took one real checkout
-        // from 34,990 entries to a handful, with the scan itself 842ms faster.
-        .args(["status", "--porcelain=v1", "-z", "--untracked-files=normal"])
-        .output()
-        .map_err(|error| GitDeliveryError::GitCommand {
-            cwd: repo.into(),
-            args: vec![
-                "status".into(),
-                "--porcelain=v1".into(),
-                "-z".into(),
-                "--untracked-files=normal".into(),
-            ],
-            message: error.to_string().into_boxed_str(),
-        })?;
+fn git_status_entries(
+    repo: &str,
+    budget: Duration,
+) -> Result<Vec<GitStatusEntry>, GitDeliveryError> {
+    // Not `--untracked-files=all`: the per-file detail fed nothing but a
+    // count, and collapsing untracked directories took one real checkout
+    // from 34,990 entries to a handful, with the scan itself 842ms faster.
+    // `--no-optional-locks` because this is a report: `status` would otherwise
+    // take `index.lock` to write back its refresh, and an expired budget now
+    // SIGKILLs the child -- leaving behind the stale lock this whole change
+    // exists to stop waiting on.
+    let args = [
+        "--no-optional-locks",
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=normal",
+    ];
+    let output = git_run(repo, &args, budget)?;
     if !output.status.success() {
-        return Err(GitDeliveryError::GitCommand {
-            cwd: repo.into(),
-            args: vec![
-                "status".into(),
-                "--porcelain=v1".into(),
-                "-z".into(),
-                "--untracked-files=normal".into(),
-            ],
-            message: String::from_utf8_lossy(&output.stderr)
-                .trim()
-                .to_owned()
-                .into_boxed_str(),
-        });
+        return Err(git_failure(
+            repo,
+            &args,
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
     }
     let mut entries = Vec::new();
     let mut fields = output.stdout.split(|byte| *byte == 0);
@@ -442,38 +502,42 @@ fn git_status_entries(repo: &str) -> Result<Vec<GitStatusEntry>, GitDeliveryErro
     Ok(entries)
 }
 
-fn stale_base_candidates(repo: &str, head_sha: &str) -> Result<Vec<String>, GitDeliveryError> {
+fn stale_base_candidates(
+    repo: &str,
+    head_sha: &str,
+    budget: Duration,
+) -> Result<Vec<String>, GitDeliveryError> {
     let mut candidates = Vec::new();
     for spec in ["HEAD@{1}", "HEAD^1"] {
-        let Ok(candidate) = git_output(repo, &["rev-parse", "--verify", spec]) else {
+        // `optional_git_output`, not `git_output`: a spec git does not have is
+        // a `None` to skip, and a git that never answered is an error to
+        // report. Collapsing the two made a wedged `rev-parse` read as "no
+        // such base", which is how a stale checkout came back `Modified`.
+        let Some(candidate) = optional_git_output(repo, &["rev-parse", "--verify", spec], budget)?
+        else {
             continue;
         };
         if candidate == head_sha || candidates.contains(&candidate) {
             continue;
         }
-        if git_is_ancestor(repo, &candidate, head_sha)? {
+        if git_is_ancestor(repo, &candidate, head_sha, budget)? {
             candidates.push(candidate);
         }
     }
     Ok(candidates)
 }
 
-fn git_is_ancestor(repo: &str, ancestor: &str, descendant: &str) -> Result<bool, GitDeliveryError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["merge-base", "--is-ancestor", ancestor, descendant])
-        .output()
-        .map_err(|error| GitDeliveryError::GitCommand {
-            cwd: repo.into(),
-            args: vec![
-                "merge-base".into(),
-                "--is-ancestor".into(),
-                ancestor.into(),
-                descendant.into(),
-            ],
-            message: error.to_string().into_boxed_str(),
-        })?;
+fn git_is_ancestor(
+    repo: &str,
+    ancestor: &str,
+    descendant: &str,
+    budget: Duration,
+) -> Result<bool, GitDeliveryError> {
+    let output = git_run(
+        repo,
+        &["merge-base", "--is-ancestor", ancestor, descendant],
+        budget,
+    )?;
     Ok(output.status.success())
 }
 
@@ -487,44 +551,16 @@ fn git_is_ancestor(repo: &str, ancestor: &str, descendant: &str) -> Result<bool,
 /// Answers come back in input order, one line per spec, and a spec git cannot
 /// resolve echoes itself followed by ` missing` -- which is the same `None`
 /// the per-file lookup returned for an absent blob.
-fn batch_blobs(repo: &str, specs: &[String]) -> Result<Vec<Option<String>>, GitDeliveryError> {
+fn batch_blobs(
+    repo: &str,
+    specs: &[String],
+    budget: Duration,
+) -> Result<Vec<Option<String>>, GitDeliveryError> {
     if specs.is_empty() {
         return Ok(Vec::new());
     }
     let args = ["cat-file", "--batch-check"];
-    let fail = |message: String| GitDeliveryError::GitCommand {
-        cwd: repo.into(),
-        args: args.iter().map(|arg| (*arg).to_owned()).collect(),
-        message: message.into_boxed_str(),
-    };
-    let mut child = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| fail(error.to_string()))?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| fail("stdin not piped".into()))?;
-    let mut payload = Vec::new();
-    for spec in specs {
-        payload.extend_from_slice(spec.as_bytes());
-        payload.push(b'\n');
-    }
-    // Written from another thread because git answers while it reads: filling
-    // the output pipe while we still held the input would deadlock both ends.
-    let writer = std::thread::spawn(move || stdin.write_all(&payload));
-    let output = child
-        .wait_with_output()
-        .map_err(|error| fail(error.to_string()))?;
-    let written = writer
-        .join()
-        .map_err(|_| fail("stdin writer panicked".into()))?;
-    written.map_err(|error| fail(error.to_string()))?;
+    let output = git_run_with_stdin(repo, &args, lines_payload(specs), budget)?;
     let text = String::from_utf8_lossy(&output.stdout);
     let blobs: Vec<Option<String>> = text
         .lines()
@@ -538,13 +574,24 @@ fn batch_blobs(repo: &str, specs: &[String]) -> Result<Vec<Option<String>>, GitD
     if blobs.len() != specs.len() {
         // A short answer is not an answer of `None`s: say which call came back
         // wrong rather than reporting every blob as absent.
-        return Err(fail(format!(
-            "cat-file answered {} of {} specs",
-            blobs.len(),
-            specs.len()
-        )));
+        return Err(git_failure(
+            repo,
+            &args,
+            format!("cat-file answered {} of {} specs", blobs.len(), specs.len()),
+        ));
     }
     Ok(blobs)
+}
+
+/// One newline-terminated line per item, which is what every batch pipe here
+/// reads.
+fn lines_payload(items: &[String]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    for item in items {
+        payload.extend_from_slice(item.as_bytes());
+        payload.push(b'\n');
+    }
+    payload
 }
 
 /// Whether a path can be asked for down a batch pipe at all.
@@ -563,17 +610,29 @@ fn tree_blobs(
     repo: &str,
     treeish: &str,
     paths: &[String],
+    budget: Duration,
 ) -> Result<Vec<Option<String>>, GitDeliveryError> {
     resolved_in_batches(
         repo,
         paths,
         |path| format!("{treeish}:{path}"),
-        |repo, path| tree_blob(repo, treeish, path),
+        |repo, path| tree_blob(repo, treeish, path, budget),
+        budget,
     )
 }
 
-fn index_blobs(repo: &str, paths: &[String]) -> Result<Vec<Option<String>>, GitDeliveryError> {
-    resolved_in_batches(repo, paths, |path| format!(":{path}"), index_blob)
+fn index_blobs(
+    repo: &str,
+    paths: &[String],
+    budget: Duration,
+) -> Result<Vec<Option<String>>, GitDeliveryError> {
+    resolved_in_batches(
+        repo,
+        paths,
+        |path| format!(":{path}"),
+        |repo, path| index_blob(repo, path, budget),
+        budget,
+    )
 }
 
 fn resolved_in_batches(
@@ -581,13 +640,14 @@ fn resolved_in_batches(
     paths: &[String],
     spec: impl Fn(&str) -> String,
     single: impl Fn(&str, &str) -> Result<Option<String>, GitDeliveryError>,
+    budget: Duration,
 ) -> Result<Vec<Option<String>>, GitDeliveryError> {
     let batchable: Vec<String> = paths
         .iter()
         .filter(|path| path_is_batchable(path))
         .map(|path| spec(path))
         .collect();
-    let mut batched = batch_blobs(repo, &batchable)?.into_iter();
+    let mut batched = batch_blobs(repo, &batchable, budget)?.into_iter();
     let mut blobs = Vec::with_capacity(paths.len());
     for path in paths {
         if path_is_batchable(path) {
@@ -601,7 +661,11 @@ fn resolved_in_batches(
 
 /// Worktree hashes come from the files themselves, so only paths that are
 /// present are asked about; the rest keep the `None` they always had.
-fn worktree_blobs(repo: &str, paths: &[String]) -> Result<Vec<Option<String>>, GitDeliveryError> {
+fn worktree_blobs(
+    repo: &str,
+    paths: &[String],
+    budget: Duration,
+) -> Result<Vec<Option<String>>, GitDeliveryError> {
     let present: Vec<&String> = paths
         .iter()
         .filter(|path| Path::new(repo).join(path.as_str()).is_file())
@@ -611,13 +675,13 @@ fn worktree_blobs(repo: &str, paths: &[String]) -> Result<Vec<Option<String>>, G
         .filter(|path| path_is_batchable(path))
         .map(|path| (*path).clone())
         .collect();
-    let mut hashed = hash_object_batch(repo, &batchable)?.into_iter();
+    let mut hashed = hash_object_batch(repo, &batchable, budget)?.into_iter();
     let mut by_path = std::collections::BTreeMap::new();
     for path in &present {
         let hash = if path_is_batchable(path) {
             hashed.next().flatten()
         } else {
-            worktree_blob(repo, path)?
+            worktree_blob(repo, path, budget)?
         };
         by_path.insert((*path).clone(), hash);
     }
@@ -630,44 +694,17 @@ fn worktree_blobs(repo: &str, paths: &[String]) -> Result<Vec<Option<String>>, G
 fn hash_object_batch(
     repo: &str,
     paths: &[String],
+    budget: Duration,
 ) -> Result<Vec<Option<String>>, GitDeliveryError> {
     if paths.is_empty() {
         return Ok(Vec::new());
     }
     let args = ["hash-object", "--stdin-paths"];
-    let fail = |message: String| GitDeliveryError::GitCommand {
-        cwd: repo.into(),
-        args: args.iter().map(|arg| (*arg).to_owned()).collect(),
-        message: message.into_boxed_str(),
-    };
-    let mut child = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| fail(error.to_string()))?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| fail("stdin not piped".into()))?;
-    let mut payload = Vec::new();
-    for path in paths {
-        payload.extend_from_slice(path.as_bytes());
-        payload.push(b'\n');
-    }
-    let writer = std::thread::spawn(move || stdin.write_all(&payload));
-    let output = child
-        .wait_with_output()
-        .map_err(|error| fail(error.to_string()))?;
-    let written = writer
-        .join()
-        .map_err(|_| fail("stdin writer panicked".into()))?;
-    written.map_err(|error| fail(error.to_string()))?;
+    let output = git_run_with_stdin(repo, &args, lines_payload(paths), budget)?;
     if !output.status.success() {
-        return Err(fail(
+        return Err(git_failure(
+            repo,
+            &args,
             String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         ));
     }
@@ -677,44 +714,61 @@ fn hash_object_batch(
         .map(|line| Some(line.trim().to_owned()))
         .collect();
     if hashes.len() != paths.len() {
-        return Err(fail(format!(
-            "hash-object answered {} of {} paths",
-            hashes.len(),
-            paths.len()
-        )));
+        return Err(git_failure(
+            repo,
+            &args,
+            format!(
+                "hash-object answered {} of {} paths",
+                hashes.len(),
+                paths.len()
+            ),
+        ));
     }
     Ok(hashes)
 }
 
-fn tree_blob(repo: &str, treeish: &str, path: &str) -> Result<Option<String>, GitDeliveryError> {
+fn tree_blob(
+    repo: &str,
+    treeish: &str,
+    path: &str,
+    budget: Duration,
+) -> Result<Option<String>, GitDeliveryError> {
     let spec = format!("{treeish}:{path}");
-    optional_git_output(repo, &["rev-parse", "--verify", &spec])
+    optional_git_output(repo, &["rev-parse", "--verify", &spec], budget)
 }
 
-fn index_blob(repo: &str, path: &str) -> Result<Option<String>, GitDeliveryError> {
+fn index_blob(
+    repo: &str,
+    path: &str,
+    budget: Duration,
+) -> Result<Option<String>, GitDeliveryError> {
     let spec = format!(":{path}");
-    optional_git_output(repo, &["rev-parse", "--verify", &spec])
+    optional_git_output(repo, &["rev-parse", "--verify", &spec], budget)
 }
 
-fn worktree_blob(repo: &str, path: &str) -> Result<Option<String>, GitDeliveryError> {
+fn worktree_blob(
+    repo: &str,
+    path: &str,
+    budget: Duration,
+) -> Result<Option<String>, GitDeliveryError> {
     let full_path = Path::new(repo).join(path);
     if !full_path.is_file() {
         return Ok(None);
     }
-    optional_git_output(repo, &["hash-object", "--", path])
+    optional_git_output(repo, &["hash-object", "--", path], budget)
 }
 
-fn optional_git_output(cwd: &str, args: &[&str]) -> Result<Option<String>, GitDeliveryError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(args)
-        .output()
-        .map_err(|error| GitDeliveryError::GitCommand {
-            cwd: cwd.into(),
-            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
-            message: error.to_string().into_boxed_str(),
-        })?;
+/// A git call whose failure means "no such object", not "could not ask".
+///
+/// A non-zero exit is the absent answer; a spawn failure or an expired budget
+/// still comes back as an error, because a wedged child reported as `None`
+/// would make every blob look absent and the checkout look coherent.
+fn optional_git_output(
+    cwd: &str,
+    args: &[&str],
+    budget: Duration,
+) -> Result<Option<String>, GitDeliveryError> {
+    let output = git_run(cwd, args, budget)?;
     if output.status.success() {
         return Ok(Some(
             String::from_utf8_lossy(&output.stdout).trim().to_owned(),
@@ -727,4 +781,100 @@ fn canonical_equal(left: &str, right: &str) -> bool {
     let left = std::fs::canonicalize(left).unwrap_or_else(|_| PathBuf::from(left));
     let right = std::fs::canonicalize(right).unwrap_or_else(|_| PathBuf::from(right));
     left == right
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The batch pipes and the candidate walk, reached directly.
+    ///
+    /// `inspect_git_checkout_coherence_within` with a spent budget dies at its
+    /// first `rev-parse`, so nothing below it is covered from outside: an
+    /// adversarial review made `git_run_with_stdin` ignore its budget and
+    /// every integration test still passed. These reach the private callers.
+    fn fixture(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "aimux-git-delivery-unit-{label}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("fixture root");
+        let repo = root.to_string_lossy().into_owned();
+        for args in [
+            vec!["init", "--initial-branch=master"],
+            vec!["config", "user.email", "aimux-test@example.com"],
+            vec!["config", "user.name", "Aimux Test"],
+        ] {
+            git_run(&repo, &args, GIT_COMMAND_TIMEOUT).expect("set up the fixture repo");
+        }
+        std::fs::write(root.join("file.txt"), "base\n").expect("write file");
+        git_run(&repo, &["add", "file.txt"], GIT_COMMAND_TIMEOUT).expect("add");
+        git_run(&repo, &["commit", "-m", "base"], GIT_COMMAND_TIMEOUT).expect("commit");
+        root
+    }
+
+    fn timed_out(error: &GitDeliveryError, expected_args: &[&str]) {
+        let GitDeliveryError::GitCommand { args, message, .. } = error else {
+            panic!("expected a named git failure, got {error:?}");
+        };
+        assert_eq!(args, expected_args);
+        assert!(message.contains("timed out"), "{message}");
+    }
+
+    #[test]
+    fn a_spent_budget_stops_the_blob_batch_pipe() {
+        let root = fixture("batch");
+        let repo = root.to_string_lossy().into_owned();
+        let specs = vec!["HEAD:file.txt".to_owned()];
+
+        let answered =
+            batch_blobs(&repo, &specs, GIT_COMMAND_TIMEOUT).expect("the real budget answers");
+        assert_eq!(answered.len(), 1);
+        assert!(answered[0].is_some(), "the fixture has that blob");
+
+        let error =
+            batch_blobs(&repo, &specs, Duration::ZERO).expect_err("a spent budget must not answer");
+        timed_out(&error, &["cat-file", "--batch-check"]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_spent_budget_stops_the_hash_batch_pipe() {
+        let root = fixture("hash");
+        let repo = root.to_string_lossy().into_owned();
+        let paths = vec!["file.txt".to_owned()];
+
+        let answered =
+            hash_object_batch(&repo, &paths, GIT_COMMAND_TIMEOUT).expect("the real budget answers");
+        assert_eq!(answered.len(), 1);
+
+        let error = hash_object_batch(&repo, &paths, Duration::ZERO)
+            .expect_err("a spent budget must not answer");
+        timed_out(&error, &["hash-object", "--stdin-paths"]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A candidate git could not be ASKED about is not a candidate that is
+    /// absent: this walk used to `continue` on any error, so a wedged
+    /// `rev-parse` made a stale checkout report as merely modified.
+    #[test]
+    fn a_spent_budget_stops_the_stale_base_walk_instead_of_skipping_it() {
+        let root = fixture("stale-walk");
+        let repo = root.to_string_lossy().into_owned();
+        let head = git_output(
+            &repo,
+            &["rev-parse", "--verify", "HEAD"],
+            GIT_COMMAND_TIMEOUT,
+        )
+        .expect("head sha");
+
+        stale_base_candidates(&repo, &head, GIT_COMMAND_TIMEOUT)
+            .expect("the real budget answers, even with no candidates");
+
+        let error = stale_base_candidates(&repo, &head, Duration::ZERO)
+            .expect_err("a spent budget must not read as 'no such base'");
+        timed_out(&error, &["rev-parse", "--verify", "HEAD@{1}"]);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

@@ -288,6 +288,11 @@ where
     if intercept(&request, stream).await? {
         return Ok(());
     }
+    // Called on this async task, not through `spawn_blocking_named`, so a
+    // handler that bridges to async -- `git_delivery`'s bounded calls, any
+    // `block_on_named` -- would be refused and panic here. The real daemon
+    // routes through the interceptor variant above, which does spawn_blocking;
+    // anything wiring the route handler through THIS one has to do the same.
     let response = handle(request);
     write_prepared_response_async(stream, &response).await?;
     Ok(())
