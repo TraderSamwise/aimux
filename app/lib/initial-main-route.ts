@@ -41,21 +41,23 @@ export function relayLandingSignal(configured: boolean, status: RelayStatus): Re
  * Whether this status is a relay that has not answered YET, as opposed to one
  * that has answered no.
  *
- * `isRelayUnavailableForProjectDiscovery` answers a different question -- it
- * decides whether the project surface shows unavailable copy -- and two
- * genuinely different questions get two answers. For landing, a relay that
- * could not be reached and a fleet whose daemon is down are both things that
- * fix themselves: a cold cellular launch can fail three handshakes, and a
- * daemon comes back up. Treating either as a settled "no backend" sent a user
- * with shared chats straight to someone else's chats, and the redirect
- * unmounts the landing screen, so the relay connecting a second later had
- * nothing left to re-decide.
+ * `relay_unavailable` is the could-not-ask error: `relay-transport.ts` sets it
+ * after three failed handshakes and schedules a retry, so a cold cellular
+ * launch reaches it with nothing known about the fleet, and the next attempt
+ * may connect.
  *
- * `auth_failed` and `client_storage_error` are not on this list on purpose:
+ * `daemon_offline` is NOT on this list, although it looks transient. It is set
+ * from a LIVE socket carrying `daemon_status { online: false }` -- the relay
+ * answered, and the answer was that no daemon of this account is up. A
+ * share-only recipient who never ran a host sits there permanently, so
+ * treating it as pending made them wait the full budget and then land on their
+ * own empty project surface, which is the one user shared chats exist for.
+ *
+ * `auth_failed` and `client_storage_error` are not on this list either:
  * waiting does not fix wrong credentials or broken local storage.
  */
 export function isRelayAnswerPendingForLanding(status: RelayStatus): boolean {
-  return status === "daemon_offline" || status === "relay_unavailable";
+  return status === "relay_unavailable";
 }
 
 export type OwnBackendSignal = "present" | "absent" | "unknown";
