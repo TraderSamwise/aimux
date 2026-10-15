@@ -611,6 +611,32 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    /// A child that died of its OWN error keeps the blame.
+    ///
+    /// It closes the pipe, so our write fails second with `EPIPE` and knows
+    /// least. A review deleted the precedence and nothing noticed, which would
+    /// have turned every `git hash-object` failure into "failed to write git's
+    /// input: Broken pipe".
+    #[test]
+    fn a_child_that_dies_first_keeps_the_blame() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let mut command = AsyncCommand::new("/bin/sh");
+        // Exits without reading, so a payload past the pipe buffer gets EPIPE.
+        command.args(["-c", "printf 'fatal: it was me\n' >&2; exit 9"]);
+        let output = command
+            .output_timeout_with_stdin(
+                command_task_name("async-subprocess-test", "early-exit"),
+                Duration::from_secs(10),
+                "x".repeat(512 * 1024).into_bytes(),
+            )
+            .expect("the child's own answer must survive our broken pipe");
+        assert_eq!(output.status.code(), Some(9));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "fatal: it was me\n"
+        );
+    }
+
     #[test]
     fn non_zero_status_preserves_stderr() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");

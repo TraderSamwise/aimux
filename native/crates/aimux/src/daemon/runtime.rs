@@ -2948,18 +2948,14 @@ pub fn handle_daemon_runtime_request_with_mutex(
             |method, path, body, headers| {
                 build_daemon_route_context(method, path, body, headers.clone(), &[])
             },
-            |_, path, _, context, _| {
-                if let Some(access) = &context.access_decision
-                    && !access.ok
-                {
-                    return DaemonRouteResponse::json(
-                        access.status.unwrap_or(403),
-                        json!({
-                            "ok": false,
-                            "error": access.error.as_deref().unwrap_or("remote access denied")
-                        }),
-                    );
-                }
+            // No access check here, unlike the `/health` and `/projects` fast
+            // paths: those serve remote callers and have a decision to make,
+            // while the condition above has already excluded everyone an
+            // access decision could refuse. `assert_remote_access_allowed`
+            // with no actor allows unconditionally, so the block this started
+            // with was ceremony, and a review deleted it without a test
+            // noticing -- correctly.
+            |_, path, _, _, _| {
                 let snapshot = daemon_doctor_versions_snapshot(&runtime);
                 // The lock is gone by here, which is the whole point.
                 crate::daemon::text::operations::doctor_versions_text_response(

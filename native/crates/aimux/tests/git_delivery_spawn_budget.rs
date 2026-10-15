@@ -79,6 +79,53 @@ fn untracked_files_are_never_fed_to_a_batch() {
     );
 }
 
+/// A batch pipe that answers fewer specs than it was asked about is an ERROR.
+///
+/// `batch_blobs` and `hash_object_batch` count the answers against the input
+/// for exactly this reason: `resolved_in_batches` hands out the answers in
+/// order, so a short answer becomes trailing `None`s -- every blob absent, the
+/// checkout "coherent", and a stale worktree reported as fine. An adversarial
+/// review turned both checks into `if false` with the whole suite green,
+/// because nothing drove a git that under-answers. This does, through the real
+/// entry point.
+#[test]
+fn an_under_answering_cat_file_is_an_error_not_a_blob_of_nones() {
+    let spy = GitSpy::with_batch_filters("short-cat-file", "sed '$d'", "cat");
+    let repo = spy.dir.join("repo");
+    seed_tracked(&repo, 4);
+    for index in 0..4 {
+        fs::write(repo.join(format!("tracked-{index}.txt")), "changed\n").expect("modify file");
+    }
+    spy.count_while(|| {
+        let error = inspect_git_checkout_coherence(path_str(&repo))
+            .expect_err("a short cat-file answer must not read as absent blobs");
+        let message = error.to_string();
+        assert!(
+            message.contains("cat-file answered"),
+            "the error must name the call and the count: {message}"
+        );
+    });
+}
+
+#[test]
+fn an_under_answering_hash_object_is_an_error_not_a_blob_of_nones() {
+    let spy = GitSpy::with_batch_filters("short-hash-object", "cat", "sed '$d'");
+    let repo = spy.dir.join("repo");
+    seed_tracked(&repo, 4);
+    for index in 0..4 {
+        fs::write(repo.join(format!("tracked-{index}.txt")), "changed\n").expect("modify file");
+    }
+    spy.count_while(|| {
+        let error = inspect_git_checkout_coherence(path_str(&repo))
+            .expect_err("a short hash-object answer must not read as absent blobs");
+        let message = error.to_string();
+        assert!(
+            message.contains("hash-object answered"),
+            "the error must name the call and the count: {message}"
+        );
+    });
+}
+
 fn inspect_modified(files: usize) -> (usize, String) {
     let spy = GitSpy::new("modified");
     let repo = spy.dir.join("repo");
@@ -161,6 +208,17 @@ fn spy_lock() -> MutexGuard<'static, ()> {
 
 impl GitSpy {
     fn new(label: &str) -> Self {
+        Self::with_batch_filters(label, "cat", "cat")
+    }
+
+    /// A spy whose batch pipes have their ANSWERS filtered.
+    ///
+    /// `cat` is the identity. `sed '$d'` drops the last line, which is a git
+    /// that answered fewer specs than it was asked about -- the shape
+    /// `batch_blobs` and `hash_object_batch` count against their input, and the
+    /// shape an adversarial review turned into trailing `None`s with every
+    /// test still green.
+    fn with_batch_filters(label: &str, cat_file_filter: &str, hash_object_filter: &str) -> Self {
         let guard = spy_lock();
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -178,12 +236,15 @@ impl GitSpy {
                 "#!/bin/sh\n\
                  printf '%s\\n' \"$*\" >> \"{log}\"\n\
                  case \"$*\" in\n\
-                 *--stdin-paths*|*--batch-check*) exec 3>>\"{stdin}\"; tee -a /dev/fd/3 | \"{git}\" \"$@\" ;;\n\
+                 *--stdin-paths*) exec 3>>\"{stdin}\"; tee -a /dev/fd/3 | \"{git}\" \"$@\" | {hash_object_filter} ;;\n\
+                 *--batch-check*) exec 3>>\"{stdin}\"; tee -a /dev/fd/3 | \"{git}\" \"$@\" | {cat_file_filter} ;;\n\
                  *) exec \"{git}\" \"$@\" ;;\n\
                  esac\n",
                 log = log.display(),
                 stdin = stdin_log.display(),
-                git = real_git().display()
+                git = real_git().display(),
+                cat_file_filter = cat_file_filter,
+                hash_object_filter = hash_object_filter
             ),
         )
         .expect("write shim");

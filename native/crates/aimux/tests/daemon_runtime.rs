@@ -2635,6 +2635,72 @@ fn native_daemon_push_acknowledges_when_relay_is_off() {
     fixture.cleanup();
 }
 
+/// The report answers with what the snapshot READ, not with constants.
+///
+/// Three fields moved into `DoctorVersionsSnapshot`, and an adversarial review
+/// replaced each with a literal -- `relay: json!({"status":"off"})`, the
+/// `machine` insert dropped, the process-inventory section left off the text --
+/// with all 52 tests here green. The relay fixture has remote enabled on
+/// purpose: with it off, a hardcoded "off" is indistinguishable from a read.
+#[test]
+fn the_versions_report_carries_what_the_snapshot_read() {
+    let fixture = RuntimeFixture::new("doctor-versions-snapshot-fields");
+    let resolver = fixture.resolver();
+    save_credentials_at(resolver.auth_path(), &credentials()).expect("save credentials");
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let expected_relay = {
+        let locked = runtime.lock().expect("runtime lock");
+        DaemonStatusRuntime::relay_status(&*locked)
+    };
+    assert_eq!(
+        expected_relay["status"], "disconnected",
+        "the fixture must make relay status something a literal 'off' cannot fake"
+    );
+
+    let json_response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        request(
+            "GET",
+            &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
+        ),
+    );
+    let report: Value =
+        serde_json::from_str(&String::from_utf8(json_response.body).expect("json body"))
+            .expect("report json");
+
+    assert_eq!(report["relay"], expected_relay, "relay was not read");
+    assert_eq!(report["relay"]["relayUrl"], json!("wss://relay.example"));
+    // One stamp for the whole report: `current_daemon_info` is handed the same
+    // `generated_at`, which is the invariant that moving the reads under one
+    // snapshot is for.
+    assert_eq!(
+        report["generatedAt"], report["daemon"]["info"]["updatedAt"],
+        "the report and the daemon info disagree about when this was taken"
+    );
+    assert!(
+        report["generatedAt"]
+            .as_str()
+            .is_some_and(|at| at.ends_with('Z')),
+        "{}",
+        report["generatedAt"]
+    );
+    assert_eq!(
+        report["machine"]["source"], "unnamed",
+        "the machine identity is reported, and an unnamed home says so"
+    );
+
+    let text_response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        request("GET", CORE_API_ROUTES.doctor_versions_text),
+    );
+    let text = String::from_utf8(text_response.body).expect("versions text");
+    // Two sections the rendered report exists to print, and both were
+    // deletable without a test noticing.
+    assert!(text.contains("machine: not named yet"), "{text}");
+    assert!(text.contains("daemon processes: "), "{text}");
+    fixture.cleanup();
+}
+
 /// The versions report must be built with the runtime mutex RELEASED.
 ///
 /// Its own work is git, HTTP health probes and a tmux inventory, and holding
@@ -2730,21 +2796,21 @@ fn the_versions_fast_path_answers_each_caller_as_the_locked_path_would() {
                 .is_some(),
         )
     };
-    let versions_request = |path: &str, header: Option<(&str, &str)>| {
-        let mut request = request("GET", path);
+    let versions_request = |method: &str, path: &str, header: Option<(&str, &str)>| {
+        let mut request = request(method, path);
         if let Some((name, value)) = header {
             request.headers.insert(name.into(), value.into());
         }
         request
     };
 
-    // The route is loopback-and-cli-only, and the router refuses a remote
-    // actor and an `Origin` header by two separate rules -- so both are here.
-    // With only the actor cases, dropping the `Origin` half of the fast path's
-    // condition survived.
-    // Both renderings, because the fast path parses the query string itself:
-    // a fast path that dropped `?json=1` would answer text where the CLI
-    // expects JSON, and every status-only assertion would still pass.
+    // Three dimensions, each of which a mutation got past when it was missing.
+    // The two renderings: the fast path parses the query string itself, and one
+    // that dropped it answers text where `--json` expects JSON. The method: the
+    // locked path routes this only on GET, and widening the fast path to HEAD
+    // made it answer 200 and run a whole scan where the daemon 404s. The
+    // headers: the route is loopback-and-cli-only, and the router refuses a
+    // remote actor and an `Origin` by two separate rules.
     for path in [
         CORE_API_ROUTES.doctor_versions_text.to_owned(),
         format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
@@ -2754,7 +2820,7 @@ fn the_versions_fast_path_answers_each_caller_as_the_locked_path_would() {
         assert_eq!(
             served(handle_daemon_runtime_request_with_mutex(
                 &runtime,
-                versions_request(&path, None)
+                versions_request("GET", &path, None)
             )),
             if path.contains("json=1") {
                 (200, false, true)
@@ -2763,33 +2829,36 @@ fn the_versions_fast_path_answers_each_caller_as_the_locked_path_would() {
             },
             "a local caller must be served the report, in the asked-for shape, at {path}"
         );
-        for header in [
-            None,
-            Some(("x-aimux-actor-role", "owner")),
-            Some(("x-aimux-actor-role", "guest")),
-            Some(("x-aimux-actor-role", "operator")),
-            // An origin CORS ALLOWS, so the request reaches the route and the
-            // loopback-only rule is what refuses it. `https://example.com` was
-            // useless here: CORS rejects it before any route runs, so dropping the
-            // `Origin` half of the fast path's condition survived.
-            Some(("origin", "http://localhost:3000")),
-            Some(("Origin", "http://localhost:3000")),
-        ] {
-            let through_fast_path = served(handle_daemon_runtime_request_with_mutex(
-                &runtime,
-                versions_request(&path, header),
-            ));
-            let through_lock = {
-                let mut locked = runtime.lock().expect("runtime lock");
-                served(handle_daemon_runtime_request(
-                    &mut *locked,
-                    versions_request(&path, header),
-                ))
-            };
-            assert_eq!(
-                through_fast_path, through_lock,
-                "the fast path answered a {header:?} caller differently from the locked path at {path}"
-            );
+        for method in ["GET", "HEAD", "POST"] {
+            for header in [
+                None,
+                Some(("x-aimux-actor-role", "owner")),
+                Some(("x-aimux-actor-role", "guest")),
+                Some(("x-aimux-actor-role", "operator")),
+                // An origin CORS ALLOWS, so the request reaches the route and
+                // the loopback-only rule is what refuses it.
+                // `https://example.com` was useless here: CORS rejects it
+                // before any route runs, so dropping the `Origin` half of the
+                // fast path's condition survived.
+                Some(("origin", "http://localhost:3000")),
+                Some(("Origin", "http://localhost:3000")),
+            ] {
+                let through_fast_path = served(handle_daemon_runtime_request_with_mutex(
+                    &runtime,
+                    versions_request(method, &path, header),
+                ));
+                let through_lock = {
+                    let mut locked = runtime.lock().expect("runtime lock");
+                    served(handle_daemon_runtime_request(
+                        &mut *locked,
+                        versions_request(method, &path, header),
+                    ))
+                };
+                assert_eq!(
+                    through_fast_path, through_lock,
+                    "the fast path answered {method} {header:?} at {path} differently from the locked path"
+                );
+            }
         }
     }
     fixture.cleanup();

@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::async_subprocess::{AsyncCommand, command_task_name};
@@ -19,26 +19,44 @@ use crate::async_subprocess::{AsyncCommand, command_task_name};
 /// it is tens of times the worst case anyone has seen.
 pub const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Where `git` is, found once per process.
+/// Where `git` is, found once per `PATH`.
 ///
 /// A bare `"git"` makes the OS walk `PATH` on every spawn, and a coherence
 /// scan spawns several; AGENTS.md "Subprocess Churn" asks for one resolution
-/// and an absolute path to the children. The failure is cached too: a `PATH`
-/// with no git on it does not fix itself between two calls, and re-walking it
-/// per spawn is the retry loop that section forbids.
-fn git_program() -> Result<&'static OsString, &'static str> {
-    static GIT_PROGRAM: OnceLock<Result<OsString, String>> = OnceLock::new();
-    GIT_PROGRAM
-        .get_or_init(|| {
-            crate::program_lookup::resolve_program_from_path("git", std::env::var_os("PATH"), None)
-        })
-        .as_ref()
-        .map_err(String::as_str)
+/// and an absolute path to the children. The failure is cached alongside the
+/// success, because a `PATH` with no git on it does not fix itself between two
+/// spawns and re-walking it each time is the retry loop that section forbids.
+///
+/// Keyed on `PATH` rather than resolved once outright: `git_delivery_spawn_budget`
+/// installs a shim in a temp directory, counts the spawns, and deletes it, so a
+/// one-shot cache held the FIRST shim and every later test spawned a path that no
+/// longer existed. In a real process `PATH` does not change and this resolves
+/// exactly once; when it does change, that is a different question and deserves
+/// a different answer.
+/// The `PATH` a resolution was made from, and what it answered.
+type ResolvedGit = (Option<OsString>, Result<OsString, String>);
+
+fn git_program() -> Result<OsString, String> {
+    static GIT_PROGRAM: OnceLock<Mutex<Option<ResolvedGit>>> = OnceLock::new();
+    let path_env = std::env::var_os("PATH");
+    let cache = GIT_PROGRAM.get_or_init(|| Mutex::new(None));
+    // A poisoned lock still holds a usable answer: this is a memo, and
+    // refusing to resolve git because another thread panicked elsewhere would
+    // be worse than reading it again.
+    let mut slot = cache.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some((cached_path, result)) = slot.as_ref()
+        && *cached_path == path_env
+    {
+        return result.clone();
+    }
+    let result = crate::program_lookup::resolve_program_from_path("git", path_env.clone(), None);
+    *slot = Some((path_env, result.clone()));
+    result
 }
 
 fn git_command(cwd: &str, args: &[&str]) -> Result<AsyncCommand, GitDeliveryError> {
     let program = git_program().map_err(|error| git_failure(cwd, args, error))?;
-    let mut command = AsyncCommand::new(program);
+    let mut command = AsyncCommand::new(&program);
     command.arg("-C").arg(cwd).args(args);
     Ok(command)
 }
@@ -581,6 +599,15 @@ fn batch_blobs(
     }
     let args = ["cat-file", "--batch-check"];
     let output = git_run_with_stdin(repo, &args, lines_payload(specs), budget)?;
+    // Before counting the answers: a git that died has already said why, and
+    // "answered 0 of 7 specs" would blame the count for a `fatal:`.
+    if !output.status.success() {
+        return Err(git_failure(
+            repo,
+            &args,
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
     let text = String::from_utf8_lossy(&output.stdout);
     let blobs: Vec<Option<String>> = text
         .lines()
@@ -884,20 +911,109 @@ mod tests {
     fn every_git_child_is_spawned_by_absolute_path() {
         let program = git_program().expect("git is on PATH in a dev environment");
         assert!(
-            Path::new(program).is_absolute(),
+            Path::new(&program).is_absolute(),
             "{program:?} is not an absolute path"
         );
         assert!(
-            crate::program_lookup::executable_file_exists(Path::new(program)),
+            crate::program_lookup::executable_file_exists(Path::new(&program)),
             "{program:?} is not an executable file"
         );
-        assert!(
-            std::ptr::eq(program, git_program().expect("still resolvable")),
-            "git was resolved twice instead of once per process"
+        assert_eq!(
+            program,
+            git_program().expect("still resolvable"),
+            "the same PATH must answer the same way"
         );
 
         let command = git_command("/", &["rev-parse", "HEAD"]).expect("build the command");
         assert_eq!(command.program(), program.as_os_str());
+    }
+
+    /// The single-path fallbacks must propagate a spent budget too.
+    ///
+    /// They are the paths a batch pipe cannot carry -- a quoted or
+    /// carriage-return name -- and they answer `Option`, so an adversarial
+    /// review wrapped each in `.unwrap_or(None)` and every test stayed green.
+    /// A blob reported absent is a checkout reported coherent.
+    #[test]
+    fn a_spent_budget_stops_the_single_path_lookups() {
+        let root = fixture("single-path");
+        let repo = root.to_string_lossy().into_owned();
+
+        for error in [
+            tree_blob(&repo, "HEAD", "file.txt", Duration::ZERO)
+                .expect_err("tree blob must not read as absent"),
+            index_blob(&repo, "file.txt", Duration::ZERO)
+                .expect_err("index blob must not read as absent"),
+            worktree_blob(&repo, "file.txt", Duration::ZERO)
+                .expect_err("worktree blob must not read as absent"),
+        ] {
+            let GitDeliveryError::GitCommand { message, .. } = &error else {
+                panic!("expected a named git failure, got {error:?}");
+            };
+            assert!(message.contains("timed out"), "{message}");
+        }
+
+        // And the real budget still answers each of them.
+        assert!(
+            tree_blob(&repo, "HEAD", "file.txt", GIT_COMMAND_TIMEOUT)
+                .expect("tree blob")
+                .is_some()
+        );
+        assert!(
+            index_blob(&repo, "file.txt", GIT_COMMAND_TIMEOUT)
+                .expect("index blob")
+                .is_some()
+        );
+        assert!(
+            worktree_blob(&repo, "file.txt", GIT_COMMAND_TIMEOUT)
+                .expect("worktree blob")
+                .is_some()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// The status scan takes no index lock, and says so in the call it names.
+    ///
+    /// An expired budget SIGKILLs the child, and `status` without this flag
+    /// takes `index.lock` to write back its refresh -- leaving behind the
+    /// stale lock this whole change exists to stop waiting on.
+    #[test]
+    fn the_status_scan_asks_for_no_optional_locks() {
+        let root = fixture("no-optional-locks");
+        let repo = root.to_string_lossy().into_owned();
+        let error =
+            git_status_entries(&repo, Duration::ZERO).expect_err("a spent budget must not answer");
+        let GitDeliveryError::GitCommand { args, .. } = &error else {
+            panic!("expected a named git failure, got {error:?}");
+        };
+        assert_eq!(
+            args.first().map(String::as_str),
+            Some("--no-optional-locks")
+        );
+        assert!(args.contains(&"status".to_owned()), "{args:?}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// The task name is the subcommand, not whatever option comes first.
+    #[test]
+    fn the_task_name_names_the_subcommand() {
+        let named = git_task_name(&["--no-optional-locks", "status", "--porcelain=v1"]);
+        assert!(named.ends_with("status"), "{named}");
+        assert!(git_task_name(&["cat-file", "--batch-check"]).ends_with("cat-file"));
+        assert!(git_task_name(&[]).ends_with("git"));
+    }
+
+    /// Both characters the batch protocol cannot carry, not just the quote.
+    ///
+    /// `hash-object --stdin-paths` reads lines, and `strbuf_getline` strips a
+    /// trailing `\r` -- so a CR path would be asked about under a name git
+    /// cannot open. The review dropped the `\r` half and nothing noticed.
+    #[test]
+    fn a_path_the_batch_protocol_cannot_carry_is_not_batched() {
+        assert!(path_is_batchable("plain.txt"));
+        assert!(!path_is_batchable("with\nnewline.txt"));
+        assert!(!path_is_batchable("with\rcarriage.txt"));
+        assert!(!path_is_batchable("\"quoted.txt\""));
     }
 
     /// A candidate git could not be ASKED about is not a candidate that is
