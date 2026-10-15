@@ -65,6 +65,17 @@ fn project_service_sigterm_clears_endpoint_and_expose_socket_artifacts() {
         "expose socket should exist while project service is running"
     );
 
+    // A LIVE service, asked whether it armed its own defences. The incident
+    // behind them is a service that held its port with a dead accept loop and
+    // ignored SIGTERM, so a test that only reads the source could be satisfied
+    // by a call that never runs.
+    // The daemon log, not the project one: `log_lifecycle_always` resolves its
+    // own path so a lifecycle event lands in one place whichever process
+    // emitted it.
+    let log = resolver.daemon_log_path();
+    wait_for_log_line(&log, "health watchdog armed");
+    wait_for_log_line(&log, "shutdown escalation armed");
+
     signal_pid(service.id(), libc::SIGTERM);
     wait_for_child_exit(&mut service, "project service");
 
@@ -84,6 +95,25 @@ fn project_service_sigterm_clears_endpoint_and_expose_socket_artifacts() {
         !socket_path.exists(),
         "project service SIGTERM should remove expose socket"
     );
+}
+
+fn wait_for_log_line(path: impl AsRef<Path>, needle: &str) {
+    let path = path.as_ref();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        if fs::read_to_string(path)
+            .map(|text| text.contains(needle))
+            .unwrap_or(false)
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the running project service never logged {needle:?} to {}",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn wait_for_path(path: impl AsRef<Path>, label: &str) {

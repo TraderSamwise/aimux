@@ -97,6 +97,14 @@ pub const SHUTDOWN_ESCALATION_EXIT_CODE: i32 = 71;
 /// Start the escalation on its own OS thread. Returns immediately.
 #[cfg(unix)]
 pub fn spawn_shutdown_escalation(label: &'static str, grace: std::time::Duration) {
+    // Logged for the same reason the watchdog's arming is: so a live process
+    // can be asked whether it armed this, rather than a test asserting on the
+    // shape of the source.
+    crate::debug_logging::log_lifecycle_always(
+        "shutdown escalation armed",
+        label,
+        Some(serde_json::json!({ "graceMs": grace.as_millis() })),
+    );
     let _ = std::thread::Builder::new()
         .name(format!("aimux-{label}-shutdown"))
         .spawn(move || {

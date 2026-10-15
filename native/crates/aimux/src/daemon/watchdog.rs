@@ -180,6 +180,19 @@ pub const PROJECT_SERVICE_WATCHDOG: WatchdogBudget = WatchdogBudget {
 /// scheduled on the runtime it is watching stalls with it.
 pub fn spawn_health_watchdog(budget: WatchdogBudget, host: String, port: u16) {
     let thread_name = format!("aimux-{}-watchdog", budget.label);
+    // Logged so a live process can be asked whether it armed this at all. A
+    // defence nobody spawned is the shape of the incident behind it: the
+    // daemon had this watchdog all along and the project service armed none.
+    crate::debug_logging::log_lifecycle_always(
+        "health watchdog armed",
+        budget.label,
+        Some(serde_json::json!({
+            "port": port,
+            "intervalMs": budget.interval.as_millis(),
+            "timeoutMs": budget.timeout.as_millis(),
+            "failuresBeforeExit": budget.failures_before_exit,
+        })),
+    );
     let _ = std::thread::Builder::new()
         .name(thread_name)
         .spawn(move || run_watchdog_loop(budget, &host, port));
