@@ -69,6 +69,19 @@ describe("the landing screen", () => {
     expect(source, "and must not re-arm a timer of its own").not.toContain("setTimeout(");
   });
 
+  // A reviewer froze the answer with `const [route] = React.useState(() =>
+  // initialMainRoute({...}))`. Every assertion above still matched, and the
+  // screen stopped re-deciding when the relay finally replied -- which is the
+  // entire mechanism by which the wait ends early.
+  it("re-decides on every render instead of freezing the first answer", () => {
+    expect(source, "a plain call, recomputed each render").toContain(
+      "const route = initialMainRoute({",
+    );
+    expect(source, "a frozen answer ignores the relay's later reply").not.toMatch(
+      /(useState|useRef|useMemo|useCallback)[\s\S]{0,40}initialMainRoute/,
+    );
+  });
+
   it("acts on all three answers", () => {
     expect(source, "pending must render rather than navigate").toMatch(
       /route === "pending"[\s\S]*?ActivityIndicator/,

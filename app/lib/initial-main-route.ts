@@ -32,8 +32,32 @@ export function relayLandingSignal(configured: boolean, status: RelayStatus): Re
   // the status when one was configured.
   if (!configured) return "available";
   if (status === "connected") return "available";
+  if (isRelayAnswerPendingForLanding(status)) return "unknown";
   if (isRelayUnavailableForProjectDiscovery(status)) return "unavailable";
   return "unknown";
+}
+
+/**
+ * Whether this status is a relay that has not answered YET, as opposed to one
+ * that has answered no.
+ *
+ * `relay_unavailable` is the could-not-ask error: `relay-transport.ts` sets it
+ * after three failed handshakes and schedules a retry, so a cold cellular
+ * launch reaches it with nothing known about the fleet, and the next attempt
+ * may connect.
+ *
+ * `daemon_offline` is NOT on this list, although it looks transient. It is set
+ * from a LIVE socket carrying `daemon_status { online: false }` -- the relay
+ * answered, and the answer was that no daemon of this account is up. A
+ * share-only recipient who never ran a host sits there permanently, so
+ * treating it as pending made them wait the full budget and then land on their
+ * own empty project surface, which is the one user shared chats exist for.
+ *
+ * `auth_failed` and `client_storage_error` are not on this list either:
+ * waiting does not fix wrong credentials or broken local storage.
+ */
+export function isRelayAnswerPendingForLanding(status: RelayStatus): boolean {
+  return status === "relay_unavailable";
 }
 
 export type OwnBackendSignal = "present" | "absent" | "unknown";
