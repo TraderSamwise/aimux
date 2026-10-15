@@ -160,11 +160,6 @@ import { chatViewportKeyForRoute } from "@/lib/chat-viewport-key";
 import {
   CHAT_OUTPUT_CAPTURE_START_LINE,
   CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
-  chatHistoryPageOutcome,
-  chatHistoryPagingAllowed,
-  chatHistoryPagingRetryable,
-  chatHistorySeedStartLine,
-  chatOutputHistoryStartLineForScroll,
 } from "@/lib/chat-output-constants";
 import {
   agentOutputModeForVisiblePane,
@@ -192,6 +187,12 @@ import {
 } from "@/lib/shared-sessions";
 import { attachmentTooLargeMessage, firstOversizedAttachment } from "@/lib/attachment-limits";
 import { chatHistoryAtFloor, chatHistoryFloorNotice } from "@/lib/chat-history-floor";
+import {
+  type ChatHistoryPagerResolution,
+  chatHistoryPagerResolved,
+  chatHistoryPagerScrolled,
+  chatHistoryPagerState,
+} from "@/lib/chat-history-pager";
 import { toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
@@ -720,17 +721,12 @@ export default function ChatScreen() {
   });
   const agentOutputFeedMode = agentOutputModeForVisiblePane({ terminalViewVisible });
   const [chatHistoryFloorReached, setChatHistoryFloorReached] = useState(false);
-  // Set only where a page actually arrived, so the two paths that move the
-  // cursor without fetching cannot make the view claim it reached a floor.
-  const chatHistoryPagedRef = useRef(false);
-  // Consecutive pages that were never served. Holding the cursor still removes
-  // the brake the old bug accidentally provided.
-  const chatHistoryFailuresRef = useRef(0);
-  // The cursor itself. A ref rather than state because nothing renders from
-  // it -- the transcript comes from the store and the pager passes its own
-  // start line -- and because a resolved page must read it without an impure
-  // React updater. It was state, written by three paths and read by none.
-  const chatOutputHistoryStartLineRef = useRef(CHAT_OUTPUT_CAPTURE_START_LINE);
+  // The pager's whole state in one ref: the cursor, the failure count within
+  // this gesture, whether a page has arrived, and whether the service has said
+  // there is no more. A ref because nothing renders from it -- the transcript
+  // comes from the store -- and because a resolved page must read it without
+  // an impure React updater.
+  const chatHistoryPagerRef = useRef(chatHistoryPagerState());
   const [pendingChatOutputHistoryStartLine, setPendingChatOutputHistoryStartLine] = useState<
     number | null
   >(null);
@@ -763,14 +759,10 @@ export default function ChatScreen() {
     // on screen, cursor and transcript agree.
     const stored = jotaiStore.get(transcriptStartLineFamily(agentKey));
     const hasTranscript = jotaiStore.get(transcriptFamily(agentKey)).length > 0;
-    const seeded = chatHistorySeedStartLine(hasTranscript ? stored : undefined);
-    chatOutputHistoryStartLineRef.current = seeded;
-    chatHistoryFailuresRef.current = 0;
+    const seeded = hasTranscript ? stored : undefined;
+    chatHistoryPagerRef.current = chatHistoryPagerState(seeded);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- each route/session clears its own floor notice
     setChatHistoryFloorReached(false);
-    // Not a page THIS mount was given, so the floor notice still has to earn
-    // itself: a seeded cursor says only that something was stored before.
-    chatHistoryPagedRef.current = false;
     pendingChatOutputHistoryStartLineRef.current = null;
     setPendingChatOutputHistoryStartLine(null);
   }, [agentKey, jotaiStore]);
@@ -1082,26 +1074,15 @@ export default function ChatScreen() {
   // One place both paging paths decide what a page meant. A React updater has
   // to be pure, so the decision happens here and only the new value goes in.
   //
-  // `appliedStartLine` comes from the feed as the snapshot is applied, not from
-  // the store afterwards: a live stream event carrying no start line sets that
-  // atom to `undefined` while storing its messages, so reading it after the
-  // await raced the stream and read "nothing arrived" for a page that had.
-  const applyChatHistoryPageOutcome = useCallback((appliedStartLine: number | undefined) => {
-    const outcome = chatHistoryPageOutcome({
-      currentStartLine: chatOutputHistoryStartLineRef.current,
-      appliedStartLine,
-    });
-    if (outcome.kind === "not-served") {
-      chatHistoryFailuresRef.current += 1;
-      return;
-    }
-    chatHistoryFailuresRef.current = 0;
-    chatHistoryPagedRef.current = true;
-    if (outcome.kind === "no-deeper-history") {
-      setChatHistoryFloorReached(true);
-      return;
-    }
-    chatOutputHistoryStartLineRef.current = outcome.startLine;
+  // The pager's state lives in a ref and its rules live in
+  // `chat-history-pager`, where the sequences can actually be driven: this
+  // screen is an Expo Router route no renderer in this app executes, so a gate
+  // here can only read source text -- and four mutations survived that,
+  // including restoring the original bug verbatim.
+  const applyChatHistoryPageOutcome = useCallback((resolution: ChatHistoryPagerResolution) => {
+    const next = chatHistoryPagerResolved(chatHistoryPagerRef.current, resolution);
+    chatHistoryPagerRef.current = next;
+    if (next.floorReached) setChatHistoryFloorReached(true);
   }, []);
 
   const wasAppVisibleRef = useRef(appVisible);
@@ -1124,42 +1105,31 @@ export default function ChatScreen() {
       },
     })
       .then(() => {
-        applyChatHistoryPageOutcome(
-          arrived ? (served ?? CHAT_OUTPUT_MAX_CAPTURE_START_LINE) : undefined,
-        );
+        applyChatHistoryPageOutcome({
+          requestedStartLine: CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
+          arrived,
+          appliedStartLine: served,
+        });
       })
       .catch(() => {});
   }, [appVisible, applyChatHistoryPageOutcome, refreshOutputSnapshot]);
 
   const requestChatHistoryPage = useCallback(
     (metrics: ChatScrollMetrics) => {
-      // The brake counts within one gesture. Scrolling away from the top and
-      // back is what trying again looks like, and without this a service down
-      // for a moment left the pager refusing for the rest of the session.
-      if (chatHistoryPagingRetryable(metrics)) chatHistoryFailuresRef.current = 0;
-      const nextStartLine = chatOutputHistoryStartLineForScroll({
-        // The ref, not the state: `.finally` clears the pending guard in the
-        // same microtask chain, before React commits the new cursor. A scroll
-        // queued at the top then re-computed the SAME window from a stale
-        // closure, was served it, and the applier -- which reads the ref --
-        // called that "no deeper history" and stuck the floor notice on a chat
-        // with plenty left.
-        currentStartLine: chatOutputHistoryStartLineRef.current,
-        enabled:
-          chatViewVisible &&
-          heartbeatReady &&
-          !routeSessionMissing &&
-          chatHistoryPagingAllowed(chatHistoryFailuresRef.current),
+      const scrolled = chatHistoryPagerScrolled(chatHistoryPagerRef.current, {
         metrics,
+        ready: chatViewVisible && heartbeatReady && !routeSessionMissing,
         pendingStartLine:
           pendingChatOutputHistoryStartLineRef.current ?? pendingChatOutputHistoryStartLine,
       });
+      chatHistoryPagerRef.current = scrolled.state;
+      const nextStartLine = scrolled.request;
       if (nextStartLine === null) {
         if (
           chatHistoryAtFloor({
-            currentStartLine: chatOutputHistoryStartLineRef.current,
+            currentStartLine: scrolled.state.startLine,
             metrics,
-            pagedAtLeastOnce: chatHistoryPagedRef.current,
+            pagedAtLeastOnce: scrolled.state.pagedAtLeastOnce,
           })
         ) {
           setChatHistoryFloorReached(true);
@@ -1168,11 +1138,9 @@ export default function ChatScreen() {
       }
       pendingChatOutputHistoryStartLineRef.current = nextStartLine;
       setPendingChatOutputHistoryStartLine(nextStartLine);
-      // Three outcomes, not two. The callback fires only when a snapshot was
-      // applied, so never firing means nothing arrived. Firing with no start
-      // line means a page DID arrive without one -- the field is optional in
-      // the contract -- and treating that as nothing would stop paging on a
-      // page already on screen.
+      // The callback fires only when a snapshot was applied, so never firing
+      // means nothing arrived. Firing with no start line means a page DID
+      // arrive without one -- the field is optional in the contract.
       let arrived = false;
       let served: number | undefined;
       void refreshOutputSnapshot("history", {
@@ -1183,12 +1151,16 @@ export default function ChatScreen() {
         },
       })
         .then(() => {
-          applyChatHistoryPageOutcome(arrived ? (served ?? nextStartLine) : undefined);
+          applyChatHistoryPageOutcome({
+            requestedStartLine: nextStartLine,
+            arrived,
+            appliedStartLine: served,
+          });
         })
         .catch(() => {
           // History paging is opportunistic; the live feed and explicit Retry
           // own visible errors. The failure still counts against the brake.
-          chatHistoryFailuresRef.current += 1;
+          applyChatHistoryPageOutcome({ requestedStartLine: nextStartLine, arrived: false });
         })
         .finally(() => {
           if (pendingChatOutputHistoryStartLineRef.current === nextStartLine) {
