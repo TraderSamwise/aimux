@@ -335,6 +335,15 @@ impl AsyncCommand {
         run_spawn_detached(self).await
     }
 
+    /// The program this command will actually exec.
+    ///
+    /// Exposed so a caller that resolves its binary once can prove the
+    /// children get the absolute path rather than a name the OS re-walks
+    /// `PATH` for on every spawn.
+    pub fn program(&self) -> &OsStr {
+        &self.program
+    }
+
     fn program_display(&self) -> String {
         self.program.to_string_lossy().into_owned()
     }

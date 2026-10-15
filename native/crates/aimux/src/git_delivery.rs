@@ -1,6 +1,8 @@
+use std::ffi::OsString;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::async_subprocess::{AsyncCommand, command_task_name};
@@ -17,10 +19,28 @@ use crate::async_subprocess::{AsyncCommand, command_task_name};
 /// it is tens of times the worst case anyone has seen.
 pub const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn git_command(cwd: &str, args: &[&str]) -> AsyncCommand {
-    let mut command = AsyncCommand::new("git");
+/// Where `git` is, found once per process.
+///
+/// A bare `"git"` makes the OS walk `PATH` on every spawn, and a coherence
+/// scan spawns several; AGENTS.md "Subprocess Churn" asks for one resolution
+/// and an absolute path to the children. The failure is cached too: a `PATH`
+/// with no git on it does not fix itself between two calls, and re-walking it
+/// per spawn is the retry loop that section forbids.
+fn git_program() -> Result<&'static OsString, &'static str> {
+    static GIT_PROGRAM: OnceLock<Result<OsString, String>> = OnceLock::new();
+    GIT_PROGRAM
+        .get_or_init(|| {
+            crate::program_lookup::resolve_program_from_path("git", std::env::var_os("PATH"), None)
+        })
+        .as_ref()
+        .map_err(String::as_str)
+}
+
+fn git_command(cwd: &str, args: &[&str]) -> Result<AsyncCommand, GitDeliveryError> {
+    let program = git_program().map_err(|error| git_failure(cwd, args, error))?;
+    let mut command = AsyncCommand::new(program);
     command.arg("-C").arg(cwd).args(args);
-    command
+    Ok(command)
 }
 
 fn git_task_name(args: &[&str]) -> String {
@@ -46,7 +66,7 @@ fn git_failure(cwd: &str, args: &[&str], message: impl Into<String>) -> GitDeliv
 /// or the deadline is an error, so a caller that treats a failed exit as
 /// "absent" cannot also swallow a wedged child.
 fn git_run(cwd: &str, args: &[&str], budget: Duration) -> Result<Output, GitDeliveryError> {
-    git_command(cwd, args)
+    git_command(cwd, args)?
         .output_timeout(git_task_name(args), budget)
         .map_err(|error| git_failure(cwd, args, error.to_string()))
 }
@@ -57,7 +77,7 @@ fn git_run_with_stdin(
     payload: Vec<u8>,
     budget: Duration,
 ) -> Result<Output, GitDeliveryError> {
-    git_command(cwd, args)
+    git_command(cwd, args)?
         .output_timeout_with_stdin(git_task_name(args), budget, payload)
         .map_err(|error| git_failure(cwd, args, error.to_string()))
 }
@@ -853,6 +873,31 @@ mod tests {
             .expect_err("a spent budget must not answer");
         timed_out(&error, &["hash-object", "--stdin-paths"]);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Children get an absolute `git`, resolved once.
+    ///
+    /// A bare name is a `PATH` walk per spawn, and a coherence scan spawns
+    /// several. Asserted on the command this module actually builds, because
+    /// a resolver nothing passes to its children resolves nothing.
+    #[test]
+    fn every_git_child_is_spawned_by_absolute_path() {
+        let program = git_program().expect("git is on PATH in a dev environment");
+        assert!(
+            Path::new(program).is_absolute(),
+            "{program:?} is not an absolute path"
+        );
+        assert!(
+            crate::program_lookup::executable_file_exists(Path::new(program)),
+            "{program:?} is not an executable file"
+        );
+        assert!(
+            std::ptr::eq(program, git_program().expect("still resolvable")),
+            "git was resolved twice instead of once per process"
+        );
+
+        let command = git_command("/", &["rev-parse", "HEAD"]).expect("build the command");
+        assert_eq!(command.program(), program.as_os_str());
     }
 
     /// A candidate git could not be ASKED about is not a candidate that is
