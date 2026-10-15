@@ -390,11 +390,29 @@ impl AsyncCommand {
     }
 }
 
+/// A budget already spent cannot be spent on a child.
+///
+/// Refusing before the spawn rather than after: `tokio::time::timeout` polls
+/// its future once before the deadline, so a zero budget raced the child --
+/// deterministic on one machine, and on a Linux runner the first `git` call
+/// sometimes finished inside that poll while a later one did not. A test that
+/// spends its budget would then be told about an arbitrary call, and the one
+/// thing nobody wants from a zero budget is a process to kill.
+fn refuse_spent_budget(program: &str, timeout: Duration) -> Option<AsyncCommandError> {
+    timeout.is_zero().then(|| AsyncCommandError::Timeout {
+        program: program.to_owned(),
+        duration: timeout,
+    })
+}
+
 async fn run_output(
     command: &mut AsyncCommand,
     timeout: Duration,
 ) -> Result<Output, AsyncCommandError> {
     let (program, current_dir) = command.failure_context();
+    if let Some(refusal) = refuse_spent_budget(&program, timeout) {
+        return Err(refusal);
+    }
     let mut command = command.build_tokio_command();
     match tokio::time::timeout(timeout, command.output()).await {
         Ok(Ok(output)) => Ok(output),
@@ -414,6 +432,9 @@ async fn run_output_with_stdin(
     use tokio::io::AsyncWriteExt;
 
     let (program, current_dir) = command.failure_context();
+    if let Some(refusal) = refuse_spent_budget(&program, timeout) {
+        return Err(refusal);
+    }
     command.stdin(Stdio::piped());
     // `wait_with_output` can only answer about pipes it owns.
     if command.stdout.is_none() {
@@ -635,6 +656,75 @@ mod tests {
             String::from_utf8_lossy(&output.stderr),
             "fatal: it was me\n"
         );
+    }
+
+    /// A spent budget refuses before the spawn, on every platform.
+    ///
+    /// `tokio::time::timeout` polls its future once before the deadline, so a
+    /// zero budget used to RACE the child: deterministic across twenty runs on
+    /// one machine, and on a Linux runner the first `git` call sometimes
+    /// finished inside that poll while a later one did not -- which told the
+    /// test about an arbitrary call and failed it.
+    #[test]
+    fn a_spent_budget_refuses_without_spawning() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let root = std::env::temp_dir().join(format!(
+            "aimux-async-subprocess-spent-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("temp dir");
+        let witness = root.join("it-ran");
+
+        for attempt in 0..20 {
+            let mut command = AsyncCommand::new("/bin/sh");
+            command.args(["-c", &format!("printf 'x' >> {}", witness.display())]);
+            let error = command
+                .output_timeout(
+                    command_task_name("async-subprocess-test", "spent"),
+                    Duration::ZERO,
+                )
+                .expect_err("a zero budget must never answer");
+            assert!(
+                matches!(error, AsyncCommandError::Timeout { .. }),
+                "attempt {attempt}: {error}"
+            );
+        }
+        assert!(
+            !witness.exists(),
+            "a spent budget spawned a child it had no time to wait for"
+        );
+
+        // The discriminator: a program that does not exist fails the SPAWN
+        // with `ENOENT`, so only a budget refused before the spawn can answer
+        // `Timeout` here. Without the refusal this is `Spawn`, on every
+        // platform, however the kill-versus-exec race lands.
+        let mut missing = AsyncCommand::new("/nonexistent/aimux-no-such-program");
+        let error = missing
+            .output_timeout(
+                command_task_name("async-subprocess-test", "spent-missing"),
+                Duration::ZERO,
+            )
+            .expect_err("a zero budget must never answer");
+        assert!(
+            matches!(error, AsyncCommandError::Timeout { .. }),
+            "a spent budget must refuse before the spawn, not fail in it: {error}"
+        );
+
+        // The stdin-fed lane refuses at the same point.
+        let mut command = AsyncCommand::new("/bin/cat");
+        let error = command
+            .output_timeout_with_stdin(
+                command_task_name("async-subprocess-test", "spent-stdin"),
+                Duration::ZERO,
+                b"payload".to_vec(),
+            )
+            .expect_err("a zero budget must never answer");
+        assert!(
+            matches!(error, AsyncCommandError::Timeout { .. }),
+            "{error}"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

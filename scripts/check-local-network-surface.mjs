@@ -234,7 +234,7 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   },
   {
     path: "native/crates/aimux/src/git_delivery.rs",
-    marker: "AsyncCommand::new(&program);",
+    marker: "AsyncCommand::new(program.as_os_str());",
     command:
       "git, resolved once per process to an absolute path by program_lookup rather than spawned by name",
     argv:

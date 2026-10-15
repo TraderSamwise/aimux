@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::async_subprocess::{AsyncCommand, command_task_name};
@@ -34,9 +34,14 @@ pub const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 /// exactly once; when it does change, that is a different question and deserves
 /// a different answer.
 /// The `PATH` a resolution was made from, and what it answered.
-type ResolvedGit = (Option<OsString>, Result<OsString, String>);
+///
+/// `Arc` so two callers under one `PATH` can be SHOWN to have the same
+/// resolution rather than merely equal strings: an adversarial review deleted
+/// the cache outright and every test still passed, because value equality
+/// cannot tell one resolution from two identical ones.
+type ResolvedGit = (Option<OsString>, Result<Arc<OsString>, String>);
 
-fn git_program() -> Result<OsString, String> {
+fn git_program() -> Result<Arc<OsString>, String> {
     static GIT_PROGRAM: OnceLock<Mutex<Option<ResolvedGit>>> = OnceLock::new();
     let path_env = std::env::var_os("PATH");
     let cache = GIT_PROGRAM.get_or_init(|| Mutex::new(None));
@@ -49,14 +54,15 @@ fn git_program() -> Result<OsString, String> {
     {
         return result.clone();
     }
-    let result = crate::program_lookup::resolve_program_from_path("git", path_env.clone(), None);
+    let result = crate::program_lookup::resolve_program_from_path("git", path_env.clone(), None)
+        .map(Arc::new);
     *slot = Some((path_env, result.clone()));
     result
 }
 
 fn git_command(cwd: &str, args: &[&str]) -> Result<AsyncCommand, GitDeliveryError> {
     let program = git_program().map_err(|error| git_failure(cwd, args, error))?;
-    let mut command = AsyncCommand::new(&program);
+    let mut command = AsyncCommand::new(program.as_os_str());
     command.arg("-C").arg(cwd).args(args);
     Ok(command)
 }
@@ -87,6 +93,22 @@ fn git_run(cwd: &str, args: &[&str], budget: Duration) -> Result<Output, GitDeli
     git_command(cwd, args)?
         .output_timeout(git_task_name(args), budget)
         .map_err(|error| git_failure(cwd, args, error.to_string()))
+}
+
+/// What a failed git said, or failing that, that it failed.
+///
+/// An empty stderr with a non-zero exit is still an answer and must not come
+/// back as an empty message: a child killed by a signal says nothing at all.
+fn failure_detail(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+    format!("exited with {}", output.status)
 }
 
 fn git_run_with_stdin(
@@ -513,11 +535,7 @@ fn git_status_entries(
     ];
     let output = git_run(repo, &args, budget)?;
     if !output.status.success() {
-        return Err(git_failure(
-            repo,
-            &args,
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        ));
+        return Err(git_failure(repo, &args, failure_detail(&output)));
     }
     let mut entries = Vec::new();
     let mut fields = output.stdout.split(|byte| *byte == 0);
@@ -602,11 +620,7 @@ fn batch_blobs(
     // Before counting the answers: a git that died has already said why, and
     // "answered 0 of 7 specs" would blame the count for a `fatal:`.
     if !output.status.success() {
-        return Err(git_failure(
-            repo,
-            &args,
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        ));
+        return Err(git_failure(repo, &args, failure_detail(&output)));
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let blobs: Vec<Option<String>> = text
@@ -749,11 +763,7 @@ fn hash_object_batch(
     let args = ["hash-object", "--stdin-paths"];
     let output = git_run_with_stdin(repo, &args, lines_payload(paths), budget)?;
     if !output.status.success() {
-        return Err(git_failure(
-            repo,
-            &args,
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        ));
+        return Err(git_failure(repo, &args, failure_detail(&output)));
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let hashes: Vec<Option<String>> = text
@@ -911,17 +921,20 @@ mod tests {
     fn every_git_child_is_spawned_by_absolute_path() {
         let program = git_program().expect("git is on PATH in a dev environment");
         assert!(
-            Path::new(&program).is_absolute(),
+            Path::new(program.as_os_str()).is_absolute(),
             "{program:?} is not an absolute path"
         );
         assert!(
-            crate::program_lookup::executable_file_exists(Path::new(&program)),
+            crate::program_lookup::executable_file_exists(Path::new(program.as_os_str())),
             "{program:?} is not an executable file"
         );
-        assert_eq!(
-            program,
-            git_program().expect("still resolvable"),
-            "the same PATH must answer the same way"
+        // The same resolution, not merely the same string: deleting the
+        // cache and re-walking `PATH` on every spawn answers equal values and
+        // defeats the whole point of resolving it once.
+        let again = git_program().expect("still resolvable");
+        assert!(
+            Arc::ptr_eq(&program, &again),
+            "git was resolved twice under one PATH"
         );
 
         let command = git_command("/", &["rev-parse", "HEAD"]).expect("build the command");
