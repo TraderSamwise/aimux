@@ -157,6 +157,14 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         crate::process_signals::DAEMON_TERMINATION_SIGNALS,
     )
     .context("install project-service shutdown signal handlers")?;
+    // The recorded signal only reaches the exit path if the accept loop keeps
+    // polling it. When that loop stopped running, a SIGTERM was recorded and
+    // never acted on -- only SIGKILL ended the process. This thread honours it
+    // whatever the loop is doing.
+    crate::process_signals::spawn_shutdown_escalation(
+        "project-service",
+        crate::process_signals::SHUTDOWN_GRACE,
+    );
     let test_isolation_owner_gone =
         crate::runtime_safety_guard::spawn_test_isolation_owner_watchdog(
             &aimux_home,
@@ -168,6 +176,17 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         .context("read project-service listener address")?
         .port();
     publish_project_service_endpoint(&startup.project_state_dir, port)?;
+    // Armed here, once the port is known and published. A service whose accept
+    // loop dies keeps the port open, so every client hangs against a process
+    // that cannot answer -- one did for 4 days 19 hours, and only SIGKILL
+    // ended it. The probe goes over TCP to this service's own port, which is
+    // the half that wedges, and runs on its own OS thread because a watchdog
+    // scheduled on the runtime it is watching stalls with it.
+    crate::daemon::watchdog::spawn_health_watchdog(
+        crate::daemon::watchdog::PROJECT_SERVICE_WATCHDOG,
+        "127.0.0.1".to_owned(),
+        port,
+    );
     log_lifecycle_always(
         "project service listener published",
         "project-service",

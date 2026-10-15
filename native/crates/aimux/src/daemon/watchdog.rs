@@ -47,6 +47,24 @@ pub fn watchdog_action(
     armed: bool,
     shutting_down: bool,
 ) -> WatchdogAction {
+    watchdog_action_within(
+        probe_succeeded,
+        consecutive_failures,
+        armed,
+        shutting_down,
+        FAILURES_BEFORE_EXIT,
+    )
+}
+
+/// The same decision against a named budget, so a process kind that needs more
+/// patience than the daemon gets it without a second copy of the rule.
+pub fn watchdog_action_within(
+    probe_succeeded: bool,
+    consecutive_failures: u32,
+    armed: bool,
+    shutting_down: bool,
+    failures_before_exit: u32,
+) -> WatchdogAction {
     if probe_succeeded {
         return if consecutive_failures > 0 {
             WatchdogAction::Recovered
@@ -57,7 +75,7 @@ pub fn watchdog_action(
     if !armed || shutting_down {
         return WatchdogAction::Wait;
     }
-    if consecutive_failures >= FAILURES_BEFORE_EXIT {
+    if consecutive_failures >= failures_before_exit {
         WatchdogAction::ExitWedged
     } else {
         WatchdogAction::Wait
@@ -67,6 +85,10 @@ pub fn watchdog_action(
 /// One blocking health request. `Err` carries what went wrong, so a watchdog
 /// exit can say which half failed rather than only that it gave up.
 pub fn probe_health(host: &str, port: u16) -> Result<(), String> {
+    probe_health_within(host, port, PROBE_TIMEOUT)
+}
+
+pub fn probe_health_within(host: &str, port: u16, timeout: Duration) -> Result<(), String> {
     let address = format!("{host}:{port}");
     let target: std::net::SocketAddr = address
         .parse()
@@ -78,11 +100,11 @@ pub fn probe_health(host: &str, port: u16) -> Result<(), String> {
             "refusing to probe a non-loopback address: {address}"
         ));
     }
-    let mut stream = TcpStream::connect_timeout(&target, PROBE_TIMEOUT)
+    let mut stream = TcpStream::connect_timeout(&target, timeout)
         .map_err(|error| format!("connect failed: {error}"))?;
     stream
-        .set_read_timeout(Some(PROBE_TIMEOUT))
-        .and_then(|()| stream.set_write_timeout(Some(PROBE_TIMEOUT)))
+        .set_read_timeout(Some(timeout))
+        .and_then(|()| stream.set_write_timeout(Some(timeout)))
         .map_err(|error| format!("setting probe timeouts failed: {error}"))?;
     stream
         .write_all(
@@ -114,30 +136,76 @@ pub fn probe_health(host: &str, port: u16) -> Result<(), String> {
     }
 }
 
-/// Start the probe on its own OS thread. Returns immediately; the thread ends
-/// the process if the daemon stops answering.
-pub fn spawn_daemon_watchdog(host: String, port: u16) {
-    let _ = std::thread::Builder::new()
-        .name("aimux-daemon-watchdog".to_owned())
-        .spawn(move || run_watchdog_loop(&host, port));
+/// How long a process gets to keep failing before it ends itself.
+///
+/// A budget per process kind, not one shared constant: the daemon serves state
+/// off disk, while a project service's `/health` builds scheduler diagnostics
+/// on a two-worker runtime, so its latency tracks contention. The thing a
+/// watchdog must never do is end a service that is merely starved of CPU.
+#[derive(Debug, Clone, Copy)]
+pub struct WatchdogBudget {
+    pub label: &'static str,
+    pub interval: Duration,
+    pub timeout: Duration,
+    pub failures_before_exit: u32,
 }
 
-fn run_watchdog_loop(host: &str, port: u16) -> ! {
+pub const DAEMON_WATCHDOG: WatchdogBudget = WatchdogBudget {
+    label: "daemon",
+    interval: PROBE_INTERVAL,
+    timeout: PROBE_TIMEOUT,
+    failures_before_exit: FAILURES_BEFORE_EXIT,
+};
+
+/// Deliberately more patient than the daemon's.
+///
+/// A project service answers `/health` by building scheduler diagnostics on a
+/// two-worker runtime, so its latency tracks contention -- and this machine
+/// routinely has ten agents compiling. Five strikes a minute apart is five
+/// minutes of continuous silence before the service ends itself, which a
+/// service that is merely starved of CPU does not reach, while the wedge this
+/// exists for lasted 4 days 19 hours. Ending a healthy service under load
+/// would be worse than the wedge.
+pub const PROJECT_SERVICE_WATCHDOG: WatchdogBudget = WatchdogBudget {
+    label: "project-service",
+    interval: Duration::from_secs(60),
+    timeout: Duration::from_secs(15),
+    failures_before_exit: 5,
+};
+
+/// Start the probe on its own OS thread. Returns immediately; the thread ends
+/// the process if it stops answering its own health route.
+///
+/// Its own OS thread, not a task on the async runtime, because a watchdog
+/// scheduled on the runtime it is watching stalls with it.
+pub fn spawn_health_watchdog(budget: WatchdogBudget, host: String, port: u16) {
+    let thread_name = format!("aimux-{}-watchdog", budget.label);
+    let _ = std::thread::Builder::new()
+        .name(thread_name)
+        .spawn(move || run_watchdog_loop(budget, &host, port));
+}
+
+pub fn spawn_daemon_watchdog(host: String, port: u16) {
+    spawn_health_watchdog(DAEMON_WATCHDOG, host, port);
+}
+
+fn run_watchdog_loop(budget: WatchdogBudget, host: &str, port: u16) -> ! {
     let mut consecutive_failures = 0u32;
     let mut armed = false;
     let mut last_error = String::new();
     loop {
-        std::thread::sleep(PROBE_INTERVAL);
+        std::thread::sleep(budget.interval);
         let shutting_down = crate::process_signals::received_shutdown_signal().is_some();
-        let outcome = probe_health(host, port);
+        let outcome = probe_health_within(host, port, budget.timeout);
         if let Err(error) = &outcome {
             last_error = error.clone();
         }
-        let action = watchdog_action(
+        let action = watchdog_action_within(
             outcome.is_ok(),
             consecutive_failures + u32::from(outcome.is_err()),
             armed,
             shutting_down,
+            budget.failures_before_exit,
         );
         match action {
             WatchdogAction::Wait => {
@@ -150,8 +218,8 @@ fn run_watchdog_loop(host: &str, port: u16) -> ! {
             }
             WatchdogAction::Recovered => {
                 crate::debug_logging::log_lifecycle_always(
-                    "daemon health recovered",
-                    "daemon-watchdog",
+                    "health recovered",
+                    budget.label,
                     Some(serde_json::json!({
                         "consecutiveFailures": consecutive_failures,
                         "lastError": last_error,
@@ -162,17 +230,19 @@ fn run_watchdog_loop(host: &str, port: u16) -> ! {
             }
             WatchdogAction::ExitWedged => {
                 let detail = serde_json::json!({
+                    "label": budget.label,
                     "port": port,
                     "consecutiveFailures": consecutive_failures + 1,
+                    "failuresBeforeExit": budget.failures_before_exit,
                     "lastError": last_error,
                     "exitCode": WEDGED_EXIT_CODE,
                 });
                 crate::debug_logging::log_lifecycle_always(
-                    "daemon wedged, exiting so the next command can start a live one",
-                    "daemon-watchdog",
+                    "wedged, exiting so the next command can start a live one",
+                    budget.label,
                     Some(detail.clone()),
                 );
-                eprintln!("aimux daemon wedged and is exiting: {detail}");
+                eprintln!("aimux {} wedged and is exiting: {detail}", budget.label);
                 std::process::exit(WEDGED_EXIT_CODE);
             }
         }
@@ -182,6 +252,102 @@ fn run_watchdog_loop(host: &str, port: u16) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The project service must actually ARM one, before it enters the serve
+    /// loop.
+    ///
+    /// A budget nobody spawns is the shape this whole item is about: the
+    /// daemon has had this watchdog all along and the service armed nothing.
+    /// Driving a real wedge would take a service whose accept loop is dead, so
+    /// the call site is pinned at the source, the way this crate already pins
+    /// the logging opt-in's position.
+    #[test]
+    fn the_project_service_arms_a_watchdog_before_it_serves() {
+        let source = include_str!("../project_service/process.rs");
+        let armed = source
+            .find("spawn_health_watchdog(")
+            .expect("the project service still arms a health watchdog");
+        let serving = source
+            .find("block_on(serve_project_service_listener_until(")
+            .expect("the project service still enters its serve loop");
+
+        assert!(
+            armed < serving,
+            "a watchdog armed after the serve loop would never start: armed at \
+             {armed}, serving at {serving}"
+        );
+        assert!(
+            source[armed..serving].len() < 4_000
+                || source[..armed].contains("PROJECT_SERVICE_WATCHDOG"),
+            "the service must arm its own budget, not the daemon's"
+        );
+        assert!(
+            source.contains("PROJECT_SERVICE_WATCHDOG"),
+            "the service must arm its own budget, not the daemon's"
+        );
+    }
+
+    /// The project service gets a budget of its own, and it must be the more
+    /// patient one. `/health` there builds scheduler diagnostics on a
+    /// two-worker runtime, so its latency tracks contention -- ending a
+    /// service that is merely starved of CPU would be worse than the wedge
+    /// this exists for.
+    // These ARE constants, and that is the point: the test states the
+    // relationship between two tunables so changing one in isolation fails.
+    #[allow(clippy::assertions_on_constants)]
+    #[test]
+    fn a_project_service_is_given_more_patience_than_the_daemon() {
+        assert!(
+            PROJECT_SERVICE_WATCHDOG.failures_before_exit > DAEMON_WATCHDOG.failures_before_exit,
+            "a service under load must get more strikes than the daemon"
+        );
+        assert!(
+            PROJECT_SERVICE_WATCHDOG.timeout > DAEMON_WATCHDOG.timeout,
+            "and longer to answer each one"
+        );
+        assert!(
+            PROJECT_SERVICE_WATCHDOG.interval >= DAEMON_WATCHDOG.interval,
+            "and no more often than the daemon is asked"
+        );
+        // The incident lasted 4d19h. Anything under a couple of minutes risks
+        // a loaded service; anything over an hour is not a liveness check.
+        let patience =
+            PROJECT_SERVICE_WATCHDOG.interval * PROJECT_SERVICE_WATCHDOG.failures_before_exit;
+        assert!(
+            patience >= Duration::from_secs(180) && patience <= Duration::from_secs(1_800),
+            "the service's patience is {patience:?}, which is outside the useful range"
+        );
+    }
+
+    /// The decision must honour the budget it is given, not the daemon's.
+    #[test]
+    fn a_service_within_its_own_budget_is_not_ended() {
+        let strikes = PROJECT_SERVICE_WATCHDOG.failures_before_exit;
+        for failures in FAILURES_BEFORE_EXIT..strikes {
+            assert_eq!(
+                watchdog_action_within(false, failures, true, false, strikes),
+                WatchdogAction::Wait,
+                "{failures} misses is still inside the service's budget"
+            );
+        }
+        assert_eq!(
+            watchdog_action_within(false, strikes, true, false, strikes),
+            WatchdogAction::ExitWedged,
+            "and the budget is reached eventually"
+        );
+    }
+
+    /// A service that has never answered is starting, however long it takes.
+    #[test]
+    fn a_service_that_has_never_answered_is_never_ended() {
+        let strikes = PROJECT_SERVICE_WATCHDOG.failures_before_exit;
+        for failures in 0..=strikes + 5 {
+            assert_eq!(
+                watchdog_action_within(false, failures, false, false, strikes),
+                WatchdogAction::Wait
+            );
+        }
+    }
 
     #[test]
     fn a_slow_start_is_not_a_wedge() {
