@@ -34,6 +34,15 @@ pub enum AsyncCommandError {
         program: String,
         duration: Duration,
     },
+    /// The child was reached and its input could not be delivered.
+    ///
+    /// Separate from `Spawn` because the spawn succeeded: saying "failed to
+    /// run git" about a broken pipe accuses the wrong half, and a truncated
+    /// batch comes back as a short answer rather than as nothing.
+    Stdin {
+        program: String,
+        source: std::io::Error,
+    },
 }
 
 impl std::fmt::Display for AsyncCommandError {
@@ -70,6 +79,9 @@ impl std::fmt::Display for AsyncCommandError {
             },
             Self::Timeout { program, duration } => {
                 write!(formatter, "{program} timed out after {duration:?}")
+            }
+            Self::Stdin { program, source } => {
+                write!(formatter, "failed to write {program}'s input: {source}")
             }
         }
     }
@@ -246,6 +258,31 @@ impl AsyncCommand {
         run_output(self, timeout).await
     }
 
+    /// Bounded, and the child reads its input from us.
+    ///
+    /// `output()` closes stdin before the child starts, which is right for a
+    /// query and wrong for `git cat-file --batch-check`: those read a list and
+    /// answer as they read, so the write and the read have to run together or
+    /// a payload larger than one pipe buffer deadlocks both ends.
+    #[track_caller]
+    pub fn output_timeout_with_stdin(
+        &mut self,
+        name: impl Into<String>,
+        timeout: Duration,
+        payload: Vec<u8>,
+    ) -> Result<Output, AsyncCommandError> {
+        // aimux-async-seam: permanent - bounded stdin-fed output bridge for sync git-delivery callers
+        block_on_named(name, run_output_with_stdin(self, timeout, payload))
+    }
+
+    pub async fn output_timeout_with_stdin_async(
+        &mut self,
+        timeout: Duration,
+        payload: Vec<u8>,
+    ) -> Result<Output, AsyncCommandError> {
+        run_output_with_stdin(self, timeout, payload).await
+    }
+
     #[track_caller]
     pub fn status(&mut self) -> Result<ExitStatus, AsyncCommandError> {
         let name = command_task_name("subprocess", &self.program_display());
@@ -298,6 +335,15 @@ impl AsyncCommand {
         run_spawn_detached(self).await
     }
 
+    /// The program this command will actually exec.
+    ///
+    /// Exposed so a caller that resolves its binary once can prove the
+    /// children get the absolute path rather than a name the OS re-walks
+    /// `PATH` for on every spawn.
+    pub fn program(&self) -> &OsStr {
+        &self.program
+    }
+
     fn program_display(&self) -> String {
         self.program.to_string_lossy().into_owned()
     }
@@ -344,17 +390,98 @@ impl AsyncCommand {
     }
 }
 
+/// A budget already spent cannot be spent on a child.
+///
+/// Refusing before the spawn rather than after: `tokio::time::timeout` polls
+/// its future once before the deadline, so a zero budget raced the child --
+/// deterministic on one machine, and on a Linux runner the first `git` call
+/// sometimes finished inside that poll while a later one did not. A test that
+/// spends its budget would then be told about an arbitrary call, and the one
+/// thing nobody wants from a zero budget is a process to kill.
+fn refuse_spent_budget(program: &str, timeout: Duration) -> Option<AsyncCommandError> {
+    timeout.is_zero().then(|| AsyncCommandError::Timeout {
+        program: program.to_owned(),
+        duration: timeout,
+    })
+}
+
 async fn run_output(
     command: &mut AsyncCommand,
     timeout: Duration,
 ) -> Result<Output, AsyncCommandError> {
     let (program, current_dir) = command.failure_context();
+    if let Some(refusal) = refuse_spent_budget(&program, timeout) {
+        return Err(refusal);
+    }
     let mut command = command.build_tokio_command();
     match tokio::time::timeout(timeout, command.output()).await {
         Ok(Ok(output)) => Ok(output),
         Ok(Err(source)) => Err(spawn_error(program, current_dir, source)),
         Err(_) => Err(AsyncCommandError::Timeout {
             program,
+            duration: timeout,
+        }),
+    }
+}
+
+async fn run_output_with_stdin(
+    command: &mut AsyncCommand,
+    timeout: Duration,
+    payload: Vec<u8>,
+) -> Result<Output, AsyncCommandError> {
+    use tokio::io::AsyncWriteExt;
+
+    let (program, current_dir) = command.failure_context();
+    if let Some(refusal) = refuse_spent_budget(&program, timeout) {
+        return Err(refusal);
+    }
+    command.stdin(Stdio::piped());
+    // `wait_with_output` can only answer about pipes it owns.
+    if command.stdout.is_none() {
+        command.stdout(Stdio::piped());
+    }
+    if command.stderr.is_none() {
+        command.stderr(Stdio::piped());
+    }
+    let mut built = command.build_tokio_command();
+    let timed_out = program.clone();
+    let fed = async move {
+        let mut child = built
+            .spawn()
+            .map_err(|source| spawn_error(program.clone(), current_dir.clone(), source))?;
+        let mut stdin = child.stdin.take().ok_or_else(|| AsyncCommandError::Stdin {
+            program: program.clone(),
+            source: std::io::Error::other("stdin was not piped"),
+        })?;
+        let write = async move {
+            stdin.write_all(&payload).await?;
+            stdin.shutdown().await
+        };
+        // Concurrently, not in sequence: a child that answers while it reads
+        // fills its output pipe, and waiting for the write to finish first is
+        // the deadlock that shape has.
+        let (written, waited) = tokio::join!(write, child.wait_with_output());
+        let output = waited.map_err(|source| spawn_error(program.clone(), current_dir, source));
+        if let Err(source) = written {
+            // A child that died of its own error closes the pipe, so our write
+            // fails second and knows least. Let what it said stand: reporting
+            // "broken pipe" over `fatal: cannot open 'gone.txt'` would accuse
+            // the wrong half, which is what this variant exists to avoid.
+            if source.kind() == std::io::ErrorKind::BrokenPipe
+                && let Ok(output) = output
+            {
+                return Ok(output);
+            }
+            return Err(AsyncCommandError::Stdin { program, source });
+        }
+        output
+    };
+    match tokio::time::timeout(timeout, fed).await {
+        Ok(result) => result,
+        // The child goes with the dropped future: `kill_on_drop` is on unless
+        // a caller detached it.
+        Err(_) => Err(AsyncCommandError::Timeout {
+            program: timed_out,
             duration: timeout,
         }),
     }
@@ -443,6 +570,160 @@ mod tests {
 
         let pid = wait_for_pid_file(&pid_path);
         wait_until_not_alive(pid);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A payload larger than one pipe buffer, which is the whole reason the
+    /// write and the read run together: feeding it first and reading after
+    /// deadlocks once the child's output pipe fills.
+    #[test]
+    fn stdin_fed_command_answers_a_payload_bigger_than_a_pipe() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let payload = "x".repeat(512 * 1024).into_bytes();
+        let mut command = AsyncCommand::new("/bin/cat");
+        let started = Instant::now();
+        let output = command
+            .output_timeout_with_stdin(
+                command_task_name("async-subprocess-test", "cat"),
+                Duration::from_secs(10),
+                payload.clone(),
+            )
+            .expect("cat should answer");
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), payload.len());
+        assert_eq!(output.stdout, payload);
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn stdin_fed_command_that_never_finishes_is_killed() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let root = std::env::temp_dir().join(format!(
+            "aimux-async-subprocess-stdin-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("temp dir");
+        let pid_path = root.join("pid");
+
+        let started = Instant::now();
+        let mut command = AsyncCommand::new("/bin/sh");
+        command.args([
+            "-c",
+            &format!(
+                "echo $$ > {}; cat > /dev/null; while :; do sleep 1; done",
+                pid_path.display()
+            ),
+        ]);
+        let error = command
+            .output_timeout_with_stdin(
+                command_task_name("async-subprocess-test", "stdin-sleep"),
+                Duration::from_millis(200),
+                b"one\n".to_vec(),
+            )
+            .expect_err("a child that reads its input and then hangs must time out");
+        assert!(
+            matches!(error, AsyncCommandError::Timeout { .. }),
+            "{error}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        let pid = wait_for_pid_file(&pid_path);
+        wait_until_not_alive(pid);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A child that died of its OWN error keeps the blame.
+    ///
+    /// It closes the pipe, so our write fails second with `EPIPE` and knows
+    /// least. A review deleted the precedence and nothing noticed, which would
+    /// have turned every `git hash-object` failure into "failed to write git's
+    /// input: Broken pipe".
+    #[test]
+    fn a_child_that_dies_first_keeps_the_blame() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let mut command = AsyncCommand::new("/bin/sh");
+        // Exits without reading, so a payload past the pipe buffer gets EPIPE.
+        command.args(["-c", "printf 'fatal: it was me\n' >&2; exit 9"]);
+        let output = command
+            .output_timeout_with_stdin(
+                command_task_name("async-subprocess-test", "early-exit"),
+                Duration::from_secs(10),
+                "x".repeat(512 * 1024).into_bytes(),
+            )
+            .expect("the child's own answer must survive our broken pipe");
+        assert_eq!(output.status.code(), Some(9));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "fatal: it was me\n"
+        );
+    }
+
+    /// A spent budget refuses before the spawn, on every platform.
+    ///
+    /// `tokio::time::timeout` polls its future once before the deadline, so a
+    /// zero budget used to RACE the child: deterministic across twenty runs on
+    /// one machine, and on a Linux runner the first `git` call sometimes
+    /// finished inside that poll while a later one did not -- which told the
+    /// test about an arbitrary call and failed it.
+    #[test]
+    fn a_spent_budget_refuses_without_spawning() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let root = std::env::temp_dir().join(format!(
+            "aimux-async-subprocess-spent-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("temp dir");
+        let witness = root.join("it-ran");
+
+        for attempt in 0..20 {
+            let mut command = AsyncCommand::new("/bin/sh");
+            command.args(["-c", &format!("printf 'x' >> {}", witness.display())]);
+            let error = command
+                .output_timeout(
+                    command_task_name("async-subprocess-test", "spent"),
+                    Duration::ZERO,
+                )
+                .expect_err("a zero budget must never answer");
+            assert!(
+                matches!(error, AsyncCommandError::Timeout { .. }),
+                "attempt {attempt}: {error}"
+            );
+        }
+        assert!(
+            !witness.exists(),
+            "a spent budget spawned a child it had no time to wait for"
+        );
+
+        // The discriminator: a program that does not exist fails the SPAWN
+        // with `ENOENT`, so only a budget refused before the spawn can answer
+        // `Timeout` here. Without the refusal this is `Spawn`, on every
+        // platform, however the kill-versus-exec race lands.
+        let mut missing = AsyncCommand::new("/nonexistent/aimux-no-such-program");
+        let error = missing
+            .output_timeout(
+                command_task_name("async-subprocess-test", "spent-missing"),
+                Duration::ZERO,
+            )
+            .expect_err("a zero budget must never answer");
+        assert!(
+            matches!(error, AsyncCommandError::Timeout { .. }),
+            "a spent budget must refuse before the spawn, not fail in it: {error}"
+        );
+
+        // The stdin-fed lane refuses at the same point.
+        let mut command = AsyncCommand::new("/bin/cat");
+        let error = command
+            .output_timeout_with_stdin(
+                command_task_name("async-subprocess-test", "spent-stdin"),
+                Duration::ZERO,
+                b"payload".to_vec(),
+            )
+            .expect_err("a zero budget must never answer");
+        assert!(
+            matches!(error, AsyncCommandError::Timeout { .. }),
+            "{error}"
+        );
         let _ = fs::remove_dir_all(root);
     }
 

@@ -4104,7 +4104,7 @@ fn resolve_tmux_program_from_env(
 ) -> Result<OsString, String> {
     if let Some(tmux_bin) = tmux_bin_env.filter(|value| !value.is_empty()) {
         let candidate = PathBuf::from(&tmux_bin);
-        if executable_file_exists(&candidate) {
+        if crate::program_lookup::executable_file_exists(&candidate) {
             return Ok(tmux_bin);
         }
         return Err(format!(
@@ -4119,57 +4119,7 @@ fn resolve_tmux_program_from_path(
     path_env: Option<OsString>,
     current_dir: Option<&Path>,
 ) -> Result<OsString, String> {
-    let current_dir = current_dir
-        .map(Path::to_path_buf)
-        .or_else(|| std::env::current_dir().ok());
-    let mut searched = Vec::new();
-    let Some(path_env) = path_env.filter(|value| !value.is_empty()) else {
-        return Err("tmux executable not found: PATH is empty".to_owned());
-    };
-    for dir in std::env::split_paths(&path_env) {
-        let candidate = tmux_candidate_path(&dir, current_dir.as_deref());
-        searched.push(candidate.display().to_string());
-        if executable_file_exists(&candidate) {
-            return Ok(candidate.into_os_string());
-        }
-    }
-    Err(format!(
-        "tmux executable not found; searched {}",
-        searched.join(", ")
-    ))
-}
-
-fn tmux_candidate_path(path_entry: &Path, current_dir: Option<&Path>) -> PathBuf {
-    let dir = if path_entry.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        path_entry
-    };
-    let candidate = dir.join("tmux");
-    if candidate.is_absolute() {
-        return candidate;
-    }
-    current_dir
-        .map(|cwd| cwd.join(&candidate))
-        .unwrap_or(candidate)
-}
-
-fn executable_file_exists(path: &Path) -> bool {
-    let Ok(metadata) = fs::metadata(path) else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    crate::program_lookup::resolve_program_from_path("tmux", path_env, current_dir)
 }
 
 /// The statusline runs fresh on every status redraw, so it takes the stable

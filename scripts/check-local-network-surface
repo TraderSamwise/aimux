@@ -10,6 +10,12 @@ SOURCE_ROOT="$ROOT_DIR"
 MANIFEST_PATH="$ROOT_DIR/native/Cargo.toml"
 NEEDS_METADATA=1
 
+# Every expansion of this array below uses `${ARGS[@]+...}`: with no arguments
+# it is EMPTY, and bash 3.2 -- which is the `bash` on every macOS -- treats
+# `"${ARGS[@]}"` on an empty array as unbound under `set -u`. It printed
+# `ARGS[@]: unbound variable`, exited 0, and the caller read that as a pass, so
+# this gate had not run on a developer Mac at all; CI, on bash 5, ran it. A
+# spawn site added on 2026-10-15 reached a PR because of it.
 ARGS=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -41,7 +47,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "$NEEDS_METADATA" -eq 0 ]; then
-  exec "$ROOT_DIR/scripts/run-yarn" node "$ROOT_DIR/scripts/check-local-network-surface.mjs" "${ARGS[@]}"
+  exec "$ROOT_DIR/scripts/run-yarn" node "$ROOT_DIR/scripts/check-local-network-surface.mjs" ${ARGS[@]+"${ARGS[@]}"}
 fi
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aimux-local-network-surface.XXXXXX")"
@@ -52,4 +58,4 @@ trap cleanup EXIT
 
 METADATA="$TMP_DIR/cargo-metadata.json"
 cargo metadata --manifest-path "$MANIFEST_PATH" --no-default-features --format-version=1 >"$METADATA"
-exec "$ROOT_DIR/scripts/run-yarn" node "$ROOT_DIR/scripts/check-local-network-surface.mjs" "${ARGS[@]}" --cargo-metadata-file "$METADATA"
+exec "$ROOT_DIR/scripts/run-yarn" node "$ROOT_DIR/scripts/check-local-network-surface.mjs" ${ARGS[@]+"${ARGS[@]}"} --cargo-metadata-file "$METADATA"

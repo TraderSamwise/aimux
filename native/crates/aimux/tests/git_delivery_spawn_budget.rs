@@ -79,6 +79,162 @@ fn untracked_files_are_never_fed_to_a_batch() {
     );
 }
 
+/// A batch pipe that answers fewer specs than it was asked about is an ERROR.
+///
+/// `batch_blobs` and `hash_object_batch` count the answers against the input
+/// for exactly this reason: `resolved_in_batches` hands out the answers in
+/// order, so a short answer becomes trailing `None`s -- every blob absent, the
+/// checkout "coherent", and a stale worktree reported as fine. An adversarial
+/// review turned both checks into `if false` with the whole suite green,
+/// because nothing drove a git that under-answers. This does, through the real
+/// entry point.
+#[test]
+fn an_under_answering_cat_file_is_an_error_not_a_blob_of_nones() {
+    let spy = GitSpy::with_batch_answers("short-cat-file", BatchAnswer::Short, BatchAnswer::Real);
+    let repo = spy.dir.join("repo");
+    seed_tracked(&repo, 4);
+    for index in 0..4 {
+        fs::write(repo.join(format!("tracked-{index}.txt")), "changed\n").expect("modify file");
+    }
+    spy.count_while(|| {
+        let error = inspect_git_checkout_coherence(path_str(&repo))
+            .expect_err("a short cat-file answer must not read as absent blobs");
+        let message = error.to_string();
+        assert!(
+            message.contains("cat-file answered"),
+            "the error must name the call and the count: {message}"
+        );
+    });
+}
+
+#[test]
+fn an_under_answering_hash_object_is_an_error_not_a_blob_of_nones() {
+    let spy =
+        GitSpy::with_batch_answers("short-hash-object", BatchAnswer::Real, BatchAnswer::Short);
+    let repo = spy.dir.join("repo");
+    seed_tracked(&repo, 4);
+    for index in 0..4 {
+        fs::write(repo.join(format!("tracked-{index}.txt")), "changed\n").expect("modify file");
+    }
+    spy.count_while(|| {
+        let error = inspect_git_checkout_coherence(path_str(&repo))
+            .expect_err("a short hash-object answer must not read as absent blobs");
+        let message = error.to_string();
+        assert!(
+            message.contains("hash-object answered"),
+            "the error must name the call and the count: {message}"
+        );
+    });
+}
+
+/// A batch call that FAILS is git's failure, not a short answer.
+///
+/// `sh` reports a pipeline's last status, so while every batch branch piped
+/// through `cat` both batch calls' status checks were disarmed -- `if false`
+/// on either survived the whole target. Unpiped now, and driven here.
+#[test]
+fn a_failing_cat_file_is_reported_as_its_own_failure() {
+    let spy = GitSpy::with_batch_answers("failed-cat-file", BatchAnswer::Failed, BatchAnswer::Real);
+    let repo = spy.dir.join("repo");
+    seed_tracked(&repo, 3);
+    for index in 0..3 {
+        fs::write(repo.join(format!("tracked-{index}.txt")), "changed\n").expect("modify file");
+    }
+    spy.count_while(|| {
+        let message = inspect_git_checkout_coherence(path_str(&repo))
+            .expect_err("a failing batch call must be an error")
+            .to_string();
+        assert!(
+            message.contains("the batch pipe gave up"),
+            "git's own words must survive: {message}"
+        );
+        assert!(
+            !message.contains("answered"),
+            "a failure must not be reported as a short answer: {message}"
+        );
+    });
+}
+
+#[test]
+fn a_failing_hash_object_is_reported_as_its_own_failure() {
+    let spy =
+        GitSpy::with_batch_answers("failed-hash-object", BatchAnswer::Real, BatchAnswer::Failed);
+    let repo = spy.dir.join("repo");
+    seed_tracked(&repo, 3);
+    for index in 0..3 {
+        fs::write(repo.join(format!("tracked-{index}.txt")), "changed\n").expect("modify file");
+    }
+    spy.count_while(|| {
+        let message = inspect_git_checkout_coherence(path_str(&repo))
+            .expect_err("a failing batch call must be an error")
+            .to_string();
+        assert!(message.contains("the batch pipe gave up"), "{message}");
+        assert!(!message.contains("answered"), "{message}");
+    });
+}
+
+/// The status scan really asks git for no optional locks.
+///
+/// Asserted on what was EXEC'd, not on the args array the error carries: an
+/// expired budget never spawns, so a flag could sit in that array and never
+/// reach git.
+#[test]
+fn the_status_scan_reaches_git_with_no_optional_locks() {
+    let spy = GitSpy::new("no-optional-locks");
+    let repo = spy.dir.join("repo");
+    seed_tracked(&repo, 2);
+    fs::write(repo.join("tracked-0.txt"), "changed\n").expect("modify file");
+    spy.count_while(|| {
+        inspect_git_checkout_coherence(path_str(&repo)).expect("inspect checkout");
+    });
+    let logged = fs::read_to_string(&spy.log).unwrap_or_default();
+    let status_calls: Vec<&str> = logged
+        .lines()
+        .filter(|line| line.contains(" status "))
+        .collect();
+    assert!(!status_calls.is_empty(), "no status call was logged");
+    for call in status_calls {
+        assert!(
+            call.contains("--no-optional-locks"),
+            "a report must not take the index lock: {call}"
+        );
+    }
+}
+
+/// A path the batch protocol cannot carry is not fed to it.
+///
+/// `path_is_batchable` is tested as a rule next door; this pins the CALL
+/// SITES, which is where dropping the filter would still mis-hash a
+/// carriage-return name under a name git cannot open.
+#[test]
+fn a_carriage_return_path_is_never_fed_to_a_batch() {
+    let spy = GitSpy::new("carriage-return");
+    let repo = spy.dir.join("repo");
+    seed_tracked(&repo, 1);
+    let awkward = "tracked\rcr.txt";
+    fs::write(repo.join(awkward), "first\n").expect("write cr file");
+    run_git(&repo, &["add", "--", awkward]);
+    run_git(&repo, &["commit", "-m", "cr"]);
+    fs::write(repo.join(awkward), "second\n").expect("modify cr file");
+    spy.count_while(|| {
+        let checkout = inspect_git_checkout_coherence(path_str(&repo)).expect("inspect checkout");
+        let reported = checkout
+            .files
+            .iter()
+            .find(|file| file.path.contains('\r'))
+            .expect("the carriage-return path is still reported");
+        assert!(
+            reported.worktree_blob.is_some(),
+            "and still carries a real hash"
+        );
+    });
+    let batched = spy.batched_paths();
+    assert!(
+        !batched.contains('\r'),
+        "a carriage-return path reached a batch pipe: {batched:?}"
+    );
+}
+
 fn inspect_modified(files: usize) -> (usize, String) {
     let spy = GitSpy::new("modified");
     let repo = spy.dir.join("repo");
@@ -149,6 +305,35 @@ struct GitSpy {
     _guard: MutexGuard<'static, ()>,
 }
 
+/// What a spy makes a batch pipe answer.
+#[derive(Clone, Copy)]
+enum BatchAnswer {
+    /// git, unpiped, so its exit status is the one the caller sees.
+    Real,
+    /// git, minus its last answer line: a git that answered fewer specs than
+    /// it was asked about. `batch_blobs` and `hash_object_batch` count the
+    /// answers against their input for exactly this, and an adversarial review
+    /// turned both checks into `if false` with every test still green.
+    Short,
+    /// A batch call that fails outright, which is the other half: a non-zero
+    /// exit must be reported as git's own failure rather than counted as a
+    /// short answer.
+    Failed,
+}
+
+fn batch_command(answer: BatchAnswer) -> String {
+    let git = real_git().display().to_string();
+    match answer {
+        // No pipe: `sh` reports a pipeline's LAST status, so piping even
+        // through `cat` would hide a failing git from the caller.
+        BatchAnswer::Real => format!("exec \"{git}\" \"$@\""),
+        BatchAnswer::Short => format!("\"{git}\" \"$@\" | sed '$d'"),
+        BatchAnswer::Failed => {
+            "cat > /dev/null; printf 'fatal: the batch pipe gave up\\n' >&2; exit 7".to_owned()
+        }
+    }
+}
+
 /// Held for a spy's whole life, not just the counted body: a sibling fixture
 /// spawning git while our shim is installed both races `set_var` and lands in
 /// our log. Locking only the body reported 1 invocation where there were 8.
@@ -161,6 +346,20 @@ fn spy_lock() -> MutexGuard<'static, ()> {
 
 impl GitSpy {
     fn new(label: &str) -> Self {
+        Self::with_batch_answers(label, BatchAnswer::Real, BatchAnswer::Real)
+    }
+
+    /// A spy that can make either batch pipe answer badly.
+    ///
+    /// `Real` runs git and nothing else, so git's own exit status reaches the
+    /// caller -- a pipeline would report the LAST command's status instead,
+    /// which silently disarmed both batch calls' status checks when every
+    /// branch piped through `cat`.
+    fn with_batch_answers(
+        label: &str,
+        cat_file_answer: BatchAnswer,
+        hash_object_answer: BatchAnswer,
+    ) -> Self {
         let guard = spy_lock();
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -178,12 +377,15 @@ impl GitSpy {
                 "#!/bin/sh\n\
                  printf '%s\\n' \"$*\" >> \"{log}\"\n\
                  case \"$*\" in\n\
-                 *--stdin-paths*|*--batch-check*) exec 3>>\"{stdin}\"; tee -a /dev/fd/3 | \"{git}\" \"$@\" ;;\n\
+                 *--stdin-paths*) exec 3>>\"{stdin}\"; tee -a /dev/fd/3 | {hash_object_batch} ;;\n\
+                 *--batch-check*) exec 3>>\"{stdin}\"; tee -a /dev/fd/3 | {cat_file_batch} ;;\n\
                  *) exec \"{git}\" \"$@\" ;;\n\
                  esac\n",
                 log = log.display(),
                 stdin = stdin_log.display(),
-                git = real_git().display()
+                git = real_git().display(),
+                cat_file_batch = batch_command(cat_file_answer),
+                hash_object_batch = batch_command(hash_object_answer)
             ),
         )
         .expect("write shim");

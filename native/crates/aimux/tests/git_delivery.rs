@@ -1,11 +1,12 @@
 use aimux::git_delivery::{
-    GitCheckoutCoherenceStatus, GitDeliveryError, inspect_git_checkout_coherence,
-    verify_git_delivery,
+    GIT_COMMAND_TIMEOUT, GitCheckoutCoherenceStatus, GitDeliveryError,
+    inspect_git_checkout_coherence, inspect_git_checkout_coherence_within, verify_git_delivery,
+    verify_git_delivery_within,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 struct TempGitFixture {
     root: PathBuf,
@@ -326,4 +327,97 @@ fn git_command(cwd: &Path, args: &[&str]) -> std::io::Result<std::process::Outpu
 
 fn path_str(path: &Path) -> &str {
     path.to_str().expect("utf8 temp path")
+}
+
+/// A `git` that never answers must be killed and NAMED, not waited on.
+///
+/// Every call in this module used to be an unbounded `Command::output()`, and
+/// the daemon's coherence report makes them with the global runtime mutex
+/// held: on 2026-10-11 a stuck checkout held that lock until `kill -9`. These
+/// four tests run the real entry points with the budget already spent, which
+/// is the one way to reach the deadline without waiting for a hang.
+#[test]
+fn a_delivery_check_whose_budget_is_spent_names_the_call_it_gave_up_on() {
+    let fixture = TempGitFixture::new("delivery-deadline");
+    let source = fixture.path("source");
+    create_source_repo(&source);
+
+    let started = Instant::now();
+    let result = verify_git_delivery_within(
+        path_str(&source),
+        path_str(&source),
+        "master",
+        Duration::ZERO,
+    );
+
+    let Err(GitDeliveryError::GitCommand { cwd, args, message }) = result else {
+        panic!("a spent budget must be an error, not an answer: {result:?}");
+    };
+    assert_eq!(cwd.as_ref(), path_str(&source));
+    assert_eq!(args, vec!["rev-parse", "--verify", "HEAD"]);
+    assert!(
+        message.contains("timed out"),
+        "the message must say the call was given up on: {message}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "giving up took {:?}, so something is still waiting on the child",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn a_coherence_scan_whose_budget_is_spent_is_an_error_not_a_clean_checkout() {
+    let fixture = TempGitFixture::new("coherence-deadline");
+    let repo = fixture.path("repo");
+    create_source_repo(&repo);
+    fs::write(repo.join("file.txt"), "base\nmodified\n").expect("modify tracked file");
+
+    let started = Instant::now();
+    let result = inspect_git_checkout_coherence_within(path_str(&repo), Duration::ZERO);
+
+    let Err(GitDeliveryError::GitCommand { cwd, args, message }) = result else {
+        panic!("a scan that could not ask must not report a coherent checkout: {result:?}");
+    };
+    assert_eq!(cwd.as_ref(), path_str(&repo));
+    assert_eq!(args, vec!["rev-parse", "--show-toplevel"]);
+    assert!(message.contains("timed out"), "{message}");
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+/// The inverse, and the one that would break the product: the deadline must
+/// not change what a healthy `git` answers.
+#[test]
+fn the_real_budget_still_answers_a_delivery_check() {
+    let fixture = TempGitFixture::new("delivery-budget-ok");
+    let source = fixture.path("source");
+    create_source_repo(&source);
+
+    let bounded = verify_git_delivery_within(
+        path_str(&source),
+        path_str(&source),
+        "master",
+        GIT_COMMAND_TIMEOUT,
+    )
+    .expect("a healthy repo answers within the real budget");
+    let unbounded =
+        verify_git_delivery(path_str(&source), path_str(&source), "master").expect("same answer");
+    assert_eq!(bounded, unbounded);
+}
+
+#[test]
+fn the_real_budget_still_answers_a_coherence_scan() {
+    let fixture = TempGitFixture::new("coherence-budget-ok");
+    let repo = fixture.path("repo");
+    create_source_repo(&repo);
+    fs::write(repo.join("file.txt"), "base\nmodified\n").expect("modify tracked file");
+
+    let bounded = inspect_git_checkout_coherence_within(path_str(&repo), GIT_COMMAND_TIMEOUT)
+        .expect("a healthy repo answers within the real budget");
+    let unbounded = inspect_git_checkout_coherence(path_str(&repo)).expect("same answer");
+    assert_eq!(bounded.status, GitCheckoutCoherenceStatus::Modified);
+    assert_eq!(bounded, unbounded);
+    // The batch pipe really was exercised, so its bounded path is covered too.
+    assert_eq!(bounded.files.len(), 1);
+    assert!(bounded.files[0].worktree_blob.is_some());
 }

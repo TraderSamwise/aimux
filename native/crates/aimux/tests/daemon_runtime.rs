@@ -48,10 +48,11 @@ use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 mod support;
 
@@ -2631,6 +2632,235 @@ fn native_daemon_push_acknowledges_when_relay_is_off() {
         result,
         json!({ "ok": true, "suppressed": true, "reason": "relay_off" })
     );
+    fixture.cleanup();
+}
+
+/// The report answers with what the snapshot READ, not with constants.
+///
+/// Three fields moved into `DoctorVersionsSnapshot`, and an adversarial review
+/// replaced each with a literal -- `relay: json!({"status":"off"})`, the
+/// `machine` insert dropped, the process-inventory section left off the text --
+/// with all 52 tests here green. The relay fixture has remote enabled on
+/// purpose: with it off, a hardcoded "off" is indistinguishable from a read.
+#[test]
+fn the_versions_report_carries_what_the_snapshot_read() {
+    let fixture = RuntimeFixture::new("doctor-versions-snapshot-fields");
+    let resolver = fixture.resolver();
+    save_credentials_at(resolver.auth_path(), &credentials()).expect("save credentials");
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let expected_relay = {
+        let locked = runtime.lock().expect("runtime lock");
+        DaemonStatusRuntime::relay_status(&*locked)
+    };
+    assert_eq!(
+        expected_relay["status"], "disconnected",
+        "the fixture must make relay status something a literal 'off' cannot fake"
+    );
+
+    let json_response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        request(
+            "GET",
+            &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
+        ),
+    );
+    let report: Value =
+        serde_json::from_str(&String::from_utf8(json_response.body).expect("json body"))
+            .expect("report json");
+
+    assert_eq!(report["relay"], expected_relay, "relay was not read");
+    assert_eq!(report["relay"]["relayUrl"], json!("wss://relay.example"));
+    // One stamp for the whole report: `current_daemon_info` is handed the same
+    // `generated_at`, which is the invariant that moving the reads under one
+    // snapshot is for.
+    assert_eq!(
+        report["generatedAt"], report["daemon"]["info"]["updatedAt"],
+        "the report and the daemon info disagree about when this was taken"
+    );
+    assert!(
+        report["generatedAt"]
+            .as_str()
+            .is_some_and(|at| at.ends_with('Z')),
+        "{}",
+        report["generatedAt"]
+    );
+    assert_eq!(
+        report["machine"]["source"], "unnamed",
+        "the machine identity is reported, and an unnamed home says so"
+    );
+
+    let text_response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        request("GET", CORE_API_ROUTES.doctor_versions_text),
+    );
+    let text = String::from_utf8(text_response.body).expect("versions text");
+    // Two sections the rendered report exists to print, and both were
+    // deletable without a test noticing.
+    assert!(text.contains("machine: not named yet"), "{text}");
+    assert!(text.contains("daemon processes: "), "{text}");
+    fixture.cleanup();
+}
+
+/// The versions report must be built with the runtime mutex RELEASED.
+///
+/// Its own work is git, HTTP health probes and a tmux inventory, and holding
+/// the lock across that is what let one checkout git would not answer about
+/// block every other daemon request until `kill -9` (2026-10-11). The tmux
+/// provider here stops inside the report and stays there, so the test can ask
+/// the one question that matters: can anybody else have the lock right now?
+#[test]
+fn the_versions_report_is_built_with_the_runtime_lock_released() {
+    let fixture = RuntimeFixture::new("doctor-versions-off-the-lock");
+    let entered = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(AtomicBool::new(false));
+    let provider_entered = Arc::clone(&entered);
+    let provider_release = Arc::clone(&release);
+    let runtime = Arc::new(Mutex::new(
+        fixture
+            .runtime()
+            .with_runtime_coherence_tmux_provider(Arc::new(move || {
+                provider_entered.store(true, Ordering::SeqCst);
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while !provider_release.load(Ordering::SeqCst) && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                RuntimeCoherenceTmux {
+                    available: false,
+                    version: None,
+                    ..RuntimeCoherenceTmux::default()
+                }
+            })),
+    ));
+
+    let request_runtime = Arc::clone(&runtime);
+    let request_thread = thread::spawn(move || {
+        handle_daemon_runtime_request_with_mutex(
+            &request_runtime,
+            request("GET", CORE_API_ROUTES.doctor_versions_text),
+        )
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !entered.load(Ordering::SeqCst) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        entered.load(Ordering::SeqCst),
+        "the report never reached its tmux provider"
+    );
+
+    let held = runtime.try_lock();
+    let acquired = held.is_ok();
+    drop(held);
+    release.store(true, Ordering::SeqCst);
+    let response = request_thread.join().expect("request thread");
+
+    assert!(
+        acquired,
+        "the runtime mutex was still held while the versions report was being built, \
+         so one unanswering git still blocks every other daemon request"
+    );
+    assert_eq!(response.status, 200);
+    let body = String::from_utf8(response.body).expect("versions text");
+    assert!(body.starts_with("Aimux Versions\n"), "{body}");
+    fixture.cleanup();
+}
+
+/// The fast path must not become a hole: a caller the locked path refuses must
+/// still be refused here, and a caller it serves must still be served.
+///
+/// Asserted against the locked path itself rather than against a status I
+/// expect, so this keeps holding if that policy changes. An earlier version
+/// held the lock and watched for silence, which proved nothing: without a
+/// guard the request blocks on taking the snapshot instead, so both shapes
+/// look identical from outside.
+#[test]
+fn the_versions_fast_path_answers_each_caller_as_the_locked_path_would() {
+    let fixture = RuntimeFixture::new("doctor-versions-access-parity");
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+
+    let served = |response: aimux::daemon::http::PreparedDaemonResponse| {
+        let status = response.status;
+        let body = String::from_utf8(response.body).expect("body");
+        // Which RENDERING, not merely whether something came back: `?json=1`
+        // and the plain path carry the same report in two shapes, and a fast
+        // path that dropped the query string would still answer 200 with a
+        // report. Asked separately, that answers differently from the locked
+        // path, which is the point.
+        (
+            status,
+            body.starts_with("Aimux Versions\n"),
+            serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|json| json["cliVersion"].as_str().map(str::to_owned))
+                .is_some(),
+        )
+    };
+    let versions_request = |method: &str, path: &str, header: Option<(&str, &str)>| {
+        let mut request = request(method, path);
+        if let Some((name, value)) = header {
+            request.headers.insert(name.into(), value.into());
+        }
+        request
+    };
+
+    // Three dimensions, each of which a mutation got past when it was missing.
+    // The two renderings: the fast path parses the query string itself, and one
+    // that dropped it answers text where `--json` expects JSON. The method: the
+    // locked path routes this only on GET, and widening the fast path to HEAD
+    // made it answer 200 and run a whole scan where the daemon 404s. The
+    // headers: the route is loopback-and-cli-only, and the router refuses a
+    // remote actor and an `Origin` by two separate rules.
+    for path in [
+        CORE_API_ROUTES.doctor_versions_text.to_owned(),
+        format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
+    ] {
+        // Not vacuous: a local caller really is served at both paths, so a
+        // comparison of two refusals cannot pass for a comparison of answers.
+        assert_eq!(
+            served(handle_daemon_runtime_request_with_mutex(
+                &runtime,
+                versions_request("GET", &path, None)
+            )),
+            if path.contains("json=1") {
+                (200, false, true)
+            } else {
+                (200, true, false)
+            },
+            "a local caller must be served the report, in the asked-for shape, at {path}"
+        );
+        for method in ["GET", "HEAD", "POST"] {
+            for header in [
+                None,
+                Some(("x-aimux-actor-role", "owner")),
+                Some(("x-aimux-actor-role", "guest")),
+                Some(("x-aimux-actor-role", "operator")),
+                // An origin CORS ALLOWS, so the request reaches the route and
+                // the loopback-only rule is what refuses it.
+                // `https://example.com` was useless here: CORS rejects it
+                // before any route runs, so dropping the `Origin` half of the
+                // fast path's condition survived.
+                Some(("origin", "http://localhost:3000")),
+                Some(("Origin", "http://localhost:3000")),
+            ] {
+                let through_fast_path = served(handle_daemon_runtime_request_with_mutex(
+                    &runtime,
+                    versions_request(method, &path, header),
+                ));
+                let through_lock = {
+                    let mut locked = runtime.lock().expect("runtime lock");
+                    served(handle_daemon_runtime_request(
+                        &mut *locked,
+                        versions_request(method, &path, header),
+                    ))
+                };
+                assert_eq!(
+                    through_fast_path, through_lock,
+                    "the fast path answered {method} {header:?} at {path} differently from the locked path"
+                );
+            }
+        }
+    }
     fixture.cleanup();
 }
 
