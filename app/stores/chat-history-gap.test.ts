@@ -37,12 +37,18 @@ describe("returning from the background", () => {
     );
     const at = source.indexOf("const wasAppVisibleRef");
     expect(at, "the resume read must exist").toBeGreaterThan(0);
-    const effect = source.slice(at, at + 600);
+    // The effect's own extent, not a byte count: a fixed slice meant adding a
+    // comment pushed the assertions out of range and the test failed for a
+    // reason that had nothing to do with it.
+    const closes = source.indexOf("}, [appVisible", at);
+    expect(closes, "the resume effect must close").toBeGreaterThan(at);
+    const effect = source.slice(at, closes);
     expect(effect).toContain("appVisible && !wasAppVisibleRef.current");
     expect(effect).toContain("startLine: CHAT_OUTPUT_MAX_CAPTURE_START_LINE");
-    // Without this the next scroll up asks for a shallower window than the one
-    // just stored and pages back to it.
-    expect(effect).toContain("setChatOutputHistoryStartLine");
+    // The cursor has to move with it, or the next scroll up asks for a
+    // shallower window than the one just stored and pages back to it -- but
+    // only once the page is here, which is what the shared applier decides.
+    expect(effect).toContain("applyChatHistoryPageOutcome(served)");
     // A deeper start line than the stored one is what takes the wholesale
     // replace branch, so it must not be the live default.
     expect(effect).not.toContain("CHAT_OUTPUT_CAPTURE_START_LINE,");

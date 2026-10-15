@@ -25,6 +25,17 @@ export type AgentOutputFeedPurpose = NonNullable<LivePaneOutputInput["purpose"]>
 export type AgentOutputFeedRefreshOptions = {
   surfaceError?: boolean;
   startLine?: number;
+  /**
+   * The start line the service actually served, handed over the moment the
+   * snapshot is applied.
+   *
+   * A caller cannot read this from the store afterwards: a live stream event
+   * carrying no start line sets that atom to `undefined` while storing its
+   * messages, so a page's own value survives only until the next event. The
+   * history pager needs it to tell "the service served a shallower window than
+   * I asked for" from "nothing arrived", and those lead to opposite decisions.
+   */
+  onSnapshotApplied?: (startLine: number | undefined) => void;
 };
 
 const INITIAL_OUTPUT_TIMEOUT_MS = 12_000;
@@ -173,6 +184,7 @@ export function useAgentOutputFeed({
         lastHttpOutputAtRef.current = Date.now();
         const loaded = applySnapshotResult(result);
         if (loaded) {
+          options.onSnapshotApplied?.(result.startLine);
           setInitialStatusState((current) => initialAgentOutputFeedLoadedState(current, feedKey));
         }
         return loaded;

@@ -160,6 +160,8 @@ import { chatViewportKeyForRoute } from "@/lib/chat-viewport-key";
 import {
   CHAT_OUTPUT_CAPTURE_START_LINE,
   CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
+  chatHistoryPageOutcome,
+  chatHistoryPagingAllowed,
   chatOutputHistoryStartLineForScroll,
 } from "@/lib/chat-output-constants";
 import {
@@ -211,6 +213,7 @@ import {
   outputBufferFamily,
   markOutputInterruptedAtom,
   transcriptFamily,
+  transcriptStartLineFamily,
 } from "@/stores/chat";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import { selectedSessionIdAtom } from "@/stores/projects";
@@ -721,6 +724,12 @@ export default function ChatScreen() {
   // Set only where a page actually arrived, so the two paths that move the
   // cursor without fetching cannot make the view claim it reached a floor.
   const chatHistoryPagedRef = useRef(false);
+  // Consecutive pages that were never served. Holding the cursor still removes
+  // the brake the old bug accidentally provided.
+  const chatHistoryFailuresRef = useRef(0);
+  // Mirrors the cursor so a resolved page can read it without an impure
+  // updater, the way the pending start line already does.
+  const chatOutputHistoryStartLineRef = useRef(CHAT_OUTPUT_CAPTURE_START_LINE);
   const [pendingChatOutputHistoryStartLine, setPendingChatOutputHistoryStartLine] = useState<
     number | null
   >(null);
@@ -741,13 +750,33 @@ export default function ChatScreen() {
   }, [activeShareForRoute, sessionId, stateProjectKey]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- each route/session starts from the shallow live capture window
-    setChatOutputHistoryStartLine(CHAT_OUTPUT_CAPTURE_START_LINE);
+    // Seeded from the transcript the store already holds for THIS agent, not
+    // from the shallow window. Re-entering a session that had been paged to
+    // the floor used to restart the cursor at -160 while the store still held
+    // the deep transcript, so the next several scroll-ups asked for windows
+    // already on screen and changed nothing.
+    // Only when a transcript is actually stored for this agent. The start line
+    // is the echoed request, the atom outlives the pane it described, and a
+    // stream event with no start line clears it -- so on its own it can say
+    // "-2000" about history that is no longer there. Tied to content that is
+    // on screen, cursor and transcript agree.
+    const stored = jotaiStore.get(transcriptStartLineFamily(agentKey));
+    const hasTranscript = jotaiStore.get(transcriptFamily(agentKey)).length > 0;
+    const seeded =
+      hasTranscript && typeof stored === "number"
+        ? Math.min(stored, CHAT_OUTPUT_CAPTURE_START_LINE)
+        : CHAT_OUTPUT_CAPTURE_START_LINE;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- each route/session re-seeds its paging cursor
+    setChatOutputHistoryStartLine(seeded);
+    chatOutputHistoryStartLineRef.current = seeded;
+    chatHistoryFailuresRef.current = 0;
     setChatHistoryFloorReached(false);
+    // Not a page THIS mount was given, so the floor notice still has to earn
+    // itself: a seeded cursor says only that something was stored before.
     chatHistoryPagedRef.current = false;
     pendingChatOutputHistoryStartLineRef.current = null;
     setPendingChatOutputHistoryStartLine(null);
-  }, [agentKey]);
+  }, [agentKey, jotaiStore]);
 
   useEffect(() => {
     pendingAttachmentsRef.current = pendingAttachments;
@@ -1053,26 +1082,64 @@ export default function ChatScreen() {
   // will serve rather than the 160-line default: a shallow window shares no
   // message with the stored transcript, and the lines between were never
   // fetched. `-2000 < currentStartLine` takes the wholesale-replace branch.
+  // One place both paging paths decide what a page meant. A React updater has
+  // to be pure, so the decision happens here and only the new value goes in.
+  //
+  // `appliedStartLine` comes from the feed as the snapshot is applied, not from
+  // the store afterwards: a live stream event carrying no start line sets that
+  // atom to `undefined` while storing its messages, so reading it after the
+  // await raced the stream and read "nothing arrived" for a page that had.
+  const applyChatHistoryPageOutcome = useCallback((appliedStartLine: number | undefined) => {
+    const outcome = chatHistoryPageOutcome({
+      currentStartLine: chatOutputHistoryStartLineRef.current,
+      appliedStartLine,
+    });
+    if (outcome.kind === "not-served") {
+      chatHistoryFailuresRef.current += 1;
+      return;
+    }
+    chatHistoryFailuresRef.current = 0;
+    chatHistoryPagedRef.current = true;
+    if (outcome.kind === "no-deeper-history") {
+      setChatHistoryFloorReached(true);
+      return;
+    }
+    chatOutputHistoryStartLineRef.current = outcome.startLine;
+    setChatOutputHistoryStartLine(outcome.startLine);
+  }, []);
+
   const wasAppVisibleRef = useRef(appVisible);
   useEffect(() => {
     const returned = appVisible && !wasAppVisibleRef.current;
     wasAppVisibleRef.current = appVisible;
     if (!returned) return;
+    // The paging cursor has to move with it, or the next scroll up asks for a
+    // SHALLOWER window than the one now stored and pages back to it -- but
+    // only once the page is actually here. It used to move before this request
+    // resolved, and on a resume with no endpoint it moved for a request that
+    // was never sent.
+    let served: number | undefined;
     void refreshOutputSnapshot("history", {
       startLine: CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
-    }).catch(() => {});
-    // The paging cursor has to move with it, or the next scroll up asks for a
-    // SHALLOWER window than the one now stored and pages back to it.
-    setChatOutputHistoryStartLine((current) =>
-      Math.min(current, CHAT_OUTPUT_MAX_CAPTURE_START_LINE),
-    );
-  }, [appVisible, refreshOutputSnapshot]);
+      onSnapshotApplied: (startLine) => {
+        served = startLine;
+      },
+    })
+      .then(() => {
+        applyChatHistoryPageOutcome(served);
+      })
+      .catch(() => {});
+  }, [appVisible, applyChatHistoryPageOutcome, refreshOutputSnapshot]);
 
   const requestChatHistoryPage = useCallback(
     (metrics: ChatScrollMetrics) => {
       const nextStartLine = chatOutputHistoryStartLineForScroll({
         currentStartLine: chatOutputHistoryStartLine,
-        enabled: chatViewVisible && heartbeatReady && !routeSessionMissing,
+        enabled:
+          chatViewVisible &&
+          heartbeatReady &&
+          !routeSessionMissing &&
+          chatHistoryPagingAllowed(chatHistoryFailuresRef.current),
         metrics,
         pendingStartLine:
           pendingChatOutputHistoryStartLineRef.current ?? pendingChatOutputHistoryStartLine,
@@ -1091,13 +1158,20 @@ export default function ChatScreen() {
       }
       pendingChatOutputHistoryStartLineRef.current = nextStartLine;
       setPendingChatOutputHistoryStartLine(nextStartLine);
-      void refreshOutputSnapshot("history", { startLine: nextStartLine })
-        .then((fetched) => {
-          if (fetched) chatHistoryPagedRef.current = true;
-          setChatOutputHistoryStartLine((current) => Math.min(current, nextStartLine));
+      let served: number | undefined;
+      void refreshOutputSnapshot("history", {
+        startLine: nextStartLine,
+        onSnapshotApplied: (startLine) => {
+          served = startLine;
+        },
+      })
+        .then(() => {
+          applyChatHistoryPageOutcome(served);
         })
         .catch(() => {
-          // History paging is opportunistic; the live feed and explicit Retry own visible errors.
+          // History paging is opportunistic; the live feed and explicit Retry
+          // own visible errors. The failure still counts against the brake.
+          chatHistoryFailuresRef.current += 1;
         })
         .finally(() => {
           if (pendingChatOutputHistoryStartLineRef.current === nextStartLine) {
@@ -1109,6 +1183,7 @@ export default function ChatScreen() {
         });
     },
     [
+      applyChatHistoryPageOutcome,
       chatOutputHistoryStartLine,
       chatViewVisible,
       heartbeatReady,
