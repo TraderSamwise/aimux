@@ -7,6 +7,17 @@ const NO_SIGNAL: i32 = 0;
 #[cfg(unix)]
 static RECEIVED_SIGNAL: AtomicI32 = AtomicI32::new(NO_SIGNAL);
 
+/// How many `SignalFlagGuard`s are alive in this process.
+///
+/// A nested install must not clear a signal it did not see. The project
+/// service installs these at startup AND again, in-process, for the lifetime
+/// of every `aimux expose` connection -- so opening or closing one used to
+/// reset `RECEIVED_SIGNAL`, erasing a pending SIGTERM that the accept loop and
+/// the shutdown escalation were both still waiting to act on. Only the
+/// outermost guard owns the flag.
+#[cfg(unix)]
+static INSTALL_DEPTH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 #[cfg(unix)]
 pub const TERMINATION_SIGNALS: &[i32] = &[libc::SIGINT, libc::SIGTERM];
 
@@ -36,7 +47,13 @@ impl SignalFlagGuard {
 #[cfg(unix)]
 impl Drop for SignalFlagGuard {
     fn drop(&mut self) {
-        RECEIVED_SIGNAL.store(NO_SIGNAL, Ordering::SeqCst);
+        if INSTALL_DEPTH
+            .fetch_sub(1, Ordering::SeqCst)
+            .saturating_sub(1)
+            == 0
+        {
+            RECEIVED_SIGNAL.store(NO_SIGNAL, Ordering::SeqCst);
+        }
         for (signal, previous) in &self.previous {
             // SAFETY: Restoring process signal dispositions is the same libc
             // operation used during installation, and runs outside the signal
@@ -109,16 +126,20 @@ pub fn spawn_shutdown_escalation(label: &'static str, grace: std::time::Duration
         .name(format!("aimux-{label}-shutdown"))
         .spawn(move || {
             let mut signalled_at = None;
+            let mut seen = None;
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(250));
-                let Some(signal) = received_shutdown_signal() else {
-                    // A guard that restored the handlers clears the flag, so a
-                    // signal can un-happen. Forget it rather than counting
-                    // from a stale moment.
-                    signalled_at = None;
+                // Latched: once a shutdown signal has been SEEN, nothing
+                // un-sees it. The flag itself is clearable -- the outermost
+                // guard clears it on the way out -- and a grace that restarts
+                // whenever the flag goes quiet is a grace that never expires.
+                if let Some(signal) = received_shutdown_signal() {
+                    seen = Some(signal);
+                    signalled_at.get_or_insert_with(std::time::Instant::now);
+                }
+                let (Some(signal), Some(since)) = (seen, signalled_at) else {
                     continue;
                 };
-                let since = *signalled_at.get_or_insert_with(std::time::Instant::now);
                 if shutdown_escalation(true, since.elapsed(), grace) == ShutdownEscalation::Wait {
                     continue;
                 }
@@ -141,7 +162,10 @@ pub fn spawn_shutdown_escalation(label: &'static str, grace: std::time::Duration
 
 #[cfg(unix)]
 pub fn install_shutdown_signal_flag(signals: &[i32]) -> io::Result<SignalFlagGuard> {
-    RECEIVED_SIGNAL.store(NO_SIGNAL, Ordering::SeqCst);
+    let outermost = INSTALL_DEPTH.fetch_add(1, Ordering::SeqCst) == 0;
+    if outermost {
+        RECEIVED_SIGNAL.store(NO_SIGNAL, Ordering::SeqCst);
+    }
     let mut previous = Vec::new();
     for signal in signals {
         // SAFETY: The handler only stores the signal number in an atomic. All
@@ -162,6 +186,9 @@ pub fn install_shutdown_signal_flag(signals: &[i32]) -> io::Result<SignalFlagGua
                         std::ptr::null_mut(),
                     );
                 }
+                // The guard that would have decremented this is never
+                // constructed, so the failed install gives its depth back here.
+                INSTALL_DEPTH.fetch_sub(1, Ordering::SeqCst);
                 return Err(error);
             }
             previous.push((*signal, old_action));
@@ -235,6 +262,60 @@ pub fn received_shutdown_signal_name() -> Option<&'static str> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// A nested install must not erase a signal it did not see.
+    ///
+    /// The project service installs these at startup AND again, in-process,
+    /// for the lifetime of every `aimux expose` connection. Opening or closing
+    /// one used to reset the flag, so a pending SIGTERM vanished -- and both
+    /// the accept loop's `should_stop` and the shutdown escalation were still
+    /// waiting to act on it. Opening an expose session was enough to make a
+    /// stop request disappear.
+    #[test]
+    fn a_nested_install_does_not_erase_a_pending_signal() {
+        let outer = install_shutdown_signal_flag(TERMINATION_SIGNALS).expect("outer install");
+        // Stands in for the signal arriving: the handler does exactly this.
+        RECEIVED_SIGNAL.store(libc::SIGTERM, Ordering::SeqCst);
+
+        {
+            let _connection =
+                install_shutdown_signal_flag(TERMINATION_SIGNALS).expect("nested install");
+            assert_eq!(
+                received_shutdown_signal(),
+                Some(libc::SIGTERM),
+                "a nested install must leave a pending signal alone"
+            );
+        }
+
+        assert_eq!(
+            received_shutdown_signal(),
+            Some(libc::SIGTERM),
+            "and dropping the nested guard must not clear it either"
+        );
+        drop(outer);
+        assert_eq!(
+            received_shutdown_signal(),
+            None,
+            "the outermost guard still owns the flag"
+        );
+    }
+
+    /// And the escalation latches, so even a flag that is cleared cannot
+    /// restart the grace.
+    #[test]
+    fn an_observed_signal_stays_observed() {
+        // The decision itself takes the observation as a fact, which is what
+        // lets the loop keep it latched.
+        assert_eq!(
+            shutdown_escalation(true, SHUTDOWN_GRACE, SHUTDOWN_GRACE),
+            ShutdownEscalation::Exit
+        );
+        assert_eq!(
+            shutdown_escalation(false, SHUTDOWN_GRACE * 10, SHUTDOWN_GRACE),
+            ShutdownEscalation::Wait,
+            "and an observation it never had is not invented"
+        );
+    }
 
     /// A signal nobody has sent is not a reason to end anything.
     #[test]

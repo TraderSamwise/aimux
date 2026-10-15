@@ -278,7 +278,10 @@ mod tests {
     fn the_project_service_arms_a_watchdog_before_it_serves() {
         let source = include_str!("../project_service/process.rs");
         let armed = source
-            .find("spawn_health_watchdog(")
+            // `rfind`, not `find`: a doc comment naming the same symbol would
+            // otherwise satisfy this, and a gate a comment can satisfy is not
+            // a gate.
+            .rfind("spawn_health_watchdog(")
             .expect("the project service still arms a health watchdog");
         let serving = source
             .find("block_on(serve_project_service_listener_until(")
@@ -290,12 +293,7 @@ mod tests {
              {armed}, serving at {serving}"
         );
         assert!(
-            source[armed..serving].len() < 4_000
-                || source[..armed].contains("PROJECT_SERVICE_WATCHDOG"),
-            "the service must arm its own budget, not the daemon's"
-        );
-        assert!(
-            source.contains("PROJECT_SERVICE_WATCHDOG"),
+            source[armed..armed + 200].contains("PROJECT_SERVICE_WATCHDOG"),
             "the service must arm its own budget, not the daemon's"
         );
     }
