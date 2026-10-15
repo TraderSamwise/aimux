@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -48,5 +51,31 @@ describe("agent output feed start lines", () => {
       snapshotStartLine: -160,
       streamStartLine: -160,
     });
+  });
+});
+
+describe("the feed hands over the start line it was served", () => {
+  // This hook cannot be driven here -- the app has no renderer in its test
+  // setup, which is why every other test in this file covers the extracted
+  // pure helpers. So the one thing the pager depends on is pinned at the
+  // source: without it the pager sees `undefined` for every page, reads that
+  // as "nothing arrived", and stops paging after three scroll-ups.
+  const source = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "use-agent-output-feed.ts"),
+    "utf8",
+  );
+
+  it("reports it as the snapshot is applied", () => {
+    const applied = source.indexOf("const loaded = applySnapshotResult(result);");
+    expect(applied, "the snapshot is still applied here").toBeGreaterThan(0);
+    const branch = source.slice(applied, source.indexOf("return loaded;", applied));
+    expect(branch).toContain("options.onSnapshotApplied?.(result.startLine);");
+  });
+
+  it("reports the SERVED line, not the requested one", () => {
+    // A service clamps the request to its own capture limit, so handing back
+    // the request would re-create the bug this exists to fix.
+    expect(source).not.toContain("onSnapshotApplied?.(options.startLine)");
+    expect(source).not.toContain("onSnapshotApplied?.(requestStartLines.snapshotStartLine)");
   });
 });

@@ -4,7 +4,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   CHAT_OUTPUT_CAPTURE_START_LINE,
+  CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE,
+  CHAT_HISTORY_PAGE_FAILURE_LIMIT,
+  CHAT_OUTPUT_HISTORY_PAGE_TOP_THRESHOLD_PX,
   CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
+  chatHistoryPageOutcome,
+  chatHistoryPagingAllowed,
+  chatHistoryPagingRetryable,
+  chatHistorySeedStartLine,
   chatOutputHistoryStartLineForScroll,
   nextChatOutputCaptureStartLine,
 } from "./chat-output-constants";
@@ -93,3 +100,167 @@ const TEST_PROJECT_KEY = projectStateKey({ machineId: "mbp", path: "/repo" });
 function agentKey(sessionId: string) {
   return agentStateKey(TEST_PROJECT_KEY, sessionId);
 }
+
+describe("what a requested history page means for the cursor", () => {
+  it("does not move the cursor when nothing was served", () => {
+    // The case the whole item is about: a shared chat or a down service makes
+    // `refreshOutputSnapshot` answer without asking, and the cursor used to
+    // advance anyway -- walking from the initial window to the floor with zero
+    // network calls.
+    expect(
+      chatHistoryPageOutcome({
+        currentStartLine: CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE,
+        appliedStartLine: undefined,
+      }),
+    ).toEqual({ kind: "not-served" });
+  });
+
+  it("follows what the service served, not what was asked for", () => {
+    // A service clamps the request to its own capture limit. Advancing to the
+    // REQUESTED depth is how every later page came to ask for a window
+    // nothing would ever serve.
+    expect(
+      chatHistoryPageOutcome({
+        currentStartLine: CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE,
+        appliedStartLine: -800,
+      }),
+    ).toEqual({ kind: "advanced", startLine: -800 });
+  });
+
+  it("reads a page that goes no deeper as the real floor", () => {
+    // The constant floor is only this view's own bound. The service has one of
+    // its own and cannot be asked for it, so asking and learning there is no
+    // more is the only honest signal.
+    expect(
+      chatHistoryPageOutcome({
+        currentStartLine: -800,
+        appliedStartLine: -800,
+      }),
+    ).toEqual({ kind: "no-deeper-history" });
+  });
+
+  it("never walks the cursor back towards the live window", () => {
+    expect(
+      chatHistoryPageOutcome({
+        currentStartLine: CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
+        appliedStartLine: CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE,
+      }),
+    ).toEqual({ kind: "no-deeper-history" });
+  });
+});
+
+describe("the pager's failure brake", () => {
+  it("keeps asking while failures are few", () => {
+    for (let failures = 0; failures < CHAT_HISTORY_PAGE_FAILURE_LIMIT; failures += 1) {
+      expect(chatHistoryPagingAllowed(failures)).toBe(true);
+    }
+  });
+
+  it("stops asking once they are not", () => {
+    // Holding the cursor still removes the accidental brake the old bug
+    // provided, so one request per scroll event against a failing service
+    // would run forever.
+    expect(chatHistoryPagingAllowed(CHAT_HISTORY_PAGE_FAILURE_LIMIT)).toBe(false);
+    expect(chatHistoryPagingAllowed(CHAT_HISTORY_PAGE_FAILURE_LIMIT + 10)).toBe(false);
+  });
+});
+
+describe("a page that races the live stream", () => {
+  it("still counts, because the served line does not come from the store", () => {
+    // `applyTranscriptMessages` sets the start-line atom to `undefined` when a
+    // stream event carries none, while still storing that event's messages. So
+    // the atom holds a page's own value only until the next stream event, and
+    // the pager used to read it after awaiting. Reading `undefined` there
+    // meant "nothing arrived" for a page that had -- three of those in a row
+    // and the pager stops for good.
+    //
+    // The fix is the source of the value, so this pins the distinction the
+    // outcome draws: a served line is a page, absence is not.
+    expect(
+      chatHistoryPageOutcome({
+        currentStartLine: CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE,
+        appliedStartLine: -480,
+      }),
+    ).toEqual({ kind: "advanced", startLine: -480 });
+    expect(
+      chatHistoryPageOutcome({
+        currentStartLine: CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE,
+        appliedStartLine: undefined,
+      }),
+    ).toEqual({ kind: "not-served" });
+  });
+});
+
+describe("seeding a re-entered chat's cursor", () => {
+  it("starts at the live window when the store holds nothing", () => {
+    expect(chatHistorySeedStartLine(undefined)).toBe(CHAT_OUTPUT_CAPTURE_START_LINE);
+  });
+
+  it("picks up where the stored transcript left off", () => {
+    expect(chatHistorySeedStartLine(-640)).toBe(-640);
+  });
+
+  it("always leaves one page of room to ask", () => {
+    // Seeding to the floor makes the pager a dead end:
+    // `chatOutputHistoryStartLineForScroll` declines when there is nothing
+    // deeper, and the floor notice needs a page THIS mount was given -- so
+    // scrolling up would do nothing and say nothing. The stored line can also
+    // outlive the pane it described, so it is never taken as final.
+    const seeded = chatHistorySeedStartLine(CHAT_OUTPUT_MAX_CAPTURE_START_LINE);
+    expect(seeded).toBeGreaterThan(CHAT_OUTPUT_MAX_CAPTURE_START_LINE);
+    expect(
+      chatOutputHistoryStartLineForScroll({
+        currentStartLine: seeded,
+        metrics: { contentHeight: 2_000, offsetY: 0, viewportHeight: 800 },
+      }),
+    ).not.toBeNull();
+  });
+
+  it("never seeds shallower than the live window", () => {
+    expect(chatHistorySeedStartLine(-10)).toBe(CHAT_OUTPUT_CAPTURE_START_LINE);
+  });
+});
+
+describe("a page that arrives without a start line", () => {
+  it("is still a page, because the field is optional in the contract", () => {
+    // The store writes `undefined` for it and keeps the messages, so reading
+    // that as "nothing arrived" stopped paging on a page already on screen --
+    // worse than the bug being fixed. The call site falls back to the line it
+    // asked for, which is the best information available.
+    expect(
+      chatHistoryPageOutcome({
+        currentStartLine: CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE,
+        appliedStartLine: nextChatOutputCaptureStartLine(CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE),
+      }),
+    ).toEqual({
+      kind: "advanced",
+      startLine: nextChatOutputCaptureStartLine(CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE),
+    });
+  });
+});
+
+describe("the brake counts within one gesture", () => {
+  it("does not clear while the reader is still at the top", () => {
+    // Clearing here would make the brake meaningless: the pager is called on
+    // every scroll event, and at the top they keep coming.
+    expect(
+      chatHistoryPagingRetryable({ contentHeight: 2_000, offsetY: 0, viewportHeight: 800 }),
+    ).toBe(false);
+    expect(
+      chatHistoryPagingRetryable({
+        contentHeight: 2_000,
+        offsetY: CHAT_OUTPUT_HISTORY_PAGE_TOP_THRESHOLD_PX,
+        viewportHeight: 800,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears once the reader has moved away and can come back", () => {
+    // Without this the brake counted forever: a service down for a moment left
+    // the pager refusing for the rest of the session, and the only ways back
+    // were changing agent or backgrounding the app.
+    expect(
+      chatHistoryPagingRetryable({ contentHeight: 4_000, offsetY: 900, viewportHeight: 800 }),
+    ).toBe(true);
+  });
+});
