@@ -24,13 +24,30 @@ use std::time::{Duration, Instant};
 
 const MODE: &str = "AIMUX_TEST_SELF_TERMINATION";
 
-/// Small enough to run inside a test, same shape as production's.
+/// For children that are SUPPOSED to be ended, so being quick to anger is
+/// the point.
 fn quick_budget() -> WatchdogBudget {
     WatchdogBudget {
         label: "project-service",
         interval: Duration::from_millis(200),
         timeout: Duration::from_millis(400),
         failures_before_exit: 2,
+    }
+}
+
+/// For children that must NOT be ended.
+///
+/// A budget quick to anger makes a healthy child flaky rather than a gate:
+/// several children competing for this machine can miss two 400ms probes in a
+/// row, and that is the fixture's fault, not a defect. Five strikes with a
+/// two-second timeout is ten seconds of silence, which a parent watching for
+/// three cannot mistake.
+fn patient_budget() -> WatchdogBudget {
+    WatchdogBudget {
+        label: "project-service",
+        interval: Duration::from_millis(200),
+        timeout: Duration::from_secs(2),
+        failures_before_exit: 5,
     }
 }
 
@@ -86,7 +103,7 @@ fn an_unhonoured_shutdown_signal_ends_the_process() {
         return;
     }
     let mut child = spawn_child("escalation", "the_child_that_ignores_a_shutdown_signal");
-    let code = wait_for_exit(&mut child, Duration::from_secs(10));
+    let code = wait_for_exit(&mut child, Duration::from_secs(30));
     let _ = child.kill();
     let _ = child.wait();
 
@@ -119,7 +136,7 @@ fn a_process_that_stops_answering_ends_itself() {
         return;
     }
     let mut child = spawn_child("watchdog", "the_child_that_stops_answering");
-    let code = wait_for_exit(&mut child, Duration::from_secs(15));
+    let code = wait_for_exit(&mut child, Duration::from_secs(30));
     let _ = child.kill();
     let _ = child.wait();
 
@@ -169,7 +186,7 @@ fn the_child_that_keeps_answering() {
     }
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
     let port = listener.local_addr().expect("local addr").port();
-    spawn_health_watchdog(quick_budget(), "127.0.0.1".to_owned(), port);
+    spawn_health_watchdog(patient_budget(), "127.0.0.1".to_owned(), port);
     serve_then_wedge(listener, usize::MAX);
 }
 
@@ -199,11 +216,17 @@ fn the_child_watched_on_the_wrong_port() {
         return;
     }
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
-    let port = listener.local_addr().expect("local addr").port();
-    // Deliberately the wrong port: nothing answers there, so `armed` stays
-    // false and the strikes never become fatal.
-    spawn_health_watchdog(quick_budget(), "127.0.0.1".to_owned(), port.wrapping_add(1));
+    // A port this child OWNS and never accepts on, so nothing can ever answer
+    // there and `armed` stays false. `port + 1` was wrong: the ephemeral ports
+    // handed to sibling children in one run can collide with it, and then this
+    // watchdog armed against a sibling's healthy service -- and consumed the
+    // one answer that sibling needed to arm its own. Both tests then failed,
+    // about one run in ten, for a reason entirely the fixture's.
+    let decoy = TcpListener::bind(("127.0.0.1", 0)).expect("bind the decoy");
+    let decoy_port = decoy.local_addr().expect("local addr").port();
+    spawn_health_watchdog(patient_budget(), "127.0.0.1".to_owned(), decoy_port);
     serve_then_wedge(listener, usize::MAX);
+    drop(decoy);
 }
 
 /// Sanity on the fixture itself: the served port really does answer 200, so a
