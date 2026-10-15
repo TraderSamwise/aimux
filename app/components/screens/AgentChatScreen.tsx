@@ -3159,6 +3159,15 @@ const AgentTerminalOutputPane = React.memo(
         terminalScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
         terminalScrollChromeRef.current = createChatScrollChromeState();
         terminalInitialLayoutKeyRef.current = null;
+        // This pane has no `key`, so it is the same instance across agents and
+        // its geometry would otherwise answer for the previous one -- a
+        // navigation scroll computed from another agent's content height.
+        terminalGeometryRef.current = {
+          bottomInset: terminalGeometryRef.current.bottomInset,
+          contentHeight: 0,
+          offsetY: 0,
+          viewportHeight: 0,
+        };
         onChromeVisibleChange(true);
         executeTerminalScrollCommand(chatCommandForNavigationFocus());
       }, [executeTerminalScrollCommand, onChromeVisibleChange, agentKey]);
@@ -3206,12 +3215,19 @@ const AgentTerminalOutputPane = React.memo(
 
       // Android does not report the keyboard-driven inset in the scroll event, so
       // the library hands it over here instead.
-      const handleTerminalContentInsetChange = useCallback((insets: { bottom: number }) => {
-        terminalGeometryRef.current = {
-          ...terminalGeometryRef.current,
-          bottomInset: insets.bottom,
-        };
-      }, []);
+      const handleTerminalContentInsetChange = useCallback(
+        (insets: { bottom: number }) => {
+          if (terminalGeometryRef.current.bottomInset === insets.bottom) return;
+          terminalGeometryRef.current = {
+            ...terminalGeometryRef.current,
+            bottomInset: insets.bottom,
+          };
+          executeTerminalScrollCommand(
+            chatCommandForKeyboardChange(terminalScrollPolicyRef.current),
+          );
+        },
+        [executeTerminalScrollCommand],
+      );
 
       const handleTerminalScroll = useCallback(
         (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -3510,13 +3526,17 @@ const AgentChatSessionViewport = React.memo(
 
       useFocusEffect(
         useCallback(() => {
-          // Cleared, not claimed: the first layout after focus is the only
-          // moment the pane has been measured, and claiming the key here made
-          // `handleChatLayout` take the content branch instead -- so the
-          // landing happened before `onLayout`, `onContentSizeChange` and the
+          // Cleared only while nothing has been measured. Claiming it always
+          // made `handleChatLayout` take the content branch, so the landing
+          // happened before `onLayout`, `onContentSizeChange` and the
           // library's inset callback had said anything, and `scrollToEnd` was
-          // the only thing left to land it. The terminal pane clears it.
-          chatInitialLayoutKeyRef.current = null;
+          // all that was left to land it. Clearing it always is the other
+          // mistake: a re-focus with no remount -- back from a modal -- would
+          // leave the next layout change, a composer growing a line, to fire
+          // an `initial` scroll that yanks a reader who has since scrolled up.
+          // Measured means the command below is enough.
+          chatInitialLayoutKeyRef.current =
+            chatScrollEndOffset(chatScrollMetricsRef.current) === null ? null : agentKey;
           chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
           chatScrollChromeRef.current = createChatScrollChromeState();
           resetNewMessageBadge();
@@ -3530,6 +3550,7 @@ const AgentChatSessionViewport = React.memo(
             cancelPendingChatScroll();
           };
         }, [
+          agentKey,
           cancelPendingChatScroll,
           executeChatScrollCommand,
           onChromeVisibleChange,
@@ -3574,12 +3595,28 @@ const AgentChatSessionViewport = React.memo(
       // Android does not report the keyboard-driven inset in the scroll event, so
       // the library hands it over here instead -- the same reason the terminal
       // pane takes it this way.
-      const handleChatContentInsetChange = useCallback((insets: { bottom: number }) => {
-        chatScrollMetricsRef.current = {
-          ...chatScrollMetricsRef.current,
-          bottomInset: insets.bottom,
-        };
-      }, []);
+      const handleChatContentInsetChange = useCallback(
+        (insets: { bottom: number }) => {
+          if (chatScrollMetricsRef.current.bottomInset === insets.bottom) return;
+          chatScrollMetricsRef.current = {
+            ...chatScrollMetricsRef.current,
+            bottomInset: insets.bottom,
+          };
+          // Acted on, not merely recorded. The library reports this through a
+          // Reanimated reaction, so it can arrive AFTER every landing scroll
+          // has already run against an inset of zero -- each of them short by
+          // the reserve. The next scroll event would then measure that gap
+          // against the new inset, read it as scrollback, and freeze the pane
+          // with the reader mid-history. Re-landing here closes that window,
+          // and `keyboard` is the reason it is: only a reader who has not
+          // scrolled away gets moved.
+          executeChatScrollCommand(
+            chatCommandForKeyboardChange(chatScrollPolicyRef.current),
+            "keyboard",
+          );
+        },
+        [executeChatScrollCommand],
+      );
 
       const handleChatScroll = useCallback(
         (event: NativeSyntheticEvent<NativeScrollEvent>) => {

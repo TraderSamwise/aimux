@@ -64,23 +64,41 @@ describe("both panes scroll to the same end", () => {
     }
   });
 
-  it("leaves the first layout after focus its landing", () => {
-    // Claiming the layout key in the focus effect made `handleChatLayout` take
-    // the content branch, so the only landing happened before `onLayout`,
-    // `onContentSizeChange` and the inset callback had said anything -- with
-    // nothing measured, and `scrollToEnd` the only thing left to land it.
+  it("measures the pane before it decides where the end is", () => {
+    // Order, not presence. Writing the viewport height BELOW the branch left
+    // the `initial` command -- the one that is supposed to run on measured
+    // geometry -- computing from a height of zero, which is no target at all
+    // and so a bare `scrollToEnd` again.
     expect(handlerBody("handleChatLayout")).toMatch(
-      /chatInitialLayoutKeyRef\.current !== agentKey[\s\S]*?chatCommandForInitialLayout\(\)/,
+      /viewportHeight: event\.nativeEvent\.layout\.height[\s\S]*?chatInitialLayoutKeyRef\.current !== agentKey[\s\S]*?chatCommandForInitialLayout\(\)/,
     );
-    expect(screenSource, "the key is cleared on focus, not claimed").toContain(
-      "chatInitialLayoutKeyRef.current = null",
+    expect(handlerBody("handleTerminalLayout")).toMatch(
+      /viewportHeight: event\.nativeEvent\.layout\.height[\s\S]*?terminalInitialLayoutKeyRef\.current !== agentKey/,
     );
-    // And `handleChatLayout` is the only place that claims it, because a
-    // second claim is a second landing that never happens.
-    expect(
-      screenSource.split("chatInitialLayoutKeyRef.current = agentKey").length - 1,
-      "exactly one claim, in the handler that has been measured",
-    ).toBe(1);
+    // And the content height has exactly one writer before the first scroll
+    // event: dropping it leaves every landing command with nothing measured.
+    expect(handlerBody("handleChatContentSizeChange")).toContain(
+      "chatScrollMetricsRef.current = {",
+    );
+    expect(handlerBody("handleChatContentSizeChange")).toContain("contentHeight,");
+    expect(handlerBody("handleTerminalContentSizeChange")).toContain(
+      "terminalGeometryRef.current = {",
+    );
+    expect(handlerBody("handleTerminalContentSizeChange")).toContain("contentHeight }");
+  });
+
+  it("leaves the first layout after focus its landing, and only then", () => {
+    // Claiming the layout key on focus made `handleChatLayout` take the
+    // content branch, so the only landing happened before anything had been
+    // measured. Clearing it unconditionally is the other mistake: a re-focus
+    // with no remount would leave the next layout change -- a composer growing
+    // a line -- to fire an `initial` scroll at a reader who has since scrolled
+    // up. So it is decided from whether the pane has been measured.
+    expect(screenSource).toMatch(
+      /chatInitialLayoutKeyRef\.current =\s*chatScrollEndOffset\(chatScrollMetricsRef\.current\) === null \? null : agentKey;/,
+    );
+    // One claim, in the handler that has been measured.
+    expect(screenSource.split("chatInitialLayoutKeyRef.current = agentKey").length - 1).toBe(1);
   });
 
   it("records the inset the library reports, into the geometry it scrolls by", () => {
@@ -106,6 +124,27 @@ describe("both panes scroll to the same end", () => {
     );
     expect(screenSource).toContain("onContentInsetChange={handleChatContentInsetChange}");
     expect(screenSource).toContain("onContentInsetChange={handleTerminalContentInsetChange}");
+  });
+
+  it("re-lands when the inset arrives, because it arrives late", () => {
+    // The library reports the inset through a Reanimated reaction, so it can
+    // land after every scroll has already run against an inset of zero -- each
+    // of them short by the composer reserve. The next scroll event measures
+    // that gap against the new inset, reads it as scrollback, and freezes the
+    // pane mid-history. Recording the number is not enough; the pane has to
+    // act on it, and `keyboard` is the reason that moves only a reader who has
+    // not scrolled away.
+    for (const [handler, policy] of [
+      ["handleChatContentInsetChange", "chatScrollPolicyRef.current"],
+      ["handleTerminalContentInsetChange", "terminalScrollPolicyRef.current"],
+    ]) {
+      const body = handlerBody(handler);
+      expect(body, `${handler} must act on the inset it just learned`).toContain(
+        `chatCommandForKeyboardChange(${policy})`,
+      );
+      // And not on every report of the same number.
+      expect(body).toMatch(/bottomInset === insets\.bottom\) return;/);
+    }
   });
 
   it("lets a landing scroll survive a scroll event that arrives mid-flight", () => {
