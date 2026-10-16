@@ -128,6 +128,7 @@ pub mod shell_args;
 pub mod shell_hooks;
 pub mod state_update_lock;
 pub mod statusline_chip_window;
+pub mod subagent_activity;
 pub mod team_contract;
 pub mod terminal_key_parser;
 pub mod tmux;
