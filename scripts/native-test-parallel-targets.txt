@@ -9,6 +9,7 @@ agent_name_across_surfaces
 agent_order_across_surfaces
 agent_plane_across_surfaces
 agent_prompt_submit
+agent_subagents_across_surfaces
 agent_start_across_surfaces
 agent_status_label_surfaces
 agent_token_spend

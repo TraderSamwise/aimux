@@ -222,8 +222,31 @@ pub fn subagent_summary(runs: &[SubagentRun]) -> Option<Value> {
     Some(json!({
         "running": runs.len(),
         "label": subagent_summary_label(runs.len()),
+        "detail": subagent_summary_detail(runs.len(), &ordered),
         "items": items,
     }))
+}
+
+/// The one sentence that says both how many and which, rendered verbatim by
+/// the dashboard's details pane and the app's chat header.
+///
+/// Composed here rather than in each renderer because there are two of them in
+/// two languages, and a count spelled twice is how two surfaces end up
+/// disagreeing about one fact.
+pub fn subagent_summary_detail(running: usize, named: &[SubagentRun]) -> String {
+    let label = subagent_summary_label(running);
+    let names = named
+        .iter()
+        .take(SUBAGENT_ITEM_LIMIT)
+        .map(|run| match &run.kind {
+            Some(kind) => format!("{} ({kind})", run.name),
+            None => run.name.clone(),
+        })
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        return label;
+    }
+    format!("{label}: {}", names.join(", "))
 }
 
 /// The one label for a count of working sub-agents, rendered verbatim by the
@@ -260,6 +283,33 @@ pub fn subagent_publish(scan: Option<&[SubagentRun]>) -> SubagentPublish {
             None => SubagentPublish::Clear,
         },
     }
+}
+
+/// The label to render for a published summary, or `None` when there is
+/// nothing to say.
+///
+/// Both terminal renderers and the app ask this rather than testing the count
+/// themselves: a zero can still arrive from an older build's metadata, and
+/// "0 sub-agents" on a row is worse than silence.
+pub fn subagent_label(summary: Option<&Value>) -> Option<String> {
+    summary_text(summary, "label")
+}
+
+/// The one-sentence detail to render, or `None` when there is nothing to say.
+pub fn subagent_detail(summary: Option<&Value>) -> Option<String> {
+    summary_text(summary, "detail").or_else(|| subagent_label(summary))
+}
+
+fn summary_text(summary: Option<&Value>, key: &str) -> Option<String> {
+    if subagent_running_count(summary) == 0 {
+        return None;
+    }
+    summary?
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 /// How many sub-agents a published summary says are working.
@@ -385,6 +435,40 @@ mod tests {
     }
 
     #[test]
+    fn the_detail_says_how_many_and_which() {
+        let runs = vec![
+            claude_subagent_run("agent-a", Some(&meta()), Some(1), 2),
+            SubagentRun {
+                key: "agent-b".into(),
+                name: "Audit phase 3".into(),
+                kind: None,
+                model: None,
+                started_at_ms: Some(2),
+                updated_at_ms: 3,
+            },
+        ];
+        let summary = subagent_summary(&runs).expect("summary");
+        assert_eq!(
+            summary["detail"],
+            "2 sub-agents: Adversarial review of PR 451 (Explore), Audit phase 3",
+            "the label verbatim, then what they are"
+        );
+        // The names follow the published order, so the pane and the app agree
+        // with the list beside them.
+        assert_eq!(summary["items"][0]["key"], "agent-a");
+    }
+
+    #[test]
+    fn the_detail_of_one_unnamed_subagent_is_just_the_label() {
+        let runs = vec![claude_subagent_run("agent-a", None, None, 1)];
+        let summary = subagent_summary(&runs).expect("summary");
+        // The key is the name when there is no meta file, so there is always
+        // something to say; an empty list would be the only way to get here.
+        assert_eq!(summary["detail"], "1 sub-agent: agent-a");
+        assert_eq!(subagent_summary_detail(3, &[]), "3 sub-agents");
+    }
+
+    #[test]
     fn one_subagent_reads_as_one() {
         assert_eq!(subagent_summary_label(1), "1 sub-agent");
         assert_eq!(subagent_summary_label(2), "2 sub-agents");
@@ -402,6 +486,23 @@ mod tests {
             subagent_publish(Some(&runs)),
             SubagentPublish::Set(_)
         ));
+    }
+
+    #[test]
+    fn a_summary_that_says_none_are_working_renders_nothing() {
+        let zero = json!({ "running": 0, "label": "0 sub-agents", "detail": "0 sub-agents" });
+        assert_eq!(subagent_label(Some(&zero)), None);
+        assert_eq!(subagent_detail(Some(&zero)), None);
+        assert_eq!(subagent_label(None), None);
+        // A summary from a build that published no detail still has something
+        // to render, rather than a surface falling back to its own spelling.
+        let no_detail = json!({ "running": 2, "label": "2 sub-agents" });
+        assert_eq!(
+            subagent_detail(Some(&no_detail)).as_deref(),
+            Some("2 sub-agents")
+        );
+        let blank = json!({ "running": 2, "label": "   " });
+        assert_eq!(subagent_label(Some(&blank)), None);
     }
 
     #[test]

@@ -146,6 +146,25 @@ function UnreadBadge({ count }: { count?: number }) {
   );
 }
 
+/**
+ * What this agent has working inside it.
+ *
+ * The service's own `label`, rendered verbatim: a count spelled here as well
+ * would be a second answer to one question, and the terminal row already
+ * renders this exact string.
+ */
+function SubagentBadge({ subagents }: { subagents?: DesktopSession["subagents"] }) {
+  const label = subagents?.label?.trim();
+  if (!subagents || subagents.running <= 0 || !label) return null;
+  return (
+    <View className="shrink-0 rounded-full border border-[#3b4150] px-1.5 py-[1px]">
+      <Text className="text-[10px] text-[#9aa0ad]" numberOfLines={1}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
 function IndexBadge({ digit }: { digit: number }) {
   return <Text className="w-7 shrink-0 font-mono text-[12px] text-[#7c7e88]">{`[${digit}]`}</Text>;
 }
@@ -284,6 +303,7 @@ function AgentRowImpl({
           {shortName}
         </Text>
         <UnreadBadge count={session.notificationUnreadCount} />
+        <SubagentBadge subagents={session.subagents} />
       </View>
       {compact ? null : <TrailingHint text={detailHint} />}
     </>

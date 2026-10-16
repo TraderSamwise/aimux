@@ -1579,6 +1579,12 @@ fn session_activity_chips(session: &DashboardSession) -> String {
     if session.workflow_blocked_count > 0 {
         chips.push(chip("coordination blocked", tone(ChipTone::Danger)));
     }
+    // Ahead of the coordination counts, because this is the agent's own work
+    // rather than something waiting on someone, and the label is the service's
+    // -- the app row and the chat header render the same string.
+    if let Some(label) = crate::subagent_activity::subagent_label(session.subagents.as_ref()) {
+        chips.push(chip(&label, tone(ChipTone::Work)));
+    }
     let thread_unread = thread_unread_count(session);
     if thread_unread > 0 {
         chips.push(chip(

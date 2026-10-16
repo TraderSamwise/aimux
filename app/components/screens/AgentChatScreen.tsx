@@ -1380,9 +1380,18 @@ export default function ChatScreen() {
       sessionId ||
       "Unknown session";
   // Keep the chat header focused on human context; ids remain in error states.
+  // The service's own sentence about the sub-agents, verbatim -- the same
+  // string the dashboard's details pane renders. Composing it here as well
+  // would be a second answer to "what is working inside this agent".
+  const subagentDetail =
+    session?.subagents && session.subagents.running > 0
+      ? session.subagents.detail || session.subagents.label
+      : undefined;
   const sessionSubtitle = routeSessionMissing
     ? `${sessionId} · not found`
-    : [headerWorktreeBranch, session?.status ?? "unknown"].filter(Boolean).join(" · ");
+    : [headerWorktreeBranch, session?.status ?? "unknown", subagentDetail]
+        .filter(Boolean)
+        .join(" · ");
   const hasPendingAttachments = pendingAttachments.length > 0;
   const canSendMessageBase = Boolean(
     serviceEndpoint &&

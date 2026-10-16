@@ -432,6 +432,61 @@ describe("AgentRow", () => {
     expect(text).not.toContain("overseer");
   });
 
+  // The service decides how many sub-agents are working and how to say it.
+  // A count spelled here as well would be a second answer to one question --
+  // the terminal row renders this exact string, pinned in
+  // native/crates/aimux/tests/agent_subagents_across_surfaces.rs.
+  it("renders the service's sub-agent label verbatim", () => {
+    const text = collectText(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-busy",
+          label: "worker",
+          command: "claude",
+          subagents: {
+            running: 3,
+            label: "3 sub-agents",
+            detail: "3 sub-agents: Audit phase 3 (Explore)",
+            items: [{ key: "agent-1", name: "Audit phase 3", kind: "Explore" }],
+          },
+        }),
+        digit: 1,
+        selected: false,
+        projectStateKey: projectStateKey({ path: "/repo" }),
+        endpoint: null,
+        token: null,
+        onPick: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+
+    expect(text).toContain("3 sub-agents");
+  });
+
+  it("says nothing when no sub-agent is working", () => {
+    // A zero can still arrive from an older build's metadata, and
+    // "0 sub-agents" on a row is worse than silence.
+    const text = collectText(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-quiet",
+          label: "worker",
+          command: "claude",
+          subagents: { running: 0, label: "0 sub-agents", items: [] },
+        }),
+        digit: 1,
+        selected: false,
+        projectStateKey: projectStateKey({ path: "/repo" }),
+        endpoint: null,
+        token: null,
+        onPick: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+
+    expect(text).not.toContain("sub-agent");
+  });
+
   it("renders the role column only inside the supervisor lane", () => {
     const text = collectText(
       React.createElement(AgentRow, {
