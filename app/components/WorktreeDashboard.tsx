@@ -172,14 +172,26 @@ function UnreadBadge({ count }: { count?: number }) {
  * way the terminal row puts them after its identity columns, and on a stacked
  * row that group has a line of its own.
  */
-function RowChips({ session, budget }: { session: DesktopSession; budget: number }) {
+function RowChips({
+  session,
+  budget,
+  offline,
+}: {
+  session: DesktopSession;
+  budget: number;
+  offline: boolean;
+}) {
   const published = rowChipsOf(session);
   // A daemon older than the published ladder sends no chips at all. The row
   // kept one of these facts before this existed -- the sub-agent badge -- and
   // losing it to a version skew would be a regression the terminal row does
   // not have, because it can ask the ladder directly.
   if (published.length === 0) {
-    return <SubagentBadge subagents={session.subagents} tone="work" />;
+    // The tone the published chip would have carried, from the state word this
+    // row already renders rather than a rule invented here: a dead agent's
+    // facts are still true but nothing is happening, and the terminal mutes
+    // them.
+    return <SubagentBadge subagents={session.subagents} tone={offline ? "muted" : "work"} />;
   }
   const { visible, more } = visibleRowChips(published, budget);
   if (visible.length === 0 && !more) return null;
@@ -372,7 +384,11 @@ function AgentRowImpl({
         <View className="flex-row items-center gap-2">{identity}</View>
         <View className="flex-row items-center gap-1.5">
           <CompactRecency text={fullHint} />
-          <RowChips session={session} budget={NARROW_ROW_CHIP_BUDGET} />
+          <RowChips
+            session={session}
+            budget={NARROW_ROW_CHIP_BUDGET}
+            offline={state.kind === "offline"}
+          />
         </View>
       </Pressable>
     );
@@ -405,7 +421,11 @@ function AgentRowImpl({
           narrow ? "shrink-0" : "shrink-0 pl-3",
         )}
       >
-        <RowChips session={session} budget={narrow ? NARROW_ROW_CHIP_BUDGET : ROW_CHIP_BUDGET} />
+        <RowChips
+          session={session}
+          budget={narrow ? NARROW_ROW_CHIP_BUDGET : ROW_CHIP_BUDGET}
+          offline={state.kind === "offline"}
+        />
         <RecencyCell text={recency} />
         <StatusCell state={state} />
         <AgentActions

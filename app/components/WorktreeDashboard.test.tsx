@@ -577,6 +577,40 @@ describe("AgentRow", () => {
     expect(text).not.toContain("\u203a");
   });
 
+  it("mutes the skew fallback for an agent that is gone", () => {
+    // No chips published (an older daemon) and the agent is offline: the
+    // terminal mutes its chips, so this must not paint them as work.
+    const tree = renderNode(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-gone",
+          label: "worker",
+          command: "claude",
+          status: "offline",
+          semantic: { user: { label: "offline" }, presentation: { statusLabel: "offline" } },
+          subagents: { running: 2, label: "2 sub-agents", items: [] },
+        }),
+        digit: 1,
+        selected: false,
+        projectStateKey: projectStateKey({ path: "/repo" }),
+        endpoint: null,
+        token: null,
+        onPick: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+    const work = findNodes(tree, (node) => {
+      const style = node.props.style as { color?: string } | undefined;
+      return style?.color === rowChipColors("work").text;
+    });
+    expect(work).toHaveLength(0);
+    const muted = findNodes(tree, (node) => {
+      const style = node.props.style as { color?: string } | undefined;
+      return style?.color === rowChipColors("muted").text;
+    });
+    expect(muted.length).toBeGreaterThan(0);
+  });
+
   it("renders the sub-agent chip in the tone it was published with", () => {
     const tree = renderNode(
       React.createElement(AgentRow, {
