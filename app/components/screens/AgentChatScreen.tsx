@@ -29,6 +29,8 @@ import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "ex
 import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
 import { useColorScheme } from "nativewind";
 import { KeyboardChatScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
+
+import { RuntimeBrandMark } from "@/components/RuntimeBrandMark";
 import Reanimated, {
   Easing as ReanimatedEasing,
   interpolateColor,
@@ -2349,13 +2351,21 @@ export default function ChatScreen() {
                             {sessionTitle}
                           </Text>
                         </View>
-                        <Text
-                          className="text-xs text-muted-foreground"
-                          numberOfLines={1}
-                          ellipsizeMode="middle"
-                        >
-                          {sessionSubtitle}
-                        </Text>
+                        <View className="flex-row items-center gap-1.5" style={{ minWidth: 0 }}>
+                          {session && !isSharedConversation ? (
+                            <View className="flex-shrink-0">
+                              <RuntimeBrandMark agent={session} />
+                            </View>
+                          ) : null}
+                          <Text
+                            className="text-xs text-muted-foreground"
+                            numberOfLines={1}
+                            ellipsizeMode="middle"
+                            style={{ minWidth: 0, flexShrink: 1 }}
+                          >
+                            {sessionSubtitle}
+                          </Text>
+                        </View>
                       </View>
                       {modeControls ? <View className="mr-2">{modeControls}</View> : null}
                       {session && canUseOwnerControls ? (
@@ -2444,13 +2454,21 @@ export default function ChatScreen() {
                           {sessionTitle}
                         </Text>
                       </View>
-                      <Text
-                        className="text-xs text-muted-foreground"
-                        numberOfLines={1}
-                        ellipsizeMode="middle"
-                      >
-                        {sessionSubtitle}
-                      </Text>
+                      <View className="flex-row items-center gap-1.5" style={{ minWidth: 0 }}>
+                        {session && !isSharedConversation ? (
+                          <View className="flex-shrink-0">
+                            <RuntimeBrandMark agent={session} />
+                          </View>
+                        ) : null}
+                        <Text
+                          className="text-xs text-muted-foreground"
+                          numberOfLines={1}
+                          ellipsizeMode="middle"
+                          style={{ minWidth: 0, flexShrink: 1 }}
+                        >
+                          {sessionSubtitle}
+                        </Text>
+                      </View>
                     </View>
                     {modeControls ? (
                       <View className="mx-2 flex-shrink-0">{modeControls}</View>
