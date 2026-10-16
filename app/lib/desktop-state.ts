@@ -45,6 +45,12 @@ export interface DesktopSessionSemanticState {
   // "Running" for an agent the service had already called "ready".
   presentation?: {
     statusLabel?: string | null;
+    /**
+     * The chips the agent's row says about it, ordered by the project service.
+     * Rendered as given: the terminal row renders this same list, and a client
+     * deciding its own order is how two surfaces come to disagree.
+     */
+    rowChips?: { kind: string; label: string; tone: string }[] | null;
   } | null;
   runtime?: {
     lifecycle?: string | null;

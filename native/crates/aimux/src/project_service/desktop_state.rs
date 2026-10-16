@@ -1153,6 +1153,9 @@ fn dashboard_session(
         workflow_blocked_count: workflow.blocked,
         workflow_family_count: workflow.families.len() as i64,
         has_active_task: active_tasks.contains(id),
+        // Read off the item the periodic task published to, so the row's chip
+        // and the chat header's sentence come from one summary.
+        subagent_label: crate::subagent_activity::subagent_label(item.get("subagents")),
     });
     let live_label = semantic
         .get("user")

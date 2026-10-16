@@ -1,5 +1,6 @@
 import React, { type ReactNode } from "react";
 import { projectStateKey } from "@/lib/project-key";
+import { rowChipColors } from "@/lib/row-chips";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("react-native", () => ({
@@ -143,6 +144,12 @@ function collectText(node: ReactNode): string {
   }
 
   return collectText((node.props as { children?: ReactNode }).children);
+}
+
+/// The text inside one rendered node, for asking which group a chip landed in.
+function collectTextOf(node: HostNode): string {
+  const own = collectText(node.props.children as ReactNode);
+  return own || node.children.map(collectTextOf).join("");
 }
 
 function findNodes(root: HostNode[], predicate: (node: HostNode) => boolean): HostNode[] {
@@ -434,22 +441,75 @@ describe("AgentRow", () => {
     expect(text).not.toContain("overseer");
   });
 
-  // The service decides how many sub-agents are working and how to say it.
-  // A count spelled here as well would be a second answer to one question --
-  // the terminal row renders this exact string, pinned in
-  // native/crates/aimux/tests/agent_subagents_across_surfaces.rs.
-  it("renders the service's sub-agent label verbatim", () => {
-    const text = collectText(
+  // The chips are the project service's decision -- order, labels and tones --
+  // and the terminal dashboard row renders the same published list. A row that
+  // spelled any of it here would be a second answer to one question.
+  function rowWith(chips: { kind: string; label: string; tone: string }[], narrow?: boolean) {
+    return collectText(
       React.createElement(AgentRow, {
         session: session({
           id: "claude-busy",
           label: "worker",
           command: "claude",
+          semantic: {
+            user: { label: "ready" },
+            presentation: { statusLabel: "ready", rowChips: chips },
+          },
           subagents: {
             running: 3,
             label: "3 sub-agents",
             detail: "3 sub-agents: Audit phase 3 (Explore)",
             items: [{ key: "agent-1", name: "Audit phase 3", kind: "Explore" }],
+          },
+        }),
+        digit: 1,
+        selected: false,
+        narrow,
+        projectStateKey: projectStateKey({ path: "/repo" }),
+        endpoint: null,
+        token: null,
+        onPick: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+  }
+
+  // The name's line holds the name. A pill beside it is `shrink-0`, so it
+  // takes its width from the name -- the "c." crush at 432px.
+  it("keeps the chips off the line the name is on", () => {
+    const rowProps = () => ({
+      session: session({
+        id: "claude-busy",
+        label: "a-long-agent-name",
+        command: "claude",
+        semantic: {
+          user: { label: "ready" },
+          presentation: {
+            statusLabel: "ready",
+            rowChips: [{ kind: "threads-unread", label: "8 threads unread", tone: "work" }],
+          },
+        },
+      }),
+      digit: 1,
+      selected: false,
+      projectStateKey: projectStateKey({ path: "/repo" }),
+      endpoint: null,
+      token: null,
+      onPick: vi.fn(),
+      onKilled: vi.fn(),
+    });
+    const tree = renderNode(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-busy",
+          label: "a-long-agent-name",
+          command: "claude",
+          semantic: {
+            user: { label: "ready" },
+            presentation: {
+              statusLabel: "ready",
+              rowChips: [{ kind: "threads-unread", label: "8 threads unread", tone: "work" }],
+            },
           },
         }),
         digit: 1,
@@ -461,20 +521,47 @@ describe("AgentRow", () => {
         onKilled: vi.fn(),
       }),
     );
-
-    expect(text).toContain("3 sub-agents");
+    const nameGroup = findNodes(
+      tree,
+      (node) =>
+        typeof node.props.className === "string" &&
+        node.props.className.includes("flex-row items-baseline gap-2"),
+    );
+    expect(nameGroup).toHaveLength(1);
+    expect(collectTextOf(nameGroup[0]!)).not.toContain("8 threads unread");
+    // And it is still on the row, in the group that has width to give.
+    expect(collectText(React.createElement(AgentRow, rowProps()))).toContain("8 threads unread");
   });
 
-  it("says nothing when no sub-agent is working", () => {
-    // A zero can still arrive from an older build's metadata, and
-    // "0 sub-agents" on a row is worse than silence.
-    const text = collectText(
+  it("renders nothing rather than a fallback when every published chip is malformed", () => {
+    // The terminal shows nothing for this payload, so the app must not show
+    // its version-skew fallback instead.
+    const text = rowWith([
+      { kind: "x" } as unknown as { kind: string; label: string; tone: string },
+    ]);
+    expect(text).not.toContain("sub-agent");
+  });
+
+  // This harness renders without measuring, so the bound is asserted where it
+  // is applied: two long labels growing the trailing group is what takes the
+  // name's share of a row just above the stacking threshold.
+  it("bounds each pill so a long label cannot grow the group", () => {
+    const tree = renderNode(
       React.createElement(AgentRow, {
         session: session({
-          id: "claude-quiet",
+          id: "claude-busy",
           label: "worker",
           command: "claude",
-          subagents: { running: 0, label: "0 sub-agents", items: [] },
+          semantic: {
+            user: { label: "ready" },
+            presentation: {
+              statusLabel: "ready",
+              rowChips: [
+                { kind: "waiting-on-me", label: "waiting on you", tone: "attention" },
+                { kind: "coordination-blocked", label: "coordination blocked", tone: "danger" },
+              ],
+            },
+          },
         }),
         digit: 1,
         selected: false,
@@ -485,8 +572,155 @@ describe("AgentRow", () => {
         onKilled: vi.fn(),
       }),
     );
+    const pills = findNodes(tree, (node) => {
+      const className = node.props.className;
+      return typeof className === "string" && className.includes("rounded-full border px");
+    });
+    expect(pills).toHaveLength(2);
+    for (const pill of pills) {
+      expect(pill.props.className as string).toContain("max-w-");
+    }
+  });
 
+  it("renders the chips the service published, verbatim", () => {
+    const text = rowWith([
+      { kind: "threads-unread", label: "8 threads unread", tone: "work" },
+      { kind: "subagents", label: "3 sub-agents", tone: "work" },
+    ]);
+    expect(text).toContain("8 threads unread");
+    // The sub-agent chip keeps its richer control, and still its own label.
+    expect(text).toContain("3 sub-agents");
+  });
+
+  it("says there is more rather than dropping chips in silence", () => {
+    const text = rowWith([
+      { kind: "waiting-on-me", label: "waiting on you", tone: "attention" },
+      { kind: "coordination-blocked", label: "coordination blocked", tone: "danger" },
+      { kind: "threads-unread", label: "8 threads unread", tone: "work" },
+    ]);
+    expect(text).toContain("waiting on you");
+    expect(text).toContain("coordination blocked");
+    expect(text).not.toContain("8 threads unread");
+    expect(text).toContain("\u203a");
+  });
+
+  it("gives up a chip when the row has already given its width to the name", () => {
+    const text = rowWith(
+      [
+        { kind: "waiting-on-me", label: "waiting on you", tone: "attention" },
+        { kind: "threads-unread", label: "8 threads unread", tone: "work" },
+      ],
+      true,
+    );
+    expect(text).toContain("waiting on you");
+    expect(text).not.toContain("8 threads unread");
+    expect(text).toContain("\u203a");
+  });
+
+  // A daemon older than the published ladder sends no chips at all. The row
+  // kept this one fact before the ladder existed, and losing it to a version
+  // skew would be a regression the terminal row does not have.
+  it("still names the sub-agents when nothing published the chips", () => {
+    // No `rowChips` key at all, which is what a daemon older than the ladder
+    // sends. An empty list is an answer and takes the other path.
+    const text = collectText(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-old-daemon",
+          label: "worker",
+          command: "claude",
+          subagents: { running: 3, label: "3 sub-agents", items: [] },
+        }),
+        digit: 1,
+        selected: false,
+        projectStateKey: projectStateKey({ path: "/repo" }),
+        endpoint: null,
+        token: null,
+        onPick: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+    expect(text).toContain("3 sub-agents");
+    expect(text).not.toContain("\u203a");
+  });
+
+  it("takes an empty published list as the answer it is", () => {
+    const text = rowWith([]);
     expect(text).not.toContain("sub-agent");
+    expect(text).not.toContain("\u203a");
+  });
+
+  it("mutes the skew fallback for an agent that is gone", () => {
+    // No chips published (an older daemon) and the agent is offline: the
+    // terminal mutes its chips, so this must not paint them as work.
+    const tree = renderNode(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-gone",
+          label: "worker",
+          command: "claude",
+          status: "offline",
+          semantic: { user: { label: "offline" }, presentation: { statusLabel: "offline" } },
+          subagents: { running: 2, label: "2 sub-agents", items: [] },
+        }),
+        digit: 1,
+        selected: false,
+        projectStateKey: projectStateKey({ path: "/repo" }),
+        endpoint: null,
+        token: null,
+        onPick: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+    const work = findNodes(tree, (node) => {
+      const style = node.props.style as { color?: string } | undefined;
+      return style?.color === rowChipColors("work").text;
+    });
+    expect(work).toHaveLength(0);
+    const muted = findNodes(tree, (node) => {
+      const style = node.props.style as { color?: string } | undefined;
+      return style?.color === rowChipColors("muted").text;
+    });
+    expect(muted.length).toBeGreaterThan(0);
+  });
+
+  it("renders the sub-agent chip in the tone it was published with", () => {
+    const tree = renderNode(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-busy",
+          label: "worker",
+          command: "claude",
+          semantic: {
+            user: { label: "ready" },
+            presentation: {
+              statusLabel: "ready",
+              rowChips: [{ kind: "subagents", label: "3 sub-agents", tone: "work" }],
+            },
+          },
+          subagents: { running: 3, label: "3 sub-agents", items: [] },
+        }),
+        digit: 1,
+        selected: false,
+        projectStateKey: projectStateKey({ path: "/repo" }),
+        endpoint: null,
+        token: null,
+        onPick: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+    // Hardcoding grey here painted a live agent's sub-agents muted in the app
+    // while the terminal painted them as work.
+    const painted = findNodes(tree, (node) => {
+      const style = node.props.style as { color?: string } | undefined;
+      return style?.color === rowChipColors("work").text;
+    });
+    expect(painted.length).toBeGreaterThan(0);
+    const muted = findNodes(tree, (node) => {
+      const style = node.props.style as { color?: string } | undefined;
+      return style?.color === rowChipColors("muted").text;
+    });
+    expect(muted).toHaveLength(0);
   });
 
   it("renders the role column only inside the supervisor lane", () => {

@@ -170,6 +170,9 @@ fn semantics_input(input: &Value) -> SessionSemanticsInput {
             .get("hasActiveTask")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        // Absent from every frozen case: the Node semantics this contract
+        // pins had no sub-agents to report.
+        subagent_label: string(input, "subagentLabel"),
     }
 }
 

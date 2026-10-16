@@ -18,6 +18,9 @@ pub struct SessionSemanticsInput {
     pub workflow_blocked_count: i64,
     pub workflow_family_count: i64,
     pub has_active_task: bool,
+    /// The sub-agent summary's own label, so the row's chip for it is the same
+    /// string the chat header and the details pane render.
+    pub subagent_label: Option<String>,
 }
 
 pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
@@ -70,6 +73,20 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
         blocked_count,
         has_active_task: input.has_active_task,
     });
+    // The row's chips, decided here so the dashboard row and the app row stop
+    // answering "what is going on with this agent" differently.
+    let row_chips =
+        crate::agent_row_chips::agent_row_chips(&crate::agent_row_chips::RowChipsInput {
+            offline: row_chips_offline(&input, &user),
+            waiting_on_me_count,
+            workflow_blocked_count: blocked_count,
+            subagent_label: input.subagent_label.clone(),
+            thread_unread_count,
+            activity_new_count,
+            pending_delivery_count,
+            waiting_on_them_count,
+            family_count,
+        });
     let presentation = json!({
         // The action itself, not the bucket `user.label` coarsens it into:
         // `creating`, `forking` and `migrating` all become `starting` there,
@@ -85,6 +102,7 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
         ),
         "compactHint": compact_hint,
         "attentionScore": attention_score(&user, &notifications, activity_new_count, pending_delivery_count),
+        "rowChips": row_chips,
     });
     let mut semantic = Map::new();
     semantic.insert("runtime".into(), runtime);
@@ -110,6 +128,31 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
     semantic.insert("blockedCount".into(), Value::from(blocked_count));
     semantic.insert("familyCount".into(), Value::from(family_count));
     Value::Object(semantic)
+}
+
+/// Whether the row's chips should read muted, by exactly the rule the
+/// dashboard renderer applies.
+///
+/// Not just the user label: `runtime_lifecycle` answers `error` BEFORE it
+/// answers `offline`, so an agent that failed and then exited has
+/// `label: "error"` while the renderer's `is_session_offline` says it is gone.
+/// Deciding from the label alone flipped that agent's chips from muted to
+/// attention the moment the decision moved here -- the same error-before-
+/// offline hole `desktop_state` patches with `raw_status != "offline"`.
+///
+/// A pending action means something is happening right now, so it is never
+/// offline; no transient action is ever spelled `offline`, which is why the
+/// renderer's `pending_action.is_some() -> false` and this agree.
+fn row_chips_offline(input: &SessionSemanticsInput, user: &Value) -> bool {
+    if input
+        .pending_action
+        .as_deref()
+        .is_some_and(|action| !action.trim().is_empty())
+    {
+        return false;
+    }
+    user.get("label").and_then(Value::as_str) == Some("offline")
+        || matches!(input.status.as_str(), "offline" | "exited")
 }
 
 fn runtime_lifecycle(input: &SessionSemanticsInput) -> &'static str {
@@ -427,4 +470,81 @@ fn integer_field(value: &Value, key: &str) -> i64 {
 
 fn string_field(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_row_chips::RowChipTone;
+
+    fn chips(semantic: &Value) -> Vec<crate::agent_row_chips::RowChip> {
+        crate::agent_row_chips::published_row_chips(
+            semantic
+                .get("presentation")
+                .and_then(|presentation| presentation.get("rowChips")),
+        )
+    }
+
+    fn busy(status: &str, attention: &str) -> SessionSemanticsInput {
+        SessionSemanticsInput {
+            status: status.to_owned(),
+            attention: Some(attention.to_owned()),
+            thread_unread_count: 3,
+            workflow_on_me_count: 2,
+            ..SessionSemanticsInput::default()
+        }
+    }
+
+    #[test]
+    fn the_row_chips_are_published_with_the_rest_of_the_presentation() {
+        let semantic = derive_session_semantics(busy("running", "normal"));
+        let chips = chips(&semantic);
+        assert_eq!(
+            chips
+                .iter()
+                .map(|chip| chip.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["waiting-on-me", "threads-unread"],
+            "the facts the badge cannot carry, in the service's order"
+        );
+        assert_eq!(chips[0].tone, RowChipTone::Attention);
+    }
+
+    /// The error-before-offline hole, pinned.
+    ///
+    /// `runtime_lifecycle` answers `error` before it answers `offline`, so an
+    /// agent that failed and then exited reads `label: "error"` -- while the
+    /// dashboard's own `is_session_offline` says it is gone. Deciding the chip
+    /// tones from the label alone flipped exactly that agent's chips from
+    /// muted to attention when this moved into the service.
+    #[test]
+    fn an_agent_that_failed_and_then_exited_still_reads_as_gone() {
+        let semantic = derive_session_semantics(busy("exited", "error"));
+        assert_eq!(
+            semantic["user"]["label"], "error",
+            "the label is error, which is the whole trap"
+        );
+        let chips = chips(&semantic);
+        assert!(!chips.is_empty(), "positive control: it still has facts");
+        assert!(
+            chips.iter().all(|chip| chip.tone == RowChipTone::Muted),
+            "nothing is happening, so nothing shouts: {chips:?}"
+        );
+    }
+
+    #[test]
+    fn a_live_agent_with_the_same_facts_still_shouts() {
+        let chips = chips(&derive_session_semantics(busy("running", "normal")));
+        assert!(chips.iter().any(|chip| chip.tone != RowChipTone::Muted));
+    }
+
+    #[test]
+    fn an_agent_mid_action_is_not_gone_whatever_its_status_says() {
+        // A pending action means something is happening right now. The
+        // renderer refuses offline for any pending action, and so does this.
+        let mut input = busy("exited", "error");
+        input.pending_action = Some("starting".to_owned());
+        let chips = chips(&derive_session_semantics(input));
+        assert!(chips.iter().any(|chip| chip.tone != RowChipTone::Muted));
+    }
 }

@@ -265,12 +265,20 @@ fn a_summary_that_says_none_are_working_is_not_rendered_either() {
 fn a_busy_row_puts_the_subagents_behind_the_overflow_mark() {
     let summary = published_summary(2);
     let mut state = desktop_state(Some(&summary));
-    // Both chips read the service's derivation rather than the raw counts: the
-    // row asks `semantic.waitingOnMeCount` and the session's own
-    // `workflowBlockedCount`.
+    // Driven through the published chip list, because that is what the row
+    // renders now: the service decides the order, the surface decides how many
+    // fit. Built with the real ladder rather than hand-written, so the order
+    // under test is the shipped one.
+    let busy = aimux::agent_row_chips::agent_row_chips(&aimux::agent_row_chips::RowChipsInput {
+        waiting_on_me_count: 3,
+        workflow_blocked_count: 1,
+        subagent_label: summary["label"].as_str().map(ToOwned::to_owned),
+        ..aimux::agent_row_chips::RowChipsInput::default()
+    });
+    assert_eq!(busy.len(), 3, "two attention chips ahead of the sub-agents");
     patch_session(&mut state, &|session| {
-        session["semantic"]["waitingOnMeCount"] = json!(3);
-        session["workflowBlockedCount"] = json!(1);
+        session["semantic"]["presentation"]["rowChips"] =
+            serde_json::to_value(&busy).expect("chips encode");
     });
 
     let row = dashboard_row(&state);

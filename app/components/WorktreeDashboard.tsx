@@ -19,6 +19,15 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { filterWorktreeBucketToActiveEntries } from "@/lib/desktop-state";
 import { formatServiceRecency, formatSessionRecency } from "@/lib/recency";
+import {
+  hasPublishedRowChips,
+  NARROW_ROW_CHIP_BUDGET,
+  ROW_CHIP_BUDGET,
+  rowChipColors,
+  rowChipsOf,
+  visibleRowChips,
+  type RowChip,
+} from "@/lib/row-chips";
 import { unreadBadgeLabel } from "@/lib/unread-badge";
 import {
   formatPreviewCaptureUnavailable,
@@ -143,6 +152,88 @@ function UnreadBadge({ count }: { count?: number }) {
   return (
     <View className="rounded-full bg-[#e0b341] px-1.5 py-[1px]">
       <Text className="font-mono text-[10px] font-bold text-[#1a1c22]">{label}</Text>
+    </View>
+  );
+}
+
+/**
+ * What this agent's row says about it, as the project service decided.
+ *
+ * The order, the labels and the tones are published; this renders them and
+ * decides only how many fit. The terminal dashboard row renders the same list
+ * -- pinned in native/crates/aimux/tests/agent_row_chips_across_surfaces.rs.
+ */
+/**
+ * Deliberately not on the name's line.
+ *
+ * The identity group is capped at 55% of a full row and the name shrinks
+ * inside it, so a `shrink-0` pill beside the name takes its width from the
+ * name -- which is how it got crushed to "c." at 432px, the regression the
+ * stacked row exists to prevent. These sit in the trailing group instead, the
+ * way the terminal row puts them after its identity columns, and on a stacked
+ * row that group has a line of its own.
+ */
+function RowChips({
+  session,
+  budget,
+  offline,
+}: {
+  session: DesktopSession;
+  budget: number;
+  offline: boolean;
+}) {
+  const published = rowChipsOf(session);
+  // A daemon older than the published ladder sends no chips at all. The row
+  // kept one of these facts before this existed -- the sub-agent badge -- and
+  // losing it to a version skew would be a regression the terminal row does
+  // not have, because it can ask the ladder directly.
+  //
+  // Keyed on whether a list was published rather than on how many entries
+  // survived reading it, which is how the terminal keys it: a list of nothing
+  // but malformed chips is still an answer.
+  if (!hasPublishedRowChips(session)) {
+    // The tone the published chip would have carried, from the state word this
+    // row already renders rather than a rule invented here: a dead agent's
+    // facts are still true but nothing is happening, and the terminal mutes
+    // them.
+    return <SubagentBadge subagents={session.subagents} tone={offline ? "muted" : "work"} />;
+  }
+  const { visible, more } = visibleRowChips(published, budget);
+  if (visible.length === 0 && !more) return null;
+  return (
+    <>
+      {visible.map((chip) =>
+        // One fact with a richer control: tapping it names the sub-agents.
+        // Same label, same place in the order, the tone it was published with
+        // -- a different affordance.
+        chip.kind === "subagents" ? (
+          <SubagentBadge key={chip.kind} subagents={session.subagents} tone={chip.tone} />
+        ) : (
+          <RowChipPill key={chip.kind} chip={chip} />
+        ),
+      )}
+      {more ? (
+        // The row says there is more rather than dropping it in silence, the
+        // way the dashboard row does. The details pane names every one.
+        <Text className="shrink-0 text-[10px] text-[#7c7e88]">{"\u203a"}</Text>
+      ) : null}
+    </>
+  );
+}
+
+function RowChipPill({ chip }: { chip: RowChip }) {
+  const colors = rowChipColors(chip.tone);
+  return (
+    <View
+      // Bounded, so two long labels cannot grow the trailing group into the
+      // name's share of a row just above the stacking threshold. The label
+      // truncates instead; the details pane names every chip in full.
+      className="max-w-[140px] shrink-0 rounded-full border px-1.5 py-[1px]"
+      style={{ borderColor: colors.border }}
+    >
+      <Text className="text-[10px]" style={{ color: colors.text }} numberOfLines={1}>
+        {chip.label}
+      </Text>
     </View>
   );
 }
@@ -285,7 +376,6 @@ function AgentRowImpl({
           {shortName}
         </Text>
         <UnreadBadge count={session.notificationUnreadCount} />
-        <SubagentBadge subagents={session.subagents} />
       </View>
       {compact ? null : <TrailingHint text={detailHint} />}
     </>
@@ -300,7 +390,14 @@ function AgentRowImpl({
         className={cn("rounded-md px-2.5 py-2", selected ? "bg-[#232733]" : PRESS)}
       >
         <View className="flex-row items-center gap-2">{identity}</View>
-        <CompactRecency text={fullHint} />
+        <View className="flex-row items-center gap-1.5">
+          <CompactRecency text={fullHint} />
+          <RowChips
+            session={session}
+            budget={NARROW_ROW_CHIP_BUDGET}
+            offline={state.kind === "offline"}
+          />
+        </View>
       </Pressable>
     );
   }
@@ -332,6 +429,11 @@ function AgentRowImpl({
           narrow ? "shrink-0" : "shrink-0 pl-3",
         )}
       >
+        <RowChips
+          session={session}
+          budget={narrow ? NARROW_ROW_CHIP_BUDGET : ROW_CHIP_BUDGET}
+          offline={state.kind === "offline"}
+        />
         <RecencyCell text={recency} />
         <StatusCell state={state} />
         <AgentActions
