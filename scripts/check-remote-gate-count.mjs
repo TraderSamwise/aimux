@@ -27,10 +27,10 @@ const FAR_SIDE = ["remote"];
 // Lowered as the split proceeds; it may never rise. The end state is 0, with
 // the boundary expressed as one dependency edge in one Cargo.toml.
 //
-// It started at 72 (68 outside the edges). It counts both spellings: a
+// It started at 72. It counts both spellings: a
 // `cfg(not(feature = ..))` branch is a second implementation compiled into the
 // local build, which a reviewer has to read for exactly the same reason.
-const BUDGET = 61;
+const BUDGET = 40;
 
 function sourceFiles(dir) {
   const found = [];

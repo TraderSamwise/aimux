@@ -6,8 +6,6 @@ pub use project_services::{
 };
 
 use crate::attachment_hosting::{AttachmentHostingResult, PublishedAttachmentHostInput};
-#[cfg(feature = "remote-control")]
-use crate::attachment_hosting::{HttpAttachmentUploader, maybe_host_published_attachment};
 use crate::cli_launcher::{
     AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
     get_aimux_current_cli_identity,
@@ -5030,24 +5028,7 @@ impl DaemonProjectContentTextRuntime for RealDaemonRuntime {
         &mut self,
         input: &PublishedAttachmentHostInput<'_>,
     ) -> AttachmentHostingResult {
-        #[cfg(not(feature = "remote-control"))]
-        {
-            let _ = input;
-            return AttachmentHostingResult::Skipped;
-        }
-        #[cfg(feature = "remote-control")]
-        {
-            let Some(credentials) = remote_credentials::load_credentials(&self.resolver) else {
-                return AttachmentHostingResult::Skipped;
-            };
-            maybe_host_published_attachment(
-                input,
-                &credentials.relay_url,
-                &credentials.token,
-                credentials.remote_enabled,
-                &HttpAttachmentUploader,
-            )
-        }
+        crate::remote_control_edge::host_published_attachment(input, &self.resolver)
     }
 }
 

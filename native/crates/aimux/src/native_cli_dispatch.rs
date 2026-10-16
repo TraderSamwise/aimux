@@ -153,18 +153,5 @@ pub fn is_known_aimux_command_word(word: &str) -> bool {
             | "__tmux-open-hyperlink-internal"
             | "__project-service-internal"
             | "__job-exec-internal"
-    ) || remote_control_command_word(word)
-}
-
-#[cfg(feature = "remote-control")]
-fn remote_control_command_word(word: &str) -> bool {
-    matches!(
-        word,
-        "hosted" | "login" | "logout" | "remote" | "security" | "whoami"
-    )
-}
-
-#[cfg(not(feature = "remote-control"))]
-fn remote_control_command_word(_word: &str) -> bool {
-    false
+    ) || crate::remote_control_edge::is_remote_control_command_word(word)
 }
