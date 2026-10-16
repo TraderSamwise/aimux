@@ -896,11 +896,16 @@ fn session_attention_score(session: &Value) -> i64 {
         .and_then(|semantic| semantic.get("presentation"))
         .and_then(|presentation| presentation.get("attentionScore"))
         .and_then(Value::as_i64)
-        .unwrap_or_else(|| match string_field(session, "attention") {
-            Some("error") => 5,
-            Some("needs_input" | "needs_response") => 4,
-            Some("blocked") => 3,
-            _ => 0,
+        // The same ladder, applied to the one field a session without a
+        // published score still carries. This was a fourth copy of it.
+        .unwrap_or_else(|| {
+            crate::project_service::session_semantics::attention_score_for(
+                string_field(session, "attention"),
+                None,
+                0,
+                0,
+                0,
+            )
         })
 }
 

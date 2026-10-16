@@ -2152,7 +2152,17 @@ mod tests {
             "presentation": {
                 "statusLabel": status_label,
                 "compactHint": compact_hint.into(),
-                "attentionScore": 0
+                // Derived, because a row with `attentionScore: 0` beside an
+                // attention of `needs_input` is one the service cannot emit --
+                // and a fixture that can say something impossible is a fixture
+                // the thing under test can be wrong against.
+                "attentionScore": crate::project_service::session_semantics::attention_score_for(
+                    Some(attention),
+                    Some(status_label),
+                    0,
+                    0,
+                    activity_new_count,
+                )
             },
             "attention": attention,
             "activityNewCount": activity_new_count,

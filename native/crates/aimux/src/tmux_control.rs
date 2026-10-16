@@ -2453,13 +2453,30 @@ fn nav_item_order_probe(item: &NavItem) -> Value {
     Value::Object(probe)
 }
 
+/// How `n`/`p` order the windows they cycle.
+///
+/// The ladder itself is the project service's -- this was a third copy of it,
+/// and the two that drifted cost `u` an agent it should have stopped at. What
+/// tmux has here is a window's metadata, which carries `attention` but none of
+/// the counts the service ranks with: `unseenCount` is the per-session
+/// unseen-output counter, cleared when the session is viewed, NOT
+/// `notifications.unreadCount`, so it cannot stand in for the unread term.
+/// Passing it as one would be a worse answer than admitting the gap.
+///
+/// `unseenCount` IS the service's activity term, though -- `session_semantics`
+/// computes `activity_new_count` from exactly this number -- so it goes in as
+/// that, and an agent whose only claim is new output now ranks here as it does
+/// there. What tmux still cannot see is the unread and undelivered-message
+/// terms, which rank 2 on the server and 0 or 1 here. Closing that needs the
+/// published score in the window metadata, which is `947602-120`'s other half.
 fn attention_rank(item: &NavItem) -> (i64, i64, i64) {
-    let attention_score = match item.attention.as_str() {
-        "error" => 5,
-        "needs_input" | "needs_response" => 4,
-        "blocked" => 3,
-        _ => 0,
-    };
+    let attention_score = crate::project_service::session_semantics::attention_score_for(
+        Some(item.attention.as_str()),
+        None,
+        0,
+        0,
+        item.unseen_count,
+    );
     (
         attention_score,
         item.unseen_count,

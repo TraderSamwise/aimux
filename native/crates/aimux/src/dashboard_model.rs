@@ -446,8 +446,18 @@ pub struct SessionLatestUnread {
 pub struct SessionPresentationState {
     pub status_label: String,
     pub compact_hint: Option<String>,
-    #[serde(default)]
-    pub attention_score: usize,
+    /// `None` when the producer published no score at all.
+    ///
+    /// Not defaulted to 0: a snapshot forwarded by an older host, or read back
+    /// from a desktop-state file an older build wrote, has no score -- and
+    /// zero is this ladder's word for "needs nothing", so defaulting would
+    /// make `u` silently skip an agent that is asking for the user. Absent and
+    /// zero are different answers.
+    // Skipped when absent, not written as null: this struct round-trips
+    // against the TypeScript desktop state, and a `null` nobody sent breaks
+    // that parity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention_score: Option<usize>,
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
 }
