@@ -16,6 +16,7 @@ use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_
 use aimux::dashboard_service_input::DashboardThreadReplyState;
 use aimux::dashboard_tool_picker::{DashboardToolEntry, DashboardToolPickerMode};
 use aimux::project_api_contract::routes;
+use aimux::project_service::session_semantics::attention_score_for;
 use aimux::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineSource, WorkOutlineStatus,
 };
@@ -1104,6 +1105,108 @@ fn next_attention_key_opens_highest_priority_attention_session() {
         Some(DashboardEntryRef::Session(
             &snapshot.worktree_groups[1].sessions[0]
         ))
+    );
+}
+
+/// Every row's published score, cleared so a test can say which agent wins.
+///
+/// The golden fixture's own rows carry published scores, and they became
+/// visible to `u` the moment it stopped re-deriving from `user.attention` --
+/// which is correct, and makes a test that asserts a winner ambiguous unless
+/// it starts from a clean slate.
+fn without_semantics(snapshot: &mut DesktopStateSnapshot) {
+    for session in &mut snapshot.sessions {
+        session.semantic = None;
+    }
+    for group in &mut snapshot.worktree_groups {
+        for session in &mut group.sessions {
+            session.semantic = None;
+        }
+    }
+    for session in &mut snapshot.teammates {
+        session.semantic = None;
+    }
+}
+
+fn set_semantic(
+    snapshot: &mut DesktopStateSnapshot,
+    index: usize,
+    window: &str,
+    semantic: SessionSemanticState,
+) {
+    let id = snapshot.worktree_groups[index].sessions[0].id.clone();
+    snapshot.worktree_groups[index].sessions[0].tmux_window_id = Some(window.to_owned());
+    snapshot.worktree_groups[index].sessions[0].semantic = Some(semantic.clone());
+    // The same agent appears in the flat list and in its worktree group, and
+    // `u` walks the visual order built from both.
+    for session in &mut snapshot.sessions {
+        if session.id == id {
+            session.tmux_window_id = Some(window.to_owned());
+            session.semantic = Some(semantic.clone());
+        }
+    }
+}
+
+/// `u` must reach an agent whose only claim is an undelivered message.
+///
+/// This is the row the TUI's own copy of the ladder could not see: it had no
+/// `pendingDeliveryCount` term, so the agent scored 0 there and 2 on the
+/// server, and `u` walked past the one agent with something actually waiting
+/// to reach it. Asserted against the published score rather than a number
+/// repeated here, so the two cannot drift apart again.
+#[test]
+fn next_attention_key_reaches_an_agent_with_an_undelivered_message() {
+    let mut snapshot = snapshot();
+    without_semantics(&mut snapshot);
+    let pending = semantic_with_pending("running", "none", 0, 0, 2);
+    assert_eq!(
+        pending.presentation.attention_score, 2,
+        "the service ranks an undelivered message above nothing"
+    );
+    set_semantic(&mut snapshot, 1, "@pending", pending);
+    let mut controller = DashboardController::new(&snapshot);
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('u'))
+    else {
+        panic!("expected attention request for the agent with an undelivered message");
+    };
+    assert_eq!(
+        request.body,
+        json!({ "windowId": "@pending", "focus": true })
+    );
+}
+
+/// And the order `u` walks is the order the service published, not one the TUI
+/// worked out for itself.
+#[test]
+fn next_attention_key_walks_the_order_the_service_published() {
+    let mut snapshot = snapshot();
+    without_semantics(&mut snapshot);
+    // Deliberately mixed: the agent with the worst-reading attention word is
+    // not the one the service ranks highest.
+    let rows = [
+        (0, "@unread", semantic("running", "none", 3, 0)),
+        (1, "@error", semantic("error", "error", 0, 0)),
+    ];
+    for (index, window, semantic) in rows.clone() {
+        set_semantic(&mut snapshot, index, window, semantic);
+    }
+    let highest = rows
+        .iter()
+        .max_by_key(|(_, _, semantic)| semantic.presentation.attention_score)
+        .expect("a highest-ranked row");
+    let mut controller = DashboardController::new(&snapshot);
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('u'))
+    else {
+        panic!("expected attention request");
+    };
+    assert_eq!(
+        request.body,
+        json!({ "windowId": highest.1, "focus": true }),
+        "`u` opened something other than the agent the service ranked highest"
     );
 }
 
@@ -3077,11 +3180,40 @@ fn semantic(
     unread_count: usize,
     activity_new_count: usize,
 ) -> SessionSemanticState {
+    semantic_with_pending(label, attention, unread_count, activity_new_count, 0)
+}
+
+/// A row the project service could actually emit.
+///
+/// `attentionScore` used to be hardcoded to 0 here, beside whatever attention
+/// the caller passed -- a combination the service cannot produce, since
+/// `blocked` scores 3. Every attention test in this file passed against that,
+/// which is why the TUI could carry a ladder of its own for as long as it did.
+/// Derived from the service's own function now, so the fixture cannot lie.
+fn semantic_with_pending(
+    label: &str,
+    attention: &str,
+    unread_count: usize,
+    activity_new_count: usize,
+    pending_delivery_count: usize,
+) -> SessionSemanticState {
+    let attention_score = attention_score_for(
+        Some(attention),
+        Some(label),
+        unread_count as i64,
+        pending_delivery_count as i64,
+        activity_new_count as i64,
+    );
     serde_json::from_value(json!({
         "user": { "label": label, "attention": attention },
         "notifications": { "unreadCount": unread_count },
-        "presentation": { "statusLabel": label, "compactHint": null, "attentionScore": 0 },
-        "activityNewCount": activity_new_count
+        "presentation": {
+            "statusLabel": label,
+            "compactHint": null,
+            "attentionScore": attention_score,
+        },
+        "activityNewCount": activity_new_count,
+        "pendingDeliveryCount": pending_delivery_count
     }))
     .unwrap()
 }
@@ -4122,5 +4254,44 @@ fn a_dashboard_with_nothing_failed_has_nothing_to_clear() {
             DashboardControllerEffect::Ignored
         ),
         "nothing failed, so X asks the service for nothing"
+    );
+}
+
+/// One ladder, asserted where the copies disagreed.
+///
+/// Three implementations of "how much does this agent need the user" had
+/// drifted: the service's, the TUI's (missing the undelivered-message term),
+/// and tmux's (missing every count). The first two are now one number
+/// published once; this pins the ladder itself, including the rows that told
+/// the copies apart.
+#[test]
+fn the_attention_ladder_ranks_every_claim_in_one_order() {
+    // attention, label, unread, pending, activity -> rank
+    let rows: [(&str, &str, i64, i64, i64, i64); 9] = [
+        ("error", "running", 0, 0, 0, 5),
+        ("needs_input", "running", 0, 0, 0, 4),
+        ("needs_response", "running", 0, 0, 0, 4),
+        ("blocked", "running", 0, 0, 0, 3),
+        // The row the TUI's copy could not see.
+        ("none", "running", 0, 2, 0, 2),
+        ("none", "running", 3, 0, 0, 2),
+        ("none", "running", 0, 0, 1, 1),
+        ("none", "done", 0, 0, 0, 1),
+        ("none", "running", 0, 0, 0, 0),
+    ];
+    for (attention, label, unread, pending, activity, expected) in rows {
+        assert_eq!(
+            attention_score_for(Some(attention), Some(label), unread, pending, activity),
+            expected,
+            "{attention}/{label} unread={unread} pending={pending} activity={activity}"
+        );
+    }
+    // An agent nobody has said anything about ranks nothing, and so does one
+    // with no attention word at all.
+    assert_eq!(attention_score_for(None, None, 0, 0, 0), 0);
+    // Urgency beats volume: a single question outranks any number of unreads.
+    assert!(
+        attention_score_for(Some("needs_input"), None, 0, 0, 0)
+            > attention_score_for(Some("none"), None, 99, 99, 99)
     );
 }

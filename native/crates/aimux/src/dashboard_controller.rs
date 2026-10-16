@@ -3692,18 +3692,20 @@ fn is_overseer_session(session: &DashboardSession) -> bool {
     is_dashboard_overseer_session(session)
 }
 
+/// What the project service published, not a second opinion.
+///
+/// This used to be a copy of the service's ladder with the
+/// `pendingDeliveryCount` term missing, so an agent with undelivered messages
+/// ranked 0 here and 2 there -- and `u`, which exists to jump to the next
+/// agent that needs the user, walked straight past it. The service decides
+/// this in `session_semantics::attention_score_for`; a row with no semantic
+/// has published nothing to read.
 fn attention_score(session: &DashboardSession) -> usize {
-    let Some(semantic) = session.semantic.as_ref() else {
-        return 0;
-    };
-    match semantic.user.attention.as_str() {
-        "error" => 5,
-        "needs_input" | "needs_response" => 4,
-        "blocked" => 3,
-        _ if semantic.notifications.unread_count > 0 => 2,
-        _ if semantic.activity_new_count > 0 || semantic.user.label == "done" => 1,
-        _ => 0,
-    }
+    session
+        .semantic
+        .as_ref()
+        .map(|semantic| semantic.presentation.attention_score)
+        .unwrap_or(0)
 }
 
 pub fn is_teammate_session(session: &DashboardSession) -> bool {

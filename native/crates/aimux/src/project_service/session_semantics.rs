@@ -312,24 +312,49 @@ fn status_label_for(label: &str) -> &str {
     }
 }
 
+/// How much an agent needs the user, as one number.
+///
+/// This is the only place it is decided. Three copies of this ladder had
+/// drifted: the TUI's own version in `dashboard_controller` omitted the
+/// `pending_delivery_count` term, so an agent with undelivered messages
+/// ranked 0 there and 2 here -- and `u`, which jumps to the next agent
+/// needing attention, skipped it. `tmux_control`'s version had neither the
+/// unread nor the activity term.
+///
+/// Public so a test fixture can build a row the service could actually emit.
+/// `dashboard_controller`'s fixture used to hardcode a score of 0 beside an
+/// attention of `blocked`, which this function cannot produce, and every
+/// attention test in that file passed against it.
+pub fn attention_score_for(
+    attention: Option<&str>,
+    label: Option<&str>,
+    unread_count: i64,
+    pending_delivery_count: i64,
+    activity_new_count: i64,
+) -> i64 {
+    match attention {
+        Some("error") => 5,
+        Some("needs_input" | "needs_response") => 4,
+        Some("blocked") => 3,
+        _ if unread_count > 0 || pending_delivery_count > 0 => 2,
+        _ if activity_new_count > 0 || label == Some("done") => 1,
+        _ => 0,
+    }
+}
+
 fn attention_score(
     user: &Value,
     notifications: &Value,
     activity_new_count: i64,
     pending_delivery_count: i64,
 ) -> i64 {
-    match user.get("attention").and_then(Value::as_str) {
-        Some("error") => 5,
-        Some("needs_input" | "needs_response") => 4,
-        Some("blocked") => 3,
-        _ if integer_field(notifications, "unreadCount") > 0 || pending_delivery_count > 0 => 2,
-        _ if activity_new_count > 0
-            || user.get("label").and_then(Value::as_str) == Some("done") =>
-        {
-            1
-        }
-        _ => 0,
-    }
+    attention_score_for(
+        user.get("attention").and_then(Value::as_str),
+        user.get("label").and_then(Value::as_str),
+        integer_field(notifications, "unreadCount"),
+        pending_delivery_count,
+        activity_new_count,
+    )
 }
 
 struct CompactHintInput<'a> {
