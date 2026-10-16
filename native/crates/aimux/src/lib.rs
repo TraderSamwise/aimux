@@ -103,6 +103,8 @@ pub mod recording_cleanup;
 pub mod release_version_contract;
 #[cfg(feature = "remote-control")]
 pub mod remote;
+pub mod remote_cli_vocabulary;
+pub mod remote_control_edge;
 pub mod repair_events;
 pub mod request_actor;
 pub mod root_session_launch;

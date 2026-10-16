@@ -113,12 +113,16 @@ pub trait CoreCliRuntime {
     fn load_daemon_info(&self) -> Option<AimuxDaemonInfo>;
     fn load_daemon_state(&self) -> DaemonState;
     fn loop_actor_context(&self) -> CoreLoopActorContext;
-    #[cfg(feature = "remote-control")]
+    /// Whether this machine holds remote credentials.
+    ///
+    /// Ungated, and answered by the edge: a local build has none, which is a
+    /// real answer rather than a method that does not exist.
     fn has_remote_credentials(&self) -> bool;
-    #[cfg(feature = "remote-control")]
+    /// Carry out a remote action. The signature is local on both sides --
+    /// `RemoteCliAction` is plain data -- so the edge can answer either way.
     fn run_remote_cli_action(
         &mut self,
-        action: crate::remote::cli::RemoteCliAction,
+        action: crate::remote_cli_vocabulary::RemoteCliAction,
         output_mode: CoreCliOutputMode,
     ) -> Result<CoreCliExecution, String>;
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String>;
@@ -250,19 +254,16 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         CoreLoopActorContext::from_env()
     }
 
-    #[cfg(feature = "remote-control")]
     fn has_remote_credentials(&self) -> bool {
-        let resolver = PathResolver::from_env();
-        crate::remote::remote_credentials::load_credentials(&resolver).is_some()
+        crate::remote_control_edge::has_remote_credentials()
     }
 
-    #[cfg(feature = "remote-control")]
     fn run_remote_cli_action(
         &mut self,
-        action: crate::remote::cli::RemoteCliAction,
+        action: crate::remote_cli_vocabulary::RemoteCliAction,
         output_mode: CoreCliOutputMode,
     ) -> Result<CoreCliExecution, String> {
-        crate::remote::cli::run_remote_cli_action(action, output_mode, self)
+        crate::remote_control_edge::run_remote_cli_action(action, output_mode, self)
     }
 
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
@@ -1008,7 +1009,7 @@ fn plan_core_cli<R: CoreCliRuntime>(
         current_working_dir,
         current_project_root,
         daemon_running: runtime.load_daemon_info().is_some(),
-        has_credentials: core_cli_has_remote_credentials(runtime),
+        has_credentials: runtime.has_remote_credentials(),
         loop_actor: runtime.loop_actor_context(),
     };
     let mut plan = match classify_core_cli_with_project_resolver(raw_args, &context, |project| {
@@ -1920,16 +1921,6 @@ mod job_stream_tests {
     }
 }
 
-#[cfg(feature = "remote-control")]
-fn core_cli_has_remote_credentials(runtime: &(impl CoreCliRuntime + ?Sized)) -> bool {
-    runtime.has_remote_credentials()
-}
-
-#[cfg(not(feature = "remote-control"))]
-fn core_cli_has_remote_credentials(_runtime: &impl CoreCliRuntime) -> bool {
-    false
-}
-
 fn scope_bare_restart_to_current_project(
     plan: &mut crate::core_cli::CoreCliPlan,
     context: &CoreCliContext,
@@ -2108,7 +2099,6 @@ where
             session_id,
         } => run_agent_identity(output_mode, &project_root, &session_id, runtime),
         CoreCliAction::Compact { project_root } => run_compact(&project_root),
-        #[cfg(feature = "remote-control")]
         CoreCliAction::Remote(action) => runtime.run_remote_cli_action(action, output_mode),
         CoreCliAction::RestartControlPlane {
             project_root,
