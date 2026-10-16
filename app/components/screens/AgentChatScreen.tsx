@@ -2352,7 +2352,7 @@ export default function ChatScreen() {
                           </Text>
                         </View>
                         <View className="flex-row items-center gap-1.5" style={{ minWidth: 0 }}>
-                          {session ? (
+                          {session && !isSharedConversation ? (
                             <View className="flex-shrink-0">
                               <RuntimeBrandMark agent={session} />
                             </View>
@@ -2455,7 +2455,7 @@ export default function ChatScreen() {
                         </Text>
                       </View>
                       <View className="flex-row items-center gap-1.5" style={{ minWidth: 0 }}>
-                        {session ? (
+                        {session && !isSharedConversation ? (
                           <View className="flex-shrink-0">
                             <RuntimeBrandMark agent={session} />
                           </View>

@@ -24,6 +24,7 @@ const screenSource = readFileSync(
 describe("the chat header says which tool", () => {
   it("marks both header layouts, not just one", () => {
     const uses = screenSource.split("<RuntimeBrandMark agent={session} />").length - 1;
+    expect(uses).toBe(2);
     const subtitles = screenSource.split("{sessionSubtitle}").length - 1;
     expect(subtitles, "the header still renders two layouts").toBe(2);
     expect(uses, "each layout carries the mark").toBe(subtitles);
@@ -57,6 +58,17 @@ describe("the chat header says which tool", () => {
     expect(screenSource, "the accent rule still carries only the worktree tone").toMatch(
       /style=\{\{ width: 3, backgroundColor: headerTone \}\}/,
     );
+  });
+
+  it("says nothing about a shared chat, because it knows nothing", () => {
+    // `sessionFromActiveShare` fills `toolConfigKey: "shared"`: the receiver
+    // is told the owner's session id and project, never which runtime is
+    // behind it. "Agent" would read as a classification where there is none,
+    // so the mark is absent -- the same reason an unreadable value is not
+    // reported as an empty one.
+    const marks = screenSource.split("<RuntimeBrandMark agent={session} />").length - 1;
+    const gated = screenSource.split("session && !isSharedConversation ? (").length - 1;
+    expect(gated, "every mark is behind the ownership check").toBe(marks);
   });
 
   it("asks the agent, not the route, which tool it is", () => {
