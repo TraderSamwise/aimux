@@ -354,6 +354,91 @@ fn a_control_session_stranded_at_needs_input_is_cleared() {
     assert_eq!(deps.settled, vec!["a".to_owned()]);
 }
 
+/// `needs_input` was not the only attention that strands a control session.
+///
+/// Every one of these latches: `task_failed` and an error-toned `notify` or
+/// `status` set `error`, `blocked` sets `blocked`, and nothing on an overseer
+/// or a scribe ever clears them, because the clearing event is a person
+/// replying and nobody reads these. A scribe whose last event was error-toned
+/// was deadlocked exactly like the fifteen-hour one above.
+#[test]
+fn a_control_session_stranded_at_any_latching_attention_is_cleared() {
+    for attention in ["error", "blocked"] {
+        let mut reconciler = TranscriptReconciler::new();
+        let mut deps = TestDeps {
+            probe_result: complete(),
+            ..Default::default()
+        };
+        let sessions = [control_session("claude")];
+        let metadata = metadata(
+            json!({ "activity": "waiting", "attention": attention }),
+            json!({}),
+        );
+
+        reconciler.scan(&sessions, &metadata, &mut deps);
+        assert!(
+            deps.cleared.is_empty(),
+            "{attention}: not on the first tick"
+        );
+        reconciler.scan(&sessions, &metadata, &mut deps);
+        assert_eq!(deps.cleared, vec!["a".to_owned()], "{attention}");
+        assert_eq!(deps.settled, vec!["a".to_owned()], "{attention}");
+    }
+}
+
+/// A control session waiting on a LIVE request is not stranded.
+///
+/// `needs_response` is Part B's, and Part B asks the interaction registry
+/// first. Sweeping it into Part C's set would clear a question somebody is
+/// actually waiting to answer -- on a control session, where the request is
+/// how another agent talks to it.
+#[test]
+fn a_control_session_with_a_live_request_keeps_its_attention() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        pending_interaction: true,
+        ..Default::default()
+    };
+    let sessions = [control_session("claude")];
+    let metadata = metadata(
+        json!({ "activity": "waiting", "attention": "needs_response" }),
+        json!({}),
+    );
+
+    for _ in 0..3 {
+        reconciler.scan(&sessions, &metadata, &mut deps);
+    }
+    assert!(
+        deps.cleared.is_empty(),
+        "the request is still registered, so the question stands"
+    );
+    assert!(deps.settled.is_empty());
+}
+
+/// An ordinary agent keeps its error, because a person reads it.
+///
+/// Part C is for the sessions nobody reads. Clearing a coder's error would
+/// take a real failure off the row the user was going to look at.
+#[test]
+fn an_ordinary_agent_keeps_a_latching_attention() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_result: complete(),
+        ..Default::default()
+    };
+    let sessions = [session("claude")];
+    let metadata = metadata(
+        json!({ "activity": "waiting", "attention": "error" }),
+        json!({}),
+    );
+
+    reconciler.scan(&sessions, &metadata, &mut deps);
+    reconciler.scan(&sessions, &metadata, &mut deps);
+    assert!(deps.cleared.is_empty(), "the user's own error stays put");
+    assert!(deps.settled.is_empty());
+}
+
 /// Clearing the attention alone would not have been enough.
 ///
 /// `scribe_readiness` is an AND of two fields, and a stranded scribe fails

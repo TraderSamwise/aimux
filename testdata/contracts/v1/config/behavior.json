@@ -6,11 +6,11 @@
   "cases": [
     {
       "id": "config-behavior-001",
-      "name": "leaves automatic scribe creation disabled by default",
+      "name": "gives a project a scribe by default",
       "source": "src/config.test.ts",
       "api": "loadConfig",
       "input": { "includeGlobal": false, "select": ["scribe"] },
-      "output": { "defaultAgent": null },
+      "output": { "defaultAgent": "claude" },
       "inputSha256": "5b3f8c4b8ce6e64606cbc99c1bf7d1c6cd579892279325573adc5f88639e2cd0"
     },
     {

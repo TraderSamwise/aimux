@@ -30,10 +30,14 @@ worktrees/
 ";
 const ROOT_GITIGNORE_AIMUX_BLOCK: &str = "# Aimux local runtime state\n.aimux/\n";
 
+/// The tool a project reaches for when nothing names one -- for its agents and
+/// for its scribe, which is the same answer.
+const DEFAULT_TOOL: &str = "claude";
+
 /// Return a fresh JSON representation of the TypeScript `DEFAULT_CONFIG`.
 pub fn default_config() -> Value {
     json!({
-        "defaultTool": "claude",
+        "defaultTool": DEFAULT_TOOL,
         "contextMaxEntries": 20,
         "liveWindowSize": 20,
         "compactEveryNTurns": 50,
@@ -112,7 +116,11 @@ pub fn default_config() -> Value {
             "scanEveryTicks": 8
         },
         "scribe": {
-            "defaultAgent": null
+            // Opt OUT: a project has a scribe unless its config says
+            // `null`/`false`, which `normalize_scribe` keeps meaning off. The
+            // tool is the project's default tool rather than a second literal,
+            // because "which agent" has one answer.
+            "defaultAgent": DEFAULT_TOOL
         },
         "tools": {
             "claude": {
@@ -197,7 +205,48 @@ pub fn merge_config_layers(global: Option<&Value>, project: Option<&Value>) -> V
         }
         config = deep_merge(&config, &project);
     }
+    follow_default_tool_for_scribe(&mut config, global, project);
     normalize_config(config)
+}
+
+/// A project that runs codex gets a codex scribe.
+///
+/// The stored default has to be a concrete tool -- the config contract is a
+/// value, not a rule -- so the default scribe agent is the same literal as
+/// `defaultTool`. That is only right while a project keeps the default tool.
+/// A project whose `defaultTool` is codex would otherwise get a claude scribe
+/// it may not even have installed, and a warning about it on every start.
+///
+/// Decided here rather than in `normalize_scribe` because only this function
+/// can tell the difference that matters: whether a layer actually named a
+/// scribe agent, or whether the value in hand is the default being carried
+/// through.
+fn follow_default_tool_for_scribe(
+    config: &mut Value,
+    global: Option<&Value>,
+    project: Option<&Value>,
+) {
+    let named_a_scribe = |layer: Option<&Value>| {
+        layer
+            .and_then(|layer| layer.get("scribe"))
+            .and_then(|scribe| scribe.get("defaultAgent"))
+            .is_some()
+    };
+    if named_a_scribe(global) || named_a_scribe(project) {
+        return;
+    }
+    let Some(default_tool) = config
+        .get("defaultTool")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|tool| !tool.is_empty())
+        .map(ToOwned::to_owned)
+    else {
+        return;
+    };
+    if let Some(scribe) = config.get_mut("scribe").and_then(Value::as_object_mut) {
+        scribe.insert("defaultAgent".into(), Value::String(default_tool));
+    }
 }
 
 pub fn load_config_for_project(project_root: impl AsRef<Path>) -> Value {

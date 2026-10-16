@@ -1341,10 +1341,102 @@ fn agent_spawn_without_role_keeps_worktree_coder_default() {
     cleanup(project);
 }
 
+/// A project-relative tool resolves against the project, not PATH.
+///
+/// `node_modules/.bin/claude` is a real way to point at a tool, and it is not
+/// a PATH lookup: searching PATH for it refuses a scribe whose program the
+/// spawn would have found.
+#[test]
+fn a_default_scribe_tool_inside_the_project_is_found() {
+    let project = temp_project("default-scribe-relative-program");
+    let state_dir = project.join("state");
+    fs::create_dir_all(&state_dir).unwrap();
+    let bin = project.join("node_modules").join(".bin");
+    fs::create_dir_all(&bin).unwrap();
+    let program = bin.join("mock");
+    fs::write(&program, "#!/bin/sh\nexit 0\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let aimux_dir = project.join(".aimux");
+    fs::create_dir_all(&aimux_dir).unwrap();
+    fs::write(
+        aimux_dir.join("config.json"),
+        serde_json::to_string_pretty(&json!({
+            "scribe": { "defaultAgent": "mock" },
+            "tools": { "mock": { "command": "node_modules/.bin/mock", "enabled": true } }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = ensure_default_scribe_agent(&context, &mut runtime);
+
+    assert_eq!(
+        response["created"], true,
+        "the program is there, so the scribe is made: {response}"
+    );
+    cleanup(project);
+}
+
+/// No window for a program that is not installed.
+///
+/// A scribe is attempted on every project-service start now, so a machine
+/// without the tool would otherwise collect one dead supervisor window per
+/// start -- a real tmux window, with a preamble and a plan file behind it, and
+/// nothing in it.
+#[test]
+fn a_default_scribe_is_not_launched_for_a_program_that_is_not_there() {
+    let project = temp_project("default-scribe-missing-program");
+    let state_dir = project.join("state");
+    fs::create_dir_all(&state_dir).unwrap();
+    let aimux_dir = project.join(".aimux");
+    fs::create_dir_all(&aimux_dir).unwrap();
+    fs::write(
+        aimux_dir.join("config.json"),
+        serde_json::to_string_pretty(&json!({
+            "scribe": { "defaultAgent": "mock" },
+            "tools": {
+                "mock": {
+                    "command": project.join("not-installed").to_string_lossy(),
+                    "enabled": true
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = ensure_default_scribe_agent(&context, &mut runtime);
+
+    assert_eq!(response["created"], false);
+    assert_eq!(
+        response["reason"], "program-not-found",
+        "named, so the warning says what to install"
+    );
+    assert!(
+        response["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty()),
+        "and carries what was looked for: {response}"
+    );
+    assert!(
+        runtime.created.is_empty(),
+        "and no window was opened for it"
+    );
+    cleanup(project);
+}
+
 #[test]
 fn default_scribe_startup_launches_configured_agent_and_marks_project_control() {
     let project = temp_project("default-scribe-create");
-    write_project_scribe_config(&project);
+    let command = write_project_scribe_config(&project);
     let state_dir = project.join("state");
     fs::create_dir_all(&state_dir).unwrap();
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
@@ -1356,7 +1448,7 @@ fn default_scribe_startup_launches_configured_agent_and_marks_project_control() 
     assert_eq!(response["sessionId"], "mock-scribe");
     assert_eq!(response["toolConfigKey"], "mock");
     assert_eq!(runtime.created.len(), 1);
-    assert_eq!(runtime.created[0].name, "/bin/mock");
+    assert_eq!(runtime.created[0].name, command.to_string_lossy());
     assert_eq!(runtime.created[0].cwd, project.to_string_lossy());
     assert!(runtime.created[0].detached);
     for expected in [
@@ -1396,7 +1488,7 @@ fn default_scribe_startup_launches_configured_agent_and_marks_project_control() 
 #[test]
 fn default_scribe_startup_keeps_existing_live_scribe_without_duplicate_window() {
     let project = temp_project("default-scribe-existing");
-    write_project_scribe_config(&project);
+    let _command = write_project_scribe_config(&project);
     let state_dir = project.join("state");
     write_agent_resume_topology(
         &state_dir,
@@ -1430,7 +1522,7 @@ fn default_scribe_startup_keeps_existing_live_scribe_without_duplicate_window() 
 #[test]
 fn default_scribe_startup_blocks_when_topology_is_unreadable() {
     let project = temp_project("default-scribe-unreadable-topology");
-    write_project_scribe_config(&project);
+    let _command = write_project_scribe_config(&project);
     let state_dir = project.join("state");
     fs::create_dir_all(&state_dir).unwrap();
     fs::write(runtime_topology_path(&state_dir), "not: [valid").unwrap();
@@ -6586,9 +6678,23 @@ fn write_project_tool_config(project: &Path) {
     .unwrap();
 }
 
-fn write_project_scribe_config(project: &Path) {
+/// A project whose scribe tool is a real executable.
+///
+/// Real because the launcher refuses to open a window for a program that is
+/// not there -- a scribe is attempted on every project-service start now, and
+/// a machine without the tool would otherwise collect one dead supervisor
+/// window per start. A stub named `mock` keeps the derived `mock-scribe`
+/// session id these tests assert on.
+fn write_project_scribe_config(project: &Path) -> std::path::PathBuf {
     let aimux_dir = project.join(".aimux");
     std::fs::create_dir_all(&aimux_dir).unwrap();
+    let command = project.join("mock");
+    std::fs::write(&command, "#!/bin/sh\nexit 0\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     std::fs::write(
         aimux_dir.join("config.json"),
         serde_json::to_string_pretty(&json!({
@@ -6601,7 +6707,7 @@ fn write_project_scribe_config(project: &Path) {
             },
             "tools": {
                 "mock": {
-                    "command": "/bin/mock",
+                    "command": command.to_string_lossy(),
                     "args": ["--base"],
                     "defaultEnv": { "AIMUX_TOOL_DEFAULT": "1" },
                     "enabled": true,
@@ -6612,6 +6718,7 @@ fn write_project_scribe_config(project: &Path) {
         .unwrap(),
     )
     .unwrap();
+    command
 }
 
 /// The worktree group as a client actually receives it, built from a topology.

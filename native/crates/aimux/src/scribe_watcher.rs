@@ -9,6 +9,20 @@ use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// The statuses a session can be briefed in.
+///
+/// One answer, two callers: the task filters the topology with it before the
+/// watcher sees anything, and `find_scribe_session_id` applies it again
+/// because the watcher is also driven directly. Spelling it twice is how the
+/// two come to disagree about which scribe exists.
+///
+/// Deliberately narrower than the creation guard's list in
+/// `project_service/lifecycle/default_scribe.rs`, which also accepts `planned`
+/// and a session with no status at all: that one answers "is a scribe already
+/// on its way, so do not make a second", and this one answers "can this scribe
+/// be talked to now".
+pub const SCRIBE_BRIEFABLE_STATUSES: &[&str] = &["starting", "running", "idle"];
+
 const SCRIBE_WATCHER_COOLDOWN_MS: i64 = 60_000;
 const SCRIBE_WATCHER_MAX_CANDIDATES: usize = 4;
 const SCRIBE_WATCHER_MAX_SCAN_CANDIDATES: usize = 50;
@@ -356,20 +370,63 @@ pub fn scribe_readiness(input: &Value, scribe_id: Option<&str>) -> bool {
     attention == "normal"
 }
 
+/// The scribe this project has, if it still has one.
+///
+/// Two things this is careful about, each of which silenced a scribe:
+///
+/// - **It asks the project's own predicate.** Reading `meta.scribe` directly
+///   missed the flagless form the topology deliberately keeps -- a session
+///   whose role lives in `role` or `team.role` -- so a scribe that showed in
+///   the dashboard was never briefed. `team_contract::is_scribe_session` is
+///   the one answer, and it also honours a `projectControl: false` demotion.
+/// - **It requires the session to still be there.** An ordinary kill leaves the
+///   metadata flag behind, and the first flag in map order won whatever state
+///   it was in, so one dead `claude-scribe` silenced a live `codex-scribe`.
+///
+/// A flag with no live session is `None`, not that session: the watcher then
+/// reads as having no scribe, which is true, instead of waiting on a corpse.
 pub fn find_scribe_session_id(input: &Value) -> Option<String> {
-    input
+    let sessions = array_field(input, "sessions").to_vec();
+    let metadata = input
         .get("metadata")
         .and_then(|metadata| metadata.get("sessions"))
         .and_then(Value::as_object)
         .cloned()
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let live = |id: &str| {
+        sessions
+            .iter()
+            .find(|session| str_field(session, "id") == id)
+            .filter(|session| {
+                SCRIBE_BRIEFABLE_STATUSES
+                    .contains(&optional_str(session, "status").unwrap_or("running"))
+            })
+    };
+    let mut found = metadata
         .iter()
-        .find_map(|(id, meta)| {
-            meta.get("scribe")
-                .and_then(Value::as_bool)
-                .filter(|scribe| *scribe)
-                .map(|_| id.clone())
+        .filter_map(|(id, meta)| {
+            let session = live(id)?;
+            let mut probe = session.as_object().cloned().unwrap_or_default();
+            // Both places a legacy role can live, which is the list the
+            // transcript reconciler's own probe carries. Forgetting one is
+            // silent: the session reads as having no role at all.
+            for key in ["role", "team"] {
+                if let Some(value) = meta.get(key) {
+                    probe.entry(key.to_owned()).or_insert(value.clone());
+                }
+            }
+            let merged = crate::team_contract::session_with_stored_control_flags(
+                &Value::Object(probe),
+                Some(meta),
+            );
+            crate::team_contract::is_scribe_session(Some(&merged)).then(|| id.clone())
         })
+        .collect::<Vec<_>>();
+    // Sorted rather than left in map order: this map preserves insertion
+    // order, so a project with two live scribes would brief whichever one the
+    // topology happened to write first, and that can change between ticks.
+    found.sort();
+    found.into_iter().next()
 }
 
 /// Node merged the metadata flags over the topology session before asking

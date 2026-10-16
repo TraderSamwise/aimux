@@ -114,13 +114,25 @@ only when its config has `resumeArgs` containing `{sessionId}` and
 still be launched, but Aimux warns at spawn time and labels the session with the
 restore-blocked reason if it is offline after a restart.
 
-Automatic project scribes are disabled by default. To create one whenever a
-project service starts, set a default scribe tool:
+Every project gets a scribe. A project service creates one at startup using the
+project's `defaultTool`, so a project that runs codex gets a codex scribe, and
+it is not created if that tool is unknown, disabled, or not installed -- the
+project log says which. To pin a different tool for it:
 
 ```json
 {
   "scribe": {
-    "defaultAgent": "claude"
+    "defaultAgent": "codex"
+  }
+}
+```
+
+To turn it off, for a project or globally:
+
+```json
+{
+  "scribe": {
+    "defaultAgent": false
   }
 }
 ```
@@ -141,8 +153,8 @@ model or generation flags stay owned by the underlying tool:
 }
 ```
 
-Set `"defaultAgent": null` in a project config to disable a global default for
-that project.
+Set `"defaultAgent": null` or `false` in a project config to turn the scribe
+off for that project.
 
 ## Remote Access And Sharing
 
