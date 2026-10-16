@@ -448,3 +448,59 @@ fn toggling_offline_agents_keeps_the_agent_the_pointer_is_on() {
         "the header must account for the one agent that was hidden: {painted}"
     );
 }
+
+/// A key pressed before the loop can act on it must not be thrown away.
+///
+/// Two passes used to read a key and drop it with the pass: one before the
+/// first frame was painted, and one with no snapshot in hand. Over a link with
+/// real latency those passes are most of the first second, which is Sam's
+/// "on strix over mosh I have to hit the key many many times to get it to
+/// register" -- and why typing into an agent is unaffected, since that is tmux
+/// passthrough rather than this loop.
+///
+/// `ToggleOfflineAgents` is the key because its effect is countable: it changes
+/// what the dashboard asks for, so a handled one costs a second load and a
+/// dropped one costs nothing. The existing tests all press on the SECOND pass
+/// for exactly this reason -- one of them says so.
+#[test]
+fn a_key_pressed_before_the_first_frame_is_still_acted_on() {
+    let driven = drive(vec![
+        // Pass one: nothing painted yet, no snapshot in hand. The key cannot be
+        // dispatched here, and must not be lost here either.
+        (0, vec![DashboardKey::ToggleOfflineAgents]),
+        // Pass two: a frame is up and a snapshot is in hand.
+        (NO_EXTRA_IDLE, vec![]),
+    ]);
+
+    assert_eq!(
+        driven.loads, 2,
+        "the key read before the first frame was dropped, so the dashboard never \
+         reloaded for it"
+    );
+}
+
+/// And a burst pressed into that window is still one burst, not a replay.
+///
+/// Held keys go through the same coalescing a fast typist's single read gets,
+/// so three presses while the loop was getting ready do not become three
+/// round trips.
+#[test]
+fn a_burst_pressed_before_the_first_frame_is_coalesced() {
+    let driven = drive(vec![
+        (
+            0,
+            vec![DashboardKey::Down, DashboardKey::Down, DashboardKey::Down],
+        ),
+        (NO_EXTRA_IDLE, vec![]),
+    ]);
+
+    assert_eq!(
+        driven.loads, 1,
+        "a held burst of pointer moves must repaint from the snapshot in hand, \
+         not fetch one each"
+    );
+    assert!(
+        driven.frames >= 1,
+        "and the burst still produces a frame once the loop is ready"
+    );
+}
