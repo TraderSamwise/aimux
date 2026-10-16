@@ -30,7 +30,7 @@ const FAR_SIDE = ["remote"];
 // It started at 72. It counts both spellings: a
 // `cfg(not(feature = ..))` branch is a second implementation compiled into the
 // local build, which a reviewer has to read for exactly the same reason.
-const BUDGET = 40;
+const BUDGET = 3;
 
 function sourceFiles(dir) {
   const found = [];

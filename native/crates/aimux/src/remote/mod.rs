@@ -1,6 +1,7 @@
 pub mod attachment_upload;
 pub mod cli;
 pub mod core_cli_runtime;
+pub mod daemon_auth_runtime;
 pub mod daemon_auth_text;
 pub mod daemon_relay;
 pub mod hosted_audit;
