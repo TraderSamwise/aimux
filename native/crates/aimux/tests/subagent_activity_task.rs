@@ -1,14 +1,8 @@
 //! The sub-agent scan, driven against real files.
 //!
 //! The entry shapes here are the real ones, read off this machine: a
-//! `.meta.json` carrying `agentType` / `description` / `model`, a transcript
-//! whose last assistant entry stops on `tool_use` while it works and on
-//! `end_turn` when it is done.
-//!
-//! The clock is a parameter rather than the filesystem's, so staleness is
-//! driven by moving `now` instead of back-dating a file.
 
-use std::collections::HashSet;
+use aimux::project_service::subagent_activity_task::ClaudeSubagentCache;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -84,7 +78,7 @@ fn just_after(dir: &Path, key: &str) -> u64 {
 fn a_working_subagent_is_found_with_what_it_was_asked_to_do() {
     let dir = temp_dir("working");
     write_subagent(&dir, "agent-aee1cddaa7c9690af", WORKING, Some(META));
-    let mut terminal = HashSet::new();
+    let mut terminal = ClaudeSubagentCache::default();
     let runs = read(scan_subagents_dir(
         &dir,
         just_after(&dir, "agent-aee1cddaa7c9690af"),
@@ -104,10 +98,10 @@ fn a_working_subagent_is_found_with_what_it_was_asked_to_do() {
 }
 
 #[test]
-fn a_finished_subagent_is_not_working_and_is_never_read_again() {
+fn a_finished_subagent_reappears_when_its_transcript_changes() {
     let dir = temp_dir("finished");
     write_subagent(&dir, "agent-done", FINISHED, Some(META));
-    let mut terminal = HashSet::new();
+    let mut terminal = ClaudeSubagentCache::default();
     let runs = read(scan_subagents_dir(
         &dir,
         just_after(&dir, "agent-done"),
@@ -130,10 +124,7 @@ fn a_finished_subagent_is_not_working_and_is_never_read_again() {
         &mut terminal,
         &budget(),
     ));
-    assert!(
-        runs.is_empty(),
-        "a key seen finished is not read again this process"
-    );
+    assert_eq!(runs.len(), 1, "SendMessage resumes the same sub-agent ID");
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -141,7 +132,7 @@ fn a_finished_subagent_is_not_working_and_is_never_read_again() {
 fn a_transcript_that_went_quiet_is_not_working_and_is_not_cached() {
     let dir = temp_dir("quiet");
     write_subagent(&dir, "agent-killed", WORKING, Some(META));
-    let mut terminal = HashSet::new();
+    let mut terminal = ClaudeSubagentCache::default();
     let quiet = modified_ms(&dir.join("agent-killed.jsonl")) + SUBAGENT_STALE_AFTER_MS;
     let runs = read(scan_subagents_dir(&dir, quiet, &mut terminal, &budget()));
     assert!(
@@ -171,7 +162,7 @@ fn only_a_subagent_transcript_is_counted() {
     write_subagent(&dir, "agent-real", WORKING, Some(META));
     fs::write(dir.join("rollout-2026.jsonl"), WORKING).expect("write stray");
     fs::write(dir.join("notes.txt"), "hello").expect("write stray");
-    let mut terminal = HashSet::new();
+    let mut terminal = ClaudeSubagentCache::default();
     let runs = read(scan_subagents_dir(
         &dir,
         just_after(&dir, "agent-real"),
@@ -190,7 +181,7 @@ fn a_missing_directory_is_no_subagents_rather_than_no_answer() {
     // none, and that has to take the label off the row.
     let dir = temp_dir("missing");
     let absent = dir.join("subagents");
-    let mut terminal = HashSet::new();
+    let mut terminal = ClaudeSubagentCache::default();
     assert_eq!(
         scan_subagents_dir(&absent, 0, &mut terminal, &budget()),
         ScanOutcome::Read(Vec::new())
@@ -203,7 +194,7 @@ fn a_scan_that_runs_out_of_budget_publishes_nothing_rather_than_a_short_list() {
     let dir = temp_dir("budget");
     write_subagent(&dir, "agent-one", WORKING, Some(META));
     write_subagent(&dir, "agent-two", WORKING, Some(META));
-    let mut terminal = HashSet::new();
+    let mut terminal = ClaudeSubagentCache::default();
     // Zero allowance is spent before the first entry, so the whole scan is the
     // one that did not happen -- a half-read directory published as the answer
     // would take working sub-agents off the row.
@@ -220,7 +211,7 @@ fn a_scan_that_runs_out_of_budget_publishes_nothing_rather_than_a_short_list() {
 fn a_subagent_without_a_meta_file_is_still_reported() {
     let dir = temp_dir("nometa");
     write_subagent(&dir, "agent-bare", WORKING, None);
-    let mut terminal = HashSet::new();
+    let mut terminal = ClaudeSubagentCache::default();
     let runs = read(scan_subagents_dir(
         &dir,
         just_after(&dir, "agent-bare"),
@@ -239,7 +230,7 @@ fn a_subagent_without_a_meta_file_is_still_reported() {
 fn a_transcript_that_cannot_be_probed_is_not_an_answer_about_it() {
     let dir = temp_dir("unreadable");
     write_subagent(&dir, "agent-gone", WORKING, Some(META));
-    let mut terminal = HashSet::new();
+    let mut terminal = ClaudeSubagentCache::default();
     let now = just_after(&dir, "agent-gone");
     // A directory in place of the transcript: stat-able, inside the window,
     // and unreadable. Collapsing that into "not working" undercounts the row,
@@ -262,7 +253,7 @@ fn the_launch_time_comes_from_the_meta_file_not_the_transcript() {
     fs::write(dir.join("agent-old.meta.json"), META).expect("write meta");
     std::thread::sleep(Duration::from_millis(30));
     fs::write(dir.join("agent-old.jsonl"), WORKING).expect("write transcript");
-    let mut terminal = HashSet::new();
+    let mut terminal = ClaudeSubagentCache::default();
     let runs = read(scan_subagents_dir(
         &dir,
         just_after(&dir, "agent-old"),
@@ -442,6 +433,70 @@ mod end_to_end {
             .expect("write metadata");
         }
 
+        /// A codex session, with its rollout named the way codex names one.
+        fn write_codex_topology(&self) {
+            let mut topology = empty_runtime_topology();
+            let root = self.0.to_string_lossy().into_owned();
+            let saved = save_runtime_topology_sessions(
+                &mut topology,
+                &[json!({
+                    "id": "s1",
+                    "status": "running",
+                    "toolConfigKey": "codex",
+                    "backendSessionId": "be-1",
+                    "worktreePath": root,
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                })],
+                &root,
+                "2026-01-01T00:00:00.000Z",
+            );
+            write_runtime_topology(runtime_topology_path(self.state_dir()), &saved)
+                .expect("write topology");
+            fs::write(
+                metadata_state_path(self.state_dir()),
+                serde_json::to_string(&json!({
+                    "version": 1,
+                    "sessions": {
+                        "s1": {
+                            "derived": { "activity": "running", "attention": "normal" },
+                            "context": {
+                                "backendSessionId": "be-1",
+                                "transcriptPath": self.rollout().to_string_lossy(),
+                            },
+                        }
+                    }
+                }))
+                .expect("encode metadata"),
+            )
+            .expect("write metadata");
+        }
+
+        fn rollout(&self) -> PathBuf {
+            self.0.join("rollout-2026-10-07T07-14-58-be-1.jsonl")
+        }
+
+        /// Appends rollout entries. No `timestamp` field, so the fold dates
+        /// them from the clock it was given -- which is this machine's, and is
+        /// what keeps the fixture from ageing out of the freshness window.
+        fn append_rollout(&self, lines: &[&str]) {
+            let mut text = fs::read_to_string(self.rollout()).unwrap_or_default();
+            for line in lines {
+                let entry: Value = serde_json::from_str(line).expect("fixture JSON");
+                let output = entry["payload"]["output"]
+                    .as_str()
+                    .and_then(|s| serde_json::from_str::<Value>(s).ok());
+                if output.as_ref().is_some_and(|o| o.get("agents").is_some()) {
+                    text.push_str(&json!({"type":"response_item","payload":{
+                        "type":"function_call","name":"list_agents","arguments":"{}","call_id":entry["payload"]["call_id"]
+                    }}).to_string());
+                    text.push('\n');
+                }
+                text.push_str(line);
+                text.push('\n');
+            }
+            fs::write(self.rollout(), text).expect("write rollout");
+        }
+
         /// A topology this session is simply not in -- removed, migrated,
         /// graveyarded -- as opposed to one where it is listed as stopped.
         fn write_topology_without_the_session(&self) {
@@ -595,7 +650,6 @@ mod end_to_end {
         // The session leaves the topology, and comes back resumed -- the same
         // id, a fresh set of sub-agents. The finished-key cache has to go with
         // it, or the new work is hidden behind the old answer for the life of
-        // the process.
         project.write_topology_without_the_session();
         tick(&project, &mut task);
         project.write_topology("running");
@@ -605,6 +659,54 @@ mod end_to_end {
             project.published().expect("published")["running"],
             1,
             "a forgotten session is scanned from scratch"
+        );
+    }
+
+    #[test]
+    fn a_codex_session_publishes_the_agents_it_spawned() {
+        const SPAWN: &str = r#"{"type":"response_item","payload":{"type":"function_call","name":"spawn_agent","arguments":"{\"task_name\":\"pr_security\"}","call_id":"call_1"}}"#;
+        const SPAWN_OUTPUT: &str = r#"{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"{\"task_name\":\"/root/pr_security\"}"}}"#;
+        const LIST_COMPLETED: &str = r#"{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_2","output":"{\"agents\":[{\"agent_name\":\"/root\",\"agent_status\":\"running\"},{\"agent_name\":\"/root/pr_security\",\"agent_status\":{\"completed\":\"done\"}}]}"}}"#;
+
+        const LIST_RUNNING: &str = r#"{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_3","output":"{\"agents\":[{\"agent_name\":\"/root\",\"agent_status\":\"running\"},{\"agent_name\":\"/root/pr_security\",\"agent_status\":\"running\"}]}"}}"#;
+
+        let project = TempProject::new("codex");
+        project.write_codex_topology();
+        // History, already on disk before the first look.
+        project.append_rollout(&[SPAWN, SPAWN_OUTPUT]);
+        let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+            project.root(),
+            project.state_dir(),
+        ));
+        let mut task = SubagentActivityTask::new(context);
+
+        // First sight takes the baseline at the end of the rollout and parses
+        // none of it: one here runs to hundreds of megabytes, and reading it
+        // on the tick thread is what this baseline exists to avoid.
+        tick(&project, &mut task);
+        assert_eq!(
+            project.published().expect("history is reconstructed")["running"],
+            1
+        );
+
+        // A subsequent listing confirms the reconstructed state: the next listing names
+        // everything that is working.
+        project.append_rollout(&[LIST_RUNNING]);
+        tick(&project, &mut task);
+        let published = project.published().expect("a summary is published");
+        assert_eq!(published["running"], 1);
+        assert_eq!(published["label"], "1 sub-agent");
+        assert_eq!(
+            published["items"][0]["name"], "pr_security",
+            "named from the listing, since the spawn was before the baseline"
+        );
+
+        project.append_rollout(&[LIST_COMPLETED]);
+        tick(&project, &mut task);
+        assert_eq!(
+            project.published(),
+            None,
+            "the completion report takes it off the row"
         );
     }
 
@@ -625,9 +727,6 @@ mod end_to_end {
         // The backend id goes away -- a session mid-rebind, or one whose id was
         // never recorded. The path is then unresolvable, and clearing on that
         // would flicker the label off a row whose sub-agents are still working.
-        // Both halves have to go: the topology carries one too, and the
-        // published summary is left in place because that is what is under
-        // test.
         project.forget_backend_session_id();
         tick(&project, &mut task);
         assert_eq!(
@@ -635,5 +734,155 @@ mod end_to_end {
             1,
             "could not look is not the same answer as nothing is working"
         );
+    }
+}
+
+/// Codex's sub-agents, folded out of a real rollout's entry shapes.
+///
+/// The lines here are the shapes read off a real rollout: `spawn_agent` as a
+mod codex {
+    use aimux::subagent_activity::{CodexSubagentScan, SUBAGENT_STALE_AFTER_MS};
+
+    const SPAWN: &str = r#"{"timestamp":"2026-10-07T07:14:58.370Z","type":"response_item","payload":{"type":"function_call","id":"fc_1","name":"spawn_agent","namespace":"collaboration","arguments":"{\"task_name\":\"hosted_audit\",\"message\":\"gAAAAA-encrypted\"}","call_id":"call_1"}}"#;
+    const SPAWN_OUTPUT: &str = r#"{"timestamp":"2026-10-07T07:14:58.470Z","type":"response_item","payload":{"type":"function_call_output","id":"fco_1","call_id":"call_1","output":"{\"task_name\":\"/root/hosted_audit\"}"}}"#;
+    const LIST_RUNNING: &str = r#"{"timestamp":"2026-10-07T07:20:00.000Z","type":"response_item","payload":{"type":"function_call_output","id":"fco_2","call_id":"call_2","output":"{\"agents\":[{\"agent_name\":\"/root\",\"agent_status\":\"running\"},{\"agent_name\":\"/root/hosted_audit\",\"agent_status\":\"running\"}]}"}}"#;
+    const LIST_COMPLETED: &str = r#"{"timestamp":"2026-10-07T07:30:00.000Z","type":"response_item","payload":{"type":"function_call_output","id":"fco_3","call_id":"call_3","output":"{\"agents\":[{\"agent_name\":\"/root\",\"agent_status\":\"running\"},{\"agent_name\":\"/root/hosted_audit\",\"agent_status\":{\"completed\":\"Fixed the theme leakage.\"}}]}"}}"#;
+    const WAIT_OUTPUT: &str = r#"{"timestamp":"2026-10-07T07:25:00.000Z","type":"response_item","payload":{"type":"function_call_output","id":"fco_4","call_id":"call_4","output":"{\"message\":\"Wait completed.\",\"timed_out\":false}"}}"#;
+
+    /// A minute after the newest entry the fixtures spawn or confirm with, so
+    /// freshness is about the fold rather than about today's date.
+    fn now() -> u64 {
+        aimux::visual_client_leases::parse_iso_millis("2026-10-07T07:21:00.000Z")
+            .expect("the fixture instant parses") as u64
+    }
+
+    fn scan(_rollout: &str) -> CodexSubagentScan {
+        CodexSubagentScan::default()
+    }
+
+    fn lines(entries: &[&str]) -> String {
+        let mut text = String::new();
+        for entry in entries {
+            let value: serde_json::Value = serde_json::from_str(entry).unwrap();
+            let payload = &value["payload"];
+            let output = payload["output"]
+                .as_str()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
+            if output.as_ref().is_some_and(|o| o.get("agents").is_some()) {
+                text.push_str(&serde_json::json!({"type":"response_item", "payload":{
+                    "type":"function_call", "name":"list_agents", "call_id":payload["call_id"], "arguments":"{}"
+                }}).to_string());
+                text.push('\n');
+            }
+            text.push_str(entry);
+            text.push('\n');
+        }
+        text
+    }
+
+    #[test]
+    fn a_spawned_agent_is_working_and_carries_the_name_it_was_given() {
+        let mut scan = scan("/rollout.jsonl");
+        let text = lines(&[SPAWN, SPAWN_OUTPUT]);
+        assert_eq!(
+            scan.fold(&text, now()),
+            text.len() as u64,
+            "every complete line is consumed"
+        );
+        let runs = scan.runs(now());
+        assert_eq!(runs.len(), 1);
+        // `/root/hosted_audit` is how codex addresses it; the name is what a
+        // person called it.
+        assert_eq!(runs[0].name, "hosted_audit");
+        assert_eq!(runs[0].key, "/root/hosted_audit");
+        assert_eq!(runs[0].kind, None, "codex has no agent type to report");
+    }
+
+    #[test]
+    fn the_parent_itself_is_not_one_of_its_sub_agents() {
+        let mut scan = scan("/rollout.jsonl");
+        // `list_agents` names the root beside its children, and counting it
+        // would put a chip on every codex session that ever listed them.
+        scan.fold(&lines(&[LIST_RUNNING]), now());
+        let runs = scan.runs(now());
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].key, "/root/hosted_audit");
+    }
+
+    #[test]
+    fn an_agent_reported_completed_stops_being_working() {
+        let mut scan = scan("/rollout.jsonl");
+        scan.fold(&lines(&[SPAWN, SPAWN_OUTPUT, LIST_RUNNING]), now());
+        assert_eq!(scan.runs(now()).len(), 1, "positive control");
+        scan.fold(&lines(&[LIST_COMPLETED]), now());
+        assert!(
+            scan.runs(now()).is_empty(),
+            "the report is how codex says it finished"
+        );
+    }
+
+    #[test]
+    fn an_agent_the_listing_no_longer_names_is_gone() {
+        let mut scan = scan("/rollout.jsonl");
+        scan.fold(&lines(&[SPAWN, SPAWN_OUTPUT]), now());
+        assert_eq!(scan.runs(now()).len(), 1, "positive control");
+        let only_root = r#"{"timestamp":"2026-10-07T07:40:00.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_9","output":"{\"agents\":[{\"agent_name\":\"/root\",\"agent_status\":\"running\"}]}"}}"#;
+        scan.fold(&lines(&[only_root]), now());
+        assert!(
+            scan.runs(now()).is_empty(),
+            "a killed agent leaves no completion report, only a listing without it"
+        );
+    }
+
+    #[test]
+    fn a_wait_says_nothing_about_which_agents_are_working() {
+        let mut scan = scan("/rollout.jsonl");
+        scan.fold(&lines(&[SPAWN, SPAWN_OUTPUT, WAIT_OUTPUT]), now());
+        assert_eq!(
+            scan.runs(now()).len(),
+            1,
+            "`Wait completed.` names nobody, so it retires nobody"
+        );
+    }
+
+    #[test]
+    fn a_spawn_nobody_followed_up_on_stops_being_reported() {
+        let mut scan = scan("/rollout.jsonl");
+        scan.fold(&lines(&[SPAWN, SPAWN_OUTPUT]), now());
+        let spawned_at = scan.runs(now())[0].updated_at_ms;
+        assert!(
+            scan.runs(spawned_at + SUBAGENT_STALE_AFTER_MS - 1).len() == 1,
+            "inside the window it is working"
+        );
+        // Codex reports completion only when the parent asks, so without this
+        // a spawn nobody waited on would stay on the row for the life of the
+        // process.
+        assert!(
+            scan.runs(spawned_at + SUBAGENT_STALE_AFTER_MS).is_empty(),
+            "outside it, it is not"
+        );
+        // And a listing that says it is still running puts it back.
+        scan.fold(&lines(&[LIST_RUNNING]), now());
+        let confirmed = scan.runs(now())[0].updated_at_ms;
+        assert!(
+            confirmed > spawned_at,
+            "the window runs from the last confirmation, not the spawn"
+        );
+    }
+
+    #[test]
+    fn a_half_written_line_is_read_again_next_tick() {
+        let mut scan = scan("/rollout.jsonl");
+        let whole = lines(&[SPAWN, SPAWN_OUTPUT]);
+        let cut = whole.len() - 20;
+        let consumed = scan.fold(&whole[..cut], now());
+        assert!(
+            consumed < cut as u64,
+            "the partial last line is not consumed: {consumed} of {cut}"
+        );
+        // The rest arrives, starting from where the fold stopped.
+        scan.fold(&whole[consumed as usize..], now());
+        assert_eq!(scan.runs(now()).len(), 1);
+        assert_eq!(scan.runs(now())[0].key, "/root/hosted_audit");
     }
 }

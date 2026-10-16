@@ -181,13 +181,8 @@ pub struct DashboardSession {
     /// Billed spend against a token goal, or why it could not be measured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_spend: Option<Value>,
-    /// The sub-agents this agent currently has working, derived by the project
-    /// service so every surface renders one answer and one label.
-    ///
-    /// A `Value` for the same reason `token_spend` is one: this snapshot is
-    /// parsed strictly, and a shape surprise from another build would cost the
-    /// whole frame rather than the chip. The readers are
-    /// `subagent_activity::subagent_label` and `subagent_detail`.
+    /// Published sub-agent activity, kept lenient so an unfamiliar vendor
+    /// shape cannot prevent parsing the entire dashboard snapshot.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subagents: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

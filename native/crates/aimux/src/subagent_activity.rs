@@ -1,66 +1,15 @@
 //! Which sub-agents an agent session has working, and where that is read from.
 //!
-//! # The parent transcript is the wrong file
-//!
-//! The obvious source is the parent's own transcript: an `Agent` tool call
-//! with no matching `tool_result` looks like a sub-agent still running. It is
-//! not. Measured on a real 468MB session, 322 of 446 launches get a
-//! `tool_result` back within milliseconds saying "Async agent launched
-//! successfully" -- the ack, not the report -- so unpaired-means-running
-//! reports a long-finished agent forever and a running one not at all.
-//!
-//! # The right file is the sub-agent's own
-//!
-//! Claude writes a pair per sub-agent beside the parent's transcript:
-//!
-//! ```text
-//! ~/.claude/projects/<encoded-cwd>/<parentSessionId>/subagents/
-//!   agent-<id>.jsonl        the sub-agent's own transcript
-//!   agent-<id>.meta.json    {"agentType","description","toolUseId","model",...}
-//! ```
-//!
-//! So the description a human wants to read is already written down, and
-//! whether that sub-agent is working is the turn-state of its own transcript --
-//! the same [`crate::transcript_turn_state::claude_turn_state`] the reconciler
-//! settles sessions with. No parsing of the parent is needed at all.
-//!
-//! # Why a clock is part of the answer
-//!
-//! A sub-agent that was killed mid-turn leaves its transcript reading
-//! `in_progress` forever, so turn-state alone would pin a phantom to the row.
-//! Freshness decides it: a working sub-agent appends, and
-//! [`SUBAGENT_STALE_AFTER_MS`] is the longest silence still called working.
-//!
-//! # When it started
-//!
-//! The meta file carries no timestamp, and `created()` is not available on
-//! every filesystem, so the launch time is the meta file's own mtime: it is
-//! written once, at launch, and never touched again. Measured against the
-//! first record's `timestamp` on three real sub-agents, it agrees to within
-//! 35ms.
+//! Launch metadata and vendor transcripts feed one shared presentation.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-/// How long a sub-agent transcript may go unwritten and still read as working.
-///
-/// Generous on purpose. A sub-agent writes an entry per tool call, and one
-/// tool call can be a ten-minute build, so a short window would report its own
-/// agents as finished mid-run. The cost of the other direction is bounded and
-/// visible: a killed sub-agent lingers for at most this long.
-///
-/// The window is a liveness claim and it can be wrong in both directions. A
-/// sub-agent inside a single tool call longer than this drops off the row and
-/// comes back when it next writes; the alternative -- trusting the turn-state
-/// alone -- leaves a killed one on the row for the life of the process, which
-/// is worse because nothing ever takes it off.
+/// Maximum silence before a running record is considered stale.
 pub const SUBAGENT_STALE_AFTER_MS: u64 = 10 * 60 * 1000;
 
-/// How many running sub-agents the published summary names.
-///
-/// The count is always the real one; this caps only the list, because a row
-/// that renders twelve descriptions is a row nobody reads.
+/// Bound only the names, not the total count.
 pub const SUBAGENT_ITEM_LIMIT: usize = 5;
 
 const CLAUDE_SUBAGENTS_DIR: &str = "subagents";
@@ -127,11 +76,7 @@ pub fn claude_subagent_meta_path(transcript_path: impl AsRef<Path>) -> Option<Pa
     )
 }
 
-/// One sub-agent's published form, from its meta file and the two stats.
-///
-/// A meta file that is missing or unreadable is not fatal: the key still names
-/// the sub-agent, and reporting "a sub-agent is working" without its
-/// description beats reporting nothing.
+/// Missing descriptive metadata falls back to the sub-agent ID.
 pub fn claude_subagent_run(
     key: &str,
     meta: Option<&Value>,
@@ -143,7 +88,7 @@ pub fn claude_subagent_run(
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
+            .map(display_text)
     };
     SubagentRun {
         name: field("description").unwrap_or_else(|| key.to_owned()),
@@ -155,17 +100,7 @@ pub fn claude_subagent_run(
     }
 }
 
-/// Whether a sub-agent transcript describes a sub-agent still working.
-///
-/// Two facts, because neither answers alone: `complete` is the only turn-state
-/// that means finished, and a transcript nobody has written to for
-/// [`SUBAGENT_STALE_AFTER_MS`] is not being worked on whatever its last entry
-/// said.
-///
-/// `claude_turn_state` has a third answer, `unknown`, for a tail it cannot
-/// read a `stop_reason` out of -- which is what a file being created looks
-/// like. That counts as working, deliberately: a sub-agent whose first bytes
-/// are on disk has started.
+/// Unknown turn state is still working while the transcript is fresh.
 pub fn claude_subagent_running(turn: &str, updated_at_ms: u64, now_ms: u64) -> bool {
     if turn == "complete" {
         return false;
@@ -173,24 +108,9 @@ pub fn claude_subagent_running(turn: &str, updated_at_ms: u64, now_ms: u64) -> b
     now_ms.saturating_sub(updated_at_ms) < SUBAGENT_STALE_AFTER_MS
 }
 
-/// Whether a finished sub-agent can be skipped for the rest of the process.
-///
-/// A sub-agent id is minted per launch and its transcript is never reopened,
-/// so `complete` is terminal. This is what keeps a directory of hundreds of
-/// finished sub-agents from costing a tail read each on every tick.
-///
-/// Only `complete`. Caching `unknown` would freeze a sub-agent that was still
-/// being created at its first half-written tail.
-pub fn claude_subagent_is_terminal(turn: &str) -> bool {
-    turn == "complete"
-}
-
 /// The one shape the published answer takes, or `None` when nothing is
 /// working.
 ///
-/// `None` rather than a zero: every surface reads this, and an absent key is
-/// how a row says there is nothing to show. Oldest first, because the one that
-/// has been running longest is the one worth naming.
 pub fn subagent_summary(runs: &[SubagentRun]) -> Option<Value> {
     if runs.is_empty() {
         return None;
@@ -230,9 +150,6 @@ pub fn subagent_summary(runs: &[SubagentRun]) -> Option<Value> {
 /// The one sentence that says both how many and which, rendered verbatim by
 /// the dashboard's details pane and the app's chat header.
 ///
-/// Composed here rather than in each renderer because there are two of them in
-/// two languages, and a count spelled twice is how two surfaces end up
-/// disagreeing about one fact.
 pub fn subagent_summary_detail(running: usize, named: &[SubagentRun]) -> String {
     let label = subagent_summary_label(running);
     let names = named
@@ -258,13 +175,7 @@ pub fn subagent_summary_label(running: usize) -> String {
     }
 }
 
-/// What a scan should do to what is already published.
-///
-/// Three outcomes, not two, because "nobody is working" and "I could not look"
-/// are different answers and writing the same thing for both erases a good
-/// value. A session whose transcript path is not resolvable yet -- no backend
-/// session id recorded, no worktree, a tool whose sub-agents cannot be read --
-/// leaves what is there alone rather than clearing it.
+/// Distinguish no work from inability to inspect it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SubagentPublish {
     /// Could not look. Leave whatever is published where it is.
@@ -288,9 +199,6 @@ pub fn subagent_publish(scan: Option<&[SubagentRun]>) -> SubagentPublish {
 /// The label to render for a published summary, or `None` when there is
 /// nothing to say.
 ///
-/// Both terminal renderers and the app ask this rather than testing the count
-/// themselves: a zero can still arrive from an older build's metadata, and
-/// "0 sub-agents" on a row is worse than silence.
 pub fn subagent_label(summary: Option<&Value>) -> Option<String> {
     summary_text(summary, "label")
 }
@@ -380,8 +288,6 @@ mod tests {
     #[test]
     fn a_complete_transcript_is_finished_however_fresh_it_is() {
         assert!(!claude_subagent_running("complete", 1_000, 1_000));
-        assert!(claude_subagent_is_terminal("complete"));
-        assert!(!claude_subagent_is_terminal("in_progress"));
     }
 
     #[test]
@@ -511,5 +417,181 @@ mod tests {
         let summary = subagent_summary(&runs);
         assert_eq!(subagent_running_count(summary.as_ref()), 1);
         assert_eq!(subagent_running_count(None), 0);
+    }
+}
+
+/// Folds correlated Codex spawn/list calls from complete rollout records.
+#[derive(Debug, Default)]
+pub struct CodexSubagentScan {
+    outstanding: std::collections::BTreeMap<String, CodexSubagent>,
+    calls: std::collections::BTreeMap<String, (String, u64)>,
+}
+
+#[derive(Clone, Debug)]
+struct CodexSubagent {
+    name: String,
+    started_at_ms: u64,
+    confirmed_at_ms: u64,
+}
+
+impl CodexSubagentScan {
+    // Callers advance physical cursors from raw bytes, never this lossy text.
+    pub fn fold(&mut self, text: &str, now_ms: u64) -> u64 {
+        let mut consumed = 0;
+        for line in text.split_inclusive('\n') {
+            if !line.ends_with('\n') {
+                break;
+            }
+            consumed += line.len() as u64;
+            self.fold_line(line.trim_end(), now_ms);
+        }
+        consumed
+    }
+
+    fn fold_line(&mut self, line: &str, now_ms: u64) {
+        if line.trim().is_empty() {
+            return;
+        }
+        let entry = match serde_json::from_str::<Value>(line) {
+            Ok(entry) => entry,
+            Err(error) => {
+                crate::debug_logging::log_at(
+                    crate::debug_logging::LogLevel::Warn,
+                    "invalid Codex rollout record",
+                    "subagent-activity",
+                    Some(json!({ "error": error.to_string() })),
+                );
+                return;
+            }
+        };
+        if entry.get("type").and_then(Value::as_str) != Some("response_item") {
+            return;
+        }
+        let Some(payload) = entry.get("payload") else {
+            return;
+        };
+        let at_ms = entry
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(crate::visual_client_leases::parse_iso_millis)
+            .and_then(|ms| u64::try_from(ms).ok())
+            .unwrap_or(now_ms);
+        let kind = payload.get("type").and_then(Value::as_str).unwrap_or("");
+        let name = payload.get("name").and_then(Value::as_str).unwrap_or("");
+        let Some(call_id) = payload
+            .get("call_id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+        else {
+            return;
+        };
+        if matches!(kind, "function_call" | "custom_tool_call") {
+            if matches!(name, "spawn_agent" | "list_agents") {
+                self.calls
+                    .insert(call_id.to_owned(), (name.to_owned(), at_ms));
+            }
+            return;
+        }
+        if !matches!(kind, "function_call_output" | "custom_tool_call_output") {
+            return;
+        }
+        let Some((call, started_at_ms)) = self.calls.remove(call_id) else {
+            return;
+        };
+        let Some(output) = payload
+            .get("output")
+            .and_then(Value::as_str)
+            .and_then(|output| serde_json::from_str::<Value>(output).ok())
+        else {
+            return;
+        };
+        if call == "spawn_agent" {
+            if let Some(name) = output
+                .get("task_name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+            {
+                self.outstanding.insert(
+                    name.to_owned(),
+                    CodexSubagent {
+                        name: display_text(name.rsplit('/').next().unwrap_or(name)),
+                        started_at_ms,
+                        confirmed_at_ms: at_ms,
+                    },
+                );
+            }
+        } else if let Some(agents) = output.get("agents").and_then(Value::as_array) {
+            let mut listed = std::collections::BTreeSet::new();
+            for agent in agents {
+                let Some(name) = agent.get("agent_name").and_then(Value::as_str) else {
+                    continue;
+                };
+                if !name.trim_start_matches('/').contains('/') {
+                    continue;
+                }
+                if agent.get("agent_status").and_then(Value::as_str) != Some("running") {
+                    self.outstanding.remove(name);
+                    continue;
+                }
+                listed.insert(name.to_owned());
+                let run = self
+                    .outstanding
+                    .entry(name.to_owned())
+                    .or_insert(CodexSubagent {
+                        name: display_text(name.rsplit('/').next().unwrap_or(name)),
+                        started_at_ms: at_ms,
+                        confirmed_at_ms: at_ms,
+                    });
+                run.confirmed_at_ms = at_ms;
+            }
+            self.outstanding.retain(|key, _| listed.contains(key));
+        }
+        // Bound pending calls even while replaying an old rollout.
+        self.calls
+            .retain(|_, (_, at)| at_ms.saturating_sub(*at) < SUBAGENT_STALE_AFTER_MS);
+    }
+
+    pub fn runs(&mut self, now_ms: u64) -> Vec<SubagentRun> {
+        self.outstanding
+            .retain(|_, run| now_ms.saturating_sub(run.confirmed_at_ms) < SUBAGENT_STALE_AFTER_MS);
+        self.calls
+            .retain(|_, (_, at)| now_ms.saturating_sub(*at) < SUBAGENT_STALE_AFTER_MS);
+        self.outstanding
+            .iter()
+            .map(|(key, run)| SubagentRun {
+                key: key.clone(),
+                name: run.name.clone(),
+                kind: None,
+                model: None,
+                started_at_ms: Some(run.started_at_ms),
+                updated_at_ms: run.confirmed_at_ms,
+            })
+            .collect()
+    }
+}
+
+fn display_text(text: &str) -> String {
+    text.chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .take(240)
+        .collect()
+}
+
+#[cfg(test)]
+mod display_safety {
+    use super::*;
+    #[test]
+    fn vendor_descriptions_cannot_control_the_terminal() {
+        let meta = json!({"description":"review\u{1b}[2J\nnext", "agentType":"Explore\u{9b}bad"});
+        let run = claude_subagent_run("agent-a", Some(&meta), None, 1);
+        let summary = subagent_summary(&[run]).unwrap();
+        assert!(
+            !summary["detail"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .any(char::is_control)
+        );
+        assert_eq!(display_text(&"a".repeat(1_000)).len(), 240);
     }
 }

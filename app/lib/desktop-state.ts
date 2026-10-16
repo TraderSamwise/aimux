@@ -100,11 +100,7 @@ export interface DesktopSession {
   } | null;
   /** Billed spend against a token goal, or why it could not be measured. */
   tokenSpend?: { billed?: number; unmeasured?: string } | null;
-  /**
-   * The sub-agents this agent currently has working, derived by the project
-   * service. `label` is rendered verbatim -- the terminal row, this row and
-   * the chat header all show the service's one spelling of the count.
-   */
+  /** Working sub-agents and their service-composed labels. */
   subagents?: {
     running: number;
     label: string;

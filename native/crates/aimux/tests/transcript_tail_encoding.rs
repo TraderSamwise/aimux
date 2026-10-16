@@ -1,14 +1,12 @@
 //! A transcript tail must survive a cut that lands mid-character.
 //!
-//! The cut is at a byte offset, so any transcript holding a character outside
-//! ASCII -- which is every transcript of real work -- can be cut mid-codepoint.
-//! Node's `buffer.toString("utf8")` replaced those bytes; the Rust port
-//! returned `None`, and `None` is how every caller spells "no answer about
-//! this transcript".
+//! Both UTF-8 recovery and the public probe are exercised on real files.
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT: AtomicU64 = AtomicU64::new(0);
 
 use aimux::transcript_turn_state::{claude_turn_state, probe_transcript, read_file_tail};
 
@@ -16,10 +14,7 @@ fn temp_transcript(contents: &[u8]) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "aimux-transcript-tail-{}-{}",
         std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|since| since.as_nanos())
-            .unwrap_or(0)
+        NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     fs::create_dir_all(&dir).expect("mkdir");
     let path = dir.join("transcript.jsonl");

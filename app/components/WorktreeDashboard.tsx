@@ -1,3 +1,4 @@
+import { SubagentBadge } from "@/components/SubagentBadge";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { projectStateKey as projectStateKeyOf, type ProjectStateKey } from "@/lib/project-key";
 import { Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
@@ -142,25 +143,6 @@ function UnreadBadge({ count }: { count?: number }) {
   return (
     <View className="rounded-full bg-[#e0b341] px-1.5 py-[1px]">
       <Text className="font-mono text-[10px] font-bold text-[#1a1c22]">{label}</Text>
-    </View>
-  );
-}
-
-/**
- * What this agent has working inside it.
- *
- * The service's own `label`, rendered verbatim: a count spelled here as well
- * would be a second answer to one question, and the terminal row already
- * renders this exact string.
- */
-function SubagentBadge({ subagents }: { subagents?: DesktopSession["subagents"] }) {
-  const label = subagents?.label?.trim();
-  if (!subagents || subagents.running <= 0 || !label) return null;
-  return (
-    <View className="shrink-0 rounded-full border border-[#3b4150] px-1.5 py-[1px]">
-      <Text className="text-[10px] text-[#9aa0ad]" numberOfLines={1}>
-        {label}
-      </Text>
     </View>
   );
 }

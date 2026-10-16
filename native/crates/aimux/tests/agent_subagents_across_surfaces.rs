@@ -1,16 +1,6 @@
 //! One answer about sub-agents, four renderers.
 //!
 //! The project service decides which sub-agents a session has working and
-//! publishes the count, the label and the one-sentence detail. The dashboard
-//! row renders the label, the details pane renders the detail, and the app's
-//! row and chat header render those same two strings -- the app side is pinned
-//! in `app/components/WorktreeDashboard.test.tsx`, which asserts it renders
-//! what it is handed rather than composing a count of its own.
-//!
-//! What this pins is that the strings the two terminal renderers put on screen
-//! are the strings the app is handed, from the object the app is handed. A test
-//! per surface would pass happily while the surfaces disagreed, which is the
-//! failure AGENTS.md's "One Answer, Many Surfaces" describes.
 
 use aimux::dashboard_model::DesktopStateSnapshot;
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
@@ -120,7 +110,7 @@ fn session_state(state: &Value) -> Value {
 
 /// The agent's own row in the dashboard frame, ANSI stripped, wide enough
 /// that the chip is not what loses the width fight.
-fn dashboard_row(state: &Value) -> String {
+fn dashboard_frame(state: &Value, details_visible: bool) -> String {
     let snapshot: DesktopStateSnapshot =
         serde_json::from_value(state.clone()).expect("the snapshot the dashboard renders");
     let frame = render_dashboard_frame(&DashboardRenderInput {
@@ -142,11 +132,15 @@ fn dashboard_row(state: &Value) -> String {
         footer_progress: None,
         footer_note: None,
         footer_alerts: &[],
-        details_sidebar_visible: false,
+        details_sidebar_visible: details_visible,
         preview_source: "output",
         scribe_preview_entries: &[],
     });
-    let plain = strip_ansi(&frame.frame);
+    strip_ansi(&frame.frame)
+}
+
+fn dashboard_row(state: &Value) -> String {
+    let plain = dashboard_frame(state, false);
     let rows = plain
         .split("\r\n")
         .filter(|line| line.contains("[1] claude"))
@@ -159,9 +153,6 @@ fn dashboard_row(state: &Value) -> String {
 /// Edits every copy of the agent in the state.
 ///
 /// The desktop state carries the session twice -- once in `sessions` and again
-/// inside its worktree group -- and the dashboard renders rows from the group
-/// copy whenever the project has worktrees. Patching only the top-level one
-/// made a fixture that looked right and rendered the old row.
 fn patch_session(state: &mut Value, edit: &dyn Fn(&mut Value)) {
     match state {
         Value::Object(map) => {
@@ -266,11 +257,6 @@ fn a_summary_that_says_none_are_working_is_not_rendered_either() {
 /// What a busy row does with a third chip, said out loud.
 ///
 /// `ROW_CHIP_BUDGET` is two, and the sub-agent chip ranks behind the two
-/// attention chips -- something waiting on a person outranks the agent's own
-/// work. So on a row where both of those fire, the sub-agents are behind the
-/// overflow mark rather than on the row, and the details pane is where they
-/// are named. That is the existing contract for every chip past the second,
-/// and this pins it so the eviction is a decision rather than a surprise.
 #[test]
 fn a_busy_row_puts_the_subagents_behind_the_overflow_mark() {
     let summary = published_summary(2);
@@ -306,4 +292,15 @@ fn a_busy_row_puts_the_subagents_behind_the_overflow_mark() {
 fn a_quiet_row_shows_the_subagents_on_it() {
     let row = dashboard_row(&desktop_state(Some(&published_summary(2))));
     assert!(row.contains("2 sub-agents"), "got {row:?}");
+}
+
+#[test]
+fn live_dashboard_details_name_the_working_subagents() {
+    let state = desktop_state(Some(&published_summary(2)));
+    let frame = dashboard_frame(&state, true);
+    assert!(frame.contains("Sub-agents"), "{frame}");
+    assert!(frame.contains("Adversarial review of PR 450"), "{frame}");
+    assert!(frame.contains("review of PR 451"), "{frame}");
+    let cleared = dashboard_frame(&desktop_state(None), true);
+    assert!(!cleared.contains("Adversarial review of PR"));
 }

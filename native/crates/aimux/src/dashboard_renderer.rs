@@ -1997,6 +1997,9 @@ fn render_selected_details_panel(
     }
     let selected = selected_session.expect("selected session checked");
     let mut lines = Vec::new();
+    if let Some(detail) = crate::subagent_activity::subagent_detail(selected.subagents.as_ref()) {
+        push_kv(&mut lines, "Sub-agents", &detail, width);
+    }
     push_kv(
         &mut lines,
         "Agent",

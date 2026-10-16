@@ -3,6 +3,8 @@ import { projectStateKey } from "@/lib/project-key";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("react-native", () => ({
+  Alert: { alert: vi.fn() },
+  Platform: { OS: "ios" },
   Pressable: "Pressable",
   ScrollView: "ScrollView",
   View: "View",
