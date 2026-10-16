@@ -240,7 +240,14 @@ remote_dependency_pattern='(^|[[:space:]])(tokio-tungstenite|tungstenite|ureq|re
 remote_help_pattern='^[[:space:]]{2}(remote|hosted|login|logout|whoami|security)([[:space:]]|$)'
 # Distinctive strings, matched anywhere: each is long enough that a substring
 # hit is a real hit.
-remote_string_pattern='AIMUX_RELAY_URL|relay[.]aimux[.]app|wss://|ws://|relay_client|relay_runner|daemon::relay|daemon/relay|hosted_server|hosted_cli|remote_login|remote_security_devices|maybe_host_published_attachment|attachments/hosted'
+# `maybe_host_published_attachment` is deliberately NOT here any more: the
+# decision about whether and what to upload is local code, compiled into both
+# builds, and its name in the local binary says nothing about the remote half.
+# What does is the uploader that opens the socket, so that is what this looks
+# for instead -- a strictly narrower claim about the same thing. The TYPE name,
+# not its module: `attachment_upload` as a needle also matches this project's
+# own local `route_attachment_upload`, which has nothing to do with a relay.
+remote_string_pattern='AIMUX_RELAY_URL|relay[.]aimux[.]app|wss://|ws://|relay_client|relay_runner|daemon::relay|daemon/relay|hosted_server|hosted_cli|remote_login|remote_security_devices|HttpAttachmentUploader|attachments/hosted'
 # Bare crate names, which need a word boundary. `strings` emits runs of
 # adjacent literals from rodata with nothing between them, so an unanchored
 # `ureq` matches the tail of our own `project-ensure` whenever the linker puts

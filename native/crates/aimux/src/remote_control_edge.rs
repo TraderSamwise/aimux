@@ -10,7 +10,17 @@
 //! picks between them. Callers carry no gate, so there is nothing in them for
 //! a reviewer to verify.
 //!
-//! Two rules for anything added here:
+//! Three rules for anything added here:
+//!
+//! - A name on this edge must not be a far-side MODULE name.
+//!   `check-local-build-boundary.sh` greps the local binary for those names --
+//!   `hosted_server`, `hosted_cli`, `remote_login` and the rest -- because
+//!   their presence is what far-side code being linked in looks like. A no-op
+//!   here called `start_hosted_server` puts that string in the local binary's
+//!   symbol table and trips the gate, which is the gate being right about the
+//!   evidence it has. Name the capability (`start_hosted_listener`), not the
+//!   module that implements it.
+//!
 //!
 //! - The signatures must be local on both sides. A function whose argument or
 //!   return type comes from `remote/` cannot be behind this edge, because the
@@ -406,7 +416,7 @@ mod enabled_state {
         /// too -- tokio is not the remote dependency, `tokio-tungstenite` is --
         /// so both sides return the same type and the local one answers
         /// `None`.
-        pub fn start_hosted_server(
+        pub fn start_hosted_listener(
             resolver: &PathResolver,
             runtime: std::sync::Arc<std::sync::Mutex<crate::daemon::runtime::RealDaemonRuntime>>,
             scheduler_context: Option<
@@ -563,7 +573,7 @@ mod disabled_state {
         }
 
         /// No listener to start, and nothing to hold open.
-        pub fn start_hosted_server(
+        pub fn start_hosted_listener(
             _resolver: &PathResolver,
             _runtime: std::sync::Arc<std::sync::Mutex<crate::daemon::runtime::RealDaemonRuntime>>,
             _scheduler_context: Option<

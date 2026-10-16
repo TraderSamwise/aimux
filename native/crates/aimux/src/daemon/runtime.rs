@@ -3244,7 +3244,7 @@ pub fn run_daemon_internal() -> Result<()> {
     ));
     // Held for the daemon's lifetime. A local build gets `None` and holds
     // nothing, which is why the binding is not gated.
-    let _hosted_server = crate::remote_control_edge::RemoteDaemonState::start_hosted_server(
+    let _hosted_server = crate::remote_control_edge::RemoteDaemonState::start_hosted_listener(
         &resolver,
         Arc::clone(&runtime),
         Some(Arc::clone(&scheduler_context)),
