@@ -280,6 +280,11 @@ def write_config(scope: Any) -> None:
     (scope.aimux_home / "config.json").write_text(
         json.dumps(
             {
+                # The gate spawns the agents it wants to measure. A project
+                # scribe is created by default now, and in the transcript scope
+                # it is a third `claude` that can claim the shared fixture
+                # before the two this gate named -- so the scope says no.
+                "scribe": {"defaultAgent": False},
                 "loop": {
                     "scanIntervalMs": 250,
                     "scanEveryTicks": 1,
