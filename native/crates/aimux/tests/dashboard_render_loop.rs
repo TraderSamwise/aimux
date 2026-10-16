@@ -504,3 +504,58 @@ fn a_burst_pressed_before_the_first_frame_is_coalesced() {
         "and the burst still produces a frame once the loop is ready"
     );
 }
+
+/// The tail of a batch that stopped partway is answered, not discarded.
+///
+/// A key whose effect changes what the next key would mean -- a request in
+/// flight, a new surface -- stops the batch there. The batch was taken whole,
+/// so abandoning the tail was a third way to lose a keypress, and holding keys
+/// made the batches long enough to reach it.
+///
+/// `u` is the stopping key: jumping to the next agent needing attention
+/// dispatches a request, which is what stops a batch. The toggle behind it is
+/// the countable one, because it changes what the dashboard asks for -- so a
+/// discarded tail leaves that reload unmade.
+///
+/// `Enter` looked like the stopping key and is not: with nothing selected in
+/// this fixture it is ignored, both keys dispatch in one batch, and the
+/// assertion held with the tail dropped. The mutation is what said so.
+#[test]
+fn the_tail_of_a_stopped_batch_is_answered_on_the_next_pass() {
+    let driven = drive(vec![
+        (
+            0,
+            vec![
+                DashboardKey::Printable('u'),
+                DashboardKey::ToggleOfflineAgents,
+            ],
+        ),
+        (NO_EXTRA_IDLE, vec![]),
+        (NO_EXTRA_IDLE, vec![]),
+    ]);
+
+    assert_eq!(
+        driven.loads, 3,
+        "the first pass fetches, the attention jump reloads, and the toggle \
+         behind it has to reload too -- a dropped batch tail leaves this at two"
+    );
+}
+
+/// A burst longer than the buffer applies none of it, rather than a fragment.
+///
+/// Keys arrive as sequences: the one that opens an overlay and the ones typed
+/// into it. Keeping a suffix means applying the typing to whatever screen is
+/// up instead, so an overflow drops the whole burst.
+#[test]
+fn a_burst_longer_than_the_buffer_is_dropped_whole() {
+    let flood = (0..40)
+        .map(|_| DashboardKey::ToggleOfflineAgents)
+        .collect::<Vec<_>>();
+    let driven = drive(vec![(0, flood), (NO_EXTRA_IDLE, vec![])]);
+
+    assert_eq!(
+        driven.loads, 1,
+        "an overflowing burst must not reload at all: a trimmed buffer would \
+         apply whatever suffix it kept"
+    );
+}

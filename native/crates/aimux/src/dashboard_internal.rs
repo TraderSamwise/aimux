@@ -573,8 +573,13 @@ pub fn run_native_dashboard_with_seams(
         // should be what the user pressed most recently.
         pending_keys.extend(read_keys);
         if pending_keys.len() > DASHBOARD_PENDING_KEY_LIMIT {
-            let excess = pending_keys.len() - DASHBOARD_PENDING_KEY_LIMIT;
-            pending_keys.drain(..excess);
+            // Cleared, not trimmed. Keys arrive as sequences -- the one that
+            // opens an overlay and the ones typed into it -- and keeping a
+            // suffix means applying the typing to whatever screen is up
+            // instead. A dashboard this far behind has nothing worth replaying
+            // from a burst this long, and applying none of it is the only
+            // answer that cannot be wrong.
+            pending_keys.clear();
         }
         let terminal_resized = live_dashboard && consume_terminal_resize();
         if terminal_resized {
@@ -696,7 +701,8 @@ pub fn run_native_dashboard_with_seams(
                 .filter(|key| !key.is_focus_in())
                 .collect::<Vec<_>>();
             let is_coalesced_input = keys.len() > 1;
-            for key in keys {
+            let mut keys = keys.into_iter();
+            while let Some(key) = keys.next() {
                 let before_surface = controller.input_surface();
                 let before_hide_offline = controller.hide_offline_agents;
                 let effect = controller.handle_key(snapshot, key);
@@ -904,6 +910,15 @@ pub fn run_native_dashboard_with_seams(
                     DashboardControllerEffect::Ignored => {}
                 }
                 if stop_after_key {
+                    // Put the rest back rather than dropping it. This batch
+                    // stops here because the key changed what the next one
+                    // would mean -- a new surface, or a request in flight --
+                    // and the remainder has to be answered against what the
+                    // screen becomes, on the next pass. Taking the whole batch
+                    // and abandoning the tail was a third way to lose a
+                    // keypress, and holding keys made the batches long enough
+                    // to reach it.
+                    pending_keys.extend(keys);
                     break;
                 }
             }
