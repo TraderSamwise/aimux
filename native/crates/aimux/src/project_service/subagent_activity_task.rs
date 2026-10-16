@@ -77,6 +77,7 @@ struct CodexRolloutFold {
     offset: u64,
     partial: Vec<u8>,
     skipping: bool,
+    incomplete_reported: bool,
     scan: CodexSubagentScan,
 }
 impl CodexRolloutFold {
@@ -144,8 +145,24 @@ impl CodexRolloutFold {
             }
         }
         // No empty summary during replay: unseen history may still name live agents.
-        if self.offset < stamp.len || !self.partial.is_empty() || self.skipping {
+        if self.offset < stamp.len {
             return Ok(ScanOutcome::CatchingUp);
+        }
+        // Buffered EOF is not unread history. Keep its bytes, but still age
+        // confirmed work so a crashed writer cannot pin a running badge.
+        if self.partial.is_empty() && !self.skipping {
+            self.incomplete_reported = false;
+        } else if !self.incomplete_reported
+            && now.saturating_sub(stamp.millis()?)
+                >= crate::subagent_activity::SUBAGENT_STALE_AFTER_MS
+        {
+            log_at(
+                LogLevel::Warn,
+                "Codex rollout ends with an incomplete record",
+                "subagent-activity",
+                Some(json!({ "path": path, "offset": self.offset })),
+            );
+            self.incomplete_reported = true;
         }
         Ok(ScanOutcome::Read(self.scan.runs(now)))
     }
@@ -669,6 +686,27 @@ mod tests {
         assert_eq!(count(read(&mut fold, &rollout.0)), 1);
         assert_eq!(fold.offset, bytes.len() as u64);
     }
+    #[test]
+    fn incomplete_eof_does_not_prevent_confirmed_work_expiring() {
+        let rollout = Rollout::new();
+        let mut bytes = spawn("live");
+        bytes.extend_from_slice(b"{\"type\":");
+        fs::write(&rollout.0, bytes).unwrap();
+        let mut fold = CodexRolloutFold::default();
+        assert_eq!(count(read(&mut fold, &rollout.0)), 1);
+        assert!(!fold.partial.is_empty());
+        let expired = fold.read(
+            &rollout.0,
+            1_000 + crate::subagent_activity::SUBAGENT_STALE_AFTER_MS,
+            &TickLoopBudget::new(Duration::from_secs(1)),
+        );
+        assert_eq!(count(expired), 0);
+        assert!(
+            !fold.partial.is_empty(),
+            "preserve bytes until the writer completes them"
+        );
+    }
+
     #[test]
     fn codex_does_no_read_when_budget_is_spent() {
         let rollout = Rollout::new();
