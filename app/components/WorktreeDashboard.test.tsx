@@ -533,6 +533,55 @@ describe("AgentRow", () => {
     expect(collectText(React.createElement(AgentRow, rowProps()))).toContain("8 threads unread");
   });
 
+  it("renders nothing rather than a fallback when every published chip is malformed", () => {
+    // The terminal shows nothing for this payload, so the app must not show
+    // its version-skew fallback instead.
+    const text = rowWith([
+      { kind: "x" } as unknown as { kind: string; label: string; tone: string },
+    ]);
+    expect(text).not.toContain("sub-agent");
+  });
+
+  // This harness renders without measuring, so the bound is asserted where it
+  // is applied: two long labels growing the trailing group is what takes the
+  // name's share of a row just above the stacking threshold.
+  it("bounds each pill so a long label cannot grow the group", () => {
+    const tree = renderNode(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-busy",
+          label: "worker",
+          command: "claude",
+          semantic: {
+            user: { label: "ready" },
+            presentation: {
+              statusLabel: "ready",
+              rowChips: [
+                { kind: "waiting-on-me", label: "waiting on you", tone: "attention" },
+                { kind: "coordination-blocked", label: "coordination blocked", tone: "danger" },
+              ],
+            },
+          },
+        }),
+        digit: 1,
+        selected: false,
+        projectStateKey: projectStateKey({ path: "/repo" }),
+        endpoint: null,
+        token: null,
+        onPick: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+    const pills = findNodes(tree, (node) => {
+      const className = node.props.className;
+      return typeof className === "string" && className.includes("rounded-full border px");
+    });
+    expect(pills).toHaveLength(2);
+    for (const pill of pills) {
+      expect(pill.props.className as string).toContain("max-w-");
+    }
+  });
+
   it("renders the chips the service published, verbatim", () => {
     const text = rowWith([
       { kind: "threads-unread", label: "8 threads unread", tone: "work" },
@@ -572,8 +621,32 @@ describe("AgentRow", () => {
   // kept this one fact before the ladder existed, and losing it to a version
   // skew would be a regression the terminal row does not have.
   it("still names the sub-agents when nothing published the chips", () => {
-    const text = rowWith([]);
+    // No `rowChips` key at all, which is what a daemon older than the ladder
+    // sends. An empty list is an answer and takes the other path.
+    const text = collectText(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-old-daemon",
+          label: "worker",
+          command: "claude",
+          subagents: { running: 3, label: "3 sub-agents", items: [] },
+        }),
+        digit: 1,
+        selected: false,
+        projectStateKey: projectStateKey({ path: "/repo" }),
+        endpoint: null,
+        token: null,
+        onPick: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
     expect(text).toContain("3 sub-agents");
+    expect(text).not.toContain("\u203a");
+  });
+
+  it("takes an empty published list as the answer it is", () => {
+    const text = rowWith([]);
+    expect(text).not.toContain("sub-agent");
     expect(text).not.toContain("\u203a");
   });
 

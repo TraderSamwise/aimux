@@ -20,6 +20,7 @@ import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/deskt
 import { filterWorktreeBucketToActiveEntries } from "@/lib/desktop-state";
 import { formatServiceRecency, formatSessionRecency } from "@/lib/recency";
 import {
+  hasPublishedRowChips,
   NARROW_ROW_CHIP_BUDGET,
   ROW_CHIP_BUDGET,
   rowChipColors,
@@ -186,7 +187,11 @@ function RowChips({
   // kept one of these facts before this existed -- the sub-agent badge -- and
   // losing it to a version skew would be a regression the terminal row does
   // not have, because it can ask the ladder directly.
-  if (published.length === 0) {
+  //
+  // Keyed on whether a list was published rather than on how many entries
+  // survived reading it, which is how the terminal keys it: a list of nothing
+  // but malformed chips is still an answer.
+  if (!hasPublishedRowChips(session)) {
     // The tone the published chip would have carried, from the state word this
     // row already renders rather than a rule invented here: a dead agent's
     // facts are still true but nothing is happening, and the terminal mutes
@@ -220,7 +225,10 @@ function RowChipPill({ chip }: { chip: RowChip }) {
   const colors = rowChipColors(chip.tone);
   return (
     <View
-      className="shrink-0 rounded-full border px-1.5 py-[1px]"
+      // Bounded, so two long labels cannot grow the trailing group into the
+      // name's share of a row just above the stacking threshold. The label
+      // truncates instead; the details pane names every chip in full.
+      className="max-w-[140px] shrink-0 rounded-full border px-1.5 py-[1px]"
       style={{ borderColor: colors.border }}
     >
       <Text className="text-[10px]" style={{ color: colors.text }} numberOfLines={1}>

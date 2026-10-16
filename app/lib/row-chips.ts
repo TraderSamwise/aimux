@@ -22,6 +22,18 @@ export const ROW_CHIP_BUDGET = 2;
 /** One for a row that has already given its width to the name. */
 export const NARROW_ROW_CHIP_BUDGET = 1;
 
+/**
+ * Whether the service published a list at all, however many entries survive
+ * reading it.
+ *
+ * Keyed on presence, not on length, because the terminal reader is: a list
+ * whose every entry is malformed would otherwise leave the app rendering its
+ * version-skew fallback while the terminal rendered nothing.
+ */
+export function hasPublishedRowChips(session: Pick<DesktopSession, "semantic">): boolean {
+  return Array.isArray(session.semantic?.presentation?.rowChips);
+}
+
 export function rowChipsOf(session: Pick<DesktopSession, "semantic">): RowChip[] {
   const chips = session.semantic?.presentation?.rowChips;
   if (!Array.isArray(chips)) return [];

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  hasPublishedRowChips,
   NARROW_ROW_CHIP_BUDGET,
   ROW_CHIP_BUDGET,
   rowChipColors,
@@ -38,6 +39,24 @@ describe("the chips a row was handed", () => {
       },
     };
     expect(rowChipsOf(session)).toEqual([published[0]]);
+  });
+});
+
+describe("whether the service answered at all", () => {
+  it("is presence, not length", () => {
+    // The terminal keys its fallback on presence too. A list of nothing but
+    // malformed chips is still an answer, and the two surfaces have to agree
+    // about that or one renders a fallback the other does not.
+    expect(hasPublishedRowChips({ semantic: { presentation: { rowChips: [] } } })).toBe(true);
+    expect(
+      hasPublishedRowChips({
+        semantic: { presentation: { rowChips: [{ kind: "x" }] as RowChip[] } },
+      }),
+    ).toBe(true);
+    expect(hasPublishedRowChips({})).toBe(false);
+    expect(hasPublishedRowChips({ semantic: { presentation: { statusLabel: "ready" } } })).toBe(
+      false,
+    );
   });
 });
 
