@@ -1569,19 +1569,25 @@ fn waiting_on_me_count(session: &DashboardSession) -> usize {
 /// It lives in `agent_row_chips` now, and the only decision left here is how
 /// many fit.
 ///
-/// The published list is preferred, and when it is absent this asks the same
-/// function with what the session itself carries. That is not a second ladder:
-/// it is the one ladder, reached from a snapshot that has no `semantic` block
-/// -- an older build, or a Node-era fixture -- and it keeps the flat-field
-/// tolerance `activity_new_count` and `thread_unread_count` exist for.
+/// The published list is used whenever there is one, including an empty one,
+/// and only a snapshot that carries no list at all -- an older build, or a
+/// Node-era fixture -- asks the same function with what the session itself
+/// carries. That is not a second ladder: it is the one ladder, reached from a
+/// snapshot with no derivation on it, and it keeps the flat-field tolerance
+/// `activity_new_count` and `thread_unread_count` exist for.
 fn session_activity_chips(session: &DashboardSession) -> String {
     let published = session
         .semantic
         .as_ref()
         .and_then(|semantic| semantic.presentation.extra.get("rowChips"));
-    let chips = match crate::agent_row_chips::published_row_chips(published) {
-        chips if !chips.is_empty() => chips,
-        _ => crate::agent_row_chips::agent_row_chips(&row_chips_input(session)),
+    // Keyed on whether the service answered, not on whether the answer was
+    // empty. A published empty list IS an answer -- this agent has nothing to
+    // say -- and falling back from it would put chips on a row the service
+    // deliberately left quiet, from flat fields that may be older than the
+    // derivation that ignored them.
+    let chips = match published {
+        Some(published) => crate::agent_row_chips::published_row_chips(Some(published)),
+        None => crate::agent_row_chips::agent_row_chips(&row_chips_input(session)),
     };
     let (visible, more) = crate::agent_row_chips::visible_row_chips(&chips, ROW_CHIP_BUDGET);
     let mut rendered = visible

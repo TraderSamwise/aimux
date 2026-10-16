@@ -3121,6 +3121,33 @@ fn the_row_renders_the_chips_the_service_published() {
     );
 }
 
+/// A published empty list is an answer, and the row takes it.
+///
+/// Falling back from it -- as an earlier cut did, keying the fallback on
+/// whether the list was empty rather than on whether there was one -- put
+/// chips on a row the service had deliberately left quiet, read off flat
+/// fields the derivation had already ignored.
+#[test]
+fn a_row_the_service_left_quiet_stays_quiet() {
+    let snapshot = snapshot_with_semantic(Some(json!({
+        "user": { "label": "ready", "attention": "normal" },
+        "notifications": { "unreadCount": 0 },
+        "presentation": {
+            "statusLabel": "Ready",
+            "compactHint": null,
+            "attentionScore": 0,
+            "rowChips": [],
+        },
+        "activityNewCount": 12,
+        "threadUnreadCount": 8
+    })));
+    let plain = strip_ansi(&row_frame(&snapshot));
+    assert!(
+        !plain.contains("threads unread") && !plain.contains("new activity"),
+        "the service said there is nothing to say: {plain}"
+    );
+}
+
 /// A `semantic` block that predates a field must not read as a count of none.
 ///
 /// Every field in `SessionSemanticState` is `#[serde(default)]`, so a payload
