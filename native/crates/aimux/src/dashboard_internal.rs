@@ -102,6 +102,14 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// How many unhandled keys the loop will hold while it gets ready.
+///
+/// A burst this long is already more than anyone means, and the loop's own
+/// coalescing stops a replayed burst over-applying -- `is_coalesced_input`
+/// with `should_stop_coalesced_input` is the same protection a fast typist's
+/// single read already gets.
+const DASHBOARD_PENDING_KEY_LIMIT: usize = 16;
+
 const DASHBOARD_KEY_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const DASHBOARD_HIDDEN_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const DASHBOARD_STREAM_RETRY_INTERVAL: Duration = Duration::from_secs(2);
@@ -471,6 +479,8 @@ pub fn run_native_dashboard_with_seams(
     // other, which is the bug this exists to fix arriving from the other side.
     let mut pending_worktree_focus: Vec<PendingWorktreeFocus> = Vec::new();
     let mut rendered_once = false;
+    // Keys read on a pass that could not dispatch them yet.
+    let mut pending_keys: Vec<crate::dashboard_controller::DashboardKey> = Vec::new();
     let mut viewport = DashboardViewport {
         cols: options.cols,
         rows: options.rows,
@@ -540,16 +550,36 @@ pub fn run_native_dashboard_with_seams(
         {
             return Ok(());
         }
-        let keys = match seam_keys.as_mut() {
+        let read_keys = match seam_keys.as_mut() {
             Some(keys) => keys(),
             None => {
                 ensure_dashboard_stdin_nonblocking().context("keep dashboard stdin nonblocking")?;
                 read_dashboard_keys(&mut stdin).context("read dashboard key")?
             }
         };
-        if !keys.is_empty() {
+        if !read_keys.is_empty() {
             mark_dashboard_tui_visible(&mut visibility_state, now, None);
             dashboard_visible = true;
+        }
+        // Held, not dropped. A key read on a pass that cannot dispatch it --
+        // before the first frame is painted, or before any snapshot is in hand
+        // -- used to go out of scope with the pass, and over a slow link those
+        // passes are most of the first second: "I have to hit the key many
+        // many times to get it to register". Typing into an agent is
+        // unaffected because that is tmux passthrough, not this loop.
+        //
+        // Capped, and the OLDEST go: a dashboard that never becomes ready must
+        // not grow this forever, and if anything is to be replayed late it
+        // should be what the user pressed most recently.
+        pending_keys.extend(read_keys);
+        if pending_keys.len() > DASHBOARD_PENDING_KEY_LIMIT {
+            // Cleared, not trimmed. Keys arrive as sequences -- the one that
+            // opens an overlay and the ones typed into it -- and keeping a
+            // suffix means applying the typing to whatever screen is up
+            // instead. A dashboard this far behind has nothing worth replaying
+            // from a burst this long, and applying none of it is the only
+            // answer that cannot be wrong.
+            pending_keys.clear();
         }
         let terminal_resized = live_dashboard && consume_terminal_resize();
         if terminal_resized {
@@ -656,20 +686,23 @@ pub fn run_native_dashboard_with_seams(
         ) {
             start_dashboard_runtime_guard_probe(&mut runtime_guard, &options.project_root);
         }
-        if rendered_once && !keys.is_empty() {
+        if rendered_once && !pending_keys.is_empty() {
             mark_dashboard_tui_visible(&mut visibility_state, elapsed_millis(clock_start), None);
             let Some(snapshot) = latest_snapshot.as_ref() else {
+                // Left pending: this pass asks for the snapshot the keys need,
+                // and the pass that has one dispatches them.
                 render_now = true;
                 wait_for_dashboard_keys(wait_on_stdin && !driven);
                 continue;
             };
             let controller = controller.get_or_insert_with(|| DashboardController::new(snapshot));
-            let keys = keys
+            let keys = std::mem::take(&mut pending_keys)
                 .into_iter()
                 .filter(|key| !key.is_focus_in())
                 .collect::<Vec<_>>();
             let is_coalesced_input = keys.len() > 1;
-            for key in keys {
+            let mut keys = keys.into_iter();
+            while let Some(key) = keys.next() {
                 let before_surface = controller.input_surface();
                 let before_hide_offline = controller.hide_offline_agents;
                 let effect = controller.handle_key(snapshot, key);
@@ -877,6 +910,15 @@ pub fn run_native_dashboard_with_seams(
                     DashboardControllerEffect::Ignored => {}
                 }
                 if stop_after_key {
+                    // Put the rest back rather than dropping it. This batch
+                    // stops here because the key changed what the next one
+                    // would mean -- a new surface, or a request in flight --
+                    // and the remainder has to be answered against what the
+                    // screen becomes, on the next pass. Taking the whole batch
+                    // and abandoning the tail was a third way to lose a
+                    // keypress, and holding keys made the batches long enough
+                    // to reach it.
+                    pending_keys.extend(keys);
                     break;
                 }
             }
