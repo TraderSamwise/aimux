@@ -147,6 +147,8 @@ scribe_watcher_guards
 secure_permissions
 session_launch
 state_update_lock
+subagent_activity_task
+transcript_tail_encoding
 terminal_key_parser_contract
 tmux_expose
 transcript_reconciler_behavior

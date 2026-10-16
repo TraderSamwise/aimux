@@ -58,6 +58,7 @@ pub mod session_semantics;
 pub mod session_visibility;
 pub mod shell_state;
 pub mod statusline;
+pub mod subagent_activity_task;
 pub mod switchable_agents;
 pub mod team;
 pub mod tmux_metadata_sync;

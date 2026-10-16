@@ -103,7 +103,16 @@ pub fn read_file_tail(path: impl AsRef<Path>, max_bytes: Option<u64>) -> Option<
     file.seek(SeekFrom::Start(start)).ok()?;
     let mut bytes = vec![0; length as usize];
     file.read_exact(&mut bytes).ok()?;
-    String::from_utf8(bytes).ok()
+    // Lossy, because the cut is at a byte offset and lands mid-codepoint
+    // whenever the transcript holds anything outside ASCII -- which a
+    // transcript of real work always does. Node's `buffer.toString("utf8")`
+    // replaced those bytes and returned the tail; `String::from_utf8().ok()`
+    // returned `None`, and every caller reads `None` as "no answer about this
+    // transcript": the reconciler stops settling the session, and the
+    // sub-agent scan stops reporting its sub-agents. The partial first line
+    // was never parseable JSON anyway, so the replacement characters land
+    // exactly where they are already discarded.
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 pub fn probe_transcript(tool_config_key: &str, path: impl AsRef<Path>) -> Option<TranscriptProbe> {

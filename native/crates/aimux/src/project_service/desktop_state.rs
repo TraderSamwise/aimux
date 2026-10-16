@@ -1055,6 +1055,7 @@ fn dashboard_session(
         for key in [
             "loop",
             "tokenSpend",
+            "subagents",
             "loopLastAction",
             "lane",
             "overseer",
