@@ -6,14 +6,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::daemon_state::try_load_metadata_state;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
-use crate::scribe_watcher::{ScribeBriefing, ScribeWatcher};
+use crate::scribe_watcher::{
+    ScribeBriefing, ScribeWatcher, find_scribe_candidates_with_scribe, find_scribe_session_id,
+};
 
 use super::router::ProjectServiceRequestContext;
 use super::scheduler::{PeriodicTask, PeriodicTaskFuture};
@@ -86,13 +88,11 @@ impl PeriodicTask for ScribeWatcherTask {
             let budget = TickLoopBudget::new(SCAN_BUDGET);
             let mut outputs = BTreeMap::new();
             let mut failures = Vec::new();
-            for session in sessions.iter().take(MAX_SCAN_CANDIDATES as usize) {
+            for session_id in scribe_read_targets(&input) {
                 if budget.spent() {
                     break;
                 }
-                let Some(session_id) = session.get("id").and_then(serde_json::Value::as_str) else {
-                    continue;
-                };
+                let session_id = session_id.as_str();
                 match read_agent_output_tail_async(Arc::clone(&read_context), session_id, -80).await
                 {
                     Ok(Some(output)) => {
@@ -142,6 +142,29 @@ impl PeriodicTask for ScribeWatcherTask {
             finish_scribe_watcher_task(failures)
         })
     }
+}
+
+/// Whose tail this tick reads.
+///
+/// The candidates decide, not topology order. Reading the first twelve
+/// SESSIONS while the watcher considers the first twelve that PASS its filter
+/// is the same number counted in two places: on a project whose early
+/// positions hold the scribe, a control session or a busy agent, the
+/// candidates reach past twelve, those tails were never read, and the watcher
+/// skipped exactly the agents it had chosen to write up.
+///
+/// Asked with the scribe the watcher will ask with, so the scribe's own tail is
+/// not read as if it were work to write up.
+pub fn scribe_read_targets(input: &Value) -> Vec<String> {
+    find_scribe_candidates_with_scribe(input, find_scribe_session_id(input).as_deref())
+        .iter()
+        .filter_map(|candidate| {
+            candidate
+                .get("id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .collect()
 }
 
 fn finish_scribe_watcher_task(failures: Vec<String>) -> Result<(), String> {

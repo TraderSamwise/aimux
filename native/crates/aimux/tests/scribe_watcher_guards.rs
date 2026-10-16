@@ -448,3 +448,107 @@ mod which_scribe {
         );
     }
 }
+
+/// Whose tail the tick reads.
+mod read_targets {
+    use aimux::project_service::scribe_watcher_task::scribe_read_targets;
+    use serde_json::{Value, json};
+
+    /// A project whose first twelve positions the watcher will not write up,
+    /// and two real agents after them.
+    fn crowded_project() -> Value {
+        let mut sessions = Vec::new();
+        let mut metadata = serde_json::Map::new();
+        // The scribe itself, then eleven agents mid-turn: all ineligible, all
+        // ahead of the work in topology order.
+        sessions.push(json!({ "id": "claude-scribe", "status": "running" }));
+        metadata.insert(
+            "claude-scribe".into(),
+            json!({ "scribe": true, "derived": { "activity": "idle", "attention": "normal" } }),
+        );
+        for index in 0..11 {
+            let id = format!("busy-{index}");
+            sessions.push(json!({ "id": id, "status": "running" }));
+            metadata.insert(
+                id,
+                json!({ "derived": { "activity": "running", "attention": "normal" } }),
+            );
+        }
+        for id in ["quiet-a", "quiet-b"] {
+            sessions.push(json!({ "id": id, "status": "running" }));
+            metadata.insert(
+                id.into(),
+                json!({ "derived": { "activity": "idle", "attention": "normal" } }),
+            );
+        }
+        json!({
+            "sessions": sessions,
+            "metadata": { "sessions": Value::Object(metadata) },
+            "maxScanCandidates": 12,
+        })
+    }
+
+    #[test]
+    fn the_candidates_decide_the_reads_not_topology_order() {
+        // The two agents worth writing up sit at positions 12 and 13. Reading
+        // the first twelve SESSIONS read eleven busy agents and the scribe,
+        // and then the watcher skipped the only two candidates it had -- the
+        // same number counted in two places.
+        assert_eq!(
+            scribe_read_targets(&crowded_project()),
+            vec!["quiet-a".to_owned(), "quiet-b".to_owned()]
+        );
+    }
+
+    /// Every agent the briefing describes had its tail read.
+    ///
+    /// The real invariant, and the one the defect broke: the task chooses what
+    /// to read and the watcher chooses what to write up, so a test that only
+    /// checks one of them passes while the two disagree. This drives the
+    /// watcher with a reader that records what it was asked for, and compares
+    /// that against the briefing the watcher produced.
+    #[test]
+    fn everything_the_briefing_names_was_read_first() {
+        let input = crowded_project();
+        let targets = scribe_read_targets(&input);
+        let mut watcher = aimux::scribe_watcher::ScribeWatcher::new();
+        let mut asked = Vec::new();
+        let mut read = |session_id: &str, start_line: i64| {
+            asked.push(session_id.to_owned());
+            // What the task supplies: the tail it read for a candidate.
+            (start_line == -80 && targets.iter().any(|id| id == session_id))
+                .then(|| format!("work from {session_id}"))
+        };
+        let mut collect = |_: &aimux::scribe_watcher::ScribeBriefing| false;
+        let briefing = watcher
+            .scan(&input, 1_000, &mut read, &mut collect)
+            .expect("the crowded project has work to write up");
+
+        for named in ["quiet-a", "quiet-b"] {
+            assert!(
+                briefing.text.contains(named),
+                "the briefing names {named}: {}",
+                briefing.text
+            );
+            assert!(
+                asked.iter().any(|id| id == named),
+                "and its tail was read: {asked:?}"
+            );
+        }
+        assert!(
+            asked
+                .iter()
+                .all(|id| targets.iter().any(|target| target == id)),
+            "nothing outside the read set was asked for: {asked:?} vs {targets:?}"
+        );
+    }
+
+    #[test]
+    fn a_project_with_nothing_to_write_up_reads_nothing() {
+        let input = json!({
+            "sessions": [{ "id": "busy", "status": "running" }],
+            "metadata": { "sessions": { "busy": { "derived": { "activity": "running" } } } },
+        });
+        assert!(scribe_read_targets(&input).is_empty());
+    }
+}
