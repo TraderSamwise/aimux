@@ -76,11 +76,18 @@ struct CodexRolloutFold {
     stamp: Option<FileStamp>,
     offset: u64,
     partial: Vec<u8>,
+    prefix: Vec<u8>,
+    checkpoint: Vec<u8>,
     skipping: bool,
     incomplete_reported: bool,
     scan: CodexSubagentScan,
 }
 impl CodexRolloutFold {
+    fn save_checkpoint(&mut self, file: &mut File) -> Result<(), String> {
+        let length = self.offset.min(1024) as usize;
+        self.checkpoint = read_range(file, self.offset - length as u64, length)?;
+        Ok(())
+    }
     fn read(&mut self, path: &Path, now: u64, budget: &TickLoopBudget) -> ScanOutcome {
         if budget.spent() {
             return ScanOutcome::BudgetSpent;
@@ -98,26 +105,42 @@ impl CodexRolloutFold {
     ) -> Result<ScanOutcome, String> {
         let mut file = File::open(path).map_err(|e| e.to_string())?;
         let stamp = FileStamp::from_metadata(&file.metadata().map_err(|e| e.to_string())?)?;
-        let replaced = self.stamp.as_ref().is_none_or(|old| {
+        let mut replaced = self.stamp.as_ref().is_none_or(|old| {
             old.device != stamp.device
                 || old.inode != stamp.inode
                 || stamp.len < old.len
                 || stamp.len < self.offset
                 || (old.len == stamp.len && old.modified != stamp.modified)
         });
+        if !replaced {
+            let prefix = read_range(&mut file, 0, self.prefix.len())?;
+            let checkpoint = read_range(
+                &mut file,
+                self.offset.saturating_sub(self.checkpoint.len() as u64),
+                self.checkpoint.len(),
+            )?;
+            replaced = prefix != self.prefix || checkpoint != self.checkpoint;
+        }
         if replaced {
             self.offset = 0;
+            self.checkpoint.clear();
+            self.prefix.clear();
+            self.incomplete_reported = false;
             self.partial.clear();
             self.skipping = false;
             self.scan = CodexSubagentScan::default();
         }
         self.stamp = Some(stamp.clone());
+        if self.prefix.len() < stamp.len.min(1024) as usize {
+            self.prefix = read_range(&mut file, 0, stamp.len.min(1024) as usize)?;
+        }
         file.seek(SeekFrom::Start(self.offset))
             .map_err(|e| e.to_string())?;
         let mut bytes = vec![0; (stamp.len.saturating_sub(self.offset) as usize).min(CODEX_CHUNK)];
         file.read_exact(&mut bytes).map_err(|e| e.to_string())?;
         for chunk in bytes.split_inclusive(|byte| *byte == b'\n') {
             if budget.spent() {
+                self.save_checkpoint(&mut file)?;
                 return Ok(ScanOutcome::BudgetSpent);
             }
             self.offset += chunk.len() as u64;
@@ -144,6 +167,7 @@ impl CodexRolloutFold {
                 self.skipping = false;
             }
         }
+        self.save_checkpoint(&mut file)?;
         // No empty summary during replay: unseen history may still name live agents.
         if self.offset < stamp.len {
             return Ok(ScanOutcome::CatchingUp);
@@ -169,29 +193,31 @@ impl CodexRolloutFold {
 }
 
 pub struct SubagentActivityTask {
-    context: Arc<ProjectServiceRequestContext>,
     terminal: HashMap<String, ClaudeSubagentCache>,
     codex: HashMap<String, CodexRolloutFold>,
     codex_sessions_dir: PathBuf,
     cursor: u64,
 }
 impl SubagentActivityTask {
-    pub fn new(context: Arc<ProjectServiceRequestContext>) -> Self {
+    pub fn new(_context: Arc<ProjectServiceRequestContext>) -> Self {
         Self {
-            context,
             terminal: HashMap::new(),
             codex: HashMap::new(),
             codex_sessions_dir: default_codex_sessions_dir(),
             cursor: 0,
         }
     }
-    fn publish(&self, id: &str, outcome: SubagentPublish) -> Result<(), String> {
+    fn publish(
+        context: &ProjectServiceRequestContext,
+        id: &str,
+        outcome: SubagentPublish,
+    ) -> Result<(), String> {
         let value = match outcome {
             SubagentPublish::Leave => return Ok(()),
             SubagentPublish::Clear => None,
             SubagentPublish::Set(value) => Some(value),
         };
-        update_session_metadata(self.context.project_state_dir(), id, |mut current| {
+        update_session_metadata(context.project_state_dir(), id, |mut current| {
             if let Some(map) = current.as_object_mut() {
                 if let Some(value) = value {
                     map.insert("subagents".into(), value);
@@ -203,6 +229,87 @@ impl SubagentActivityTask {
         })
         .map(|_| ())
         .map_err(|error| format!("sub-agent metadata for {id}: {error}"))
+    }
+    fn scan_sessions(
+        &mut self,
+        sessions: &[Value],
+        metadata: &Value,
+        now: u64,
+        budget: &TickLoopBudget,
+        publish_result: &mut dyn FnMut(&str, SubagentPublish) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let mut failures = Vec::new();
+        let order = scan_order(sessions.len(), self.cursor);
+        self.cursor = self.cursor.wrapping_add(1);
+        let mut live = HashSet::new();
+        let mut codex_live = HashSet::new();
+        for index in order {
+            let session = &sessions[index];
+            let Some(id) = session
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+            else {
+                continue;
+            };
+            if !session_is_live(session) {
+                record_publish(
+                    id,
+                    SubagentPublish::Clear,
+                    budget,
+                    publish_result,
+                    &mut failures,
+                );
+                continue;
+            }
+            live.insert(id.to_owned());
+            let outcome = if session.get("toolConfigKey").and_then(Value::as_str) == Some("codex") {
+                codex_live.insert(id.to_owned());
+                self.scan_codex(id, session, metadata, now, budget)
+            } else if let Some(path) =
+                session_transcript_path(session, metadata).and_then(claude_subagents_dir)
+            {
+                scan_subagents_dir(
+                    &path,
+                    now,
+                    self.terminal.entry(id.to_owned()).or_default(),
+                    budget,
+                )
+            } else {
+                ScanOutcome::CatchingUp
+            };
+            let publish = match outcome {
+                ScanOutcome::Read(runs) => subagent_publish(Some(&runs)),
+                ScanOutcome::CatchingUp => SubagentPublish::Leave,
+                ScanOutcome::BudgetSpent => {
+                    log_at(
+                        LogLevel::Warn,
+                        "sub-agent scan budget exhausted",
+                        "subagent-activity",
+                        Some(json!({"sessionId":id})),
+                    );
+                    SubagentPublish::Leave
+                }
+                ScanOutcome::Unreadable(error) => {
+                    log_at(
+                        LogLevel::Warn,
+                        "sub-agent scan failed",
+                        "subagent-activity",
+                        Some(json!({"sessionId":id,"error":error})),
+                    );
+                    SubagentPublish::Leave
+                }
+            };
+            record_publish(id, publish, budget, publish_result, &mut failures);
+        }
+        self.terminal
+            .retain(|id, _| live.contains(id) && !codex_live.contains(id));
+        self.codex.retain(|id, _| codex_live.contains(id));
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
     }
     fn scan_codex(
         &mut self,
@@ -300,68 +407,9 @@ impl PeriodicTask for SubagentActivityTask {
             .map_err(|e| e.to_string())?;
             let now = now_millis().ok_or("sub-agent scan clock is before epoch")?;
             let budget = TickLoopBudget::new(SCAN_BUDGET);
-            let order = scan_order(sessions.len(), self.cursor);
-            self.cursor = self.cursor.wrapping_add(1);
-            let mut live = HashSet::new();
-            let mut codex_live = HashSet::new();
-            for index in order {
-                let session = &sessions[index];
-                let Some(id) = session
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .filter(|id| !id.is_empty())
-                else {
-                    continue;
-                };
-                if !session_is_live(session) {
-                    self.publish(id, SubagentPublish::Clear)?;
-                    continue;
-                }
-                live.insert(id.to_owned());
-                let outcome =
-                    if session.get("toolConfigKey").and_then(Value::as_str) == Some("codex") {
-                        codex_live.insert(id.to_owned());
-                        self.scan_codex(id, session, &metadata, now, &budget)
-                    } else if let Some(path) =
-                        session_transcript_path(session, &metadata).and_then(claude_subagents_dir)
-                    {
-                        scan_subagents_dir(
-                            &path,
-                            now,
-                            self.terminal.entry(id.to_owned()).or_default(),
-                            &budget,
-                        )
-                    } else {
-                        ScanOutcome::CatchingUp
-                    };
-                let publish = match outcome {
-                    ScanOutcome::Read(runs) => subagent_publish(Some(&runs)),
-                    ScanOutcome::CatchingUp => SubagentPublish::Leave,
-                    ScanOutcome::BudgetSpent => {
-                        log_at(
-                            LogLevel::Warn,
-                            "sub-agent scan budget exhausted",
-                            "subagent-activity",
-                            Some(json!({"sessionId":id})),
-                        );
-                        SubagentPublish::Leave
-                    }
-                    ScanOutcome::Unreadable(error) => {
-                        log_at(
-                            LogLevel::Warn,
-                            "sub-agent scan failed",
-                            "subagent-activity",
-                            Some(json!({"sessionId":id,"error":error})),
-                        );
-                        SubagentPublish::Leave
-                    }
-                };
-                self.publish(id, publish)?;
-            }
-            self.terminal
-                .retain(|id, _| live.contains(id) && !codex_live.contains(id));
-            self.codex.retain(|id, _| codex_live.contains(id));
-            Ok(())
+            self.scan_sessions(&sessions, &metadata, now, &budget, &mut |id, outcome| {
+                Self::publish(context, id, outcome)
+            })
         })
     }
 }
@@ -784,5 +832,113 @@ mod directory_errors {
         assert!(
             matches!(result, ScanOutcome::Unreadable(reason) if reason.contains("directory read failed"))
         );
+    }
+}
+
+fn record_publish(
+    id: &str,
+    outcome: SubagentPublish,
+    budget: &TickLoopBudget,
+    publish: &mut dyn FnMut(&str, SubagentPublish) -> Result<(), String>,
+    failures: &mut Vec<String>,
+) {
+    let result = if budget.spent() && !matches!(outcome, SubagentPublish::Leave) {
+        Err(format!(
+            "sub-agent metadata for {id} deferred: scan budget exhausted"
+        ))
+    } else {
+        publish(id, outcome)
+    };
+    if let Err(error) = result {
+        log_at(
+            LogLevel::Warn,
+            "sub-agent metadata publish failed",
+            "subagent-activity",
+            Some(json!({"sessionId": id, "error": error})),
+        );
+        failures.push(error);
+    }
+}
+
+#[cfg(test)]
+mod publish_failures {
+    use super::*;
+    #[test]
+    fn failed_publish_does_not_skip_later_sessions_or_cache_cleanup() {
+        let mut task = SubagentActivityTask::new(Arc::new(
+            ProjectServiceRequestContext::with_project_state_dir(
+                Path::new("/unused"),
+                Path::new("/unused/state"),
+            ),
+        ));
+        task.terminal
+            .insert("gone".into(), ClaudeSubagentCache::default());
+        task.codex
+            .insert("gone".into(), CodexRolloutFold::default());
+        let sessions = vec![
+            json!({"id":"first", "status":"offline"}),
+            json!({"id":"second","status":"offline"}),
+        ];
+        let mut attempted = Vec::new();
+        let result = task.scan_sessions(
+            &sessions,
+            &json!({}),
+            0,
+            &TickLoopBudget::new(Duration::from_secs(2)),
+            &mut |id, outcome| {
+                assert_eq!(outcome, SubagentPublish::Clear);
+                attempted.push(id.to_owned());
+                if id == "first" {
+                    Err("simulated publish failure".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(result.unwrap_err().contains("simulated publish failure"));
+        assert_eq!(attempted, vec!["first", "second"]);
+        assert!(task.terminal.is_empty());
+        assert!(task.codex.is_empty());
+    }
+}
+
+fn read_range(file: &mut File, start: u64, length: usize) -> Result<Vec<u8>, String> {
+    file.seek(SeekFrom::Start(start))
+        .map_err(|e| e.to_string())?;
+    let mut bytes = vec![0; length];
+    file.read_exact(&mut bytes).map_err(|e| e.to_string())?;
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod longer_rewrites {
+    use super::*;
+    #[test]
+    fn rewrite_to_longer_contents_rebuilds_old_cursor() {
+        let root =
+            std::env::temp_dir().join(format!("aimux-longer-rewrite-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("rollout.jsonl");
+        fn events(name: &str) -> String {
+            format!(
+                "{}\n{}\n",
+                json!({"type":"response_item","payload":{
+                "type":"function_call","name":"spawn_agent","call_id":name}}),
+                json!({"type":"response_item","payload":{"type":"function_call_output","call_id":name,
+                "output":json!({"task_name":format!("/root/{name}")}).to_string()}})
+            )
+        }
+        fs::write(&path, events("old")).unwrap();
+        let mut fold = CodexRolloutFold::default();
+        let budget = TickLoopBudget::new(Duration::from_secs(2));
+        assert!(
+            matches!(fold.read(&path, 1_000, &budget), ScanOutcome::Read(runs) if runs[0].name == "old")
+        );
+        fs::write(&path, events("replacement-with-a-longer-description")).unwrap();
+        assert!(
+            matches!(fold.read(&path, 1_000, &budget), ScanOutcome::Read(runs)
+            if runs.len()==1 && runs[0].name=="replacement-with-a-longer-description")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

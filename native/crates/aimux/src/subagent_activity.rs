@@ -424,7 +424,7 @@ mod tests {
 #[derive(Debug, Default)]
 pub struct CodexSubagentScan {
     outstanding: std::collections::BTreeMap<String, CodexSubagent>,
-    calls: std::collections::BTreeMap<String, (String, u64)>,
+    calls: std::collections::BTreeMap<String, (String, u64, Option<String>)>,
 }
 
 #[derive(Clone, Debug)]
@@ -486,18 +486,49 @@ impl CodexSubagentScan {
             return;
         };
         if matches!(kind, "function_call" | "custom_tool_call") {
-            if matches!(name, "spawn_agent" | "list_agents") {
+            if matches!(name, "spawn_agent" | "list_agents" | "followup_task") {
+                let target = payload
+                    .get("arguments")
+                    .and_then(Value::as_str)
+                    .and_then(|args| serde_json::from_str::<Value>(args).ok())
+                    .and_then(|args| {
+                        args.get("target")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    });
                 self.calls
-                    .insert(call_id.to_owned(), (name.to_owned(), at_ms));
+                    .insert(call_id.to_owned(), (name.to_owned(), at_ms, target));
             }
             return;
         }
         if !matches!(kind, "function_call_output" | "custom_tool_call_output") {
             return;
         }
-        let Some((call, started_at_ms)) = self.calls.remove(call_id) else {
+        let Some((call, started_at_ms, target)) = self.calls.remove(call_id) else {
             return;
         };
+        // Verified Codex follow-up acknowledgements are empty, not JSON.
+        if call == "followup_task" {
+            if payload.get("output").and_then(Value::as_str) == Some("")
+                && let Some(target) = target.filter(|target| !target.trim().is_empty())
+            {
+                let key = if target.starts_with('/') {
+                    target
+                } else {
+                    format!("/root/{target}")
+                };
+                let run = self
+                    .outstanding
+                    .entry(key.clone())
+                    .or_insert(CodexSubagent {
+                        name: display_text(key.rsplit('/').next().unwrap_or(&key)),
+                        started_at_ms,
+                        confirmed_at_ms: at_ms,
+                    });
+                run.confirmed_at_ms = at_ms;
+            }
+            return;
+        }
         let Some(output) = payload
             .get("output")
             .and_then(Value::as_str)
@@ -548,14 +579,14 @@ impl CodexSubagentScan {
         }
         // Bound pending calls even while replaying an old rollout.
         self.calls
-            .retain(|_, (_, at)| at_ms.saturating_sub(*at) < SUBAGENT_STALE_AFTER_MS);
+            .retain(|_, (_, at, _)| at_ms.saturating_sub(*at) < SUBAGENT_STALE_AFTER_MS);
     }
 
     pub fn runs(&mut self, now_ms: u64) -> Vec<SubagentRun> {
         self.outstanding
             .retain(|_, run| now_ms.saturating_sub(run.confirmed_at_ms) < SUBAGENT_STALE_AFTER_MS);
         self.calls
-            .retain(|_, (_, at)| now_ms.saturating_sub(*at) < SUBAGENT_STALE_AFTER_MS);
+            .retain(|_, (_, at, _)| now_ms.saturating_sub(*at) < SUBAGENT_STALE_AFTER_MS);
         self.outstanding
             .iter()
             .map(|(key, run)| SubagentRun {
@@ -593,5 +624,35 @@ mod display_safety {
                 .any(char::is_control)
         );
         assert_eq!(display_text(&"a".repeat(1_000)).len(), 240);
+    }
+}
+
+#[cfg(test)]
+mod codex_followups {
+    use super::*;
+    #[test]
+    fn acknowledged_followup_reactivates_a_completed_child_without_a_listing() {
+        let request = json!({"type":"response_item","payload":{"type":"function_call",
+            "name":"followup_task","call_id":"resume", "arguments":"{\"target\":\"settings_review\",\"message\":\"encrypted\"}"}});
+        let ack = json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"resume","output":""}});
+        let mut scan = CodexSubagentScan::default();
+        scan.fold(&format!("{request}\n"), 1_000);
+        assert!(
+            scan.runs(1_000).is_empty(),
+            "unacknowledged follow-up is not confirmed work"
+        );
+        scan.fold(&format!("{ack}\n"), 1_000);
+        let runs = scan.runs(1_000);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].key, "/root/settings_review");
+    }
+    #[test]
+    fn failed_followup_does_not_invent_a_running_child() {
+        let request = json!({"type":"response_item","payload":{"type":"function_call",
+            "name":"followup_task","call_id":"resume","arguments":"{\"target\":\"settings_review\"}"}});
+        let error = json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"resume","output":"agent not found"}});
+        let mut scan = CodexSubagentScan::default();
+        scan.fold(&format!("{request}\n{error}\n"), 1_000);
+        assert!(scan.runs(1_000).is_empty());
     }
 }

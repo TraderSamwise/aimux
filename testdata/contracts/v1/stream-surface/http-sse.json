@@ -229,6 +229,11 @@
                 "hot": false
               },
               {
+                "name": "subagent-activity",
+                "intervalMs": "<interval-ms-or-null>",
+                "hot": false
+              },
+              {
                 "name": "transcript-length",
                 "intervalMs": "<interval-ms-or-null>",
                 "hot": false
@@ -588,6 +593,11 @@
                 },
                 {
                   "name": "scribe-watcher",
+                  "intervalMs": "<interval-ms-or-null>",
+                  "hot": false
+                },
+                {
+                  "name": "subagent-activity",
                   "intervalMs": "<interval-ms-or-null>",
                   "hot": false
                 },

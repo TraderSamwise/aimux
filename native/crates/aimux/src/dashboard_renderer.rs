@@ -1997,15 +1997,23 @@ fn render_selected_details_panel(
     }
     let selected = selected_session.expect("selected session checked");
     let mut lines = Vec::new();
-    if let Some(detail) = crate::subagent_activity::subagent_detail(selected.subagents.as_ref()) {
-        push_kv(&mut lines, "Sub-agents", &detail, width);
-    }
     push_kv(
         &mut lines,
         "Agent",
         selected.label.as_deref().unwrap_or(&selected.command),
         width,
     );
+    if let Some(detail) = crate::subagent_activity::subagent_detail(selected.subagents.as_ref()) {
+        let mut rows = wrap_key_value("Sub-agents", &detail, width);
+        let limit = (height / 8).clamp(1, 4);
+        if rows.len() > limit {
+            rows.truncate(limit);
+            if let Some(last) = rows.last_mut() {
+                *last = format!("{} …", truncate(last, width.saturating_sub(2)));
+            }
+        }
+        lines.extend(rows);
+    }
     push_kv(
         &mut lines,
         "Canonical",

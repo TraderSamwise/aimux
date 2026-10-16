@@ -111,14 +111,18 @@ fn session_state(state: &Value) -> Value {
 /// The agent's own row in the dashboard frame, ANSI stripped, wide enough
 /// that the chip is not what loses the width fight.
 fn dashboard_frame(state: &Value, details_visible: bool) -> String {
+    dashboard_frame_at(state, details_visible, 200, 50)
+}
+
+fn dashboard_frame_at(state: &Value, details_visible: bool, cols: usize, rows: usize) -> String {
     let snapshot: DesktopStateSnapshot =
         serde_json::from_value(state.clone()).expect("the snapshot the dashboard renders");
     let frame = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
         overseer_sessions: &[],
         scribe_sessions: &[],
-        cols: 200,
-        rows: 50,
+        cols,
+        rows,
         nav_level: DashboardNavLevel::Sessions,
         selected_session_id: Some(SESSION),
         selected_service_id: None,
@@ -303,4 +307,16 @@ fn live_dashboard_details_name_the_working_subagents() {
     assert!(frame.contains("review of PR 451"), "{frame}");
     let cleared = dashboard_frame(&desktop_state(None), true);
     assert!(!cleared.contains("Adversarial review of PR"));
+}
+
+#[test]
+fn long_subagent_details_preserve_identity_and_state_on_small_terminals() {
+    let mut state = desktop_state(Some(&published_summary(7)));
+    patch_session(&mut state, &|session| {
+        session["previewSnapshot"] = json!({ "output":"ordinary agent output" });
+    });
+    let frame = dashboard_frame_at(&state, true, 80, 24);
+    assert!(frame.contains("Agent: claude"), "{frame}");
+    assert!(frame.contains("State: working"), "{frame}");
+    assert!(frame.contains("Sub-agents:"), "{frame}");
 }
