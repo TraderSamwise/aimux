@@ -1,5 +1,6 @@
 import React, { type ReactNode } from "react";
 import { projectStateKey } from "@/lib/project-key";
+import { rowChipColors } from "@/lib/row-chips";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("react-native", () => ({
@@ -502,12 +503,52 @@ describe("AgentRow", () => {
     expect(text).toContain("\u203a");
   });
 
-  it("says nothing when the service published nothing", () => {
-    // Including the sub-agent badge: the row renders the published list, so a
-    // summary nothing derived a chip from is a row with nothing to say.
+  // A daemon older than the published ladder sends no chips at all. The row
+  // kept this one fact before the ladder existed, and losing it to a version
+  // skew would be a regression the terminal row does not have.
+  it("still names the sub-agents when nothing published the chips", () => {
     const text = rowWith([]);
-    expect(text).not.toContain("sub-agent");
+    expect(text).toContain("3 sub-agents");
     expect(text).not.toContain("\u203a");
+  });
+
+  it("renders the sub-agent chip in the tone it was published with", () => {
+    const tree = renderNode(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-busy",
+          label: "worker",
+          command: "claude",
+          semantic: {
+            user: { label: "ready" },
+            presentation: {
+              statusLabel: "ready",
+              rowChips: [{ kind: "subagents", label: "3 sub-agents", tone: "work" }],
+            },
+          },
+          subagents: { running: 3, label: "3 sub-agents", items: [] },
+        }),
+        digit: 1,
+        selected: false,
+        projectStateKey: projectStateKey({ path: "/repo" }),
+        endpoint: null,
+        token: null,
+        onPick: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+    // Hardcoding grey here painted a live agent's sub-agents muted in the app
+    // while the terminal painted them as work.
+    const painted = findNodes(tree, (node) => {
+      const style = node.props.style as { color?: string } | undefined;
+      return style?.color === rowChipColors("work").text;
+    });
+    expect(painted.length).toBeGreaterThan(0);
+    const muted = findNodes(tree, (node) => {
+      const style = node.props.style as { color?: string } | undefined;
+      return style?.color === rowChipColors("muted").text;
+    });
+    expect(muted).toHaveLength(0);
   });
 
   it("renders the role column only inside the supervisor lane", () => {

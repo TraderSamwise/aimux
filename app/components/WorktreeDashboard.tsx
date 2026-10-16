@@ -163,15 +163,24 @@ function UnreadBadge({ count }: { count?: number }) {
  * -- pinned in native/crates/aimux/tests/agent_row_chips_across_surfaces.rs.
  */
 function RowChips({ session, budget }: { session: DesktopSession; budget: number }) {
-  const { visible, more } = visibleRowChips(rowChipsOf(session), budget);
+  const published = rowChipsOf(session);
+  // A daemon older than the published ladder sends no chips at all. The row
+  // kept one of these facts before this existed -- the sub-agent badge -- and
+  // losing it to a version skew would be a regression the terminal row does
+  // not have, because it can ask the ladder directly.
+  if (published.length === 0) {
+    return <SubagentBadge subagents={session.subagents} tone="work" />;
+  }
+  const { visible, more } = visibleRowChips(published, budget);
   if (visible.length === 0 && !more) return null;
   return (
     <>
       {visible.map((chip) =>
         // One fact with a richer control: tapping it names the sub-agents.
-        // Same label, same place in the order -- a different affordance.
+        // Same label, same place in the order, the tone it was published with
+        // -- a different affordance.
         chip.kind === "subagents" ? (
-          <SubagentBadge key={chip.kind} subagents={session.subagents} />
+          <SubagentBadge key={chip.kind} subagents={session.subagents} tone={chip.tone} />
         ) : (
           <RowChipPill key={chip.kind} chip={chip} />
         ),

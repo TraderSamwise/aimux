@@ -61,11 +61,18 @@ describe("how many fit", () => {
 });
 
 describe("how this client paints a tone the service named", () => {
-  it("gives each tone its own colour, and an unknown one the muted pair", () => {
-    const tones = ["attention", "danger", "work", "info"] as const;
-    const colors = tones.map((tone) => rowChipColors(tone).text);
-    expect(new Set(colors).size).toBe(tones.length);
-    // A tone from a newer build renders muted rather than invisible.
+  // The exact pairs, not just that they differ: swapping attention and danger
+  // paints "waiting on you" red and "coordination blocked" amber, which both
+  // read as a working row with one urgent thing -- the wrong one.
+  it("paints each tone its own colour", () => {
+    expect(rowChipColors("attention").text).toBe("#e0b341");
+    expect(rowChipColors("danger").text).toBe("#e05f5f");
+    expect(rowChipColors("work").text).toBe("#78dce8");
+    expect(rowChipColors("info").text).toBe("#a7b2e6");
+    expect(rowChipColors("muted").text).toBe("#9aa0ad");
+  });
+
+  it("gives a tone from a newer build the muted pair rather than nothing", () => {
     expect(rowChipColors("something-new" as RowChip["tone"])).toEqual(rowChipColors("muted"));
   });
 });

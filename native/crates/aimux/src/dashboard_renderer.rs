@@ -1506,7 +1506,16 @@ fn is_recently_idle(session: &DashboardSession) -> bool {
 }
 
 fn is_session_offline(session: &DashboardSession) -> bool {
-    if session.pending_action.is_some() {
+    // Blank is not an action. The published rule
+    // (`session_semantics::row_chips_offline`) trims before asking, so leaving
+    // this one on `is_some` made `pendingAction: ""` read muted in the service
+    // and live here -- the two disagreeing about the agent whose chips this
+    // decides.
+    if session
+        .pending_action
+        .as_deref()
+        .is_some_and(|action| !action.trim().is_empty())
+    {
         return false;
     }
     matches!(effective_session_row_state(session), Some("offline"))

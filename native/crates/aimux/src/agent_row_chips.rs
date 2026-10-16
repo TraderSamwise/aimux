@@ -184,9 +184,20 @@ pub fn visible_row_chips(chips: &[RowChip], budget: usize) -> (Vec<RowChip>, boo
 /// An absent or unexpected shape is an empty list rather than a parse failure:
 /// a build that publishes something else should cost a row its chips, not its
 /// row.
+///
+/// Filtered per entry rather than all-or-nothing, because the app's reader is:
+/// one malformed chip costing the terminal every chip while the app rendered
+/// the rest is two surfaces disagreeing, which is the thing this ladder exists
+/// to stop.
 pub fn published_row_chips(chips: Option<&serde_json::Value>) -> Vec<RowChip> {
     chips
-        .and_then(|chips| serde_json::from_value::<Vec<RowChip>>(chips.clone()).ok())
+        .and_then(serde_json::Value::as_array)
+        .map(|chips| {
+            chips
+                .iter()
+                .filter_map(|chip| serde_json::from_value::<RowChip>(chip.clone()).ok())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -344,6 +355,12 @@ mod tests {
         // row: nothing to render, and nothing thrown.
         let wrong = serde_json::json!([{ "kind": "x" }]);
         assert!(published_row_chips(Some(&wrong)).is_empty());
+        assert!(published_row_chips(Some(&serde_json::json!({}))).is_empty());
+        // One bad chip costs that chip, the way the app's reader costs it --
+        // all-or-nothing here would have the terminal render none while the
+        // app rendered the rest.
+        let mixed = serde_json::json!([{ "kind": "x" }, chips[0], { "label": "y" }]);
+        assert_eq!(published_row_chips(Some(&mixed)), vec![chips[0].clone()]);
     }
 
     #[test]
