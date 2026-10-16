@@ -1529,14 +1529,6 @@ fn is_session_offline(session: &DashboardSession) -> bool {
 /// and spelling that out again is the copy AGENTS.md rules out. So a payload
 /// with no `semantic` block shows no `waiting on you` rather than a second
 /// opinion on what waiting means.
-fn waiting_on_me_count(session: &DashboardSession) -> usize {
-    session
-        .semantic
-        .as_ref()
-        .map(|semantic| semantic.waiting_on_me_count)
-        .unwrap_or(0)
-}
-
 /// New output the user has not looked at. A different count from the unread
 /// badge: this one is agent output, cleared on view, and carries no
 /// notification at all.
@@ -1562,76 +1554,79 @@ fn thread_unread_count(session: &DashboardSession) -> usize {
     published.max(session.thread_unread_count)
 }
 
+fn waiting_on_me_count(session: &DashboardSession) -> usize {
+    session
+        .semantic
+        .as_ref()
+        .map(|semantic| semantic.waiting_on_me_count)
+        .unwrap_or(0)
+}
+
+/// The row's chips, as the project service decided them.
+///
+/// The ladder used to live here, and the app's row had none of it -- not
+/// because the app chose differently but because nothing handed it the list.
+/// It lives in `agent_row_chips` now, and the only decision left here is how
+/// many fit.
+///
+/// The published list is preferred, and when it is absent this asks the same
+/// function with what the session itself carries. That is not a second ladder:
+/// it is the one ladder, reached from a snapshot that has no `semantic` block
+/// -- an older build, or a Node-era fixture -- and it keeps the flat-field
+/// tolerance `activity_new_count` and `thread_unread_count` exist for.
 fn session_activity_chips(session: &DashboardSession) -> String {
-    let offline = is_session_offline(session);
-    let tone = |active| if offline { ChipTone::Muted } else { active };
-    let label = crate::project_service::session_semantics::capped_count_label;
-    let mut chips = Vec::new();
-    // The badge beside the name carries the notification unread count. These
-    // are the other facts the row used to pack into `thread 8/0/5` and
-    // `N unseen` -- different counts, not the same one spelled twice, so they
-    // stay on the row. What changed is that each says what it is. Three of
-    // them use the details pane's wording; `waiting on you` does not -- the
-    // pane says `on me` and `compactHint` says `on you`.
-    if waiting_on_me_count(session) > 0 {
-        chips.push(chip("waiting on you", tone(ChipTone::Attention)));
-    }
-    if session.workflow_blocked_count > 0 {
-        chips.push(chip("coordination blocked", tone(ChipTone::Danger)));
-    }
-    // Ahead of the coordination counts, because this is the agent's own work
-    // rather than something waiting on someone, and the label is the service's
-    // -- the app row and the chat header render the same string.
-    if let Some(label) = crate::subagent_activity::subagent_label(session.subagents.as_ref()) {
-        chips.push(chip(&label, tone(ChipTone::Work)));
-    }
-    let thread_unread = thread_unread_count(session);
-    if thread_unread > 0 {
-        chips.push(chip(
-            &format!("{} threads unread", label(thread_unread as i64)),
-            tone(ChipTone::Work),
-        ));
-    }
-    let activity_new = activity_new_count(session);
-    if activity_new > 0 {
-        chips.push(chip(
-            &format!("{} new activity", label(activity_new as i64)),
-            tone(ChipTone::Info),
-        ));
-    }
-    if session.thread_pending_count > 0 {
-        chips.push(chip(
-            // Undelivered is in flight, not failed.
-            &format!("{} pending", label(session.thread_pending_count as i64)),
-            tone(ChipTone::Work),
-        ));
-    }
-    if session.thread_waiting_on_them_count > 0 {
-        chips.push(chip("waiting on them", ChipTone::Muted));
-    }
-    if session.workflow_family_count > 0 {
-        chips.push(chip(
-            &format!("coordination {}", session.workflow_family_count),
-            ChipTone::Muted,
-        ));
-    }
-    // Two, in the order above, and a mark if there were more. The row also has
-    // to hold the next action and the headline, and seven chips pushed both
-    // off the end. Dropping the rest in silence is the part that would be
-    // wrong, so the row says there is more without spending the width to say
-    // how much.
-    let hidden = chips.len() > ROW_CHIP_BUDGET;
-    chips.truncate(ROW_CHIP_BUDGET);
-    if hidden {
+    let published = session
+        .semantic
+        .as_ref()
+        .and_then(|semantic| semantic.presentation.extra.get("rowChips"));
+    let chips = match crate::agent_row_chips::published_row_chips(published) {
+        chips if !chips.is_empty() => chips,
+        _ => crate::agent_row_chips::agent_row_chips(&row_chips_input(session)),
+    };
+    let (visible, more) = crate::agent_row_chips::visible_row_chips(&chips, ROW_CHIP_BUDGET);
+    let mut rendered = visible
+        .iter()
+        .map(|row_chip| chip(&row_chip.label, chip_tone(row_chip.tone)))
+        .collect::<Vec<_>>();
+    if more {
         // One cell, the glyph the statusline already uses for chips it could
         // not fit. `+N more` was nine cells to save the two that `8 pending`
         // costs over it, and it took the headline down to a bare `…` and the
         // next action with it -- then truncated to `+2 …` itself on a 100
         // column terminal. The count it carried was not actionable; the
         // details pane names every one of them in words.
-        chips.push(style("\u{203a}", Tone::Muted));
+        rendered.push(style("\u{203a}", Tone::Muted));
     }
-    chips.join(" ")
+    rendered.join(" ")
+}
+
+/// What the ladder reads, from the session in hand.
+///
+/// Only reached when nothing published the chips; the values are the same ones
+/// the project service would have derived them from.
+fn row_chips_input(session: &DashboardSession) -> crate::agent_row_chips::RowChipsInput {
+    crate::agent_row_chips::RowChipsInput {
+        offline: is_session_offline(session),
+        waiting_on_me_count: waiting_on_me_count(session) as i64,
+        workflow_blocked_count: session.workflow_blocked_count as i64,
+        subagent_label: crate::subagent_activity::subagent_label(session.subagents.as_ref()),
+        thread_unread_count: thread_unread_count(session) as i64,
+        activity_new_count: activity_new_count(session) as i64,
+        pending_delivery_count: session.thread_pending_count as i64,
+        waiting_on_them_count: session.thread_waiting_on_them_count as i64,
+        family_count: session.workflow_family_count as i64,
+    }
+}
+
+/// How this terminal paints a tone the service named.
+fn chip_tone(tone: crate::agent_row_chips::RowChipTone) -> ChipTone {
+    match tone {
+        crate::agent_row_chips::RowChipTone::Attention => ChipTone::Attention,
+        crate::agent_row_chips::RowChipTone::Danger => ChipTone::Danger,
+        crate::agent_row_chips::RowChipTone::Work => ChipTone::Work,
+        crate::agent_row_chips::RowChipTone::Info => ChipTone::Info,
+        crate::agent_row_chips::RowChipTone::Muted => ChipTone::Muted,
+    }
 }
 
 fn restore_blocked_chip(session: &DashboardSession) -> String {

@@ -3083,6 +3083,44 @@ fn the_row_names_the_counts_the_unread_badge_cannot_carry() {
     assert!(!plain.contains("8/0/5"));
 }
 
+/// The published chips win, and the row renders what it was given.
+///
+/// The ladder lives in the project service now. A renderer that quietly kept
+/// deciding for itself would pass every other test here, because its rule and
+/// the service's are the same one -- so this gives the two different answers
+/// and checks which one reaches the row.
+#[test]
+fn the_row_renders_the_chips_the_service_published() {
+    let published = serde_json::to_value(aimux::agent_row_chips::agent_row_chips(
+        &aimux::agent_row_chips::RowChipsInput {
+            thread_unread_count: 2,
+            ..aimux::agent_row_chips::RowChipsInput::default()
+        },
+    ))
+    .expect("chips encode");
+    let snapshot = snapshot_with_semantic(Some(json!({
+        "user": { "label": "ready", "attention": "normal" },
+        "notifications": { "unreadCount": 0 },
+        "presentation": {
+            "statusLabel": "Ready",
+            "compactHint": null,
+            "attentionScore": 0,
+            "rowChips": published,
+        },
+        // The flat facts say something else entirely. If the row still renders
+        // these, it is deriving its own answer.
+        "activityNewCount": 12,
+        "threadUnreadCount": 8
+    })));
+    let plain = strip_ansi(&row_frame(&snapshot));
+
+    assert!(plain.contains("2 threads unread"), "{plain}");
+    assert!(
+        !plain.contains("8 threads unread") && !plain.contains("12 new activity"),
+        "the row renders the published list, not its own reading: {plain}"
+    );
+}
+
 /// A `semantic` block that predates a field must not read as a count of none.
 ///
 /// Every field in `SessionSemanticState` is `#[serde(default)]`, so a payload

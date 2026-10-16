@@ -4,6 +4,7 @@ pub mod agent_goal;
 pub mod agent_label;
 pub mod agent_prompt_delivery;
 pub mod agent_restore_outcome;
+pub mod agent_row_chips;
 pub mod agent_token_spend;
 pub mod ansi_sgr_spans;
 pub mod async_runtime;
