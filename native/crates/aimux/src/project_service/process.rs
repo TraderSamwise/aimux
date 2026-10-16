@@ -255,10 +255,11 @@ pub fn run_project_service_startup_tasks(
         reconcile_offline_backend_session_ids(&startup.project_root, &startup.project_state_dir);
     let config = load_config_for_project(&startup.project_root);
     write_instruction_files(&startup.project_root, &config);
-    report_default_scribe_outcome(&ensure_default_scribe_agent(context, runtime));
+    let _ = report_default_scribe_outcome(&ensure_default_scribe_agent(context, runtime));
 }
 
-/// Says what became of the scribe this project should have.
+/// Says what became of the scribe this project should have, and returns what
+/// it said so a test can assert the choice rather than read a log.
 ///
 /// The outcome was discarded, and every reason the launcher carefully
 /// distinguishes -- a tool that is not configured, one that is disabled, a
@@ -266,23 +267,45 @@ pub fn run_project_service_startup_tasks(
 /// could not read, a launch that failed -- went nowhere. A project with no
 /// scribe and no reason is the shape of this that is hard to debug, and it
 /// matters more now that every project is meant to have one.
-fn report_default_scribe_outcome(outcome: &Value) {
+pub fn report_default_scribe_outcome(outcome: &Value) -> Option<&'static str> {
     let reason = outcome
         .get("reason")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    // Ordinary answers: it already had one, or this project asked not to.
-    if outcome.get("created").and_then(Value::as_bool) == Some(true)
-        || matches!(reason, "existing" | "disabled")
-    {
-        return;
+    // Ordinary answers: it made one, or this project asked not to have one.
+    if outcome.get("created").and_then(Value::as_bool) == Some(true) || reason == "disabled" {
+        return None;
     }
+    // `existing` is ordinary too -- unless the scribe it found is in a state
+    // nothing can brief. The creator's idea of live is deliberately wider than
+    // the watcher's: a scribe at `planned` is live enough not to replace and
+    // not live enough to talk to, so without this it said `existing` while the
+    // watcher saw no scribe at all, for ever, and nothing anywhere said so.
+    if reason == "existing" {
+        let status = outcome
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if crate::scribe_watcher::SCRIBE_BRIEFABLE_STATUSES.contains(&status) {
+            return None;
+        }
+        let title = "this project's scribe cannot be briefed in the state it is in";
+        log_at(
+            LogLevel::Warn,
+            title,
+            "project-service",
+            Some(outcome.clone()),
+        );
+        return Some(title);
+    }
+    let title = "no default scribe for this project";
     log_at(
         LogLevel::Warn,
-        "no default scribe for this project",
+        title,
         "project-service",
         Some(outcome.clone()),
     );
+    Some(title)
 }
 
 pub fn prepare_project_service_startup(

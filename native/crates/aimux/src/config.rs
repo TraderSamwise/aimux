@@ -30,11 +30,11 @@ worktrees/
 ";
 const ROOT_GITIGNORE_AIMUX_BLOCK: &str = "# Aimux local runtime state\n.aimux/\n";
 
-/// Return a fresh JSON representation of the TypeScript `DEFAULT_CONFIG`.
-/// The tool a project reaches for when nothing names one -- for its agents
-/// and for its scribe, which is the same answer.
+/// The tool a project reaches for when nothing names one -- for its agents and
+/// for its scribe, which is the same answer.
 const DEFAULT_TOOL: &str = "claude";
 
+/// Return a fresh JSON representation of the TypeScript `DEFAULT_CONFIG`.
 pub fn default_config() -> Value {
     json!({
         "defaultTool": DEFAULT_TOOL,

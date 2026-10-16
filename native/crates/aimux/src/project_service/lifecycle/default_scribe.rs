@@ -40,11 +40,12 @@ pub fn ensure_default_scribe_agent(
         return launch;
     }
     match find_existing_live_scribe(&project_state_dir) {
-        Ok(Some(session_id)) => {
+        Ok(Some((session_id, status))) => {
             return json!({
                 "created": false,
                 "reason": "existing",
                 "sessionId": session_id,
+                "status": status,
             });
         }
         Ok(None) => {}
@@ -67,11 +68,12 @@ pub fn ensure_default_scribe_agent(
         }
     };
     match find_existing_live_scribe(&project_state_dir) {
-        Ok(Some(session_id)) => {
+        Ok(Some((session_id, status))) => {
             return json!({
                 "created": false,
                 "reason": "existing",
                 "sessionId": session_id,
+                "status": status,
             });
         }
         Ok(None) => {}
@@ -89,23 +91,26 @@ pub fn ensure_default_scribe_agent(
     let Some(command) = trimmed_string(launch.get("command")) else {
         return json!({ "created": false, "reason": "missing-command" });
     };
+    let mut launch_env = string_record_entries(launch.get("env"));
+    launch_env.push(("AIMUX_SCRIBE".to_owned(), "1".to_owned()));
     // Checked before the window exists, not after. A scribe is created on every
-    // project-service start now, so a machine without this tool on PATH would
+    // project-service start now, so a machine without this tool would
     // otherwise collect one dead supervisor window per start, each one a real
     // tmux window with a preamble and a plan file behind it.
-    if let Err(error) = crate::program_lookup::resolve_program_from_path(
-        &command,
-        std::env::var_os("PATH"),
-        Some(context.project_root()),
-    ) {
+    //
+    // Resolved the way the spawn will resolve it, which is two different
+    // questions. A command carrying a path separator is not a PATH lookup at
+    // all -- `node_modules/.bin/claude` resolves against the project -- and
+    // the PATH to search is the launch's own when it sets one, because that is
+    // the environment the window gets.
+    if let Err(error) = resolve_scribe_program(&command, &launch_env, context.project_root()) {
         return json!({
             "created": false,
             "reason": "program-not-found",
             "error": error,
         });
     }
-    let mut launch_env = string_record_entries(launch.get("env"));
-    launch_env.push(("AIMUX_SCRIBE".to_owned(), "1".to_owned()));
+
     let executable = basename_like_node_posix(&command);
     let session_id = if executable.is_empty() {
         format!("{command}-scribe")
@@ -146,7 +151,13 @@ pub fn ensure_default_scribe_agent(
     }
 }
 
-fn find_existing_live_scribe(project_state_dir: &Path) -> Result<Option<String>, String> {
+/// The scribe this project already has, and the status it is in.
+///
+/// The status comes back because the two questions have different answers: a
+/// scribe at `planned` is live enough not to replace, and not live enough to
+/// brief. Returning only the id made that state silent -- the creator said
+/// `existing` and the watcher saw nothing, for ever.
+fn find_existing_live_scribe(project_state_dir: &Path) -> Result<Option<(String, String)>, String> {
     let metadata = load_metadata_state(project_state_dir);
     let topology = read_runtime_topology(runtime_topology_path(project_state_dir))?;
     let existing = list_topology_session_states(&topology, None)
@@ -159,11 +170,48 @@ fn find_existing_live_scribe(project_state_dir: &Path) -> Result<Option<String>,
                     .and_then(Value::as_str),
             ) && is_scribe_session(session, &metadata.sessions)
         })
-        .and_then(|session| trimmed_string(session.get("id")))
-        .inspect(|session_id| {
+        .and_then(|session| {
+            let id = trimmed_string(session.get("id"))?;
+            let status = session
+                .get("status")
+                .or_else(|| session.get("lifecycle"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_owned();
+            Some((id, status))
+        })
+        .inspect(|(session_id, _)| {
             set_session_control_flags(project_state_dir, session_id, false, true);
         });
     Ok(existing)
+}
+
+/// Whether the scribe's program is there, asked the way the spawn will ask.
+fn resolve_scribe_program(
+    command: &str,
+    launch_env: &[(String, String)],
+    project_root: &Path,
+) -> Result<(), String> {
+    if command.contains(std::path::MAIN_SEPARATOR) || command.contains('/') {
+        let candidate = if Path::new(command).is_absolute() {
+            PathBuf::from(command)
+        } else {
+            project_root.join(command)
+        };
+        if crate::program_lookup::executable_file_exists(&candidate) {
+            return Ok(());
+        }
+        return Err(format!(
+            "{command} is not an executable file at {}",
+            candidate.display()
+        ));
+    }
+    let path = launch_env
+        .iter()
+        .find(|(key, _)| key == "PATH")
+        .map(|(_, value)| std::ffi::OsString::from(value))
+        .or_else(|| std::env::var_os("PATH"));
+    crate::program_lookup::resolve_program_from_path(command, path, Some(project_root)).map(|_| ())
 }
 
 fn is_live_scribe_status(status: Option<&str>) -> bool {

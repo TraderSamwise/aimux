@@ -552,3 +552,102 @@ mod read_targets {
         assert!(scribe_read_targets(&input).is_empty());
     }
 }
+
+/// The watcher and its task agree about which scribe exists.
+///
+/// Three definitions of "a scribe that is there" live in this subsystem, and
+/// the dangerous disagreement is the watcher being STRICTER than the creation
+/// guard: a live scribe the watcher refuses reads as no scribe, and the
+/// guard then makes a second one. That is worse than the silence this change
+/// set out to fix.
+#[test]
+fn the_watcher_and_its_reader_share_one_idea_of_a_briefable_scribe() {
+    assert_eq!(
+        aimux::scribe_watcher::SCRIBE_BRIEFABLE_STATUSES,
+        aimux::project_service::scribe_watcher_task::readable_session_statuses(),
+        "the task pre-filters the topology with the watcher's own list"
+    );
+    // And every one of them is a status the creation guard also calls live, so
+    // the watcher never refuses a scribe the guard would decline to replace.
+    for status in aimux::scribe_watcher::SCRIBE_BRIEFABLE_STATUSES {
+        let input = serde_json::json!({
+            "sessions": [{ "id": "claude-scribe", "status": status }],
+            "metadata": { "sessions": { "claude-scribe": { "scribe": true } } },
+        });
+        assert_eq!(
+            aimux::scribe_watcher::find_scribe_session_id(&input).as_deref(),
+            Some("claude-scribe"),
+            "{status} is briefable"
+        );
+    }
+}
+
+/// What the project service says about the scribe it did or did not get.
+mod startup_report {
+    use aimux::project_service::process::report_default_scribe_outcome;
+    use serde_json::json;
+
+    #[test]
+    fn an_ordinary_outcome_is_not_a_warning() {
+        assert_eq!(
+            report_default_scribe_outcome(
+                &json!({ "created": true, "sessionId": "claude-scribe" })
+            ),
+            None
+        );
+        // The project asked not to have one.
+        assert_eq!(
+            report_default_scribe_outcome(&json!({ "created": false, "reason": "disabled" })),
+            None
+        );
+        // And one it already has, in a state it can be briefed in.
+        assert_eq!(
+            report_default_scribe_outcome(&json!({
+                "created": false,
+                "reason": "existing",
+                "sessionId": "claude-scribe",
+                "status": "running",
+            })),
+            None
+        );
+    }
+
+    #[test]
+    fn a_scribe_nothing_can_brief_is_reported_even_though_it_exists() {
+        // The creator's idea of live is wider than the watcher's on purpose: a
+        // scribe at `planned` is live enough not to replace and not live
+        // enough to talk to. That combination said `existing` while the
+        // watcher saw no scribe at all, for ever, and nothing said so.
+        for status in ["planned", "unknown", "exited"] {
+            let said = report_default_scribe_outcome(&json!({
+                "created": false,
+                "reason": "existing",
+                "sessionId": "claude-scribe",
+                "status": status,
+            }));
+            assert_eq!(
+                said,
+                Some("this project's scribe cannot be briefed in the state it is in"),
+                "{status}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_reason_it_could_not_make_one_is_reported() {
+        for reason in [
+            "unknown-tool",
+            "disabled-tool",
+            "program-not-found",
+            "claim-error",
+            "topology-unreadable",
+            "launch-failed",
+        ] {
+            assert_eq!(
+                report_default_scribe_outcome(&json!({ "created": false, "reason": reason })),
+                Some("no default scribe for this project"),
+                "{reason}"
+            );
+        }
+    }
+}

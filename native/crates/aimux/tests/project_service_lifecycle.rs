@@ -1341,6 +1341,48 @@ fn agent_spawn_without_role_keeps_worktree_coder_default() {
     cleanup(project);
 }
 
+/// A project-relative tool resolves against the project, not PATH.
+///
+/// `node_modules/.bin/claude` is a real way to point at a tool, and it is not
+/// a PATH lookup: searching PATH for it refuses a scribe whose program the
+/// spawn would have found.
+#[test]
+fn a_default_scribe_tool_inside_the_project_is_found() {
+    let project = temp_project("default-scribe-relative-program");
+    let state_dir = project.join("state");
+    fs::create_dir_all(&state_dir).unwrap();
+    let bin = project.join("node_modules").join(".bin");
+    fs::create_dir_all(&bin).unwrap();
+    let program = bin.join("mock");
+    fs::write(&program, "#!/bin/sh\nexit 0\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let aimux_dir = project.join(".aimux");
+    fs::create_dir_all(&aimux_dir).unwrap();
+    fs::write(
+        aimux_dir.join("config.json"),
+        serde_json::to_string_pretty(&json!({
+            "scribe": { "defaultAgent": "mock" },
+            "tools": { "mock": { "command": "node_modules/.bin/mock", "enabled": true } }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = ensure_default_scribe_agent(&context, &mut runtime);
+
+    assert_eq!(
+        response["created"], true,
+        "the program is there, so the scribe is made: {response}"
+    );
+    cleanup(project);
+}
+
 /// No window for a program that is not installed.
 ///
 /// A scribe is attempted on every project-service start now, so a machine

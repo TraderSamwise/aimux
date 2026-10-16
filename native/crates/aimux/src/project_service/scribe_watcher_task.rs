@@ -25,7 +25,9 @@ use super::watcher_delivery::{
 
 const SCAN_INTERVAL_MS: i64 = 60_000;
 /// Only a session backed by a live window has a pane to read.
-const READABLE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
+/// The watcher's own list, not a second copy of it: a session it cannot brief
+/// is a session whose pane must never reach a read.
+const READABLE_SESSION_STATUSES: &[&str] = crate::scribe_watcher::SCRIBE_BRIEFABLE_STATUSES;
 /// Node scanned up to 50 candidates. Each read is a tmux spawn, so the tick loop
 /// keeps a far tighter budget; the briefing only ever carries four anyway.
 const MAX_SCAN_CANDIDATES: i64 = 12;

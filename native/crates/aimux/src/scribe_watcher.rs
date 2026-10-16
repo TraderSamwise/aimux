@@ -9,6 +9,20 @@ use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// The statuses a session can be briefed in.
+///
+/// One answer, two callers: the task filters the topology with it before the
+/// watcher sees anything, and `find_scribe_session_id` applies it again
+/// because the watcher is also driven directly. Spelling it twice is how the
+/// two come to disagree about which scribe exists.
+///
+/// Deliberately narrower than the creation guard's list in
+/// `project_service/lifecycle/default_scribe.rs`, which also accepts `planned`
+/// and a session with no status at all: that one answers "is a scribe already
+/// on its way, so do not make a second", and this one answers "can this scribe
+/// be talked to now".
+pub const SCRIBE_BRIEFABLE_STATUSES: &[&str] = &["starting", "running", "idle"];
+
 const SCRIBE_WATCHER_COOLDOWN_MS: i64 = 60_000;
 const SCRIBE_WATCHER_MAX_CANDIDATES: usize = 4;
 const SCRIBE_WATCHER_MAX_SCAN_CANDIDATES: usize = 50;
@@ -384,10 +398,8 @@ pub fn find_scribe_session_id(input: &Value) -> Option<String> {
             .iter()
             .find(|session| str_field(session, "id") == id)
             .filter(|session| {
-                !matches!(
-                    optional_str(session, "status").unwrap_or("running"),
-                    "offline" | "graveyard"
-                )
+                SCRIBE_BRIEFABLE_STATUSES
+                    .contains(&optional_str(session, "status").unwrap_or("running"))
             })
     };
     let mut found = metadata
