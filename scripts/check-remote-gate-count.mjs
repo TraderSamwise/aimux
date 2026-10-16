@@ -20,7 +20,13 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(import.meta.url), "..", "..");
 const sourceRoot = join(repoRoot, "native", "crates", "aimux", "src");
-const GATE = /#\[cfg\((?:not\()?feature = "remote-control"\)?\)\]/g;
+// Every spelling that compiles a second implementation, not just the two this
+// repo happens to use today. `cfg!` is the one that matters most and the one a
+// narrow regex misses: it compiles BOTH branches into the local binary, which
+// is why docs/security/local-only-boundary-extraction.md requires it to stay
+// absent. Whitespace is optional in attribute syntax, and `all(..)`/`any(..)`
+// wrap the feature test without changing what it does.
+const GATE = /(?:#\[\s*cfg\s*\(|cfg!\s*\()[^)]*feature\s*=\s*"remote-control"/g;
 const EDGE = ["remote_control_edge.rs", "daemon/remote_control.rs"];
 const FAR_SIDE = ["remote"];
 
@@ -66,6 +72,22 @@ for (const [file, count] of ranked) {
 console.log(
   `remote-control gates outside src/remote/ and the ${EDGE.join(", ")} edge: ${total} in ${counts.size} file(s)`,
 );
+
+// The runtime-branch macro is not a gate to be counted down -- it is a leak,
+// and the local binary carries both branches when it appears.
+const RUNTIME_BRANCH = /cfg!\s*\([^)]*feature\s*=\s*"remote-control"/g;
+const leaks = [];
+for (const file of sourceFiles(sourceRoot)) {
+  const matches = readFileSync(file, "utf8").match(RUNTIME_BRANCH);
+  if (matches?.length) leaks.push(`${relative(sourceRoot, file)} (${matches.length})`);
+}
+if (leaks.length) {
+  console.error(
+    `FAIL: cfg! on the remote-control feature compiles both branches into the ` +
+      `local binary: ${leaks.join(", ")}. Use #[cfg(..)] or the edge.`,
+  );
+  process.exit(1);
+}
 
 if (total > BUDGET) {
   console.error(

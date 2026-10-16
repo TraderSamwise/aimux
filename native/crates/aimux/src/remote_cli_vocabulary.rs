@@ -86,6 +86,20 @@ pub enum RemoteCliAction {
     },
 }
 
+/// Whether a bare command word belongs to the remote half.
+///
+/// Wider than [`is_remote_core_cli_command`], and deliberately a different
+/// question: this one includes `hosted`, which the core planner never sees
+/// because the hosted CLI is dispatched before it. Both live here because
+/// neither needs a remote half to answer -- they are facts about the command
+/// line, and the dispatcher has to know them before anything can be routed.
+pub fn is_remote_control_command_word(word: &str) -> bool {
+    matches!(
+        word,
+        "hosted" | "login" | "logout" | "remote" | "security" | "whoami"
+    )
+}
+
 /// Whether a command belongs to the remote half at all.
 ///
 /// Local, because the local CLI needs the answer before it can route anything
@@ -127,6 +141,23 @@ mod tests {
                 "{command} {subcommand}"
             );
         }
+    }
+
+    #[test]
+    fn the_word_list_covers_the_dispatcher_and_the_planner() {
+        // The dispatcher's question is wider: `hosted` never reaches the core
+        // planner, because the hosted CLI is dispatched before it.
+        assert!(is_remote_control_command_word("hosted"));
+        assert!(!is_remote_core_cli_command("hosted", ""));
+        // Everything the planner claims, the dispatcher claims too. A word the
+        // planner routes and the dispatcher does not would reach neither.
+        for command in ["remote", "whoami", "logout", "login", "security"] {
+            assert!(
+                is_remote_control_command_word(command),
+                "{command} is routed by the planner, so the dispatcher must know it"
+            );
+        }
+        assert!(!is_remote_control_command_word("ps"));
     }
 
     #[test]

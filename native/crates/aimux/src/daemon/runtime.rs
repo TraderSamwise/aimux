@@ -4329,23 +4329,34 @@ pub fn build_doctor_versions_report(
     // A `~/.aimux` copied to a second host carries its machine id, and two
     // daemons claiming one id is invisible from either side -- so the id
     // has to be readable somewhere.
-    if let Some(machine) = report.get("machine") {
-        let line = match machine["source"].as_str() {
-            Some("unnamed") => "machine: not named yet".to_owned(),
-            Some("unreadable") => format!(
-                "machine: could not be read -- {}",
-                machine["error"].as_str().unwrap_or("unknown error")
-            ),
-            _ => format!(
-                "machine: {} ({})",
-                machine["name"].as_str().unwrap_or("?"),
-                machine["id"].as_str().unwrap_or("?"),
-            ),
-        };
+    if let Some(line) = report.get("machine").and_then(machine_report_line) {
         text.push_str(&format!("\n{line}\n"));
     }
     text.push_str(&render_daemon_process_inventory_for_doctor(&report));
     Ok((report, text))
+}
+
+/// What `aimux doctor` prints about this machine, or nothing.
+///
+/// Nothing is one of the answers. A build with no remote half has no machine
+/// to name, and the catch-all arm formatted two absent fields as
+/// `machine: ? (?)` -- a line of question marks where there had been no line
+/// at all. The JSON still carries `{"source": "off"}` for anything reading the
+/// report rather than printing it.
+fn machine_report_line(machine: &Value) -> Option<String> {
+    match machine["source"].as_str() {
+        Some("off") => None,
+        Some("unnamed") => Some("machine: not named yet".to_owned()),
+        Some("unreadable") => Some(format!(
+            "machine: could not be read -- {}",
+            machine["error"].as_str().unwrap_or("unknown error")
+        )),
+        _ => Some(format!(
+            "machine: {} ({})",
+            machine["name"].as_str().unwrap_or("?"),
+            machine["id"].as_str().unwrap_or("?"),
+        )),
+    }
 }
 
 impl DaemonOperationsTextRuntime for RealDaemonRuntime {
@@ -6401,6 +6412,29 @@ mod tests {
     /// file, a fresh ephemeral id and a log line per tick. It is also the one
     /// value that must never be absent: a machine-less connect is what lets
     /// the second daemon evict the first.
+    /// Every answer the machine report can carry, and what it prints.
+    ///
+    /// `off` prints nothing: a build with no remote half has no machine to
+    /// name, and the catch-all used to format two absent fields as
+    /// `machine: ? (?)`.
+    #[test]
+    fn the_machine_line_says_nothing_about_a_machine_this_build_cannot_have() {
+        assert_eq!(machine_report_line(&json!({ "source": "off" })), None);
+        assert_eq!(
+            machine_report_line(&json!({ "source": "unnamed" })).as_deref(),
+            Some("machine: not named yet")
+        );
+        assert_eq!(
+            machine_report_line(&json!({ "source": "unreadable", "error": "no home" })).as_deref(),
+            Some("machine: could not be read -- no home")
+        );
+        assert_eq!(
+            machine_report_line(&json!({ "source": "resolved", "id": "m-1", "name": "mbp" }))
+                .as_deref(),
+            Some("machine: mbp (m-1)")
+        );
+    }
+
     #[cfg(feature = "remote-control")]
     #[test]
     fn the_daemon_resolves_its_machine_identity_once_and_never_to_nothing() {

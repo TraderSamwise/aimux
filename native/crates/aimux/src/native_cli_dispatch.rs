@@ -153,5 +153,5 @@ pub fn is_known_aimux_command_word(word: &str) -> bool {
             | "__tmux-open-hyperlink-internal"
             | "__project-service-internal"
             | "__job-exec-internal"
-    ) || crate::remote_control_edge::is_remote_control_command_word(word)
+    ) || crate::remote_cli_vocabulary::is_remote_control_command_word(word)
 }

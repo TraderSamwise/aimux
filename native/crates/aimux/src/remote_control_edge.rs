@@ -25,7 +25,7 @@
 /// The binary prints it and exits with it; nothing about printing is remote,
 /// and naming the far side's own output type here would put a remote type in
 /// the binary's signature -- which is the thing this edge exists to prevent.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct RemoteCommandOutput {
     pub code: u8,
     pub stdout: Vec<String>,
@@ -36,16 +36,16 @@ pub struct RemoteCommandOutput {
 pub use enabled::{
     command_help, forward_alert_to_mobile_push, forward_alert_to_mobile_push_with_context,
     has_remote_credentials, host_published_attachment, hosted_backlog_snapshots,
-    is_remote_control_command_word, plan_remote_core_cli, root_help_commands,
-    run_hosted_root_command, run_remote_cli_action, should_defer_to_hosted_cli,
+    plan_remote_core_cli, root_help_commands, run_hosted_root_command, run_remote_cli_action,
+    should_defer_to_hosted_cli,
 };
 
 #[cfg(not(feature = "remote-control"))]
 pub use disabled::{
     command_help, forward_alert_to_mobile_push, forward_alert_to_mobile_push_with_context,
     has_remote_credentials, host_published_attachment, hosted_backlog_snapshots,
-    is_remote_control_command_word, plan_remote_core_cli, root_help_commands,
-    run_hosted_root_command, run_remote_cli_action, should_defer_to_hosted_cli,
+    plan_remote_core_cli, root_help_commands, run_hosted_root_command, run_remote_cli_action,
+    should_defer_to_hosted_cli,
 };
 
 #[cfg(feature = "remote-control")]
@@ -143,17 +143,6 @@ mod enabled {
         crate::remote::hosted_cli_help::command_help(command, subcommand, help_requested)
     }
 
-    /// Whether a bare command word belongs to the remote half.
-    ///
-    /// Wider than the CLI planner's list: this one includes `hosted`, which
-    /// the planner never sees because the hosted CLI is dispatched before it.
-    pub fn is_remote_control_command_word(word: &str) -> bool {
-        matches!(
-            word,
-            "hosted" | "login" | "logout" | "remote" | "security" | "whoami"
-        )
-    }
-
     /// The runtime reaches the remote half's own trait here, which is the one
     /// place that name is spoken outside `remote/`.
     pub fn run_remote_cli_action(
@@ -249,11 +238,6 @@ mod disabled {
         None
     }
 
-    /// No command word belongs to a half this build does not have.
-    pub fn is_remote_control_command_word(_word: &str) -> bool {
-        false
-    }
-
     /// Unreachable through the planner -- it refuses these commands above --
     /// and answered rather than panicked anyway, because a type that exists
     /// can be constructed by anything.
@@ -329,6 +313,18 @@ mod enabled_state {
             else {
                 return;
             };
+            self.start_relay_with(resolver, &credentials, force);
+        }
+
+        /// The same dial, for a caller that already has the credentials in
+        /// hand. `enable` has just written them, and reloading from disk there
+        /// is both a second read and a silent no-op if the reload misses.
+        fn start_relay_with(
+            &self,
+            resolver: &PathResolver,
+            credentials: &crate::remote::remote_credentials::AimuxCredentials,
+            force: bool,
+        ) {
             let env_url = std::env::var("AIMUX_RELAY_URL").ok();
             let env_token = std::env::var("AIMUX_RELAY_TOKEN").ok();
             if let Some((url, token)) = crate::remote::daemon_relay::resolve_relay_target(
@@ -452,9 +448,13 @@ mod enabled_state {
         /// for ever, because nothing dialled the relay afterwards.
         pub fn enable_relay_for_user_request(&self, resolver: &PathResolver) -> Value {
             match crate::remote::remote_credentials::set_remote_enabled(resolver, true) {
-                Ok(Some(_)) => {
-                    self.start_relay(resolver, true);
-                    self.relay_status(resolver)
+                Ok(Some(credentials)) => {
+                    self.start_relay_with(resolver, &credentials, true);
+                    // The RAW status, which is what this answered before the
+                    // move: the wrapper below reports `disconnected` for a
+                    // user who has asked for remote and is waiting, and an
+                    // enable that declined to dial answered `off`.
+                    self.relay.status()
                 }
                 Ok(None) => json!({ "status": "off" }),
                 Err(error) => {
@@ -773,6 +773,43 @@ mod state_tests {
                 Some("off" | "unnamed")
             ),
             "got {report}"
+        );
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+#[cfg(all(test, feature = "remote-control"))]
+mod enable_tests {
+    use super::RemoteDaemonState;
+    use crate::paths::PathResolver;
+
+    /// Enabling answers with the relay's OWN status, not the wrapped one.
+    ///
+    /// The wrapper reports `disconnected` for a user who has asked for remote
+    /// and is waiting on a connection that has not started. An enable that
+    /// declined to dial -- empty url or token, or a target the resolver
+    /// refuses -- answered `off`, and moving the call behind the state
+    /// silently upgraded that to `disconnected`. The CLI prints this verbatim.
+    #[test]
+    fn enabling_answers_with_the_relays_own_status() {
+        let home = std::env::temp_dir().join(format!(
+            "aimux-edge-enable-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|since| since.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&home).expect("fixture home");
+        let resolver = PathResolver::new("/", "/", Some(home.to_string_lossy().into_owned()));
+        let state = RemoteDaemonState::new();
+
+        // No credentials stored, so `set_remote_enabled` has nothing to enable.
+        let answer = state.enable_relay_for_user_request(&resolver);
+        assert_eq!(
+            answer["status"], "off",
+            "nothing to enable is off, not disconnected: {answer}"
         );
 
         let _ = std::fs::remove_dir_all(&home);
