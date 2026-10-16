@@ -146,6 +146,12 @@ function collectText(node: ReactNode): string {
   return collectText((node.props as { children?: ReactNode }).children);
 }
 
+/// The text inside one rendered node, for asking which group a chip landed in.
+function collectTextOf(node: HostNode): string {
+  const own = collectText(node.props.children as ReactNode);
+  return own || node.children.map(collectTextOf).join("");
+}
+
 function findNodes(root: HostNode[], predicate: (node: HostNode) => boolean): HostNode[] {
   const matches: HostNode[] = [];
   for (const node of root) {
@@ -467,6 +473,65 @@ describe("AgentRow", () => {
       }),
     );
   }
+
+  // The name's line holds the name. A pill beside it is `shrink-0`, so it
+  // takes its width from the name -- the "c." crush at 432px.
+  it("keeps the chips off the line the name is on", () => {
+    const rowProps = () => ({
+      session: session({
+        id: "claude-busy",
+        label: "a-long-agent-name",
+        command: "claude",
+        semantic: {
+          user: { label: "ready" },
+          presentation: {
+            statusLabel: "ready",
+            rowChips: [{ kind: "threads-unread", label: "8 threads unread", tone: "work" }],
+          },
+        },
+      }),
+      digit: 1,
+      selected: false,
+      projectStateKey: projectStateKey({ path: "/repo" }),
+      endpoint: null,
+      token: null,
+      onPick: vi.fn(),
+      onKilled: vi.fn(),
+    });
+    const tree = renderNode(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-busy",
+          label: "a-long-agent-name",
+          command: "claude",
+          semantic: {
+            user: { label: "ready" },
+            presentation: {
+              statusLabel: "ready",
+              rowChips: [{ kind: "threads-unread", label: "8 threads unread", tone: "work" }],
+            },
+          },
+        }),
+        digit: 1,
+        selected: false,
+        projectStateKey: projectStateKey({ path: "/repo" }),
+        endpoint: null,
+        token: null,
+        onPick: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+    const nameGroup = findNodes(
+      tree,
+      (node) =>
+        typeof node.props.className === "string" &&
+        node.props.className.includes("flex-row items-baseline gap-2"),
+    );
+    expect(nameGroup).toHaveLength(1);
+    expect(collectTextOf(nameGroup[0]!)).not.toContain("8 threads unread");
+    // And it is still on the row, in the group that has width to give.
+    expect(collectText(React.createElement(AgentRow, rowProps()))).toContain("8 threads unread");
+  });
 
   it("renders the chips the service published, verbatim", () => {
     const text = rowWith([

@@ -162,6 +162,16 @@ function UnreadBadge({ count }: { count?: number }) {
  * decides only how many fit. The terminal dashboard row renders the same list
  * -- pinned in native/crates/aimux/tests/agent_row_chips_across_surfaces.rs.
  */
+/**
+ * Deliberately not on the name's line.
+ *
+ * The identity group is capped at 55% of a full row and the name shrinks
+ * inside it, so a `shrink-0` pill beside the name takes its width from the
+ * name -- which is how it got crushed to "c." at 432px, the regression the
+ * stacked row exists to prevent. These sit in the trailing group instead, the
+ * way the terminal row puts them after its identity columns, and on a stacked
+ * row that group has a line of its own.
+ */
 function RowChips({ session, budget }: { session: DesktopSession; budget: number }) {
   const published = rowChipsOf(session);
   // A daemon older than the published ladder sends no chips at all. The row
@@ -346,10 +356,6 @@ function AgentRowImpl({
           {shortName}
         </Text>
         <UnreadBadge count={session.notificationUnreadCount} />
-        <RowChips
-          session={session}
-          budget={compact || narrow ? NARROW_ROW_CHIP_BUDGET : ROW_CHIP_BUDGET}
-        />
       </View>
       {compact ? null : <TrailingHint text={detailHint} />}
     </>
@@ -364,7 +370,10 @@ function AgentRowImpl({
         className={cn("rounded-md px-2.5 py-2", selected ? "bg-[#232733]" : PRESS)}
       >
         <View className="flex-row items-center gap-2">{identity}</View>
-        <CompactRecency text={fullHint} />
+        <View className="flex-row items-center gap-1.5">
+          <CompactRecency text={fullHint} />
+          <RowChips session={session} budget={NARROW_ROW_CHIP_BUDGET} />
+        </View>
       </Pressable>
     );
   }
@@ -396,6 +405,7 @@ function AgentRowImpl({
           narrow ? "shrink-0" : "shrink-0 pl-3",
         )}
       >
+        <RowChips session={session} budget={narrow ? NARROW_ROW_CHIP_BUDGET : ROW_CHIP_BUDGET} />
         <RecencyCell text={recency} />
         <StatusCell state={state} />
         <AgentActions
