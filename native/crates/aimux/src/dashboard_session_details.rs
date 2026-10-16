@@ -158,6 +158,12 @@ pub fn render_session_details(session: Option<&Value>, width: usize, height: usi
             width,
         ));
     }
+    // The service's own sentence, verbatim: the app's chat header renders the
+    // same string, and a count spelled in two renderers is how two surfaces
+    // end up disagreeing about one fact.
+    if let Some(detail) = crate::subagent_activity::subagent_detail(session.get("subagents")) {
+        lines.extend(wrap_key_value("Sub-agents", &detail, width));
+    }
     let services = session
         .get("services")
         .and_then(Value::as_array)

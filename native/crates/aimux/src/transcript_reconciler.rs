@@ -505,7 +505,13 @@ fn non_empty(value: Option<&Value>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn stored_transcript_path_matches_backend(path: &str, backend_session_id: Option<&str>) -> bool {
+/// Whether a stored transcript path still names the session it was recorded
+/// for. A resumed session mints a new backend id and a new file, so a stored
+/// path is only usable while its stem still matches.
+pub fn stored_transcript_path_matches_backend(
+    path: &str,
+    backend_session_id: Option<&str>,
+) -> bool {
     let Some(backend_session_id) = backend_session_id else {
         return false;
     };

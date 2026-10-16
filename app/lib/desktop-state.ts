@@ -100,6 +100,20 @@ export interface DesktopSession {
   } | null;
   /** Billed spend against a token goal, or why it could not be measured. */
   tokenSpend?: { billed?: number; unmeasured?: string } | null;
+  /** Working sub-agents and their service-composed labels. */
+  subagents?: {
+    running: number;
+    label: string;
+    /** How many and which, in one sentence, composed by the project service. */
+    detail?: string;
+    items?: {
+      key: string;
+      name: string;
+      kind?: string;
+      model?: string;
+      startedAtMs?: number;
+    }[];
+  } | null;
   projectControl?: boolean;
   overseer?: boolean;
   scribe?: boolean;

@@ -1,3 +1,4 @@
+import { SubagentBadge } from "@/components/SubagentBadge";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { projectStateKey as projectStateKeyOf, type ProjectStateKey } from "@/lib/project-key";
 import { Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
@@ -284,6 +285,7 @@ function AgentRowImpl({
           {shortName}
         </Text>
         <UnreadBadge count={session.notificationUnreadCount} />
+        <SubagentBadge subagents={session.subagents} />
       </View>
       {compact ? null : <TrailingHint text={detailHint} />}
     </>

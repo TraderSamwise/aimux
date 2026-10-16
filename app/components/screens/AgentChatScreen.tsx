@@ -30,6 +30,7 @@ import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
 import { useColorScheme } from "nativewind";
 import { KeyboardChatScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
 
+import { SubagentBadge } from "@/components/SubagentBadge";
 import { RuntimeBrandMark } from "@/components/RuntimeBrandMark";
 import Reanimated, {
   Easing as ReanimatedEasing,
@@ -2365,6 +2366,7 @@ export default function ChatScreen() {
                           >
                             {sessionSubtitle}
                           </Text>
+                          <SubagentBadge subagents={session?.subagents} />
                         </View>
                       </View>
                       {modeControls ? <View className="mr-2">{modeControls}</View> : null}
@@ -2468,6 +2470,7 @@ export default function ChatScreen() {
                         >
                           {sessionSubtitle}
                         </Text>
+                        <SubagentBadge subagents={session?.subagents} />
                       </View>
                     </View>
                     {modeControls ? (

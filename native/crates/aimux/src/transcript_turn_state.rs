@@ -103,7 +103,9 @@ pub fn read_file_tail(path: impl AsRef<Path>, max_bytes: Option<u64>) -> Option<
     file.seek(SeekFrom::Start(start)).ok()?;
     let mut bytes = vec![0; length as usize];
     file.read_exact(&mut bytes).ok()?;
-    String::from_utf8(bytes).ok()
+    // Byte-offset tails can start mid-codepoint. Match Node's UTF-8 recovery;
+    // that partial first JSONL record is discarded by the parser anyway.
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 pub fn probe_transcript(tool_config_key: &str, path: impl AsRef<Path>) -> Option<TranscriptProbe> {

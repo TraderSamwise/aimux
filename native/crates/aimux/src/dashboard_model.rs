@@ -181,6 +181,10 @@ pub struct DashboardSession {
     /// Billed spend against a token goal, or why it could not be measured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_spend: Option<Value>,
+    /// Published sub-agent activity, kept lenient so an unfamiliar vendor
+    /// shape cannot prevent parsing the entire dashboard snapshot.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagents: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub loop_last_action: Option<DashboardSessionLoopLastAction>,
     #[serde(skip_serializing_if = "Option::is_none")]
