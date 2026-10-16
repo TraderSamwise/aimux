@@ -41,7 +41,13 @@ import {
   desktopStatePresentFamily,
   worktreeGroupsFamily,
 } from "@/stores/desktopState";
-import { selectedSessionIdAtom } from "@/stores/projects";
+import { lastAgentByProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
+import {
+  lastAgentToReopen,
+  markLastAgentReopened,
+  rememberedAgentForProject,
+  reopenedLastAgentThisLaunch,
+} from "@/lib/reopen-last-agent";
 import {
   isDevicePendingApprovalError,
   projectStateErrorCopy,
@@ -874,6 +880,7 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
   const groups = useAtomValue(worktreeGroupsFamily(stateProjectKey));
   const selectedSessionId = useAtomValue(selectedSessionIdAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
+  const lastAgentByProject = useAtomValue(lastAgentByProjectAtom);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -912,6 +919,30 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
     },
     [router, selectSession],
   );
+
+  // Reopen the agent the user was last reading, once per launch.
+  //
+  // The project is already remembered across launches, so the app came back to
+  // the right checkout and then stopped here, at a list, with no way to know
+  // which agent you were in. The decision is in `reopen-last-agent` for the
+  // one way it can be wrong: doing this on every mount would throw the user
+  // back into the chat they just backed out of.
+  const reopenedThisLaunchRef = useRef(reopenedLastAgentThisLaunch());
+  useEffect(() => {
+    if (reopenedThisLaunchRef.current || !desktopStatePresent) return;
+    const target = lastAgentToReopen({
+      remembered: rememberedAgentForProject(lastAgentByProject, stateProjectKey),
+      listedSessionIds: groups.flatMap((bucket) => bucket.sessions.map((session) => session.id)),
+      alreadyReopened: reopenedLastAgentThisLaunch(),
+      routeSessionId: null,
+    });
+    // Marked whether or not there was anywhere to go: one attempt per launch,
+    // so a list that fills in a second later cannot yank the user then.
+    reopenedThisLaunchRef.current = true;
+    markLastAgentReopened();
+    if (!target) return;
+    handlePickSession(target);
+  }, [desktopStatePresent, groups, handlePickSession, lastAgentByProject, stateProjectKey]);
 
   const handlePickService = useCallback(
     (serviceId: string) => {
