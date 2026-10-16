@@ -145,10 +145,22 @@ pub fn render_session_details(session: Option<&Value>, width: usize, height: usi
             width,
         ));
     }
-    let thread_unread = number_field(session, "threadUnreadCount").unwrap_or(0);
-    let waiting_on_me = number_field(session, "threadWaitingOnMeCount").unwrap_or(0);
-    let waiting_on_them = number_field(session, "threadWaitingOnThemCount").unwrap_or(0);
-    let pending = number_field(session, "threadPendingCount").unwrap_or(0);
+    // The derived counts, which are the ones the row's chips were built from,
+    // so the pane the overflow mark points at cannot disagree with the row
+    // that pointed at it. The flat field is the floor rather than the source --
+    // the same tolerance the row keeps for a `semantic` block older than the
+    // counts beside it.
+    let derived_count = |semantic_key: &str, flat_key: &str| {
+        let derived = session
+            .get("semantic")
+            .and_then(|semantic| number_field(semantic, semantic_key))
+            .unwrap_or(0);
+        derived.max(number_field(session, flat_key).unwrap_or(0))
+    };
+    let thread_unread = derived_count("threadUnreadCount", "threadUnreadCount");
+    let waiting_on_me = derived_count("waitingOnMeCount", "threadWaitingOnMeCount");
+    let waiting_on_them = derived_count("waitingOnThemCount", "threadWaitingOnThemCount");
+    let pending = derived_count("pendingDeliveryCount", "threadPendingCount");
     if thread_unread > 0 || waiting_on_me > 0 || waiting_on_them > 0 || pending > 0 {
         lines.extend(wrap_key_value(
             "Threads",

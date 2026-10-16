@@ -19,6 +19,14 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { filterWorktreeBucketToActiveEntries } from "@/lib/desktop-state";
 import { formatServiceRecency, formatSessionRecency } from "@/lib/recency";
+import {
+  NARROW_ROW_CHIP_BUDGET,
+  ROW_CHIP_BUDGET,
+  rowChipColors,
+  rowChipsOf,
+  visibleRowChips,
+  type RowChip,
+} from "@/lib/row-chips";
 import { unreadBadgeLabel } from "@/lib/unread-badge";
 import {
   formatPreviewCaptureUnavailable,
@@ -143,6 +151,50 @@ function UnreadBadge({ count }: { count?: number }) {
   return (
     <View className="rounded-full bg-[#e0b341] px-1.5 py-[1px]">
       <Text className="font-mono text-[10px] font-bold text-[#1a1c22]">{label}</Text>
+    </View>
+  );
+}
+
+/**
+ * What this agent's row says about it, as the project service decided.
+ *
+ * The order, the labels and the tones are published; this renders them and
+ * decides only how many fit. The terminal dashboard row renders the same list
+ * -- pinned in native/crates/aimux/tests/agent_row_chips_across_surfaces.rs.
+ */
+function RowChips({ session, budget }: { session: DesktopSession; budget: number }) {
+  const { visible, more } = visibleRowChips(rowChipsOf(session), budget);
+  if (visible.length === 0 && !more) return null;
+  return (
+    <>
+      {visible.map((chip) =>
+        // One fact with a richer control: tapping it names the sub-agents.
+        // Same label, same place in the order -- a different affordance.
+        chip.kind === "subagents" ? (
+          <SubagentBadge key={chip.kind} subagents={session.subagents} />
+        ) : (
+          <RowChipPill key={chip.kind} chip={chip} />
+        ),
+      )}
+      {more ? (
+        // The row says there is more rather than dropping it in silence, the
+        // way the dashboard row does. The details pane names every one.
+        <Text className="shrink-0 text-[10px] text-[#7c7e88]">{"\u203a"}</Text>
+      ) : null}
+    </>
+  );
+}
+
+function RowChipPill({ chip }: { chip: RowChip }) {
+  const colors = rowChipColors(chip.tone);
+  return (
+    <View
+      className="shrink-0 rounded-full border px-1.5 py-[1px]"
+      style={{ borderColor: colors.border }}
+    >
+      <Text className="text-[10px]" style={{ color: colors.text }} numberOfLines={1}>
+        {chip.label}
+      </Text>
     </View>
   );
 }
@@ -285,7 +337,10 @@ function AgentRowImpl({
           {shortName}
         </Text>
         <UnreadBadge count={session.notificationUnreadCount} />
-        <SubagentBadge subagents={session.subagents} />
+        <RowChips
+          session={session}
+          budget={compact || narrow ? NARROW_ROW_CHIP_BUDGET : ROW_CHIP_BUDGET}
+        />
       </View>
       {compact ? null : <TrailingHint text={detailHint} />}
     </>

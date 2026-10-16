@@ -434,17 +434,20 @@ describe("AgentRow", () => {
     expect(text).not.toContain("overseer");
   });
 
-  // The service decides how many sub-agents are working and how to say it.
-  // A count spelled here as well would be a second answer to one question --
-  // the terminal row renders this exact string, pinned in
-  // native/crates/aimux/tests/agent_subagents_across_surfaces.rs.
-  it("renders the service's sub-agent label verbatim", () => {
-    const text = collectText(
+  // The chips are the project service's decision -- order, labels and tones --
+  // and the terminal dashboard row renders the same published list. A row that
+  // spelled any of it here would be a second answer to one question.
+  function rowWith(chips: { kind: string; label: string; tone: string }[], narrow?: boolean) {
+    return collectText(
       React.createElement(AgentRow, {
         session: session({
           id: "claude-busy",
           label: "worker",
           command: "claude",
+          semantic: {
+            user: { label: "ready" },
+            presentation: { statusLabel: "ready", rowChips: chips },
+          },
           subagents: {
             running: 3,
             label: "3 sub-agents",
@@ -454,6 +457,7 @@ describe("AgentRow", () => {
         }),
         digit: 1,
         selected: false,
+        narrow,
         projectStateKey: projectStateKey({ path: "/repo" }),
         endpoint: null,
         token: null,
@@ -461,32 +465,49 @@ describe("AgentRow", () => {
         onKilled: vi.fn(),
       }),
     );
+  }
 
+  it("renders the chips the service published, verbatim", () => {
+    const text = rowWith([
+      { kind: "threads-unread", label: "8 threads unread", tone: "work" },
+      { kind: "subagents", label: "3 sub-agents", tone: "work" },
+    ]);
+    expect(text).toContain("8 threads unread");
+    // The sub-agent chip keeps its richer control, and still its own label.
     expect(text).toContain("3 sub-agents");
   });
 
-  it("says nothing when no sub-agent is working", () => {
-    // A zero can still arrive from an older build's metadata, and
-    // "0 sub-agents" on a row is worse than silence.
-    const text = collectText(
-      React.createElement(AgentRow, {
-        session: session({
-          id: "claude-quiet",
-          label: "worker",
-          command: "claude",
-          subagents: { running: 0, label: "0 sub-agents", items: [] },
-        }),
-        digit: 1,
-        selected: false,
-        projectStateKey: projectStateKey({ path: "/repo" }),
-        endpoint: null,
-        token: null,
-        onPick: vi.fn(),
-        onKilled: vi.fn(),
-      }),
-    );
+  it("says there is more rather than dropping chips in silence", () => {
+    const text = rowWith([
+      { kind: "waiting-on-me", label: "waiting on you", tone: "attention" },
+      { kind: "coordination-blocked", label: "coordination blocked", tone: "danger" },
+      { kind: "threads-unread", label: "8 threads unread", tone: "work" },
+    ]);
+    expect(text).toContain("waiting on you");
+    expect(text).toContain("coordination blocked");
+    expect(text).not.toContain("8 threads unread");
+    expect(text).toContain("\u203a");
+  });
 
+  it("gives up a chip when the row has already given its width to the name", () => {
+    const text = rowWith(
+      [
+        { kind: "waiting-on-me", label: "waiting on you", tone: "attention" },
+        { kind: "threads-unread", label: "8 threads unread", tone: "work" },
+      ],
+      true,
+    );
+    expect(text).toContain("waiting on you");
+    expect(text).not.toContain("8 threads unread");
+    expect(text).toContain("\u203a");
+  });
+
+  it("says nothing when the service published nothing", () => {
+    // Including the sub-agent badge: the row renders the published list, so a
+    // summary nothing derived a chip from is a row with nothing to say.
+    const text = rowWith([]);
     expect(text).not.toContain("sub-agent");
+    expect(text).not.toContain("\u203a");
   });
 
   it("renders the role column only inside the supervisor lane", () => {
