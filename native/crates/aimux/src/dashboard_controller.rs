@@ -28,6 +28,7 @@ use crate::dashboard_tool_picker::{
     DashboardToolPickerState,
 };
 use crate::project_api_contract::routes;
+use crate::project_service::session_semantics;
 use crate::project_service::work_outline::WorkOutlineEntry;
 use crate::terminal_key_parser::{KeyEvent, command_key, is_shifted_letter_command, parse_keys};
 use serde_json::{Map, Value, json};
@@ -3701,11 +3702,26 @@ fn is_overseer_session(session: &DashboardSession) -> bool {
 /// this in `session_semantics::attention_score_for`; a row with no semantic
 /// has published nothing to read.
 fn attention_score(session: &DashboardSession) -> usize {
-    session
-        .semantic
-        .as_ref()
-        .map(|semantic| semantic.presentation.attention_score)
-        .unwrap_or(0)
+    let Some(semantic) = session.semantic.as_ref() else {
+        return 0;
+    };
+    if let Some(published) = semantic.presentation.attention_score {
+        return published;
+    }
+    // Nothing published: an older host across the relay, or a desktop-state
+    // file an older build wrote. Reading that as 0 would be this ladder's word
+    // for "needs nothing" and `u` would skip an agent that is asking for the
+    // user, so the service's own function is applied to the fields the
+    // snapshot does carry. Not a second opinion -- the same ladder, minus the
+    // one term an old snapshot cannot tell us, which is the tmux situation.
+    session_semantics::attention_score_for(
+        Some(semantic.user.attention.as_str()),
+        Some(semantic.user.label.as_str()),
+        semantic.notifications.unread_count as i64,
+        0,
+        semantic.activity_new_count as i64,
+    )
+    .max(0) as usize
 }
 
 pub fn is_teammate_session(session: &DashboardSession) -> bool {

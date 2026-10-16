@@ -315,3 +315,71 @@ fn the_service_prefers_the_action_in_its_word_but_not_in_its_label() {
          cannot come from here"
     );
 }
+
+/// The published score reads the input it claims to read.
+///
+/// The ladder itself is pinned next door, and the TUI now trusts the number
+/// this function publishes -- so what is left to prove is the SOURCING. Zero
+/// the `thread_pending_count` argument where the service fills it and nothing
+/// failed: no contract case carries a pending count, and both the ladder test
+/// and the controller fixture call the ladder directly. That is the term whose
+/// absence from the TUI's old copy let `u` skip an agent with an undelivered
+/// message, so it is the one that most needs a test of its own.
+#[test]
+fn the_published_score_comes_from_the_counts_it_was_given() {
+    let score = |input: SessionSemanticsInput| {
+        derive_session_semantics(input)["presentation"]["attentionScore"]
+            .as_i64()
+            .expect("a published score")
+    };
+
+    // An undelivered message, and nothing else to say.
+    assert_eq!(
+        score(SessionSemanticsInput {
+            status: "running".into(),
+            thread_pending_count: 2,
+            ..SessionSemanticsInput::default()
+        }),
+        2,
+        "an undelivered message is the claim the TUI's copy could not see"
+    );
+    // Each of the other counts, from its own field.
+    assert_eq!(
+        score(SessionSemanticsInput {
+            status: "running".into(),
+            notification_unread_count: 3,
+            ..SessionSemanticsInput::default()
+        }),
+        2,
+    );
+    assert_eq!(
+        score(SessionSemanticsInput {
+            status: "running".into(),
+            unseen_count: 4,
+            ..SessionSemanticsInput::default()
+        }),
+        1,
+        "new output ranks below something waiting to be read or delivered"
+    );
+    // And an agent with nothing waiting ranks nothing, so the terms above are
+    // doing the work rather than a floor.
+    assert_eq!(
+        score(SessionSemanticsInput {
+            status: "running".into(),
+            ..SessionSemanticsInput::default()
+        }),
+        0,
+    );
+    // A question outranks every count, however many.
+    assert_eq!(
+        score(SessionSemanticsInput {
+            status: "running".into(),
+            attention: Some("needs_input".into()),
+            notification_unread_count: 9,
+            thread_pending_count: 9,
+            unseen_count: 9,
+            ..SessionSemanticsInput::default()
+        }),
+        4,
+    );
+}

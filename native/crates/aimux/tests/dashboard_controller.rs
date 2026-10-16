@@ -1160,7 +1160,8 @@ fn next_attention_key_reaches_an_agent_with_an_undelivered_message() {
     without_semantics(&mut snapshot);
     let pending = semantic_with_pending("running", "none", 0, 0, 2);
     assert_eq!(
-        pending.presentation.attention_score, 2,
+        pending.presentation.attention_score,
+        Some(2),
         "the service ranks an undelivered message above nothing"
     );
     set_semantic(&mut snapshot, 1, "@pending", pending);
@@ -1194,7 +1195,7 @@ fn next_attention_key_walks_the_order_the_service_published() {
     }
     let highest = rows
         .iter()
-        .max_by_key(|(_, _, semantic)| semantic.presentation.attention_score)
+        .max_by_key(|(_, _, semantic)| semantic.presentation.attention_score.unwrap_or(0))
         .expect("a highest-ranked row");
     let mut controller = DashboardController::new(&snapshot);
 
@@ -4293,5 +4294,41 @@ fn the_attention_ladder_ranks_every_claim_in_one_order() {
     assert!(
         attention_score_for(Some("needs_input"), None, 0, 0, 0)
             > attention_score_for(Some("none"), None, 99, 99, 99)
+    );
+}
+
+/// A snapshot that published no score at all must not read as "needs nothing".
+///
+/// `attentionScore` is absent from a snapshot an older host forwarded across
+/// the relay, or from a desktop-state file an older build wrote. Zero is this
+/// ladder's word for "needs nothing", so defaulting would make `u` skip an
+/// agent that is asking for the user -- absent and zero are different answers.
+#[test]
+fn next_attention_key_still_finds_an_agent_whose_score_was_never_published() {
+    let mut snapshot = snapshot();
+    without_semantics(&mut snapshot);
+    // The shape an older producer sends: a semantic with no attentionScore.
+    let legacy: SessionSemanticState = serde_json::from_value(json!({
+        "user": { "label": "needs_input", "attention": "needs_input" },
+        "notifications": { "unreadCount": 0 },
+        "presentation": { "statusLabel": "needs_input", "compactHint": null },
+        "activityNewCount": 0
+    }))
+    .expect("a semantic without a published score");
+    assert_eq!(
+        legacy.presentation.attention_score, None,
+        "the fixture must be the no-score shape, or this proves nothing"
+    );
+    set_semantic(&mut snapshot, 1, "@legacy", legacy);
+    let mut controller = DashboardController::new(&snapshot);
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('u'))
+    else {
+        panic!("expected `u` to reach an agent asking for input, score or no score");
+    };
+    assert_eq!(
+        request.body,
+        json!({ "windowId": "@legacy", "focus": true })
     );
 }
