@@ -571,3 +571,33 @@ fn a_project_has_a_scribe_unless_its_config_says_no() {
     let merged = merge_config_layers(Some(&json!({})), Some(&json!({ "scribe": {} })));
     assert_eq!(scribe(&merged), json!("claude"));
 }
+
+/// A project that runs codex gets a codex scribe.
+///
+/// The stored default is a concrete tool, so without this a codex project got
+/// a claude scribe it may not have installed -- and a warning about it on
+/// every project-service start.
+#[test]
+fn the_default_scribe_follows_the_project_tool() {
+    let scribe = |config: &Value| config["scribe"]["defaultAgent"].clone();
+
+    let merged = merge_config_layers(None, Some(&json!({ "defaultTool": "codex" })));
+    assert_eq!(scribe(&merged), json!("codex"));
+    // Either layer can set the tool, and either way the scribe follows it.
+    let merged = merge_config_layers(Some(&json!({ "defaultTool": "codex" })), None);
+    assert_eq!(scribe(&merged), json!("codex"));
+
+    // But a named scribe is a named scribe: following the tool here would
+    // overwrite what the user asked for.
+    let merged = merge_config_layers(
+        Some(&json!({ "defaultTool": "codex", "scribe": { "defaultAgent": "claude" } })),
+        None,
+    );
+    assert_eq!(scribe(&merged), json!("claude"));
+    // Including the opt-out, which must survive a different default tool.
+    let merged = merge_config_layers(
+        Some(&json!({ "defaultTool": "codex" })),
+        Some(&json!({ "scribe": { "defaultAgent": false } })),
+    );
+    assert_eq!(scribe(&merged), json!(null));
+}

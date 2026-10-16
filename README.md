@@ -115,9 +115,9 @@ still be launched, but Aimux warns at spawn time and labels the session with the
 restore-blocked reason if it is offline after a restart.
 
 Every project gets a scribe. A project service creates one at startup using the
-project's `defaultTool`, and it is not created if that tool is unknown,
-disabled, or not installed -- the project log says which. To use a different
-tool for it:
+project's `defaultTool`, so a project that runs codex gets a codex scribe, and
+it is not created if that tool is unknown, disabled, or not installed -- the
+project log says which. To pin a different tool for it:
 
 ```json
 {

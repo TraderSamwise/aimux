@@ -64,6 +64,25 @@ class LiveResidualFailure(Exception):
     pass
 
 
+def write_scope_global_config(aimux_home: Path) -> None:
+    """A scenario measures the agents it spawned, so no scribe is created.
+
+    `ps_session_for_tool` returns the FIRST live session with a tool, and `ps`
+    does not filter supervisor sessions. A project scribe is created first and
+    its tool is `claude`, so the scenarios that ask for "the claude session"
+    would focus or stop the scribe and measure the wrong agent -- or pass while
+    the agent they spawned lingered. The same opt-out the installed runtime
+    gate takes, for the same reason.
+    """
+    aimux_home.mkdir(parents=True, exist_ok=True)
+    config_path = aimux_home / "config.json"
+    config: dict[str, Any] = {}
+    if config_path.exists():
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    config.setdefault("scribe", {})["defaultAgent"] = False
+    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+
+
 class Scope:
     def __init__(self, label: str, aimux_bin: Path):
         self.temp = tempfile.TemporaryDirectory(prefix=f"aimux-phase8-{label}-")
@@ -82,6 +101,7 @@ class Scope:
         self.home.mkdir(parents=True, exist_ok=True)
         self.aimux_home.mkdir(parents=True, exist_ok=True)
         write_test_isolation_marker(self.aimux_home, "phase8-live-residuals")
+        write_scope_global_config(self.aimux_home)
         self.project.mkdir(parents=True, exist_ok=True)
         assert_isolated_daemon_port(self.env.get("AIMUX_DAEMON_PORT"), "scope initialization")
 
