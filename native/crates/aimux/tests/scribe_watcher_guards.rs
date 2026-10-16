@@ -339,3 +339,112 @@ fn a_scribe_stranded_at_needs_input_is_never_briefed() {
         "activity idle and attention normal together are the unblock"
     );
 }
+
+/// Which scribe the watcher briefs, when the metadata disagrees with reality.
+mod which_scribe {
+    use aimux::scribe_watcher::{find_scribe_session_id, scribe_readiness};
+    use serde_json::{Value, json};
+
+    fn input(sessions: Value, metadata: Value) -> Value {
+        json!({ "sessions": sessions, "metadata": { "sessions": metadata } })
+    }
+
+    #[test]
+    fn a_dead_scribes_flag_does_not_silence_a_live_one() {
+        // An ordinary kill leaves the metadata flag behind. The first flag in
+        // map order used to win whatever state its session was in, so one dead
+        // `claude-scribe` silenced a live `codex-scribe` -- and `claude-` sorts
+        // first, which is why this was not a rare ordering.
+        let found = find_scribe_session_id(&input(
+            json!([
+                { "id": "claude-scribe", "status": "offline" },
+                { "id": "codex-scribe", "status": "running" },
+            ]),
+            json!({
+                "claude-scribe": { "scribe": true },
+                "codex-scribe": { "scribe": true },
+            }),
+        ));
+        assert_eq!(found.as_deref(), Some("codex-scribe"));
+    }
+
+    #[test]
+    fn a_flag_with_no_live_session_is_no_scribe_at_all() {
+        // Not that session: the watcher then reads as having no scribe, which
+        // is true, instead of waiting for a corpse to become ready.
+        let input = input(
+            json!([{ "id": "claude-scribe", "status": "graveyard" }]),
+            json!({ "claude-scribe": { "scribe": true } }),
+        );
+        assert_eq!(find_scribe_session_id(&input), None);
+        assert!(!scribe_readiness(&input, None));
+    }
+
+    #[test]
+    fn a_scribe_whose_role_is_not_a_flag_is_still_the_scribe() {
+        // The topology deliberately keeps `team: {"role": "scribe"}` on a
+        // session carrying no explicit flag, and the project's own predicate
+        // accepts it. Reading the boolean alone left that scribe in the
+        // dashboard and never briefed it.
+        for metadata in [
+            json!({ "legacy-scribe": { "team": { "role": "scribe" } } }),
+            json!({ "legacy-scribe": { "role": "scribe" } }),
+        ] {
+            let found = find_scribe_session_id(&input(
+                json!([{ "id": "legacy-scribe", "status": "running" }]),
+                metadata.clone(),
+            ));
+            assert_eq!(found.as_deref(), Some("legacy-scribe"), "{metadata}");
+        }
+    }
+
+    #[test]
+    fn a_demoted_session_is_not_the_scribe() {
+        // `projectControl: false` demotes a session the topology still
+        // describes by role, and the shared predicate honours that.
+        let found = find_scribe_session_id(&input(
+            json!([{ "id": "demoted", "status": "running" }]),
+            json!({ "demoted": { "role": "scribe", "projectControl": false } }),
+        ));
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn a_starting_scribe_is_the_scribe_but_is_not_ready() {
+        // Picking it is right -- it is the project's scribe -- and readiness is
+        // what says "not yet", so the watcher waits rather than creating a
+        // second one.
+        let input = input(
+            json!([{ "id": "claude-scribe", "status": "starting" }]),
+            json!({ "claude-scribe": { "scribe": true } }),
+        );
+        assert_eq!(
+            find_scribe_session_id(&input).as_deref(),
+            Some("claude-scribe")
+        );
+        assert!(!scribe_readiness(&input, Some("claude-scribe")));
+    }
+
+    #[test]
+    fn two_live_scribes_pick_the_same_one_every_tick() {
+        let sessions = json!([
+            { "id": "b-scribe", "status": "running" },
+            { "id": "a-scribe", "status": "running" },
+        ]);
+        let metadata = json!({
+            "b-scribe": { "scribe": true },
+            "a-scribe": { "scribe": true },
+        });
+        let first = find_scribe_session_id(&input(sessions.clone(), metadata.clone()));
+        assert_eq!(
+            first.as_deref(),
+            Some("a-scribe"),
+            "sorted by id, not map order"
+        );
+        assert_eq!(
+            find_scribe_session_id(&input(sessions, metadata)),
+            first,
+            "and the same one next tick"
+        );
+    }
+}

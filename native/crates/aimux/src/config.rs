@@ -31,9 +31,13 @@ worktrees/
 const ROOT_GITIGNORE_AIMUX_BLOCK: &str = "# Aimux local runtime state\n.aimux/\n";
 
 /// Return a fresh JSON representation of the TypeScript `DEFAULT_CONFIG`.
+/// The tool a project reaches for when nothing names one -- for its agents
+/// and for its scribe, which is the same answer.
+const DEFAULT_TOOL: &str = "claude";
+
 pub fn default_config() -> Value {
     json!({
-        "defaultTool": "claude",
+        "defaultTool": DEFAULT_TOOL,
         "contextMaxEntries": 20,
         "liveWindowSize": 20,
         "compactEveryNTurns": 50,
@@ -112,7 +116,11 @@ pub fn default_config() -> Value {
             "scanEveryTicks": 8
         },
         "scribe": {
-            "defaultAgent": null
+            // Opt OUT: a project has a scribe unless its config says
+            // `null`/`false`, which `normalize_scribe` keeps meaning off. The
+            // tool is the project's default tool rather than a second literal,
+            // because "which agent" has one answer.
+            "defaultAgent": DEFAULT_TOOL
         },
         "tools": {
             "claude": {

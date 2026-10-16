@@ -78,7 +78,7 @@
     "scanEveryTicks": 8
   },
   "scribe": {
-    "defaultAgent": null
+    "defaultAgent": "claude"
   },
   "tools": {
     "claude": {

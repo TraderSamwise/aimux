@@ -89,6 +89,21 @@ pub fn ensure_default_scribe_agent(
     let Some(command) = trimmed_string(launch.get("command")) else {
         return json!({ "created": false, "reason": "missing-command" });
     };
+    // Checked before the window exists, not after. A scribe is created on every
+    // project-service start now, so a machine without this tool on PATH would
+    // otherwise collect one dead supervisor window per start, each one a real
+    // tmux window with a preamble and a plan file behind it.
+    if let Err(error) = crate::program_lookup::resolve_program_from_path(
+        &command,
+        std::env::var_os("PATH"),
+        Some(context.project_root()),
+    ) {
+        return json!({
+            "created": false,
+            "reason": "program-not-found",
+            "error": error,
+        });
+    }
     let mut launch_env = string_record_entries(launch.get("env"));
     launch_env.push(("AIMUX_SCRIBE".to_owned(), "1".to_owned()));
     let executable = basename_like_node_posix(&command);
