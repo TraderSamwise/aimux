@@ -275,16 +275,14 @@ fn with_blocking_runtime_handle<R>(handle: Handle, closure: impl FnOnce() -> R) 
 pub fn doctor_tasks_report() -> AsyncRuntimeDoctorReport {
     let tasks = registry().snapshot();
     let (failed, refused_seams, failures) = registry().failure_snapshot();
-    #[cfg(not(feature = "remote-control"))]
-    let backlogs = backlog_snapshots();
-    #[cfg(feature = "remote-control")]
+    // One shape in both builds: the edge answers with an empty list when there
+    // is no remote half, so the merge below is not a pair of divergent
+    // `let`s -- which is what this was, down to `let` versus `let mut`.
     let mut backlogs = backlog_snapshots();
-    #[cfg(feature = "remote-control")]
-    let hosted_backlog = crate::remote::hosted_outbox::hosted_outbox_backlog_snapshot_from_env();
-    #[cfg(feature = "remote-control")]
-    backlogs.retain(|backlog| backlog.name != hosted_backlog.name);
-    #[cfg(feature = "remote-control")]
-    backlogs.push(hosted_backlog);
+    for hosted_backlog in crate::remote_control_edge::hosted_backlog_snapshots() {
+        backlogs.retain(|backlog| backlog.name != hosted_backlog.name);
+        backlogs.push(hosted_backlog);
+    }
     AsyncRuntimeDoctorReport {
         runtime: AsyncRuntimeState {
             initialized: PROCESS_RUNTIME.get().is_some(),

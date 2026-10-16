@@ -228,8 +228,7 @@ impl ProjectEventBus {
         }
         let event = Value::Object(event);
         // Hand off to the daemon's push route. Nothing here waits on it.
-        #[cfg(feature = "remote-control")]
-        crate::remote::mobile_push_bridge::forward_alert_to_mobile_push(&event);
+        crate::remote_control_edge::forward_alert_to_mobile_push(&event);
         self.publish(event);
         self.publish_project_update(
             project_root,
@@ -250,8 +249,7 @@ impl ProjectEventBus {
         let event = alert_event_from_notification(project_root, input, record);
         forward_alert_to_desktop_notification(project_root, project_state_dir, &event);
         // Hand off to the daemon's push route. Nothing here waits on it.
-        #[cfg(feature = "remote-control")]
-        crate::remote::mobile_push_bridge::forward_alert_to_mobile_push_with_context(
+        crate::remote_control_edge::forward_alert_to_mobile_push_with_context(
             Some(project_root),
             Some(project_state_dir),
             &event,

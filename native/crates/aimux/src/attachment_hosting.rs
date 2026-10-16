@@ -91,10 +91,13 @@ pub trait AttachmentUploader {
     fn post_json(&self, url: &str, token: &str, body: &Value) -> Result<(u16, Value), String>;
 }
 
-#[cfg(feature = "remote-control")]
+// The decision is local. Only the uploader that reaches the network needed the
+// remote dependency, and it lives on the far side now -- see
+// `remote/attachment_upload.rs`. A reviewer reading this file sees what we
+// decide to send; what sends it is one dependency edge away.
 pub use relay_hosting::{
-    HttpAttachmentUploader, base64_encode, maybe_host_published_attachment, parse_hosted_response,
-    relay_http_url, upload_body,
+    base64_encode, maybe_host_published_attachment, parse_hosted_response, relay_http_url,
+    upload_body,
 };
 
 pub struct PublishedAttachmentHostInput<'a> {
@@ -104,39 +107,11 @@ pub struct PublishedAttachmentHostInput<'a> {
     pub session_id: &'a str,
 }
 
-#[cfg(feature = "remote-control")]
 mod relay_hosting {
     use super::{
-        AttachmentHostingResult, AttachmentUploader, HostedAttachment,
-        PublishedAttachmentHostInput, UPLOAD_TIMEOUT_SECS,
+        AttachmentHostingResult, AttachmentUploader, HostedAttachment, PublishedAttachmentHostInput,
     };
     use serde_json::{Value, json};
-
-    pub struct HttpAttachmentUploader;
-
-    impl AttachmentUploader for HttpAttachmentUploader {
-        fn post_json(&self, url: &str, token: &str, body: &Value) -> Result<(u16, Value), String> {
-            let response = ureq::post(url)
-                .timeout(std::time::Duration::from_secs(UPLOAD_TIMEOUT_SECS))
-                .set("authorization", &format!("Bearer {token}"))
-                .set("content-type", "application/json")
-                .send_string(&body.to_string());
-            match response {
-                Ok(response) => {
-                    let status = response.status();
-                    let json = response.into_json::<Value>().unwrap_or(Value::Null);
-                    Ok((status, json))
-                }
-                // A 4xx/5xx is an answer, not a transport failure: the relay's own
-                // error message is more useful than "request failed".
-                Err(ureq::Error::Status(status, response)) => {
-                    let json = response.into_json::<Value>().unwrap_or(Value::Null);
-                    Ok((status, json))
-                }
-                Err(error) => Err(error.to_string()),
-            }
-        }
-    }
 
     /// The relay's websocket URL as an HTTP one.
     ///
@@ -344,15 +319,4 @@ mod relay_hosting {
             warning: format!("relay attachment hosting failed: {}", reason.into()),
         }
     }
-}
-
-#[cfg(not(feature = "remote-control"))]
-pub fn maybe_host_published_attachment(
-    _input: &PublishedAttachmentHostInput<'_>,
-    _relay_url: &str,
-    _token: &str,
-    _remote_enabled: bool,
-    _uploader: &dyn AttachmentUploader,
-) -> AttachmentHostingResult {
-    AttachmentHostingResult::Skipped
 }

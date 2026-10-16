@@ -11,69 +11,15 @@ use crate::core_text::{
     render_core_remote_status_lines, render_core_security_unlock_lines, render_core_whoami_lines,
 };
 use crate::remote::daemon_auth_text::AuthFlowResult;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum RemoteCliOperation {
-    RemoteStatus,
-    RemoteEnable,
-    RemoteDisable,
-    Whoami,
-    Logout,
-    Login,
-    SecurityUnlock,
-    SecurityDevices,
-    SecurityDeviceApprove,
-    SecurityDeviceBlock,
-    SecurityDeviceUnblock,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum RemoteCliFallback {
-    RelayOff,
-    NotLoggedIn,
-    DisableRemoteLocally,
-    IgnoreRelayDisableFailure,
-    RelayDisconnected,
-    RelayDeferredUntilDaemonStart,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RemoteCliAction {
-    RemoteStatus {
-        relay_request: Option<CoreCommandCall>,
-    },
-    RemoteEnable {
-        relay_request: Option<CoreCommandCall>,
-    },
-    RemoteDisable {
-        relay_request: Option<CoreCommandCall>,
-    },
-    Whoami,
-    Logout {
-        relay_disable: Option<CoreCommandCall>,
-    },
-    Login {
-        security_unlock: bool,
-        relay_enable: Option<CoreCommandCall>,
-    },
-    SecurityDevices {
-        json: bool,
-    },
-    SecurityDeviceApproveLive {
-        device_id: Option<String>,
-        json: bool,
-    },
-    SecurityDeviceUpdate {
-        device_id: String,
-        action: &'static str,
-        approval_code: Option<String>,
-        json: bool,
-    },
-}
+// The vocabulary is local: the CLI has to name these commands whether or not
+// this build can carry them out, and keeping the names here made the local
+// crate's own enums carry remote-typed variants. Re-exported so this module's
+// callers are unchanged.
+pub use crate::remote_cli_vocabulary::{
+    RemoteCliAction, RemoteCliFallback, RemoteCliOperation, is_remote_core_cli_command,
+};
 
 pub trait RemoteCliRuntime: CoreCliRuntime {
     fn credentials_for_status(&self) -> Option<Value>;
@@ -88,17 +34,6 @@ pub trait RemoteCliRuntime: CoreCliRuntime {
         action: &str,
         approval_code: Option<&str>,
     ) -> Result<Value, String>;
-}
-
-pub fn is_remote_core_cli_command(command: &str, subcommand: &str) -> bool {
-    matches!(command, "remote" | "whoami" | "logout" | "login")
-        || matches!(
-            (command, subcommand),
-            (
-                "security",
-                "unlock" | "devices" | "device" | "approve" | "block" | "revoke" | "unblock"
-            )
-        )
 }
 
 pub fn plan_remote_core_cli(

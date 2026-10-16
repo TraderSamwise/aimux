@@ -164,10 +164,8 @@ fn runtime_backlog_health_snapshots(
                 .into();
         snapshots.insert(snapshot.name.clone(), snapshot);
     }
-    #[cfg(feature = "remote-control")]
-    {
-        let hosted_snapshot: BacklogHealthSnapshot =
-            crate::remote::hosted_outbox::hosted_outbox_backlog_snapshot_from_env().into();
+    for hosted in crate::remote_control_edge::hosted_backlog_snapshots() {
+        let hosted_snapshot: BacklogHealthSnapshot = hosted.into();
         snapshots.insert(hosted_snapshot.name.clone(), hosted_snapshot);
     }
     snapshots.into_values().collect()

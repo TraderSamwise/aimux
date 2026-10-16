@@ -6,8 +6,6 @@ pub use project_services::{
 };
 
 use crate::attachment_hosting::{AttachmentHostingResult, PublishedAttachmentHostInput};
-#[cfg(feature = "remote-control")]
-use crate::attachment_hosting::{HttpAttachmentUploader, maybe_host_published_attachment};
 use crate::cli_launcher::{
     AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
     get_aimux_current_cli_identity,
@@ -128,14 +126,6 @@ use crate::release_version_contract::{
     read_aimux_build_profile_from_package_root, read_aimux_runtime_build_variant,
     read_aimux_runtime_version,
 };
-#[cfg(feature = "remote-control")]
-use crate::remote::daemon_auth_text::{
-    AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
-};
-#[cfg(feature = "remote-control")]
-use crate::remote::remote_credentials;
-#[cfg(feature = "remote-control")]
-use crate::remote::remote_login::{self, LoginAction, LoginFlowWaiter};
 use crate::repair_events::{
     ACTION_CONTROL_PLANE_RESTART, ACTION_DASHBOARD_RELOAD, ACTION_PROJECT_SERVICE_ENSURE,
     ACTION_VALIDATION_ORPHAN_CLEANUP, STATUS_FAILED, STATUS_REPAIRED, STATUS_SKIPPED,
@@ -194,15 +184,17 @@ const RESTART_BACKEND_ID_CAPTURE_POLL_CONFIG_PATH: &[&str] =
     &["runtime", "restart", "backendIdCapturePollMs"];
 
 pub struct RealDaemonRuntime {
-    resolver: PathResolver,
+    /// `pub(crate)` for the far side's own trait impls -- see
+    /// `remote/daemon_auth_runtime.rs`. Nothing outside this crate can reach
+    /// it, and when the far side becomes its own crate these have to be real
+    /// accessors instead.
+    pub(crate) resolver: PathResolver,
     info: AimuxDaemonInfo,
-    next_command: AtomicU64,
+    pub(crate) next_command: AtomicU64,
     project_service_launcher: Arc<dyn ProjectServiceLauncher>,
     project_service_process_verifier: Arc<dyn ProjectServiceProcessVerifier>,
     project_service_health_probe: Arc<dyn ProjectServiceHealthProbe>,
     project_service_startup_timeout_ms: u64,
-    #[cfg(feature = "remote-control")]
-    auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
     global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
     project_online_agent_count_cache: HashMap<String, ProjectOnlineAgentCountCacheEntry>,
     restart_live_project_service_pids: Option<BTreeMap<String, Vec<i32>>>,
@@ -213,11 +205,12 @@ pub struct RealDaemonRuntime {
     runtime_coherence_tmux_provider: Arc<dyn Fn() -> RuntimeCoherenceTmux + Send + Sync>,
     started_instant: Instant,
     daemon_scheduler: Option<DaemonSchedulerHandle>,
-    #[cfg(feature = "remote-control")]
-    relay: Arc<crate::remote::daemon_relay::RelaySupervisor>,
-    /// Resolved once per process; see `machine_identity`.
-    #[cfg(feature = "remote-control")]
-    machine_identity: std::sync::OnceLock<crate::machine_identity::MachineIdentity>,
+    /// The relay connection, the login flows in progress and the resolved
+    /// machine identity -- one field instead of three gated ones, and one type
+    /// a reviewer reads instead of thirty-nine `#[cfg]` sites. `pub(crate)` so
+    /// the far side's own trait impls can reach it; nothing outside this crate
+    /// can.
+    pub(crate) remote: crate::remote_control_edge::RemoteDaemonState,
 }
 
 #[derive(Default)]
@@ -924,7 +917,7 @@ impl fmt::Debug for RealDaemonRuntime {
                 "project_service_startup_timeout_ms",
                 &self.project_service_startup_timeout_ms,
             )
-            .field("auth_flow_count", &auth_flow_count(self))
+            .field("auth_flow_count", &self.remote.auth_flow_count())
             .field(
                 "global_expose_hot_snapshots",
                 &self.global_expose_hot_snapshots,
@@ -937,103 +930,14 @@ impl fmt::Debug for RealDaemonRuntime {
     }
 }
 
-#[cfg(feature = "remote-control")]
-fn auth_flow_count(runtime: &RealDaemonRuntime) -> Option<usize> {
-    runtime.auth_flows.lock().map(|flows| flows.len()).ok()
-}
-
-#[cfg(not(feature = "remote-control"))]
-fn auth_flow_count(_runtime: &RealDaemonRuntime) -> Option<usize> {
-    None
-}
-
 impl RealDaemonRuntime {
-    /// Dial the relay if the resolved target says we should.
-    #[cfg(feature = "remote-control")]
-    fn start_relay(&self, credentials: &remote_credentials::AimuxCredentials, force: bool) {
-        let env_url = std::env::var("AIMUX_RELAY_URL").ok();
-        let env_token = std::env::var("AIMUX_RELAY_TOKEN").ok();
-        if let Some((url, token)) = crate::remote::daemon_relay::resolve_relay_target(
-            Some(credentials.relay_url.as_str()),
-            Some(credentials.token.as_str()),
-            credentials.remote_enabled,
-            env_url.as_deref(),
-            env_token.as_deref(),
-        ) {
-            self.relay
-                .connect(&url, &token, self.machine_identity(), force);
-        }
-    }
-
-    /// Which machine the relay should route to. A home directory we cannot read
-    /// must not become a machine-less connect -- that is the eviction bug the
-    /// identity exists to stop -- so the failure is logged with its cause and a
-    /// distinct in-memory identity is used until the next restart.
-    ///
-    /// Resolved once per process. `start_relay` is called on every status poll
-    /// and usually returns without reconnecting, so reading the file each time
-    /// would be a disk read per tick -- and with an unreadable file, a new
-    /// ephemeral id and a log line per tick.
-    #[cfg(feature = "remote-control")]
-    fn machine_identity(&self) -> crate::machine_identity::MachineIdentity {
-        self.machine_identity
-            .get_or_init(
-                || match crate::machine_identity::load_or_create(&self.resolver) {
-                    Ok(identity) => identity,
-                    Err(error) => {
-                        let identity = crate::machine_identity::MachineIdentity::ephemeral(
-                            crate::machine_identity::os_hostname().as_deref(),
-                        );
-                        log_lifecycle_always(
-                            "relay could not persist machine identity; using an ephemeral id",
-                            "daemon",
-                            Some(json!({
-                                "path": self.resolver.machine_identity_path().display().to_string(),
-                                "error": error.to_string(),
-                                "machineId": identity.id,
-                            })),
-                        );
-                        identity
-                    }
-                },
-            )
-            .clone()
-    }
-
-    /// What `aimux doctor` prints for this machine. A `~/.aimux` copied to a
-    /// second host carries its id, and two daemons claiming one id is
-    /// invisible from either side, so the id has to be readable somewhere.
-    ///
-    /// Never creates: see `machine_identity::read_stored`.
-    #[cfg(feature = "remote-control")]
-    fn machine_identity_report(&self) -> Value {
-        if let Some(resolved) = self.machine_identity.get() {
-            return json!({
-                "id": resolved.id,
-                "name": resolved.name,
-                "source": "resolved",
-            });
-        }
-        match crate::machine_identity::read_stored(&self.resolver) {
-            Ok(Some(stored)) => json!({
-                "id": stored.id,
-                "name": stored.name,
-                "source": "stored",
-            }),
-            // Not yet named is a different answer from could not be read, and
-            // a report that collapsed them would hide an unreadable home.
-            Ok(None) => json!({ "source": "unnamed" }),
-            Err(error) => json!({ "source": "unreadable", "error": error.to_string() }),
-        }
-    }
-
     /// Called once the daemon is up, so a machine that was left logged in and
     /// enabled reconnects on its own rather than waiting for a CLI call.
-    #[cfg(feature = "remote-control")]
+    /// Called once the daemon is up, so a machine that was left logged in and
+    /// enabled reconnects on its own rather than waiting for a CLI call. A
+    /// build with no remote half does nothing, which is what it should do.
     pub fn connect_relay_on_startup(&self) {
-        if let Some(credentials) = remote_credentials::load_credentials(&self.resolver) {
-            self.start_relay(&credentials, false);
-        }
+        self.remote.start_relay(&self.resolver, false);
     }
 
     fn stop_project_services_for_signal_shutdown(&mut self, signal_name: &str) {
@@ -1125,8 +1029,7 @@ impl RealDaemonRuntime {
                 );
             }
         }
-        #[cfg(feature = "remote-control")]
-        self.relay.disconnect();
+        self.remote.disconnect();
     }
 
     pub fn new(resolver: PathResolver, info: AimuxDaemonInfo) -> Self {
@@ -1153,8 +1056,6 @@ impl RealDaemonRuntime {
             project_service_process_verifier: Arc::new(SystemProjectServiceProcessVerifier),
             project_service_health_probe: Arc::new(SystemProjectServiceHealthProbe),
             project_service_startup_timeout_ms,
-            #[cfg(feature = "remote-control")]
-            auth_flows: Mutex::new(HashMap::new()),
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
             project_online_agent_count_cache: HashMap::new(),
             restart_live_project_service_pids: None,
@@ -1169,10 +1070,7 @@ impl RealDaemonRuntime {
             runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
             daemon_scheduler: None,
-            #[cfg(feature = "remote-control")]
-            relay: Arc::new(crate::remote::daemon_relay::RelaySupervisor::default()),
-            #[cfg(feature = "remote-control")]
-            machine_identity: std::sync::OnceLock::new(),
+            remote: crate::remote_control_edge::RemoteDaemonState::new(),
         }
     }
 
@@ -1192,8 +1090,6 @@ impl RealDaemonRuntime {
             project_service_process_verifier,
             project_service_health_probe: Arc::new(SystemProjectServiceHealthProbe),
             project_service_startup_timeout_ms,
-            #[cfg(feature = "remote-control")]
-            auth_flows: Mutex::new(HashMap::new()),
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
             project_online_agent_count_cache: HashMap::new(),
             restart_live_project_service_pids: None,
@@ -1208,10 +1104,7 @@ impl RealDaemonRuntime {
             runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
             daemon_scheduler: None,
-            #[cfg(feature = "remote-control")]
-            relay: Arc::new(crate::remote::daemon_relay::RelaySupervisor::default()),
-            #[cfg(feature = "remote-control")]
-            machine_identity: std::sync::OnceLock::new(),
+            remote: crate::remote_control_edge::RemoteDaemonState::new(),
         }
     }
 
@@ -1248,9 +1141,9 @@ impl RealDaemonRuntime {
             // Reported, not resolved. Calling `machine_identity()` here would
             // let a diagnostic be the first thing to establish the identity --
             // and, on a home it cannot write, cache an ephemeral id that every
-            // later connect then uses.
-            #[cfg(feature = "remote-control")]
-            machine: self.machine_identity_report(),
+            // later connect then uses. A local build reports `off`, which is a
+            // different answer from `unnamed`.
+            machine: self.remote.machine_identity_report(&self.resolver),
             generated_at,
             daemon_pid: self.info.pid,
             aimux_home: self
@@ -2687,7 +2580,6 @@ pub struct DoctorVersionsSnapshot {
     daemon_info: Value,
     expected_project_service: Value,
     relay: Value,
-    #[cfg(feature = "remote-control")]
     machine: Value,
     generated_at: String,
     daemon_pid: i32,
@@ -3350,18 +3242,14 @@ pub fn run_daemon_internal() -> Result<()> {
             .with_global_expose_hot_snapshot_coordinator(global_expose_hot_snapshots.clone())
             .with_daemon_scheduler(daemon_scheduler.clone()),
     ));
-    #[cfg(feature = "remote-control")]
-    let _hosted_server = {
-        let hosted_config =
-            crate::remote::hosted_config::load_hosted_config_with_resolver(&resolver);
-        crate::remote::hosted_server::start_hosted_server_background_with_scheduler(
-            hosted_config,
-            resolver.clone(),
-            Arc::clone(&runtime),
-            Some(Arc::clone(&scheduler_context)),
-            Some(daemon_scheduler.clone()),
-        )?
-    };
+    // Held for the daemon's lifetime. A local build gets `None` and holds
+    // nothing, which is why the binding is not gated.
+    let _hosted_server = crate::remote_control_edge::RemoteDaemonState::start_hosted_listener(
+        &resolver,
+        Arc::clone(&runtime),
+        Some(Arc::clone(&scheduler_context)),
+        Some(daemon_scheduler.clone()),
+    )?;
     spawn_daemon_scheduler(
         Arc::clone(&scheduler_context),
         daemon_periodic_tasks(global_expose_hot_snapshots),
@@ -3369,7 +3257,6 @@ pub fn run_daemon_internal() -> Result<()> {
     );
     // A machine left logged in and enabled should come back on its own rather
     // than waiting for someone to run a CLI command.
-    #[cfg(feature = "remote-control")]
     if let Ok(runtime) = runtime.lock() {
         runtime.connect_relay_on_startup();
     }
@@ -3469,40 +3356,29 @@ pub struct DaemonDiskMaintenanceTask {
 pub fn daemon_periodic_tasks(
     global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
 ) -> Vec<Box<dyn DaemonPeriodicTask>> {
-    #[cfg(not(feature = "remote-control"))]
+    // One list. The local build used to carry its own copy of every task, so
+    // adding one meant editing two lists and a reviewer comparing them by eye
+    // to see what the remote build did differently.
+    let mut tasks: Vec<Box<dyn DaemonPeriodicTask>> = vec![
+        Box::new(crate::daemon::expose::GlobalExposeHotSnapshotTask::new(
+            global_expose_hot_snapshots,
+        )),
+        Box::new(DaemonProcessHealthTask),
+        Box::new(DaemonDashboardLivenessTask),
+        Box::new(crate::daemon::jobs::DaemonJobsPruneTask),
+        Box::new(crate::daemon::jobs::DaemonJobsReconcileTask),
+        Box::new(crate::daemon::jobs::DaemonJobCallbacksTask),
+        Box::new(DaemonDiskMaintenanceTask::new()),
+    ];
+    // Spliced in after the snapshot task, where they were: the hosted prune
+    // and outbox drain run early in the loop.
+    for (offset, task) in crate::remote_control_edge::RemoteDaemonState::daemon_periodic_tasks()
+        .into_iter()
+        .enumerate()
     {
-        vec![
-            Box::new(crate::daemon::expose::GlobalExposeHotSnapshotTask::new(
-                global_expose_hot_snapshots,
-            )),
-            Box::new(DaemonProcessHealthTask),
-            Box::new(DaemonDashboardLivenessTask),
-            Box::new(crate::daemon::jobs::DaemonJobsPruneTask),
-            Box::new(crate::daemon::jobs::DaemonJobsReconcileTask),
-            Box::new(crate::daemon::jobs::DaemonJobCallbacksTask),
-            Box::new(DaemonDiskMaintenanceTask::new()),
-        ]
+        tasks.insert(1 + offset, task);
     }
-    #[cfg(feature = "remote-control")]
-    {
-        let mut tasks: Vec<Box<dyn DaemonPeriodicTask>> = vec![
-            Box::new(crate::daemon::expose::GlobalExposeHotSnapshotTask::new(
-                global_expose_hot_snapshots,
-            )),
-            Box::new(DaemonProcessHealthTask),
-            Box::new(DaemonDashboardLivenessTask),
-            Box::new(crate::daemon::jobs::DaemonJobsPruneTask),
-            Box::new(crate::daemon::jobs::DaemonJobsReconcileTask),
-            Box::new(crate::daemon::jobs::DaemonJobCallbacksTask),
-            Box::new(DaemonDiskMaintenanceTask::new()),
-        ];
-        tasks.insert(1, Box::new(crate::remote::hosted_server::HostedPruneTask));
-        tasks.insert(
-            2,
-            Box::new(crate::remote::hosted_server::HostedOutboxDrainTask),
-        );
-        tasks
-    }
+    tasks
 }
 
 impl DaemonDiskMaintenanceTask {
@@ -3769,35 +3645,8 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
         load_daemon_state(self.resolver.daemon_state_path())
     }
 
-    /// The live client's own state. This used to answer a hardcoded
-    /// "disconnected" whenever remote was enabled, which was indistinguishable
-    /// from a relay that was up and working.
     fn relay_status(&self) -> Value {
-        #[cfg(not(feature = "remote-control"))]
-        {
-            return json!({ "status": "off" });
-        }
-        #[cfg(feature = "remote-control")]
-        {
-            let status = self.relay.status();
-            if status.get("status").and_then(Value::as_str) != Some("off") {
-                return status;
-            }
-            // No client running: report off unless the user has asked for remote,
-            // in which case they are waiting on a connection that has not started.
-            let Some(credentials) = remote_credentials::load_credentials(&self.resolver) else {
-                return json!({ "status": "off" });
-            };
-            if credentials.remote_enabled {
-                json!({
-                    "status": "disconnected",
-                    "relayUrl": credentials.relay_url,
-                    "lastConnectedAt": Value::Null,
-                })
-            } else {
-                json!({ "status": "off" })
-            }
-        }
+        self.remote.relay_status(&self.resolver)
     }
 
     fn resolve_project_root(&self, cwd: &str) -> String {
@@ -4369,33 +4218,18 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         self.prepare_restart_control_plane_runtime(project_root, force, wait_for_capture)
     }
 
-    #[cfg(feature = "remote-control")]
     fn has_remote_credentials(&self) -> bool {
-        remote_credentials::load_credentials(&self.resolver).is_some()
+        self.remote.has_credentials(&self.resolver)
     }
 
-    #[cfg(feature = "remote-control")]
     fn enable_relay_for_user_request(&mut self) -> Value {
-        match remote_credentials::set_remote_enabled(&self.resolver, true) {
-            Ok(Some(credentials)) => {
-                // Enabling used to only flip a flag and report "disconnected"
-                // forever, because nothing ever dialled the relay.
-                self.start_relay(&credentials, true);
-                self.relay.status()
-            }
-            Ok(None) => json!({ "status": "off" }),
-            Err(error) => json!({ "status": "auth_failed", "lastError": error.to_string() }),
-        }
+        self.remote.enable_relay_for_user_request(&self.resolver)
     }
 
-    #[cfg(feature = "remote-control")]
     fn disable_relay(&mut self) -> Value {
-        let _ = remote_credentials::set_remote_enabled(&self.resolver, false);
-        self.relay.disconnect();
-        json!({ "status": "off" })
+        self.remote.disable_relay(&self.resolver)
     }
 
-    #[cfg(feature = "remote-control")]
     fn relay_auth_failed_message(&self, relay: &Value) -> String {
         relay
             .get("error")
@@ -4423,7 +4257,6 @@ pub fn build_doctor_versions_report(
         daemon_info,
         expected_project_service,
         relay,
-        #[cfg(feature = "remote-control")]
         machine,
         generated_at,
         daemon_pid,
@@ -4485,36 +4318,45 @@ pub fn build_doctor_versions_report(
         );
         object.insert("catalogProjects".into(), json!(projects));
         object.insert("relay".into(), relay);
-        #[cfg(feature = "remote-control")]
-        {
-            // Reported, not resolved. Calling `machine_identity()` here
-            // would let a diagnostic be the first thing to establish the
-            // identity -- and, on a home it cannot write, cache an
-            // ephemeral id that every later connect then uses.
-            object.insert("machine".into(), machine);
-        }
+        // Reported, not resolved. Calling `machine_identity()` here would let
+        // a diagnostic be the first thing to establish the identity -- and, on
+        // a home it cannot write, cache an ephemeral id that every later
+        // connect then uses. A local build reports `{"source": "off"}`, which
+        // is the honest answer and not a missing key.
+        object.insert("machine".into(), machine);
     }
     let mut text = render_runtime_coherence_report(&report);
     // A `~/.aimux` copied to a second host carries its machine id, and two
     // daemons claiming one id is invisible from either side -- so the id
     // has to be readable somewhere.
-    if let Some(machine) = report.get("machine") {
-        let line = match machine["source"].as_str() {
-            Some("unnamed") => "machine: not named yet".to_owned(),
-            Some("unreadable") => format!(
-                "machine: could not be read -- {}",
-                machine["error"].as_str().unwrap_or("unknown error")
-            ),
-            _ => format!(
-                "machine: {} ({})",
-                machine["name"].as_str().unwrap_or("?"),
-                machine["id"].as_str().unwrap_or("?"),
-            ),
-        };
+    if let Some(line) = report.get("machine").and_then(machine_report_line) {
         text.push_str(&format!("\n{line}\n"));
     }
     text.push_str(&render_daemon_process_inventory_for_doctor(&report));
     Ok((report, text))
+}
+
+/// What `aimux doctor` prints about this machine, or nothing.
+///
+/// Nothing is one of the answers. A build with no remote half has no machine
+/// to name, and the catch-all arm formatted two absent fields as
+/// `machine: ? (?)` -- a line of question marks where there had been no line
+/// at all. The JSON still carries `{"source": "off"}` for anything reading the
+/// report rather than printing it.
+fn machine_report_line(machine: &Value) -> Option<String> {
+    match machine["source"].as_str() {
+        Some("off") => None,
+        Some("unnamed") => Some("machine: not named yet".to_owned()),
+        Some("unreadable") => Some(format!(
+            "machine: could not be read -- {}",
+            machine["error"].as_str().unwrap_or("unknown error")
+        )),
+        _ => Some(format!(
+            "machine: {} ({})",
+            machine["name"].as_str().unwrap_or("?"),
+            machine["id"].as_str().unwrap_or("?"),
+        )),
+    }
 }
 
 impl DaemonOperationsTextRuntime for RealDaemonRuntime {
@@ -5030,153 +4872,7 @@ impl DaemonProjectContentTextRuntime for RealDaemonRuntime {
         &mut self,
         input: &PublishedAttachmentHostInput<'_>,
     ) -> AttachmentHostingResult {
-        #[cfg(not(feature = "remote-control"))]
-        {
-            let _ = input;
-            return AttachmentHostingResult::Skipped;
-        }
-        #[cfg(feature = "remote-control")]
-        {
-            let Some(credentials) = remote_credentials::load_credentials(&self.resolver) else {
-                return AttachmentHostingResult::Skipped;
-            };
-            maybe_host_published_attachment(
-                input,
-                &credentials.relay_url,
-                &credentials.token,
-                credentials.remote_enabled,
-                &HttpAttachmentUploader,
-            )
-        }
-    }
-}
-
-#[cfg(feature = "remote-control")]
-impl DaemonAuthTextRuntime for RealDaemonRuntime {
-    fn remote_status_text_payload(&self) -> Value {
-        let credentials = remote_credentials::load_credentials(&self.resolver).map(|credentials| {
-            json!({
-                "relayUrl": credentials.relay_url,
-                "remoteEnabled": credentials.remote_enabled,
-            })
-        });
-        json!({ "credentials": credentials, "relay": self.relay_status() })
-    }
-
-    fn whoami_text_payload(&self) -> Value {
-        let credentials = remote_credentials::load_credentials(&self.resolver).map(|credentials| {
-            json!({
-                "userId": credentials.user_id,
-                "relayUrl": credentials.relay_url,
-                "remoteEnabled": credentials.remote_enabled,
-            })
-        });
-        json!({ "credentials": credentials })
-    }
-
-    fn require_remote_credentials(&self) -> Result<(), AuthTextError> {
-        if remote_credentials::load_credentials(&self.resolver).is_some() {
-            Ok(())
-        } else {
-            Err(AuthTextError {
-                status: 401,
-                error: "Not logged in. Run `aimux login` first.".into(),
-            })
-        }
-    }
-
-    fn enable_relay_for_user_request(&mut self) -> Value {
-        <Self as DaemonCoreCommandRuntime>::enable_relay_for_user_request(self)
-    }
-
-    fn relay_auth_failed_message(&self, relay: &Value) -> String {
-        <Self as DaemonCoreCommandRuntime>::relay_auth_failed_message(self, relay)
-    }
-
-    fn disable_relay(&mut self) {
-        <Self as DaemonCoreCommandRuntime>::disable_relay(self);
-    }
-
-    fn clear_credentials(&mut self) -> String {
-        remote_credentials::clear_credentials(&self.resolver)
-            .as_str()
-            .into()
-    }
-
-    fn run_auth_flow(&mut self, action: AuthAction) -> Result<AuthFlowResult, AuthFlowError> {
-        match remote_login::run_login_flow(
-            &self.resolver,
-            match action {
-                AuthAction::Login => LoginAction::Login,
-                AuthAction::SecurityUnlock => LoginAction::SecurityUnlock,
-            },
-        ) {
-            Ok(result) => Ok(AuthFlowResult {
-                user_id: result.user_id,
-                relay: <Self as DaemonCoreCommandRuntime>::enable_relay_for_user_request(self),
-                messages: result.messages,
-            }),
-            Err(error) => Err(AuthFlowError {
-                error,
-                messages: Vec::new(),
-            }),
-        }
-    }
-
-    fn start_auth_flow(&mut self, action: AuthAction) -> AuthFlowStart {
-        let id = format!(
-            "native-auth-{}",
-            self.next_command.fetch_add(1, Ordering::Relaxed) + 1
-        );
-        match remote_login::start_login_flow(
-            &self.resolver,
-            match action {
-                AuthAction::Login => LoginAction::Login,
-                AuthAction::SecurityUnlock => LoginAction::SecurityUnlock,
-            },
-        ) {
-            Ok((messages, waiter)) => {
-                self.auth_flows
-                    .lock()
-                    .expect("auth flow mutex")
-                    .insert(id.clone(), waiter);
-                AuthFlowStart { id, messages }
-            }
-            Err(error) => {
-                self.auth_flows
-                    .lock()
-                    .expect("auth flow mutex")
-                    .insert(id.clone(), LoginFlowWaiter::ready_error(error));
-                AuthFlowStart {
-                    id,
-                    messages: Vec::new(),
-                }
-            }
-        }
-    }
-
-    fn wait_auth_flow(
-        &mut self,
-        id: &str,
-        _action: AuthAction,
-    ) -> Result<AuthFlowResult, AuthTextError> {
-        let waiter = self
-            .auth_flows
-            .lock()
-            .expect("auth flow mutex")
-            .remove(id)
-            .ok_or_else(|| AuthTextError {
-                status: 404,
-                error: "auth session not found".into(),
-            })?;
-        match waiter.wait() {
-            Ok(result) => Ok(AuthFlowResult {
-                user_id: result.user_id,
-                relay: <Self as DaemonCoreCommandRuntime>::enable_relay_for_user_request(self),
-                messages: result.messages,
-            }),
-            Err(error) => Err(AuthTextError { status: 500, error }),
-        }
+        crate::remote_control_edge::host_published_attachment(input, &self.resolver)
     }
 }
 
@@ -5193,18 +4889,7 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
         {
             return json!({ "ok": true, "suppressed": true, "reason": reason });
         }
-        #[cfg(not(feature = "remote-control"))]
-        {
-            let _ = payload;
-            return json!({ "ok": true, "suppressed": true, "reason": "remote_unavailable_in_local_build" });
-        }
-        #[cfg(feature = "remote-control")]
-        let notification = crate::remote::mobile_push_bridge::relay_notification(payload);
-        #[cfg(feature = "remote-control")]
-        match self.relay.push(&notification) {
-            Ok(()) => json!({ "ok": true, "suppressed": false }),
-            Err(reason) => json!({ "ok": true, "suppressed": true, "reason": reason }),
-        }
+        self.remote.deliver_push(payload)
     }
 
     fn loop_diagnostics(&self) -> Value {
@@ -6727,6 +6412,29 @@ mod tests {
     /// file, a fresh ephemeral id and a log line per tick. It is also the one
     /// value that must never be absent: a machine-less connect is what lets
     /// the second daemon evict the first.
+    /// Every answer the machine report can carry, and what it prints.
+    ///
+    /// `off` prints nothing: a build with no remote half has no machine to
+    /// name, and the catch-all used to format two absent fields as
+    /// `machine: ? (?)`.
+    #[test]
+    fn the_machine_line_says_nothing_about_a_machine_this_build_cannot_have() {
+        assert_eq!(machine_report_line(&json!({ "source": "off" })), None);
+        assert_eq!(
+            machine_report_line(&json!({ "source": "unnamed" })).as_deref(),
+            Some("machine: not named yet")
+        );
+        assert_eq!(
+            machine_report_line(&json!({ "source": "unreadable", "error": "no home" })).as_deref(),
+            Some("machine: could not be read -- no home")
+        );
+        assert_eq!(
+            machine_report_line(&json!({ "source": "resolved", "id": "m-1", "name": "mbp" }))
+                .as_deref(),
+            Some("machine: mbp (m-1)")
+        );
+    }
+
     #[cfg(feature = "remote-control")]
     #[test]
     fn the_daemon_resolves_its_machine_identity_once_and_never_to_nothing() {
@@ -6748,7 +6456,7 @@ mod tests {
             },
         );
 
-        let first = runtime.machine_identity();
+        let first = runtime.remote.machine_identity(&runtime.resolver);
         assert!(
             crate::machine_identity::is_valid_machine_id(&first.id),
             "a daemon must never connect without naming a machine: {first:?}"
@@ -6758,7 +6466,7 @@ mod tests {
         // Deleting the file cannot change the answer: a second poll must not
         // go back to disk, and must not mint a new id.
         fs::remove_file(&identity_path).expect("remove identity");
-        assert_eq!(runtime.machine_identity(), first);
+        assert_eq!(runtime.remote.machine_identity(&runtime.resolver), first);
 
         // The id has to be readable, or two hosts sharing a copied `~/.aimux`
         // is undiagnosable from either side.
@@ -6809,7 +6517,7 @@ mod tests {
         );
 
         // Once the daemon has resolved it, the report says so and names it.
-        let resolved = runtime.machine_identity();
+        let resolved = runtime.remote.machine_identity(&runtime.resolver);
         let (report, text) = runtime.doctor_versions_report().expect("doctor report");
         assert_eq!(report["machine"]["source"], json!("resolved"));
         assert_eq!(report["machine"]["id"], json!(resolved.id));

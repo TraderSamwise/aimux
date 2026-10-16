@@ -177,8 +177,7 @@ pub enum CoreCliOperation {
     ProjectsList,
     ProjectsRemove,
     Restart,
-    #[cfg(feature = "remote-control")]
-    Remote(crate::remote::cli::RemoteCliOperation),
+    Remote(crate::remote_cli_vocabulary::RemoteCliOperation),
     DebugState,
 }
 
@@ -187,8 +186,7 @@ pub enum CoreCliOperation {
 pub enum CoreCliFallback {
     None,
     StoredDaemonStatus,
-    #[cfg(feature = "remote-control")]
-    Remote(crate::remote::cli::RemoteCliFallback),
+    Remote(crate::remote_cli_vocabulary::RemoteCliFallback),
     MissingDashboardTarget,
     EmptyLogTail,
 }
@@ -276,8 +274,7 @@ pub enum CoreCliAction {
     Compact {
         project_root: String,
     },
-    #[cfg(feature = "remote-control")]
-    Remote(crate::remote::cli::RemoteCliAction),
+    Remote(crate::remote_cli_vocabulary::RemoteCliAction),
     DebugState {
         target: String,
     },
@@ -2557,9 +2554,10 @@ where
                 CoreCliFallback::None,
             )
         }
-        #[cfg(feature = "remote-control")]
-        _ if crate::remote::cli::is_remote_core_cli_command(command, subcommand) => {
-            crate::remote::cli::plan_remote_core_cli(&args, context)?
+        // The predicate is local -- the parser has to know this is a remote
+        // command before anything can route it -- and the planning is not.
+        _ if crate::remote_cli_vocabulary::is_remote_core_cli_command(command, subcommand) => {
+            crate::remote_control_edge::plan_remote_core_cli(&args, context)?
         }
         _ => return Err(CoreCliPlanError::Unsupported { args }),
     };
