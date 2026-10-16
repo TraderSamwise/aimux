@@ -33,6 +33,15 @@ describe("runtime brand", () => {
     }
   });
 
+  // `in` walks the prototype; these are the names that exposes.
+  it("does not mistake an object's own members for runtimes", () => {
+    for (const tool of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+      const brand = runtimeBrandForTool(tool);
+      expect(brand.id, tool).toBe("unknown");
+      expect(brand.shortLabel, tool).toBe("AG");
+    }
+  });
+
   it("carries a real word as well as the two letters", () => {
     expect(runtimeBrandForTool("claude").label).toBe("Claude");
     expect(runtimeBrandForTool("claude").shortLabel).toBe("CL");

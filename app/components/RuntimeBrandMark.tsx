@@ -24,11 +24,17 @@ export function RuntimeBrandMark({ agent }: { agent: AgentDisplayInput }) {
   return (
     <View
       accessibilityLabel={brand.label}
-      className="items-center justify-center rounded"
+      className="items-center justify-center rounded border px-1 py-0.5"
       style={{
         backgroundColor: brand.background,
-        height: 14,
-        width: RUNTIME_BRAND_MARK_WIDTH,
+        // `minHeight`, not `height`: Android adds font padding inside a 9pt
+        // line, and every comparable chip in this app grows rather than
+        // clipping. The border is not decoration -- `headerTone` is a hashed
+        // hue with nothing excluded, so a green worktree rule can sit two
+        // points from a green `CX`, and the edge is what keeps them apart.
+        borderColor: brand.color,
+        minHeight: 14,
+        minWidth: RUNTIME_BRAND_MARK_WIDTH,
       }}
     >
       <Text

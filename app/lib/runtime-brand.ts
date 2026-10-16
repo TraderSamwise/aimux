@@ -86,9 +86,11 @@ const TOOL_ALIASES: Record<string, RuntimeBrandId> = {
  */
 export function runtimeBrandForTool(tool: string | null | undefined): RuntimeBrand {
   const normalized = (tool ?? "").trim().toLowerCase();
-  if (normalized in BRANDS) return BRANDS[normalized as RuntimeBrandId];
-  const alias = TOOL_ALIASES[normalized];
-  if (alias) return BRANDS[alias];
+  // `hasOwn`, not `in`: `in` walks the prototype, so a tool named
+  // `constructor` or `toString` would come back as something that is not a
+  // brand at all, with an undefined short label to render.
+  if (Object.hasOwn(BRANDS, normalized)) return BRANDS[normalized as RuntimeBrandId];
+  if (Object.hasOwn(TOOL_ALIASES, normalized)) return BRANDS[TOOL_ALIASES[normalized]!];
   return BRANDS.unknown;
 }
 
