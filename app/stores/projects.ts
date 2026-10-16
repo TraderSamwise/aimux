@@ -19,6 +19,7 @@ import {
   sameProjectRef,
   type ProjectRef,
 } from "@/lib/project-key";
+import { rememberAgentForProject } from "@/lib/reopen-last-agent";
 import { desktopStateFamily } from "@/stores/desktopState";
 
 // ─── Base atoms ────────────────────────────────────────────────────────────
@@ -54,7 +55,58 @@ export const selectedProjectPathAtom = atom((get) => get(selectedProjectRefAtom)
 
 export const explicitProjectSelectionAtom = atom<{ key: string; expiresAt: number } | null>(null);
 
-export const selectedSessionIdAtom = atom<string | null>(null);
+/**
+ * Which agent the user was last reading, per project, across launches.
+ *
+ * The project is already remembered, so the app reopens on the right checkout
+ * and then stops at a list with no way to know which agent you were in. This
+ * is the last step, and it is keyed by project key rather than path because
+ * the same checkout exists on two of Sam's machines.
+ */
+const lastAgentStorageAtom = atomWithStorage<Record<string, string>>(
+  "aimux-last-agent-by-project",
+  {},
+  createSsrSafeJsonStorage<Record<string, string>>(),
+  { getOnInit: true },
+);
+
+export const lastAgentByProjectAtom = atom(
+  // The storage atom's value is typed to include a pending read, which is not
+  // a memory; an unresolved one is no memory yet, as with the selected
+  // project above.
+  (get) => {
+    const stored = get(lastAgentStorageAtom);
+    return stored && typeof stored === "object" && !("then" in stored) ? stored : {};
+  },
+  (_get, set, memory: Record<string, string>) => {
+    set(lastAgentStorageAtom, memory);
+  },
+);
+
+const selectedSessionIdValueAtom = atom<string | null>(null);
+
+/**
+ * The agent open right now, which is transient, and the memory of it, which is
+ * not.
+ *
+ * Twenty-nine call sites set this, so the memory is written HERE rather than
+ * beside each of them -- one place a selection is recorded, and nothing to
+ * forget to call. Clearing the selection does not clear the memory: the
+ * clearing happens whenever the open project changes, and the next launch is
+ * exactly when the memory is read.
+ */
+export const selectedSessionIdAtom = atom(
+  (get) => get(selectedSessionIdValueAtom),
+  (get, set, sessionId: string | null) => {
+    set(selectedSessionIdValueAtom, sessionId);
+    const memory = rememberAgentForProject(
+      get(lastAgentByProjectAtom),
+      projectKey(get(selectedProjectRefAtom)),
+      sessionId,
+    );
+    if (memory !== get(lastAgentByProjectAtom)) set(lastAgentByProjectAtom, memory);
+  },
+);
 
 // Why the list looks the way it does. A failed or unavailable fetch must not
 // reach the UI as an empty array.
