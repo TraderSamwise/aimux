@@ -105,6 +105,18 @@ struct InputClearProgress {
     attempts: u32,
 }
 
+/// The attentions a control session can be stranded at.
+///
+/// Each one latches: nothing on an overseer or a scribe clears it, because the
+/// clearing event is a person replying and nobody reads these. `needs_response`
+/// is absent deliberately -- Part B owns it, and it has a live interaction
+/// registry to check first.
+const STRANDABLE_CONTROL_ATTENTION: &[&str] = &["needs_input", "error", "blocked"];
+
+fn is_strandable_control_attention(attention: &str) -> bool {
+    STRANDABLE_CONTROL_ATTENTION.contains(&attention)
+}
+
 /// How many consecutive ticks Part C retries a write the service keeps
 /// rejecting before backing off.
 ///
@@ -211,19 +223,30 @@ impl TranscriptReconciler {
             let stuck_working =
                 matches!(activity, Some("running" | "waiting")) && attention == Some("normal");
 
-            // Part C — clear a `needs_input` that nothing will ever answer.
+            // Part C — clear an attention on a control session that nothing
+            // will ever answer.
             //
-            // The event state machine strands `needs_input` the same way it
-            // strands `running`: the clearing event is dropped on a compact, an
+            // The event state machine strands these the same way it strands
+            // `running`: the clearing event is dropped on a compact, an
             // interrupt, a daemon restart or a resume. On a coder that is
             // survivable, because a person reads the prompt and replies, which
             // clears it. On an overseer or a scribe nobody reads the prompt --
             // and the one thing that would talk to a scribe refuses to while it
             // is waiting, because `scribe_readiness` requires activity
-            // idle-or-done AND attention normal. So a stranded `needs_input`
-            // there is not a stale label, it is a permanent deadlock: observed
+            // idle-or-done AND attention normal. So a stranded attention there
+            // is not a stale label, it is a permanent deadlock: observed
             // 2026-10-05 on tealstreet-next, where the scribe had finished its
             // turn at 11:40 PM and had not been briefed in fifteen hours.
+            //
+            // `needs_input` was not the only one. Every attention in
+            // `STRANDABLE_CONTROL_ATTENTION` latches: `task_failed` and an
+            // error-toned `notify` or `status` set `error`, `blocked` sets
+            // `blocked`, and nothing on a control session ever clears any of
+            // them -- so a scribe whose last event was error-toned was
+            // deadlocked exactly like the one above, for a reason nobody was
+            // going to read. Clearing it does not hide the failure: the
+            // notification and the log record it, and this only moves the
+            // label that was keeping the scribe off work.
             //
             // Gated on the same transcript evidence as Part A, which is what
             // keeps it from discarding a real question: an agent genuinely
@@ -234,7 +257,7 @@ impl TranscriptReconciler {
             // then receives arrives as a prompt, which is also the event that
             // clears attention, so a scribe that truly needs something will ask
             // again rather than be silenced.
-            let stranded_input = attention == Some("needs_input")
+            let stranded_input = attention.is_some_and(is_strandable_control_attention)
                 && crate::team_contract::is_project_control_session(Some(
                     &crate::team_contract::session_with_stored_control_flags(
                         &session.control_flags,
