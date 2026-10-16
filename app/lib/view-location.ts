@@ -171,3 +171,25 @@ export function parentViewHrefForPath(
   const prefix = detailTabPrefix(pathname);
   return buildViewHref(prefix || "/", { project: projectPath, machine: machineId });
 }
+
+/**
+ * The agent a path is already showing, if it is showing one.
+ *
+ * A screen that reopens a remembered agent has to know whether the user is
+ * already somewhere: on a cold-start notification tap, the chat is pushed
+ * within milliseconds while the list underneath is still mounted, and
+ * reopening then would yank the user out of the chat they tapped the
+ * notification for.
+ */
+export function agentSessionIdInPath(pathname: string | null | undefined): string | null {
+  const match = /\/agent\/([^/?#]+)\//.exec(pathname ?? "");
+  const id = match?.[1];
+  if (!id) return null;
+  try {
+    return decodeURIComponent(id) || null;
+  } catch {
+    // A path we cannot decode is still a path showing an agent, and the id is
+    // only used to mean "the user is already somewhere".
+    return id;
+  }
+}

@@ -8,6 +8,7 @@ import {
   reopenedLastAgentThisLaunch,
   resetLastAgentReopenedForTest,
 } from "@/lib/reopen-last-agent";
+import { agentSessionIdInPath } from "@/lib/view-location";
 
 const base = {
   remembered: "claude-7",
@@ -112,5 +113,44 @@ describe("one reopen per launch", () => {
     expect(look()).toBeNull();
     expect(look()).toBeNull();
     resetLastAgentReopenedForTest();
+  });
+});
+
+describe("the agent a path is already showing", () => {
+  it("reads the id out of a chat route", () => {
+    expect(agentSessionIdInPath("/agent/claude-7/chat")).toBe("claude-7");
+    expect(agentSessionIdInPath("/shares/u1/s1/agent/codex-2/chat")).toBe("codex-2");
+    expect(agentSessionIdInPath("/agent/claude%2F7/chat")).toBe("claude/7");
+  });
+
+  it("has nothing to say about a route showing no agent", () => {
+    expect(agentSessionIdInPath("/project")).toBeNull();
+    expect(agentSessionIdInPath("/project?project=%2Frepo")).toBeNull();
+    expect(agentSessionIdInPath("")).toBeNull();
+    expect(agentSessionIdInPath(null)).toBeNull();
+    expect(agentSessionIdInPath(undefined)).toBeNull();
+    // The segment has to be an id, not the route template or an empty one.
+    expect(agentSessionIdInPath("/agent//chat")).toBeNull();
+  });
+
+  // Together: a user already in a chat is left alone, whatever is remembered.
+  it("stops a remembered agent from redirecting a chat that is already open", () => {
+    expect(
+      lastAgentToReopen({
+        remembered: "claude-7",
+        listedSessionIds: ["claude-7", "codex-2"],
+        alreadyReopened: false,
+        routeSessionId: agentSessionIdInPath("/agent/codex-2/chat"),
+      }),
+    ).toBeNull();
+    // And on the list, with no agent in the path, it does its job.
+    expect(
+      lastAgentToReopen({
+        remembered: "claude-7",
+        listedSessionIds: ["claude-7", "codex-2"],
+        alreadyReopened: false,
+        routeSessionId: agentSessionIdInPath("/project"),
+      }),
+    ).toBe("claude-7");
   });
 });

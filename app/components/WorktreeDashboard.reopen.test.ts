@@ -41,6 +41,18 @@ describe("reopening the last agent", () => {
     expect(dashboardSource).toContain("reopenedThisLaunchRef.current || !desktopStatePresent");
   });
 
+  it("passes the agent the route is already showing", () => {
+    // Hardcoding `null` here leaves the rule's route gate dead at its only
+    // call site. On a cold-start notification tap the chat is pushed within
+    // milliseconds while this list is still mounted underneath, and the
+    // desktop state arrives after that -- so the launch's one reopen would
+    // yank the user out of the chat they tapped for.
+    expect(dashboardSource).toContain("routeSessionId: agentSessionIdInPath(pathname),");
+    // And the effect has to re-run when the route changes, or it reads a stale
+    // pathname from the mount it started on.
+    expect(dashboardSource).toMatch(/\}, \[[\s\S]{0,200}pathname,[\s\S]{0,120}\]\);/);
+  });
+
   it("opens it the way a tap does, so it lands in one place", () => {
     // `handlePickSession` selects the agent and pushes the chat. A second
     // navigation path here would be a second answer to "how do I open a chat".
