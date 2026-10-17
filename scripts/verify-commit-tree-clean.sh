@@ -38,6 +38,14 @@ if [ -z "$CHANGED" ]; then
   exit 0
 fi
 
+# The whole tree, not just the changed files. rustfmt resolves `mod` from
+# disk, so a lone `lib.rs` or `mod.rs` fails to resolve its siblings and
+# reports "not rustfmt-clean" for a file that is fine -- which broke this
+# check for exactly the commits it exists to cover, since a revert of a
+# module move touches those files. Reading from stdin avoids the resolution
+# but stops rustfmt reporting anything at all, so it is not an option.
+git archive "$COMMIT" | tar -x -C "$WORKDIR"
+
 status=0
 while IFS= read -r path; do
   [ -n "$path" ] || continue
@@ -45,8 +53,6 @@ while IFS= read -r path; do
 
   case "$path" in
     *.rs)
-      mkdir -p "$WORKDIR/$(dirname "$path")"
-      git show "$COMMIT:$path" > "$WORKDIR/$path"
       if ! rustfmt --edition 2024 --check "$WORKDIR/$path" >/dev/null 2>&1; then
         printf 'aimux: %s is not rustfmt-clean at %s\n' "$path" "$COMMIT" >&2
         status=1
