@@ -6,6 +6,7 @@ version = 4
 name = "aimux"
 version = "0.1.0"
 dependencies = [
+ "aimux-core",
  "anyhow",
  "clap",
  "futures-util",
@@ -19,6 +20,19 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "ureq",
+]
+
+[[package]]
+name = "aimux-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "time",
+ "tokio",
 ]
 
 [[package]]

@@ -10,7 +10,7 @@ export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/aimux-cargo-target-async-audit
 
 exec cargo clippy \
   --manifest-path "$repo_root/native/Cargo.toml" \
-  -p aimux \
+  --workspace \
   --all-targets \
   -- \
   -D warnings \

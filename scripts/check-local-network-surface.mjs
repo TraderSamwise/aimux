@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 const AUDITED_LOCAL_PACKAGE_IDENTITIES = [
+  "path#aimux-core@0.1.0",
   "path#aimux@0.1.0",
   "registry+https://github.com/rust-lang/crates.io-index#anstream@1.0.0",
   "registry+https://github.com/rust-lang/crates.io-index#anstyle-parse@1.0.0",
@@ -71,6 +72,7 @@ const AUDITED_LOCAL_PACKAGE_IDENTITIES = [
 ];
 
 const AUDITED_LOCAL_ROOT_DEPENDENCY_EDGES = [
+  "aimux_core->path#aimux-core@0.1.0",
   "anyhow->registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
   "clap->registry+https://github.com/rust-lang/crates.io-index#clap@4.6.6",
   "libc->registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
@@ -85,7 +87,7 @@ const AUDITED_LOCAL_ROOT_DEPENDENCY_EDGES = [
 
 const AUDITED_PROCESS_SPAWN_SITES = [
   {
-    path: "native/crates/aimux/src/async_subprocess.rs",
+    path: "native/crates/aimux-core/src/async_subprocess.rs",
     marker: "Command::new(&self.program);",
     command: "AsyncCommand.program",
     argv: "AsyncCommand.args plus explicit cwd/env/stdin/stdout/stderr fields",
@@ -290,7 +292,7 @@ const AUDITED_PROCESS_SPAWN_SITES = [
     input: "runtime-derived local UI loopback URL",
   },
   {
-    path: "native/crates/aimux/src/paths.rs",
+    path: "native/crates/aimux-core/src/paths.rs",
     marker: 'AsyncCommand::new("git")',
     command: "git",
     argv: "literal rev-parse --git-common-dir",
@@ -612,13 +614,18 @@ function readLines(path) {
   return readFileSync(path, "utf8").split(/\r?\n/);
 }
 
+function localRustSrcDirs() {
+  return ["native/crates/aimux/src", "native/crates/aimux-core/src"].map((dir) => join(sourceRoot, dir));
+}
+
 function allRustSource() {
   if (allRustSourceText !== null) return allRustSourceText;
-  const srcDir = join(sourceRoot, "native/crates/aimux/src");
   const chunks = [];
-  walk(srcDir, (path) => {
-    if (path.endsWith(".rs")) chunks.push(readFileSync(path, "utf8"));
-  });
+  for (const srcDir of localRustSrcDirs()) {
+    walk(srcDir, (path) => {
+      if (path.endsWith(".rs")) chunks.push(readFileSync(path, "utf8"));
+    });
+  }
   allRustSourceText = chunks.join("\n");
   return allRustSourceText;
 }
@@ -852,18 +859,19 @@ function isRustSpawnDefinition(marker) {
 }
 
 function collectRustSpawnSites() {
-  const srcDir = join(sourceRoot, "native/crates/aimux/src");
   const sites = [];
-  walk(srcDir, (path) => {
-    if (!path.endsWith(".rs")) return;
-    const rel = relative(sourceRoot, path).split("\\").join("/");
-    const text = removeCfgTestItems(readFileSync(path, "utf8"));
-    for (const match of text.matchAll(rustSpawnPattern())) {
-      const marker = normalizeSpawnMarker(match[0]);
-      if (isRustSpawnDefinition(marker)) continue;
-      sites.push({ path: rel, marker });
-    }
-  });
+  for (const srcDir of localRustSrcDirs()) {
+    walk(srcDir, (path) => {
+      if (!path.endsWith(".rs")) return;
+      const rel = relative(sourceRoot, path).split("\\").join("/");
+      const text = removeCfgTestItems(readFileSync(path, "utf8"));
+      for (const match of text.matchAll(rustSpawnPattern())) {
+        const marker = normalizeSpawnMarker(match[0]);
+        if (isRustSpawnDefinition(marker)) continue;
+        sites.push({ path: rel, marker });
+      }
+    });
+  }
   return sites;
 }
 
@@ -1030,39 +1038,40 @@ function containsTypeBackedLoopbackEvidence(statement, window) {
 }
 
 function checkSourceNetworkSurface() {
-  const srcDir = join(sourceRoot, "native/crates/aimux/src");
-  walk(srcDir, (path) => {
-    if (!path.endsWith(".rs")) return;
-    const rel = relative(sourceRoot, path).split("\\").join("/");
-    const text = readFileSync(path, "utf8");
-    if (hasRemoteControlCfgMacro(text)) {
-      fail(
-        `${rel} uses cfg!(feature = "remote-control"). Use a #[cfg(...)] attribute instead: #[cfg] removes code from the local build, while cfg! compiles both branches and can leave remote-control code inside the local binary even when other absence checks are green.`,
-      );
-    }
-
-    if (rel.startsWith("native/crates/aimux/src/remote/")) return;
-    const lines = readLines(path);
-    for (const match of text.matchAll(networkCallPatternFor(text))) {
-      const start = match.index ?? 0;
-      const line = lineNumberAt(text, start);
-      const statement = statementAround(text, start);
-      const window = surroundingWindow(lines, line - 1);
-      const evidence = `${statement}\n${window}`;
-      if (containsNonLoopbackLiteral(statement)) {
-        fail(`${rel}:${line} contains a non-loopback network target in a local-source socket call: ${statement.trim()}`);
-        continue;
-      }
-      if (!containsLoopbackEvidence(evidence)) {
-        if (containsTypeBackedLoopbackEvidence(statement, window)) {
-          continue;
-        }
+  for (const srcDir of localRustSrcDirs()) {
+      walk(srcDir, (path) => {
+      if (!path.endsWith(".rs")) return;
+      const rel = relative(sourceRoot, path).split("\\").join("/");
+      const text = readFileSync(path, "utf8");
+      if (hasRemoteControlCfgMacro(text)) {
         fail(
-          `${rel}:${line} has a network socket/DNS call without auditable loopback evidence near the call. Make the address loopback literal or keep an explicit is_loopback/127.0.0.1/localhost guard adjacent to the call.`,
+          `${rel} uses cfg!(feature = "remote-control"). Use a #[cfg(...)] attribute instead: #[cfg] removes code from the local build, while cfg! compiles both branches and can leave remote-control code inside the local binary even when other absence checks are green.`,
         );
       }
-    }
-  });
+
+      if (rel.startsWith("native/crates/aimux/src/remote/")) return;
+      const lines = readLines(path);
+      for (const match of text.matchAll(networkCallPatternFor(text))) {
+        const start = match.index ?? 0;
+        const line = lineNumberAt(text, start);
+        const statement = statementAround(text, start);
+        const window = surroundingWindow(lines, line - 1);
+        const evidence = `${statement}\n${window}`;
+        if (containsNonLoopbackLiteral(statement)) {
+          fail(`${rel}:${line} contains a non-loopback network target in a local-source socket call: ${statement.trim()}`);
+          continue;
+        }
+        if (!containsLoopbackEvidence(evidence)) {
+          if (containsTypeBackedLoopbackEvidence(statement, window)) {
+            continue;
+          }
+          fail(
+            `${rel}:${line} has a network socket/DNS call without auditable loopback evidence near the call. Make the address loopback literal or keep an explicit is_loopback/127.0.0.1/localhost guard adjacent to the call.`,
+          );
+        }
+      }
+    });
+  }
 }
 
 try {

@@ -5,6 +5,7 @@ import { basename, dirname, join, relative } from 'node:path';
 const repoRoot = process.cwd();
 const crateRoot = join(repoRoot, 'native/crates/aimux');
 const srcRoot = join(crateRoot, 'src');
+const coreSrcRoot = join(repoRoot, 'native/crates/aimux-core/src');
 const testsRoot = join(crateRoot, 'tests');
 const libPath = join(srcRoot, 'lib.rs');
 const contractCorpusRoot = join(repoRoot, 'testdata/contracts/v1');
@@ -300,8 +301,9 @@ function loadFixtureDispatcherAllowlist() {
   return parsed;
 }
 
-const sourceFiles = [...walk(srcRoot), ...walk(testsRoot)];
-const productionSourceFiles = sourceFiles.filter((file) => relative(repoRoot, file).startsWith('native/crates/aimux/src/'));
+const sourceFiles = [...walk(srcRoot), ...walk(coreSrcRoot), ...walk(testsRoot)];
+const productionSrcPrefixes = ['native/crates/aimux/src/', 'native/crates/aimux-core/src/'];
+const productionSourceFiles = sourceFiles.filter((file) => productionSrcPrefixes.some((prefix) => relative(repoRoot, file).startsWith(prefix)));
 const testSourceFiles = sourceFiles.filter((file) => relative(repoRoot, file).startsWith('native/crates/aimux/tests/'));
 const defs = sourceFiles.flatMap(parseFunctions);
 const defsById = new Map(defs.map((def) => [def.id, def]));
@@ -342,7 +344,9 @@ for (const def of defs.filter((def) => def.productionFile)) {
 }
 
 function isModuleDeclarationLine(line, name) {
-  return new RegExp(`\\bpub\\s+mod\\s+${name}\\s*;`).test(line);
+  // The re-export of a module moved to aimux-core declares it here; counting
+  // it as a reference would make every moved module look used by itself.
+  return new RegExp(`\\bpub\\s+(?:mod\\s+${name}|use\\s+aimux_core::${name})\\s*;`).test(line);
 }
 
 function referenceCountsOutsideDefinitions(name) {
@@ -455,6 +459,10 @@ function moduleSourceFile(moduleName) {
   if (existsSync(flat)) {
     return relative(repoRoot, flat);
   }
+  const core = join(coreSrcRoot, `${moduleName}.rs`);
+  if (existsSync(core)) {
+    return relative(repoRoot, core);
+  }
   return relative(repoRoot, join(srcRoot, moduleName, 'mod.rs'));
 }
 
@@ -465,12 +473,13 @@ function publicLibModules() {
   const raw = readFileSync(libPath, 'utf8');
   const source = stripCommentsAndStrings(raw);
   const modules = [];
-  const pattern = /^pub\s+mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;/gm;
+  const pattern = /^pub\s+(?:mod\s+([A-Za-z_][A-Za-z0-9_]*)|use\s+aimux_core::([A-Za-z_][A-Za-z0-9_]*))\s*;/gm;
   let match;
   while ((match = pattern.exec(source)) !== null) {
+    const name = match[1] ?? match[2];
     modules.push({
-      name: match[1],
-      file: moduleSourceFile(match[1]),
+      name,
+      file: moduleSourceFile(name),
       line: lineFor(raw, match.index),
     });
   }

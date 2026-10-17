@@ -376,9 +376,9 @@ artifacts are explicit exceptions: `.aimux/worktrees`, `.aimux/plugins`, and
 
 Source locations:
 
-- `native/crates/aimux/src/secure_permissions.rs`
-- `native/crates/aimux/src/atomic_write.rs`
-- `native/crates/aimux/src/config.rs`
+- `native/crates/aimux-core/src/secure_permissions.rs`
+- `native/crates/aimux-core/src/atomic_write.rs`
+- `native/crates/aimux-core/src/config.rs`
 - `native/crates/aimux/src/daemon/runtime.rs`
 - `native/crates/aimux/src/project_service/process.rs`
 - `native/crates/aimux/tests/secure_permissions.rs`
@@ -386,9 +386,9 @@ Source locations:
 Independent confirmation:
 
 ```bash
-sed -n '1,260p' native/crates/aimux/src/secure_permissions.rs
+sed -n '1,260p' native/crates/aimux-core/src/secure_permissions.rs
 rg -n 'repair_global_aimux_home|repair_registered_project_local_stores|repair_project_state_store|ensure_private_dir|PRIVATE_FILE_MODE|PRIVATE_DIR_MODE' \
-  native/crates/aimux/src native/crates/aimux/tests/secure_permissions.rs
+  native/crates/aimux/src native/crates/aimux-core/src native/crates/aimux/tests/secure_permissions.rs
 
 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/aimux-local-review-target \
   cargo test --manifest-path native/Cargo.toml -p aimux --test secure_permissions -- --test-threads=1
@@ -412,7 +412,7 @@ into the user's repository.
 
 Source locations:
 
-- `native/crates/aimux/src/config.rs`
+- `native/crates/aimux-core/src/config.rs`
 - `native/crates/aimux/tests/config.rs`
 - `scripts/check-local-build-boundary.mjs`
 - `scripts/installed-runtime-gate.py`
@@ -421,7 +421,7 @@ Independent confirmation:
 
 ```bash
 rg -n 'context/|history/|tasks/|status/|threads/|attachments/|graveyard/|recordings/|plans/|worktrees/|ROOT_GITIGNORE' \
-  native/crates/aimux/src/config.rs native/crates/aimux/tests/config.rs scripts/check-local-build-boundary.mjs
+  native/crates/aimux-core/src/config.rs native/crates/aimux/tests/config.rs scripts/check-local-build-boundary.mjs
 
 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/aimux-local-review-target \
   cargo test --manifest-path native/Cargo.toml -p aimux --test config

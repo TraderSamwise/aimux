@@ -29,6 +29,7 @@ def marker_locations() -> list[str]:
     locations: list[str] = []
     roots = [
         ROOT / "native" / "crates" / "aimux" / "src",
+        ROOT / "native" / "crates" / "aimux-core" / "src",
         ROOT / "native" / "crates" / "aimux" / "tests",
     ]
     for file in [path for root in roots for path in rust_files(root)]:

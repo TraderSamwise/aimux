@@ -111,8 +111,8 @@ check_source_local_only_gates() {
 
   require_contains "scripts/check-local-build-boundary.mjs" "attachments/" "project .aimux attachments ignore check"
   require_contains "scripts/check-local-build-boundary.mjs" "graveyard/" "project .aimux graveyard ignore check"
-  require_contains "native/crates/aimux/src/config.rs" "attachments/" "project .aimux attachments ignore template"
-  require_contains "native/crates/aimux/src/config.rs" "graveyard/" "project .aimux graveyard ignore template"
+  require_contains "native/crates/aimux-core/src/config.rs" "attachments/" "project .aimux attachments ignore template"
+  require_contains "native/crates/aimux-core/src/config.rs" "graveyard/" "project .aimux graveyard ignore template"
   require_contains "native/crates/aimux/tests/daemon_state.rs" "reject non-loopback" "daemon host loopback inverse test"
   require_contains "native/crates/aimux/src/project_service/process.rs" 'StdTcpListener::bind(("127.0.0.1"' "project service loopback bind"
 }

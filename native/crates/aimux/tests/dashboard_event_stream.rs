@@ -1,4 +1,5 @@
-use aimux::async_runtime::{AsyncTaskKind, doctor_tasks_report};
+use aimux::async_runtime::AsyncTaskKind;
+use aimux::async_runtime_doctor::doctor_tasks_report;
 use aimux::dashboard_client::ProjectServiceEndpoint;
 use aimux::dashboard_event_stream::{
     DashboardEventStreamMessage, build_project_event_stream_request,
