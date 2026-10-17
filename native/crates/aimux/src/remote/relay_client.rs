@@ -202,56 +202,9 @@ fn relay_refusal_message(status: u16, body: &str) -> String {
 }
 
 /// Split an SSE buffer into complete frames, returning the trailing partial.
-pub fn split_sse_frames(buffer: &str) -> (Vec<String>, String) {
-    let normalized = buffer.replace("\r\n", "\n");
-    let mut frames = normalized
-        .split("\n\n")
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    let remainder = frames.pop().unwrap_or_default();
-    (frames, remainder)
-}
-
-/// One SSE frame as the relay frame to forward, or an error frame if its data
-/// is not JSON. `None` means the frame carried no data lines at all.
-pub fn project_event_frame(subscription_id: &str, frame: &str) -> Option<String> {
-    let mut event = "message".to_owned();
-    let mut data_lines = Vec::new();
-    for line in frame.split('\n') {
-        if line.is_empty() || line.starts_with(':') {
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("event:") {
-            event = rest.trim().to_owned();
-        } else if let Some(rest) = line.strip_prefix("data:") {
-            data_lines.push(rest.trim_start().to_owned());
-        }
-    }
-    if data_lines.is_empty() {
-        return None;
-    }
-    let payload = data_lines.join("\n");
-    Some(match serde_json::from_str::<Value>(&payload) {
-        Ok(data) => json!({
-            "id": subscription_id,
-            "type": "project_event",
-            "event": event,
-            "data": data,
-        })
-        .to_string(),
-        Err(error) => project_events_error_frame(subscription_id, 502, &error.to_string()),
-    })
-}
-
-pub fn project_events_error_frame(subscription_id: &str, status: u16, message: &str) -> String {
-    json!({
-        "id": subscription_id,
-        "type": "project_events_error",
-        "status": status,
-        "message": message,
-    })
-    .to_string()
-}
+pub use aimux_core::relay_bridge::{
+    project_event_frame, project_events_error_frame, split_sse_frames,
+};
 
 pub fn project_events_subscribed_frame(subscription_id: &str) -> String {
     json!({ "id": subscription_id, "type": "project_events_subscribed" }).to_string()
