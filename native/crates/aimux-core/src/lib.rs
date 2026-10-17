@@ -21,5 +21,8 @@ pub mod machine_identity;
 pub mod paths;
 pub mod periodic_scheduler;
 pub mod project_api_contract;
+pub mod project_route;
+pub mod proxy_project_binding;
+pub mod request_actor;
 pub mod secure_permissions;
 pub mod wire;

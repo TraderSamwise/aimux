@@ -1,7 +1,7 @@
-use crate::daemon::routing::DaemonRouteUrl;
 use crate::project_api_contract::routes as project_routes;
 use crate::proxy_project_binding::parse_proxy_target;
-pub use aimux_core::wire::routing::RemoteAccessDecision;
+use crate::wire::routing::DaemonRouteUrl;
+pub use crate::wire::routing::RemoteAccessDecision;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;

@@ -1,4 +1,4 @@
-use crate::daemon_projects::ProjectsRouteProject;
+use crate::project_route::ProjectsRouteProject;
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

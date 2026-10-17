@@ -11,7 +11,6 @@ use crate::daemon::stream::{
     HostAgentStreamError, HostAgentStreamRequestOptions, ProjectEventStreamChunk,
     open_project_event_stream_from_url, open_project_event_stream_from_url_async,
 };
-use crate::proxy_project_binding::{is_binary_project_route, parse_proxy_target};
 use crate::remote::hosted_audit::{
     HostedAuditRecord, HostedAuditStore, HostedPromptRecord, hash_prompt,
 };
@@ -28,9 +27,10 @@ use crate::remote::hosted_principals::{
 use crate::remote::hosted_rate_limit::{
     HostedLimitOutcome, HostedRateLimitOptions, HostedRateLimiter,
 };
-use crate::request_actor::{RemoteAccessDecision, RemoteActor};
 use aimux_core::paths::PathResolver;
 use aimux_core::project_api_contract::routes as project_routes;
+use aimux_core::proxy_project_binding::{is_binary_project_route, parse_proxy_target};
+use aimux_core::request_actor::{RemoteAccessDecision, RemoteActor};
 use aimux_core::wire::http::{DaemonResponseBody, PreparedDaemonResponse, prepare_daemon_response};
 use aimux_core::wire::routing::DaemonRouteUrl;
 use aimux_core::wire::scheduler::{

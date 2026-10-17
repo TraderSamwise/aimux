@@ -23,17 +23,17 @@ use tokio::time::Instant;
 
 use crate::desktop_notifier::{DesktopNotificationPayload, send_desktop_notification_and_wait};
 use crate::project_service::lifecycle_mutation_queue::queued_lifecycle_timeout_ms;
-use crate::proxy_project_binding::parse_proxy_target;
 use crate::remote::relay_client::{project_event_frame, split_sse_frames};
 use crate::remote::relay_runner::{
     DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem,
     RelayHandle, RelayRunner,
 };
 use crate::remote::websocket::{BoxFuture, TokioTungsteniteConnector};
-use crate::request_actor::RELAY_FORWARDED_HEADER;
 use aimux_core::async_runtime::{spawn_blocking_named, task_name};
 use aimux_core::launcher_env::DEFAULT_DAEMON_PORT;
 use aimux_core::machine_identity::MachineIdentity;
+use aimux_core::proxy_project_binding::parse_proxy_target;
+use aimux_core::request_actor::RELAY_FORWARDED_HEADER;
 use aimux_core::wire::routing::DaemonRouteUrl;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -621,13 +621,13 @@ pub fn resolve_project_event_stream(path: &str, headers: &Value) -> Result<Strin
                 .collect::<std::collections::BTreeMap<String, String>>()
         })
         .unwrap_or_default();
-    let actor = crate::request_actor::parse_remote_actor(&header_map);
-    let decision = crate::request_actor::assert_remote_access_allowed(
+    let actor = aimux_core::request_actor::parse_remote_actor(&header_map);
+    let decision = aimux_core::request_actor::assert_remote_access_allowed(
         actor.as_ref(),
         "GET",
         &pathname,
         &route_url,
-        crate::request_actor::RemoteAccessContext {
+        aimux_core::request_actor::RemoteAccessContext {
             body: None,
             project_root: None,
         },
