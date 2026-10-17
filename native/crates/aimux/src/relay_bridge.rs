@@ -614,7 +614,7 @@ mod tests {
         MAX_RELAY_EVENT_SUBSCRIPTIONS, MAX_RELAY_SSE_BUFFER_BYTES, append_limited_sse_chunk,
         read_status_and_body, route_request_over_stream,
     };
-    use crate::remote::relay_runner::DaemonRelayBridge;
+    use aimux_core::relay_bridge::DaemonRelayBridge;
     use std::io::Cursor;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant as StdInstant};
