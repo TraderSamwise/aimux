@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::core_cli::CoreCommandCall;
+use crate::core_cli_transport::CoreCommandCall;
 
 /// A remote-half operation the CLI can name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

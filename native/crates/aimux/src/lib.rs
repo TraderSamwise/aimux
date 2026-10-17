@@ -107,7 +107,7 @@ pub mod relay_bridge;
 pub mod release_version_contract;
 #[cfg(feature = "remote-control")]
 pub mod remote;
-pub mod remote_cli_vocabulary;
+pub use aimux_core::remote_cli_vocabulary;
 pub mod remote_control_edge;
 pub mod repair_events;
 pub use aimux_core::request_actor;
