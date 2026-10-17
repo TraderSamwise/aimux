@@ -29,6 +29,7 @@ pub mod project_api_contract;
 pub mod project_route;
 pub mod proxy_project_binding;
 pub mod relay_bridge;
+pub mod remote_auth_contract;
 pub mod remote_cli_vocabulary;
 pub mod request_actor;
 pub mod secure_permissions;

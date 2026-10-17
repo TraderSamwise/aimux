@@ -7,62 +7,9 @@ use aimux_core::core_text::{
 use aimux_core::wire::routing::{DaemonRouteResponse, DaemonRouteUrl, text_or_json_lines};
 use serde_json::{Value, json};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuthAction {
-    Login,
-    SecurityUnlock,
-}
-
-impl AuthAction {
-    fn failure_prefix(self) -> &'static str {
-        match self {
-            Self::Login => "Login failed",
-            Self::SecurityUnlock => "Security unlock failed",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AuthFlowResult {
-    pub user_id: String,
-    pub relay: Value,
-    pub messages: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthFlowStart {
-    pub id: String,
-    pub messages: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthTextError {
-    pub status: u16,
-    pub error: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthFlowError {
-    pub error: String,
-    pub messages: Vec<String>,
-}
-
-pub trait DaemonAuthTextRuntime {
-    fn remote_status_text_payload(&self) -> Value;
-    fn whoami_text_payload(&self) -> Value;
-    fn require_remote_credentials(&self) -> Result<(), AuthTextError>;
-    fn enable_relay_for_user_request(&mut self) -> Value;
-    fn relay_auth_failed_message(&self, relay: &Value) -> String;
-    fn disable_relay(&mut self);
-    fn clear_credentials(&mut self) -> String;
-    fn run_auth_flow(&mut self, action: AuthAction) -> Result<AuthFlowResult, AuthFlowError>;
-    fn start_auth_flow(&mut self, action: AuthAction) -> AuthFlowStart;
-    fn wait_auth_flow(
-        &mut self,
-        id: &str,
-        action: AuthAction,
-    ) -> Result<AuthFlowResult, AuthTextError>;
-}
+pub use aimux_core::remote_auth_contract::{
+    AuthAction, AuthFlowError, AuthFlowResult, AuthFlowStart, AuthTextError, DaemonAuthTextRuntime,
+};
 
 pub fn route_auth_text_request(
     runtime: &mut impl DaemonAuthTextRuntime,
