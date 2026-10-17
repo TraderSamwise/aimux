@@ -19,5 +19,7 @@ pub mod debug_logging;
 pub mod launcher_env;
 pub mod machine_identity;
 pub mod paths;
+pub mod periodic_scheduler;
 pub mod project_api_contract;
 pub mod secure_permissions;
+pub mod wire;

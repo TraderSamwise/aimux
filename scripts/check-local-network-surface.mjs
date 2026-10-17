@@ -1037,6 +1037,35 @@ function containsTypeBackedLoopbackEvidence(statement, window) {
   );
 }
 
+// `aimux-core` is the crate both the local build and the remote half compile
+// against, so a reviewer reads it once and has to be able to stop worrying
+// about it. Keeping it socket-free is what makes that true, and a comment
+// saying so is not a check.
+const CORE_SOCKET_CONSTRUCTS = [
+  "TcpListener",
+  "TcpStream",
+  "UdpSocket",
+  "UnixListener",
+  "UnixStream",
+  "to_socket_addrs",
+];
+
+function checkCoreCrateHasNoSockets() {
+  const coreSrc = join(sourceRoot, "native/crates/aimux-core/src");
+  walk(coreSrc, (path) => {
+    if (!path.endsWith(".rs")) return;
+    const rel = relative(sourceRoot, path).split("\\").join("/");
+    const text = removeCfgTestItems(readFileSync(path, "utf8"));
+    for (const construct of CORE_SOCKET_CONSTRUCTS) {
+      if (!new RegExp(`\\b${construct}\\b`).test(text)) continue;
+      const line = text.split(/\r?\n/).findIndex((candidate) => candidate.includes(construct)) + 1;
+      fail(
+        `${rel}:${line} uses ${construct}. aimux-core is shared with the remote half, so opening or accepting a connection belongs in the local crate instead.`,
+      );
+    }
+  });
+}
+
 function checkSourceNetworkSurface() {
   for (const srcDir of localRustSrcDirs()) {
       walk(srcDir, (path) => {
@@ -1076,6 +1105,7 @@ function checkSourceNetworkSurface() {
 
 try {
   checkPackageIdentitySurface();
+  checkCoreCrateHasNoSockets();
   checkSourceNetworkSurface();
   checkProcessSpawnSurface();
 } catch (error) {

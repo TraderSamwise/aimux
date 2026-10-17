@@ -86,7 +86,7 @@ pub mod notification_deep_link;
 pub mod notification_delivery_guard;
 pub mod osc_notifications;
 pub use aimux_core::paths;
-pub mod periodic_scheduler;
+pub use aimux_core::periodic_scheduler;
 pub mod plugin_api;
 pub mod plugin_project_service_host;
 pub mod plugin_registry;

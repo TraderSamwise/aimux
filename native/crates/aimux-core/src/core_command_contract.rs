@@ -176,3 +176,11 @@ pub fn is_core_command_name(value: &str) -> bool {
         .iter()
         .any(|(_, command)| *command == value)
 }
+
+// Text routes the daemon's router matches; the CLI dispatcher names the
+// same strings.
+pub const CORE_SERVICE_REMOVE_TEXT_ROUTE: &str = "/core/services/remove-text";
+pub const CORE_LOOP_LIST_TEXT_ROUTE: &str = "/core/loop/list-text";
+pub const CORE_OVERSEER_STATUS_TEXT_ROUTE: &str = "/core/overseer/status-text";
+pub const CORE_SCRIBE_STATUS_TEXT_ROUTE: &str = "/core/scribe/status-text";
+pub const CORE_REVIEW_LIST_TEXT_ROUTE: &str = "/core/review/list-text";

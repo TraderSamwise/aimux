@@ -1,11 +1,10 @@
+pub use aimux_core::core_command_contract::{
+    CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE,
+    CORE_SCRIBE_STATUS_TEXT_ROUTE, CORE_SERVICE_REMOVE_TEXT_ROUTE,
+};
 use serde_json::Value;
 
 pub const CORE_SERVICE_CREATE_TEXT_ROUTE: &str = "/core/services/create-text";
-pub const CORE_SERVICE_REMOVE_TEXT_ROUTE: &str = "/core/services/remove-text";
-pub const CORE_LOOP_LIST_TEXT_ROUTE: &str = "/core/loop/list-text";
-pub const CORE_OVERSEER_STATUS_TEXT_ROUTE: &str = "/core/overseer/status-text";
-pub const CORE_SCRIBE_STATUS_TEXT_ROUTE: &str = "/core/scribe/status-text";
-pub const CORE_REVIEW_LIST_TEXT_ROUTE: &str = "/core/review/list-text";
 
 pub fn normalize_root_dispatch_args(args: &[String]) -> Vec<String> {
     match args {

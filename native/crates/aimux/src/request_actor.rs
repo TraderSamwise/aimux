@@ -1,6 +1,7 @@
 use crate::daemon::routing::DaemonRouteUrl;
 use crate::project_api_contract::routes as project_routes;
 use crate::proxy_project_binding::parse_proxy_target;
+pub use aimux_core::wire::routing::RemoteAccessDecision;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -53,31 +54,6 @@ pub struct RemoteActor {
 pub struct RemoteAccessContext<'a> {
     pub body: Option<&'a Value>,
     pub project_root: Option<&'a str>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemoteAccessDecision {
-    pub ok: bool,
-    pub status: Option<u16>,
-    pub error: Option<String>,
-}
-
-impl RemoteAccessDecision {
-    pub fn allow() -> Self {
-        Self {
-            ok: true,
-            status: None,
-            error: None,
-        }
-    }
-
-    pub fn deny(status: u16, error: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            status: Some(status),
-            error: Some(error.into()),
-        }
-    }
 }
 
 pub fn parse_remote_actor(headers: &BTreeMap<String, String>) -> Option<RemoteActor> {

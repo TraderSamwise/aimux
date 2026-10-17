@@ -1,6 +1,40 @@
-use crate::daemon::http::DaemonResponseBody;
+use crate::wire::http::DaemonResponseBody;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+
+/// Whether a remote caller may have this route, and why not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteAccessDecision {
+    pub ok: bool,
+    pub status: Option<u16>,
+    pub error: Option<String>,
+}
+
+impl RemoteAccessDecision {
+    pub fn allow() -> Self {
+        Self {
+            ok: true,
+            status: None,
+            error: None,
+        }
+    }
+
+    pub fn deny(status: u16, error: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            status: Some(status),
+            error: Some(error.into()),
+        }
+    }
+}
+
+/// What a route handler knows about the caller.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DaemonRouteRequestContext {
+    pub actor_present: bool,
+    pub headers: BTreeMap<String, String>,
+    pub access_decision: Option<RemoteAccessDecision>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DaemonRouteResponse {
@@ -295,7 +329,7 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.lifecycle_spawn_text,
     crate::core_command_contract::CORE_API_ROUTES.lifecycle_start_text,
     crate::core_command_contract::CORE_API_ROUTES.lifecycle_stop_text,
-    crate::native_cli_dispatch::CORE_SERVICE_REMOVE_TEXT_ROUTE,
+    crate::core_command_contract::CORE_SERVICE_REMOVE_TEXT_ROUTE,
     crate::core_command_contract::CORE_API_ROUTES.logs_clear_text,
     crate::core_command_contract::CORE_API_ROUTES.logs_path_text,
     crate::core_command_contract::CORE_API_ROUTES.logs_tail_text,
@@ -307,7 +341,7 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.loop_pause_text,
     crate::core_command_contract::CORE_API_ROUTES.loop_remove_text,
     crate::core_command_contract::CORE_API_ROUTES.loop_unpause_text,
-    crate::native_cli_dispatch::CORE_LOOP_LIST_TEXT_ROUTE,
+    crate::core_command_contract::CORE_LOOP_LIST_TEXT_ROUTE,
     crate::core_command_contract::CORE_API_ROUTES.message_send_text,
     crate::core_command_contract::CORE_API_ROUTES.notification_clear_text,
     crate::core_command_contract::CORE_API_ROUTES.notification_list_text,
@@ -317,10 +351,10 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.outline_update_text,
     crate::core_command_contract::CORE_API_ROUTES.overseer_clear_text,
     crate::core_command_contract::CORE_API_ROUTES.overseer_start_text,
-    crate::native_cli_dispatch::CORE_OVERSEER_STATUS_TEXT_ROUTE,
+    crate::core_command_contract::CORE_OVERSEER_STATUS_TEXT_ROUTE,
     crate::core_command_contract::CORE_API_ROUTES.scribe_clear_text,
     crate::core_command_contract::CORE_API_ROUTES.scribe_start_text,
-    crate::native_cli_dispatch::CORE_SCRIBE_STATUS_TEXT_ROUTE,
+    crate::core_command_contract::CORE_SCRIBE_STATUS_TEXT_ROUTE,
     crate::core_command_contract::CORE_API_ROUTES.project_ensure_text,
     crate::core_command_contract::CORE_API_ROUTES.team_add_text,
     crate::core_command_contract::CORE_API_ROUTES.team_default_text,
@@ -337,7 +371,7 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.restart_text,
     crate::core_command_contract::CORE_API_ROUTES.runtime_restart_text,
     crate::core_command_contract::CORE_API_ROUTES.review_approve_text,
-    crate::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE,
+    crate::core_command_contract::CORE_REVIEW_LIST_TEXT_ROUTE,
     crate::core_command_contract::CORE_API_ROUTES.review_request_changes_text,
     crate::core_command_contract::CORE_API_ROUTES.task_accept_text,
     crate::core_command_contract::CORE_API_ROUTES.task_assign_text,
