@@ -519,11 +519,10 @@ fn is_ephemeral_temp_project_root_from(repo_root: &Path, process_cwd: &Path) -> 
         && has_test_isolation_marker(&resolved)
 }
 
-/// Names the file that marks a directory as a test's own isolated home.
-pub const TEST_ISOLATION_MARKER: &str = "test-isolation.json";
-
 pub fn has_test_isolation_marker(path: impl AsRef<Path>) -> bool {
-    path.as_ref().join(TEST_ISOLATION_MARKER).is_file()
+    path.as_ref()
+        .join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER)
+        .is_file()
 }
 
 fn log_registry_skip(reason: &str, repo_root: &Path, registry_path: &Path) {

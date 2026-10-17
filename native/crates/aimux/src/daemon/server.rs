@@ -1,10 +1,10 @@
 use crate::core_command_contract::CORE_API_ROUTES;
-use crate::wire::http::{
+use crate::daemon::http::{
     DaemonResponseBody, PreparedDaemonResponse, cors_headers, prepare_daemon_response,
     read_json_body, reject_cors_response,
 };
-use crate::wire::routing::DaemonRouteRequestContext;
-use crate::wire::routing::DaemonRouteResponse;
+use crate::daemon::router::DaemonRouteRequestContext;
+use crate::daemon::routing::DaemonRouteResponse;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 

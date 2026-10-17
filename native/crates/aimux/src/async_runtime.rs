@@ -272,19 +272,14 @@ fn with_blocking_runtime_handle<R>(handle: Handle, closure: impl FnOnce() -> R) 
     })
 }
 
-/// Build the report, merging in backlogs this crate cannot see for itself.
-///
-/// `extra_backlogs` is how the hosted half's backlogs arrive: this crate has
-/// no way to reach them, so the caller that can supplies them. There is no
-/// zero-argument variant on purpose -- it would answer without them and look
-/// right.
-pub fn doctor_tasks_report_with(
-    extra_backlogs: Vec<BacklogMetricSnapshot>,
-) -> AsyncRuntimeDoctorReport {
+pub fn doctor_tasks_report() -> AsyncRuntimeDoctorReport {
     let tasks = registry().snapshot();
     let (failed, refused_seams, failures) = registry().failure_snapshot();
+    // One shape in both builds: the edge answers with an empty list when there
+    // is no remote half, so the merge below is not a pair of divergent
+    // `let`s -- which is what this was, down to `let` versus `let mut`.
     let mut backlogs = backlog_snapshots();
-    for hosted_backlog in extra_backlogs {
+    for hosted_backlog in crate::remote_control_edge::hosted_backlog_snapshots() {
         backlogs.retain(|backlog| backlog.name != hosted_backlog.name);
         backlogs.push(hosted_backlog);
     }
@@ -736,33 +731,6 @@ mod tests {
     }
 
     #[test]
-    fn an_extra_backlog_replaces_the_locally_recorded_one_of_the_same_name() {
-        crate::backlog_metrics::record_backlog_depth("test/doctor-extra-merge", 1, Some(2));
-        let extra = BacklogMetricSnapshot {
-            name: "test/doctor-extra-merge".to_owned(),
-            status: crate::backlog_metrics::BacklogMetricStatus::Ok,
-            current_depth: Some(9),
-            high_water_mark: Some(9),
-            capacity: Some(10),
-            error: None,
-        };
-
-        let report = doctor_tasks_report_with(vec![extra]);
-
-        let matching: Vec<_> = report
-            .backlogs
-            .iter()
-            .filter(|backlog| backlog.name == "test/doctor-extra-merge")
-            .collect();
-        assert_eq!(
-            matching.len(),
-            1,
-            "the extra replaces rather than duplicates"
-        );
-        assert_eq!(matching[0].current_depth, Some(9));
-    }
-
-    #[test]
     fn doctor_tasks_report_and_text_include_live_task_names() {
         init_process_runtime().expect("runtime initialized");
         let name = scoped_task_name("doctor", "tasks", "sample");
@@ -771,7 +739,7 @@ mod tests {
         let handle = spawn_named(task_name, std::future::pending::<()>());
         wait_for_task(&name).expect("doctor task is registered");
 
-        let report = doctor_tasks_report_with(Vec::new());
+        let report = doctor_tasks_report();
         let text = render_doctor_tasks_report(&report);
         assert!(report.tasks.iter().any(|task| task.name == name));
         assert!(report.backlogs.iter().any(|backlog| {
@@ -952,7 +920,7 @@ mod tests {
 
     fn wait_for_task(name: &str) -> Option<AsyncTaskSnapshot> {
         wait_until(|| {
-            doctor_tasks_report_with(Vec::new())
+            doctor_tasks_report()
                 .tasks
                 .into_iter()
                 .find(|task| task.name == name)
@@ -961,7 +929,7 @@ mod tests {
 
     fn wait_for_task_to_finish(name: &str) -> Option<()> {
         wait_until(|| {
-            let still_live = doctor_tasks_report_with(Vec::new())
+            let still_live = doctor_tasks_report()
                 .tasks
                 .iter()
                 .any(|task| task.name == name);

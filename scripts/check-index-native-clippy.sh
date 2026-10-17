@@ -50,5 +50,5 @@ git checkout-index --all --force --prefix="$TMP_ROOT/"
 cd "$TMP_ROOT"
 CARGO_INCREMENTAL=0 \
 CARGO_TARGET_DIR="${AIMUX_PRECOMMIT_CARGO_TARGET_DIR:-${TMPDIR:-/tmp}/aimux-cargo-target-precommit-$(id -u)}" \
-  cargo clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings
+  cargo clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings
 SCRIPT_COMPLETED=1

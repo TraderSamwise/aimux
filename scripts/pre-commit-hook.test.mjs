@@ -391,7 +391,7 @@ describe("pre-commit hook", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("fixture clippy rejected staged Rust");
       expect(readFileSync(join(root, "cargo.log"), "utf8")).toContain(
-        "clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings",
+        "clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -410,7 +410,7 @@ describe("pre-commit hook", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(join(root, "cargo.log"), "utf8")).toContain(
-        "clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings",
+        "clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
       );
       const tree = commitTree(root);
       expect(commitBody(root)).toContain(`Aimux-Pre-Commit: ${tree}`);
@@ -438,7 +438,7 @@ describe("pre-commit hook", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("fixture clippy rejected missing removable module");
       expect(readFileSync(join(root, "cargo.log"), "utf8")).toContain(
-        "clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings",
+        "clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -464,7 +464,7 @@ describe("pre-commit hook", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("fixture clippy rejected missing removable module");
       expect(readFileSync(join(root, "cargo.log"), "utf8")).toContain(
-        "clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings",
+        "clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -487,7 +487,7 @@ describe("pre-commit hook", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(join(root, "cargo.log"), "utf8")).toContain(
-        "clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings",
+        "clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
       );
       const tree = commitTree(root);
       expect(commitBody(root)).toContain(`Aimux-Pre-Commit: ${tree}`);
@@ -509,7 +509,7 @@ describe("pre-commit hook", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(join(root, "cargo.log"), "utf8")).toContain(
-        "clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings",
+        "clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
       );
     } finally {
       rmSync(root, { recursive: true, force: true });

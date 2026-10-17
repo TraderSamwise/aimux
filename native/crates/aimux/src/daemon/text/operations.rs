@@ -1,5 +1,6 @@
-use crate::async_runtime::{AsyncRuntimeDoctorReport, render_doctor_tasks_report};
-use crate::async_runtime_doctor::doctor_tasks_report;
+use crate::async_runtime::{
+    AsyncRuntimeDoctorReport, doctor_tasks_report, render_doctor_tasks_report,
+};
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_text::{render_core_dashboard_reload_lines, render_core_runtime_restart_lines};
 use crate::daemon::coherence_doctor::{

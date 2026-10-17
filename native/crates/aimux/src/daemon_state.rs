@@ -16,7 +16,14 @@ const METADATA_ENDPOINT_TMP_STALE_MS: u128 = 5 * 60 * 1000;
 const EPOCH_ISO: &str = "1970-01-01T00:00:00.000Z";
 const DAEMON_INFO_LOCK_WAIT_MS: u128 = 5_000;
 
-pub use aimux_core::wire::scheduler::AimuxDaemonInfo;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AimuxDaemonInfo {
+    pub pid: i32,
+    pub port: u16,
+    pub started_at: String,
+    pub updated_at: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 pub const TEST_HARNESS_HEADER: &str = "x-aimux-test-harness";
 pub const TEST_HARNESS_ENV_VAR: &str = "AIMUX_TEST_HARNESS";
-pub use aimux_core::paths::TEST_ISOLATION_MARKER;
+pub const TEST_ISOLATION_MARKER: &str = "test-isolation.json";
 const CARGO_TEST_HEADER_VALUE: &str = "cargo-test";
 const TEST_ISOLATION_OWNER_WATCHDOG_INTERVAL_MS: u64 = 500;
 const TEST_PROJECT_PREFIXES: &[&str] = &[

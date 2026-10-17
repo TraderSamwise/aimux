@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -132,15 +132,13 @@ function assertSingleGatedRemoteModule(sourceRoot) {
   if (remoteFiles.length === 0) {
     fail(`expected remote source tree with Rust files at ${relative(sourceRoot, remoteRoot)}`);
   }
-  const coreSrcRoot = join(sourceRoot, "native/crates/aimux-core/src");
-  // Both spellings of a module: `hosted_server.rs` and `hosted_server/mod.rs`
-  // are the same module, and only checking the first missed the second.
-  const present = (root, path) =>
-    existsSync(join(root, path)) ||
-    (path.endsWith(".rs") && existsSync(join(root, path.slice(0, -3), "mod.rs")));
-  const oldPaths = oldRemoteModulePaths.filter(
-    (path) => present(srcRoot, path) || present(coreSrcRoot, path),
-  );
+  const oldPaths = oldRemoteModulePaths.filter((path) => {
+    try {
+      return statSync(join(srcRoot, path)).isFile();
+    } catch {
+      return false;
+    }
+  });
   if (oldPaths.length > 0) {
     fail(`remote-control source files remain outside src/remote: ${oldPaths.join(", ")}`);
   }

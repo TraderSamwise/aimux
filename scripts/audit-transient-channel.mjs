@@ -17,8 +17,6 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const allowlistPath = resolve(repoRoot, "scripts/transient-channel-allowlist.json");
 const SCAN_ROOT = resolve(repoRoot, "native/crates/aimux/src");
-// Both crates of the local build, so a file cannot leave this gate by moving.
-const SCAN_ROOTS = [SCAN_ROOT, resolve(repoRoot, "native/crates/aimux-core/src")];
 
 // Words that only appear when something went wrong and stayed wrong.
 const FAILURE_WORDS = [
@@ -127,7 +125,7 @@ const violations = [];
 let scanned = 0;
 let classified = 0;
 
-for (const file of SCAN_ROOTS.flatMap((root) => listRustFiles(root))) {
+for (const file of listRustFiles(SCAN_ROOT)) {
   const source = readFileSync(file, "utf8");
   // In-file `mod tests` deliberately builds both channels to assert on them.
   // Cut at the LAST one, not the first: several files have a test module in the
@@ -180,7 +178,7 @@ const WRONG_TONES = ["Tone::Attention", "Tone::Danger", "ChipTone::Danger", "Chi
 // The calls that put a tone on a label.
 const TONE_CALLS = ["style(", "chip(", "pill(", "append_count("];
 
-for (const file of SCAN_ROOTS.flatMap((root) => listRustFiles(root))) {
+for (const file of listRustFiles(SCAN_ROOT)) {
   const source = readFileSync(file, "utf8");
   const body = source.slice(0, lastTestModule(source));
   const path = relative(repoRoot, file);

@@ -1,3 +1,4 @@
+use crate::paths::PathResolver;
 use crate::remote::hosted_audit::{HostedAuditRecord, HostedAuditStore};
 use crate::remote::hosted_config::{
     HostedConfig, load_hosted_config_with_resolver, validate_hosted_startup,
@@ -7,7 +8,6 @@ use crate::remote::hosted_outbox::HostedOutboxStore;
 use crate::remote::hosted_principals::{
     HostedGrant, HostedPrincipal, HostedPrincipalsState, HostedPrincipalsStore,
 };
-use aimux_core::paths::PathResolver;
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::path::Path;

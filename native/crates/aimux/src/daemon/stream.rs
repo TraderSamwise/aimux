@@ -12,9 +12,8 @@ use crate::{
     daemon::access::resolve_authorized_project_event_stream,
     proxy_project_binding::parse_proxy_target,
 };
-pub use aimux_core::wire::stream::{
-    HostAgentStreamError, HostAgentStreamRequestOptions, ProjectEventStreamChunk,
-};
+use std::error::Error;
+use std::fmt::{self, Display, Formatter};
 use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
@@ -27,6 +26,50 @@ use tokio::time::timeout;
 pub struct HostAgentStreamFailure {
     pub status: u16,
     pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostAgentStreamError {
+    InvalidUrl(String),
+    InvalidResponse(String),
+    Io(String),
+    Upstream(String),
+    Transform(String),
+}
+
+impl Display for HostAgentStreamError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidUrl(message) | Self::InvalidResponse(message) => {
+                formatter.write_str(message)
+            }
+            Self::Io(message) | Self::Upstream(message) | Self::Transform(message) => {
+                formatter.write_str(message)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostAgentStreamRequestOptions {
+    pub timeout_ms: Option<u64>,
+}
+
+impl Default for HostAgentStreamRequestOptions {
+    fn default() -> Self {
+        Self {
+            timeout_ms: Some(10_000),
+        }
+    }
+}
+
+impl Error for HostAgentStreamError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectEventStreamChunk {
+    Data(Vec<u8>),
+    Timeout,
+    Eof,
 }
 
 #[derive(Debug)]

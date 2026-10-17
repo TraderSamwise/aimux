@@ -31,14 +31,14 @@ metadata only; they do not restart daemons, services, dashboards, or agent
 sessions.
 
 ```bash
-sed -n '1,260p' native/crates/aimux-core/src/paths.rs
+sed -n '1,260p' native/crates/aimux/src/paths.rs
 sed -n '1,560p' native/crates/aimux/src/project_service/attachments.rs
 sed -n '1,370p' native/crates/aimux/src/attachment_hosting.rs
 sed -n '1,330p' native/crates/aimux/src/project_service/graveyard_cleanup.rs
 sed -n '1,330p' native/crates/aimux/src/project_service/runtime_health_history.rs
 sed -n '1,180p' native/crates/aimux/src/recording_cleanup.rs
-sed -n '1,260p' native/crates/aimux-core/src/config.rs
-sed -n '1,260p' native/crates/aimux-core/src/atomic_write.rs
+sed -n '1,260p' native/crates/aimux/src/config.rs
+sed -n '1,260p' native/crates/aimux/src/atomic_write.rs
 sed -n '1,140p' native/crates/aimux/src/remote_credentials.rs
 sed -n '120,210p' scripts/check-local-build-boundary.sh
 sed -n '3860,3910p' native/crates/aimux/src/daemon/runtime.rs
@@ -113,12 +113,12 @@ Evidence:
 - Live transcript, context, plan, status, and attachment files are `-rw-r--r--`.
 - Live home-level state under `/Users/sam/.aimux/projects` and daemon logs is
   also mostly `drwxr-xr-x` and `-rw-r--r--`.
-- `native/crates/aimux-core/src/atomic_write.rs` creates files with no mode override
+- `native/crates/aimux/src/atomic_write.rs` creates files with no mode override
   unless callers explicitly pass one.
 - `native/crates/aimux/src/project_service/attachments.rs` writes attachment
   bytes and metadata through `atomic_write` / `write_json_atomic`, with no
   owner-only mode.
-- `native/crates/aimux-core/src/debug_logging.rs` appends logs with
+- `native/crates/aimux/src/debug_logging.rs` appends logs with
   `OpenOptions::create(true).append(true)` and no owner-only mode.
 
 Positive counterexample: `~/.aimux/auth.json` is `-rw-------`, and
@@ -188,7 +188,7 @@ Evidence:
   `mimeType`, `sessionId`, `sha256`, `sizeBytes`, and `source`.
 - The live Aimux checkout has 170 attachment files totaling 23 MB.
 - Live attachments are `-rw-r--r--`.
-- `native/crates/aimux-core/src/config.rs` generates `.aimux/.gitignore` entries for
+- `native/crates/aimux/src/config.rs` generates `.aimux/.gitignore` entries for
   `context/`, `history/`, `tasks/`, `status/`, `threads/`, `recordings/`,
   `plans/`, `worktrees/`, and `state.json`; it does not list `attachments/`.
 
@@ -257,7 +257,7 @@ Severity: medium.
 Evidence:
 
 - Graveyard cleanup defaults to enabled with 14-day retention in
-  `native/crates/aimux-core/src/config.rs`; cleanup planning in
+  `native/crates/aimux/src/config.rs`; cleanup planning in
   `native/crates/aimux/src/project_service/graveyard_cleanup.rs` removes
   expired graveyarded agents/worktrees only when the cleanup route/task runs.
 - Runtime exchange compaction exists in

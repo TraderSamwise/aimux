@@ -1,5 +1,5 @@
-use aimux_core::atomic_write::quarantine_corrupt_file;
-use aimux_core::paths::PathResolver;
+use crate::atomic_write::quarantine_corrupt_file;
+use crate::paths::PathResolver;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;

@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::core_text::WORKTREE_CHECKOUT_MISSING_LABEL;
+use crate::dashboard_renderer::WORKTREE_CHECKOUT_MISSING_LABEL;
 
 use super::{
     array, coalesce_string, field, filtered_objects, js_string, nullish_or, object, pad_end,

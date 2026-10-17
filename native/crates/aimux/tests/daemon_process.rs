@@ -1,5 +1,4 @@
-use aimux::async_runtime::{AsyncTaskKind, process_runtime, spawn_named};
-use aimux::async_runtime_doctor::doctor_tasks_report;
+use aimux::async_runtime::{AsyncTaskKind, doctor_tasks_report, process_runtime, spawn_named};
 use aimux::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
 use aimux::daemon::jobs::DaemonJobRouteRuntime;
 use aimux::daemon::json::{

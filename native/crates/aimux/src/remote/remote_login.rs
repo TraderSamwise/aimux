@@ -1,7 +1,7 @@
+use crate::async_subprocess::{AsyncCommand, command_task_name};
+use crate::launcher_env::DEFAULT_WEB_APP_URL;
+use crate::paths::PathResolver;
 use crate::remote::remote_credentials::{AimuxCredentials, save_credentials_at};
-use aimux_core::async_subprocess::{AsyncCommand, command_task_name};
-use aimux_core::launcher_env::DEFAULT_WEB_APP_URL;
-use aimux_core::paths::PathResolver;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, Read};
@@ -79,12 +79,12 @@ pub fn start_login_flow(
     resolver: &PathResolver,
     action: LoginAction,
 ) -> Result<(Vec<String>, LoginFlowWaiter), String> {
-    aimux_core::async_runtime::init_process_runtime().map_err(|error| error.to_string())?;
+    crate::async_runtime::init_process_runtime().map_err(|error| error.to_string())?;
     let prepared = prepare_login_flow(resolver, action)?;
     let messages = prepared.messages.clone();
     let (sender, receiver) = channel();
-    aimux_core::async_runtime::spawn_named(
-        aimux_core::async_runtime::task_name("remote-login", "callback"),
+    crate::async_runtime::spawn_named(
+        crate::async_runtime::task_name("remote-login", "callback"),
         async move {
             let flow_result = match TcpListener::from_std(prepared.listener) {
                 Ok(listener) => {

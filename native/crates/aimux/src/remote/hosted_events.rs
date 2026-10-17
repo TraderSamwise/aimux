@@ -1,7 +1,7 @@
+use crate::atomic_write::atomic_write_with_mode;
+use crate::paths::PathResolver;
 use crate::remote::hosted_config::HostedConfig;
 use crate::remote::hosted_lock::{HostedLockOptions, with_hosted_lock};
-use aimux_core::atomic_write::atomic_write_with_mode;
-use aimux_core::paths::PathResolver;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -423,13 +423,13 @@ fn load_devices_from_path(path: PathBuf) -> DevicesState {
         Ok(raw) => raw,
         Err(error) => {
             if error.kind() != std::io::ErrorKind::NotFound {
-                aimux_core::atomic_write::quarantine_corrupt_file(&path);
+                crate::atomic_write::quarantine_corrupt_file(&path);
             }
             return empty_devices();
         }
     };
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        aimux_core::atomic_write::quarantine_corrupt_file(&path);
+        crate::atomic_write::quarantine_corrupt_file(&path);
         return empty_devices();
     };
     let Some(salt) = value

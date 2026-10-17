@@ -8,8 +8,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-pub const WORKTREE_CHECKOUT_MISSING_LABEL: &str = "checkout missing";
-
 mod collaboration;
 mod worktrees;
 pub use collaboration::{

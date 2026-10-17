@@ -4,10 +4,7 @@ import { join, relative, resolve } from "node:path";
 
 const repoRoot = resolve(new URL("..", import.meta.url).pathname);
 const roots = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
-const scanRoots =
-  roots.length > 0
-    ? roots.map((root) => resolve(repoRoot, root))
-    : [resolve(repoRoot, "native/crates/aimux"), resolve(repoRoot, "native/crates/aimux-core")];
+const scanRoots = roots.length > 0 ? roots.map((root) => resolve(repoRoot, root)) : [resolve(repoRoot, "native/crates/aimux")];
 
 const HAZARDS = [
   {

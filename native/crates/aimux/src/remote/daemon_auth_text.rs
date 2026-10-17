@@ -1,10 +1,10 @@
-use aimux_core::core_command_contract::CORE_API_ROUTES;
-use aimux_core::core_text::{
+use crate::core_command_contract::CORE_API_ROUTES;
+use crate::core_text::{
     core_whoami_json, render_core_login_lines, render_core_logout_lines,
     render_core_remote_disable_lines, render_core_remote_enable_lines,
     render_core_remote_status_lines, render_core_security_unlock_lines, render_core_whoami_lines,
 };
-use aimux_core::wire::routing::{DaemonRouteResponse, DaemonRouteUrl, text_or_json_lines};
+use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl, text_or_json_lines};
 use serde_json::{Value, json};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -17,13 +17,7 @@ const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const allowlistPath = resolve(repoRoot, "scripts/agent-ordering-allowlist.json");
 const CANONICAL_COMPARATOR = "compare_agent_canonical_order";
 
-const SCAN_ROOTS = [
-  "native/crates/aimux/src",
-  "native/crates/aimux-core/src",
-  "app",
-  "src",
-  "relay/src",
-];
+const SCAN_ROOTS = ["native/crates/aimux/src", "app", "src", "relay/src"];
 const SKIP_DIRECTORIES = new Set(["node_modules", "target", ".git", "dist", "build", ".expo"]);
 const SCAN_EXTENSIONS = [".rs", ".ts", ".tsx", ".mjs"];
 

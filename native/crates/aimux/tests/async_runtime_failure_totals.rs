@@ -13,9 +13,8 @@
 //! one gate that needs process-wide logging configured.
 
 use aimux::async_runtime::{
-    FAILURE_RING_CAPACITY, init_process_runtime, process_runtime, spawn_named,
+    FAILURE_RING_CAPACITY, doctor_tasks_report, init_process_runtime, process_runtime, spawn_named,
 };
-use aimux::async_runtime_doctor::doctor_tasks_report;
 use aimux::debug_logging::{LoggingCliOptions, configure_process_logging};
 use aimux::paths::PathResolver;
 use std::path::PathBuf;

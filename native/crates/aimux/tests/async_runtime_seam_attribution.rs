@@ -7,10 +7,10 @@
 //! chain through the sync wrappers is what makes the refusal say where.
 
 use aimux::async_runtime::{
-    AsyncTaskFailure, AsyncTaskFailureReason, AsyncTaskKind, init_process_runtime, process_runtime,
-    render_doctor_tasks_report, spawn_blocking_named, spawn_named,
+    AsyncTaskFailure, AsyncTaskFailureReason, AsyncTaskKind, doctor_tasks_report,
+    init_process_runtime, process_runtime, render_doctor_tasks_report, spawn_blocking_named,
+    spawn_named,
 };
-use aimux::async_runtime_doctor::doctor_tasks_report;
 use aimux::async_subprocess::AsyncCommand;
 use aimux::project_service::lifecycle_mutation_queue::LifecycleMutationQueue;
 use std::sync::mpsc;

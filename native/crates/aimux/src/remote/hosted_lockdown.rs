@@ -1,5 +1,5 @@
-use aimux_core::atomic_write::atomic_write_with_mode;
-use aimux_core::paths::PathResolver;
+use crate::atomic_write::atomic_write_with_mode;
+use crate::paths::PathResolver;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

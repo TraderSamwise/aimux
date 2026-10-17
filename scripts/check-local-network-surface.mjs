@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 const AUDITED_LOCAL_PACKAGE_IDENTITIES = [
-  "path#aimux-core@0.1.0",
   "path#aimux@0.1.0",
   "registry+https://github.com/rust-lang/crates.io-index#anstream@1.0.0",
   "registry+https://github.com/rust-lang/crates.io-index#anstyle-parse@1.0.0",
@@ -71,20 +70,7 @@ const AUDITED_LOCAL_PACKAGE_IDENTITIES = [
   "registry+https://github.com/rust-lang/crates.io-index#zmij@1.0.23",
 ];
 
-// What aimux-core itself may reach directly. Frozen separately because the
-// binary's edge set does not change when the shared crate gains one.
-const AUDITED_CORE_DEPENDENCY_EDGES = [
-  "anyhow->registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
-  "libc->registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
-  "serde->registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
-  "serde_json->registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
-  "sha2->registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
-  "time->registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
-  "tokio->registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
-];
-
 const AUDITED_LOCAL_ROOT_DEPENDENCY_EDGES = [
-  "aimux_core->path#aimux-core@0.1.0",
   "anyhow->registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
   "clap->registry+https://github.com/rust-lang/crates.io-index#clap@4.6.6",
   "libc->registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
@@ -99,7 +85,7 @@ const AUDITED_LOCAL_ROOT_DEPENDENCY_EDGES = [
 
 const AUDITED_PROCESS_SPAWN_SITES = [
   {
-    path: "native/crates/aimux-core/src/async_subprocess.rs",
+    path: "native/crates/aimux/src/async_subprocess.rs",
     marker: "Command::new(&self.program);",
     command: "AsyncCommand.program",
     argv: "AsyncCommand.args plus explicit cwd/env/stdin/stdout/stderr fields",
@@ -304,7 +290,7 @@ const AUDITED_PROCESS_SPAWN_SITES = [
     input: "runtime-derived local UI loopback URL",
   },
   {
-    path: "native/crates/aimux-core/src/paths.rs",
+    path: "native/crates/aimux/src/paths.rs",
     marker: 'AsyncCommand::new("git")',
     command: "git",
     argv: "literal rev-parse --git-common-dir",
@@ -562,9 +548,7 @@ let manifestPath = join(repoRoot, "native/Cargo.toml");
 let packageIdentitiesFile = null;
 let expectedPackageIdentitiesFile = null;
 let rootDependencyEdgesFile = null;
-let coreDependencyEdgesFile = null;
 let expectedRootDependencyEdgesFile = null;
-let expectedCoreDependencyEdgesFile = null;
 let cargoMetadataFile = null;
 let skipPackageIdentityCheck = false;
 
@@ -582,10 +566,6 @@ for (let i = 0; i < args.length; i += 1) {
     rootDependencyEdgesFile = resolve(args[++i]);
   } else if (arg === "--expected-root-dependency-edges-file") {
     expectedRootDependencyEdgesFile = resolve(args[++i]);
-  } else if (arg === "--core-dependency-edges-file") {
-    coreDependencyEdgesFile = resolve(args[++i]);
-  } else if (arg === "--expected-core-dependency-edges-file") {
-    expectedCoreDependencyEdgesFile = resolve(args[++i]);
   } else if (arg === "--cargo-metadata-file") {
     cargoMetadataFile = resolve(args[++i]);
   } else if (arg === "--skip-package-identity-check") {
@@ -632,17 +612,11 @@ function readLines(path) {
   return readFileSync(path, "utf8").split(/\r?\n/);
 }
 
-function localRustSrcDirs() {
-  return ["native/crates/aimux/src", "native/crates/aimux-core/src"].map((dir) => join(sourceRoot, dir));
-}
-
 function allRustSource() {
   if (allRustSourceText !== null) return allRustSourceText;
+  const srcDir = join(sourceRoot, "native/crates/aimux/src");
   const chunks = [];
-  // Only the crate that owns the socket, because this text is what EXCUSES a
-  // bind. Letting a comment in the shared crate satisfy it would be a hole,
-  // not wider coverage.
-  walk(join(sourceRoot, "native/crates/aimux/src"), (path) => {
+  walk(srcDir, (path) => {
     if (path.endsWith(".rs")) chunks.push(readFileSync(path, "utf8"));
   });
   allRustSourceText = chunks.join("\n");
@@ -667,7 +641,6 @@ function collectCurrentPackageSurface() {
     return {
       packages: readList(packageIdentitiesFile),
       rootEdges: rootDependencyEdgesFile ? readList(rootDependencyEdgesFile) : [],
-      coreEdges: coreDependencyEdgesFile ? readList(coreDependencyEdgesFile) : null,
     };
   }
 
@@ -693,16 +666,11 @@ function collectCurrentPackageSurface() {
     }
   }
   visit(aimuxPackage.id);
-  const corePackage = parsed.packages.find((pkg) => pkg.name === "aimux-core");
-  const coreNode = corePackage ? nodes.get(corePackage.id) : undefined;
-  const edgesOf = (node) =>
-    (node?.deps ?? [])
-      .map((dep) => `${dep.name}->${normalizePackageIdentity(packages.get(dep.pkg))}`)
-      .sort();
   return {
     packages: [...visited].map((id) => normalizePackageIdentity(packages.get(id))).sort(),
-    rootEdges: edgesOf(aimuxNode),
-    coreEdges: edgesOf(coreNode),
+    rootEdges: (aimuxNode?.deps ?? [])
+      .map((dep) => `${dep.name}->${normalizePackageIdentity(packages.get(dep.pkg))}`)
+      .sort(),
   };
 }
 
@@ -714,11 +682,6 @@ function expectedPackageIdentities() {
 function expectedRootDependencyEdges() {
   if (!expectedRootDependencyEdgesFile) return [...AUDITED_LOCAL_ROOT_DEPENDENCY_EDGES].sort();
   return readList(expectedRootDependencyEdgesFile);
-}
-
-function expectedCoreDependencyEdges() {
-  if (!expectedCoreDependencyEdgesFile) return [...AUDITED_CORE_DEPENDENCY_EDGES].sort();
-  return readList(expectedCoreDependencyEdgesFile);
 }
 
 function compareAuditedList({ label, current, expected, consequence }) {
@@ -756,18 +719,6 @@ function checkPackageIdentitySurface() {
     consequence:
       "This also freezes which audited transitive crates are directly usable from aimux source, so making an already-present network-capable transitive crate a direct dependency still requires review.",
   });
-  // `null` means this run was handed pre-computed lists and never measured
-  // core's edges. Comparing that against the audited set would fail every
-  // time, which is how the evidence bundle's proofs went vacuous.
-  if (current.coreEdges !== null) {
-    compareAuditedList({
-      label: "aimux-core direct dependency edge set",
-      current: current.coreEdges,
-      expected: expectedCoreDependencyEdges(),
-    consequence:
-        "aimux-core is shared with the remote half, so a crate becoming directly usable from it needs review even when the binary's own edges and the audited package list are unchanged.",
-    });
-  }
 }
 
 function normalizeSpawnMarker(value) {
@@ -901,19 +852,18 @@ function isRustSpawnDefinition(marker) {
 }
 
 function collectRustSpawnSites() {
+  const srcDir = join(sourceRoot, "native/crates/aimux/src");
   const sites = [];
-  for (const srcDir of localRustSrcDirs()) {
-    walk(srcDir, (path) => {
-      if (!path.endsWith(".rs")) return;
-      const rel = relative(sourceRoot, path).split("\\").join("/");
-      const text = removeCfgTestItems(readFileSync(path, "utf8"));
-      for (const match of text.matchAll(rustSpawnPattern())) {
-        const marker = normalizeSpawnMarker(match[0]);
-        if (isRustSpawnDefinition(marker)) continue;
-        sites.push({ path: rel, marker });
-      }
-    });
-  }
+  walk(srcDir, (path) => {
+    if (!path.endsWith(".rs")) return;
+    const rel = relative(sourceRoot, path).split("\\").join("/");
+    const text = removeCfgTestItems(readFileSync(path, "utf8"));
+    for (const match of text.matchAll(rustSpawnPattern())) {
+      const marker = normalizeSpawnMarker(match[0]);
+      if (isRustSpawnDefinition(marker)) continue;
+      sites.push({ path: rel, marker });
+    }
+  });
   return sites;
 }
 
@@ -1079,152 +1029,44 @@ function containsTypeBackedLoopbackEvidence(statement, window) {
   );
 }
 
-// `aimux-core` is the crate both the local build and the remote half compile
-// against, so a reviewer reads it once and has to be able to stop worrying
-// about it. Keeping it socket-free is what makes that true, and a comment
-// saying so is not a check.
-// `aimux-core` is the crate both the local build and the remote half compile
-// against, so a reviewer reads it once and has to be able to stop worrying
-// about it. Keeping it socket-free is what makes that true, and a comment
-// saying so is not a check.
-//
-// Patterns, not bare words, because the first version of this was defeated
-// three ways: `TcpSocket::new_v4()?.connect()` yields a `TcpStream` without
-// naming one, `use libc::{socket, connect}` never spells `libc::socket`, and a
-// raw fd becomes a stream with no socket type in sight. Comments and strings
-// are stripped first, so this file's own prose does not trip it.
-const CORE_SOCKET_CRATES = "socket2|nix|mio";
-const LIBC_SOCKET_CALLS =
-  "socket|socketpair|connect|bind|accept|listen|sendto|recvfrom|sendmsg|recvmsg|setsockopt|getsockopt|getaddrinfo|getpeername|getsockname";
-
-const CORE_SOCKET_PATTERNS = [
-  { pattern: /\b(?:Tcp|Udp|Unix)(?:Listener|Socket|Stream|Datagram)\b/, what: "a socket type" },
-  { pattern: /\bto_socket_addrs\b|\blookup_host\b/, what: "name resolution" },
-  // Constructing something FROM a descriptor is how a socket arrives unnamed.
-  // Handing out a descriptor you already own is not: `stdout().as_raw_fd()` for
-  // the terminal size is ordinary, and refusing it made this gate cry wolf.
-  {
-    pattern: /\b(?:from_raw_fd|FromRawFd|AsyncFd)\b/,
-    what: "a descriptor turned into a stream, which is how a socket arrives without being named",
-  },
-  { pattern: new RegExp(`\\blibc\\s*::\\s*(?:${LIBC_SOCKET_CALLS})\\b`), what: "a libc socket call" },
-  {
-    pattern: new RegExp(`\\buse\\s+libc\\s*::\\s*\\{[^}]*\\b(?:${LIBC_SOCKET_CALLS})\\b`),
-    what: "a libc socket call imported by name",
-  },
-  { pattern: new RegExp(`\\b(?:${CORE_SOCKET_CRATES})\\s*::`), what: "a socket crate" },
-  // An alias hides every path form above, so the aliasing itself is refused.
-  {
-    pattern: new RegExp(`\\buse\\s+(?:libc|${CORE_SOCKET_CRATES})\\s+as\\b`),
-    what: "a socket crate under an alias, which hides the calls above",
-  },
-  { pattern: /\.accept\s*\(/, what: "accepting a connection" },
-];
-
-/// Line numbers of `#[cfg(test)]` items, which do not ship.
-function cfgTestLineNumbers(lines) {
-  const skipped = new Set();
-  for (let index = 0; index < lines.length; index += 1) {
-    if (!/^\s*#\[cfg\(test\)\]/.test(lines[index])) continue;
-    let depth = 0;
-    let seenBrace = false;
-    for (let cursor = index; cursor < lines.length; cursor += 1) {
-      skipped.add(cursor);
-      for (const character of lines[cursor]) {
-        if (character === "{") {
-          depth += 1;
-          seenBrace = true;
-        } else if (character === "}") {
-          depth -= 1;
-        }
-      }
-      if (seenBrace && depth <= 0) break;
-    }
-  }
-  return skipped;
-}
-
-/// Each line with comments and string literals blanked, block comments tracked
-/// across lines, so this file's own prose about sockets is not a socket.
-function codeLines(source) {
-  const lines = source.split(/\r?\n/);
-  const skipped = cfgTestLineNumbers(lines);
-  let inBlockComment = false;
-  return lines.map((rawLine, index) => {
-    let line = rawLine;
-    if (inBlockComment) {
-      const close = line.indexOf("*/");
-      if (close < 0) return "";
-      line = line.slice(close + 2);
-      inBlockComment = false;
-    }
-    line = line.replace(/\/\*[\s\S]*?\*\//g, " ");
-    const open = line.indexOf("/*");
-    if (open >= 0) {
-      inBlockComment = true;
-      line = line.slice(0, open);
-    }
-    line = line.replace(/\/\/[^\n]*/g, " ").replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
-    return skipped.has(index) ? "" : line;
-  });
-}
-
-function checkCoreCrateHasNoSockets() {
-  const coreSrc = join(sourceRoot, "native/crates/aimux-core/src");
-  walk(coreSrc, (path) => {
+function checkSourceNetworkSurface() {
+  const srcDir = join(sourceRoot, "native/crates/aimux/src");
+  walk(srcDir, (path) => {
     if (!path.endsWith(".rs")) return;
     const rel = relative(sourceRoot, path).split("\\").join("/");
-    codeLines(readFileSync(path, "utf8")).forEach((line, index) => {
-      for (const { pattern, what } of CORE_SOCKET_PATTERNS) {
-        if (!pattern.test(line)) continue;
-        fail(
-          `${rel}:${index + 1} uses ${what}. aimux-core is shared with the remote half, so opening or accepting a connection belongs in the local crate instead.`,
-        );
-      }
-    });
-  });
-}
+    const text = readFileSync(path, "utf8");
+    if (hasRemoteControlCfgMacro(text)) {
+      fail(
+        `${rel} uses cfg!(feature = "remote-control"). Use a #[cfg(...)] attribute instead: #[cfg] removes code from the local build, while cfg! compiles both branches and can leave remote-control code inside the local binary even when other absence checks are green.`,
+      );
+    }
 
-function checkSourceNetworkSurface() {
-  for (const srcDir of localRustSrcDirs()) {
-      walk(srcDir, (path) => {
-      if (!path.endsWith(".rs")) return;
-      const rel = relative(sourceRoot, path).split("\\").join("/");
-      const text = readFileSync(path, "utf8");
-      if (hasRemoteControlCfgMacro(text)) {
-        fail(
-          `${rel} uses cfg!(feature = "remote-control"). Use a #[cfg(...)] attribute instead: #[cfg] removes code from the local build, while cfg! compiles both branches and can leave remote-control code inside the local binary even when other absence checks are green.`,
-        );
+    if (rel.startsWith("native/crates/aimux/src/remote/")) return;
+    const lines = readLines(path);
+    for (const match of text.matchAll(networkCallPatternFor(text))) {
+      const start = match.index ?? 0;
+      const line = lineNumberAt(text, start);
+      const statement = statementAround(text, start);
+      const window = surroundingWindow(lines, line - 1);
+      const evidence = `${statement}\n${window}`;
+      if (containsNonLoopbackLiteral(statement)) {
+        fail(`${rel}:${line} contains a non-loopback network target in a local-source socket call: ${statement.trim()}`);
+        continue;
       }
-
-      if (rel.startsWith("native/crates/aimux/src/remote/")) return;
-      const lines = readLines(path);
-      for (const match of text.matchAll(networkCallPatternFor(text))) {
-        const start = match.index ?? 0;
-        const line = lineNumberAt(text, start);
-        const statement = statementAround(text, start);
-        const window = surroundingWindow(lines, line - 1);
-        const evidence = `${statement}\n${window}`;
-        if (containsNonLoopbackLiteral(statement)) {
-          fail(`${rel}:${line} contains a non-loopback network target in a local-source socket call: ${statement.trim()}`);
+      if (!containsLoopbackEvidence(evidence)) {
+        if (containsTypeBackedLoopbackEvidence(statement, window)) {
           continue;
         }
-        if (!containsLoopbackEvidence(evidence)) {
-          if (containsTypeBackedLoopbackEvidence(statement, window)) {
-            continue;
-          }
-          fail(
-            `${rel}:${line} has a network socket/DNS call without auditable loopback evidence near the call. Make the address loopback literal or keep an explicit is_loopback/127.0.0.1/localhost guard adjacent to the call.`,
-          );
-        }
+        fail(
+          `${rel}:${line} has a network socket/DNS call without auditable loopback evidence near the call. Make the address loopback literal or keep an explicit is_loopback/127.0.0.1/localhost guard adjacent to the call.`,
+        );
       }
-    });
-  }
+    }
+  });
 }
 
 try {
   checkPackageIdentitySurface();
-  checkCoreCrateHasNoSockets();
   checkSourceNetworkSurface();
   checkProcessSpawnSurface();
 } catch (error) {

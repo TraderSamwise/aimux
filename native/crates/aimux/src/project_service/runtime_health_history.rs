@@ -113,9 +113,7 @@ pub fn runtime_health_sample(context: &ProjectServiceRequestContext, now_ms: i64
             Err(_) => (Vec::new(), true),
         };
     let scheduler_task_count = periodic_tasks.len();
-    let process_task_count = crate::async_runtime_doctor::doctor_tasks_report()
-        .totals
-        .live;
+    let process_task_count = crate::async_runtime::doctor_tasks_report().totals.live;
     let backlog = runtime_backlog_health_snapshots(context);
     let backlog_read_error_present = backlog.iter().any(|snapshot| snapshot.error_present);
     json!({

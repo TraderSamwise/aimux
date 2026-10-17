@@ -1,10 +1,10 @@
+use crate::backlog_metrics::{
+    BacklogMetricSnapshot, HOSTED_OUTBOX_BACKLOG, backlog_metric, record_backlog_error,
+};
+use crate::paths::PathResolver;
 use crate::remote::hosted_audit::{HostedAuditRecord, HostedAuditStore};
 pub use crate::remote::hosted_events::HostedEvent;
 use crate::remote::hosted_lock::{HostedLockOptions, with_hosted_lock};
-use aimux_core::backlog_metrics::{
-    BacklogMetricSnapshot, HOSTED_OUTBOX_BACKLOG, backlog_metric, record_backlog_error,
-};
-use aimux_core::paths::PathResolver;
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use serde_json::json;
@@ -133,7 +133,7 @@ impl HostedOutboxStore {
         match self.try_drain_outbox() {
             Ok(events) => events,
             Err(error) => {
-                aimux_core::debug_logging::log_lifecycle_always(
+                crate::debug_logging::log_lifecycle_always(
                     "skipped hosted outbox drain",
                     "hosted-outbox",
                     Some(json!({ "error": error.to_string() })),
@@ -214,8 +214,8 @@ fn hosted_outbox_depth(path: &Path) -> Result<usize, String> {
 
 fn parse_hosted_outbox(raw: &str, path: &Path) -> Vec<HostedEvent> {
     parse_hosted_outbox_with_skip_logger(raw, path, |line, error| {
-        aimux_core::debug_logging::log_at(
-            aimux_core::debug_logging::LogLevel::Debug,
+        crate::debug_logging::log_at(
+            crate::debug_logging::LogLevel::Debug,
             "skipped malformed hosted outbox line",
             "hosted-outbox",
             Some(json!({
@@ -370,7 +370,7 @@ impl OpenOptionsModeExt for OpenOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aimux_core::backlog_metrics::BacklogMetricStatus;
+    use crate::backlog_metrics::BacklogMetricStatus;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);

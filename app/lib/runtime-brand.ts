@@ -68,7 +68,7 @@ const TOOL_ALIASES: Record<string, RuntimeBrandId> = {
  * How a runtime is shown, from the tool name the product already decided.
  *
  * The tool itself is NOT decided here: `agentToolName` is the one answer for
- * that, mirrored in `native/crates/aimux-core/src/agent_display.rs` and already
+ * that, mirrored in `native/crates/aimux/src/agent_display.rs` and already
  * read by the loops screen, the topology and the expose model. This only says
  * what that answer looks like, so a second surface cannot start calling the
  * same agent something else.

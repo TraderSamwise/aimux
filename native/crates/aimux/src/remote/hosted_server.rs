@@ -1,4 +1,5 @@
 use crate::daemon::access::{build_hosted_daemon_route_context, resolve_hosted_operator_stream};
+use crate::daemon::http::{DaemonResponseBody, PreparedDaemonResponse, prepare_daemon_response};
 use crate::daemon::json::ProjectEventStreamTarget;
 use crate::daemon::listener::{
     DaemonRequestBodyLimit, DaemonRequestHead, DaemonRequestMetadata,
@@ -7,10 +8,19 @@ use crate::daemon::listener::{
     prepared_response_bytes,
 };
 use crate::daemon::router::{DaemonRouteRuntime, route_daemon_request};
+use crate::daemon::routing::DaemonRouteUrl;
+use crate::daemon::scheduler::{
+    DaemonPeriodicTask, DaemonSchedulerContext, DaemonSchedulerHandle, PeriodicTaskFuture,
+    daemon_scheduler_handle, spawn_daemon_scheduler,
+};
+use crate::daemon::server::DaemonHttpRequest;
 use crate::daemon::stream::{
     HostAgentStreamError, HostAgentStreamRequestOptions, ProjectEventStreamChunk,
     open_project_event_stream_from_url, open_project_event_stream_from_url_async,
 };
+use crate::paths::PathResolver;
+use crate::project_api_contract::routes as project_routes;
+use crate::proxy_project_binding::{is_binary_project_route, parse_proxy_target};
 use crate::remote::hosted_audit::{
     HostedAuditRecord, HostedAuditStore, HostedPromptRecord, hash_prompt,
 };
@@ -27,17 +37,7 @@ use crate::remote::hosted_principals::{
 use crate::remote::hosted_rate_limit::{
     HostedLimitOutcome, HostedRateLimitOptions, HostedRateLimiter,
 };
-use aimux_core::paths::PathResolver;
-use aimux_core::project_api_contract::routes as project_routes;
-use aimux_core::proxy_project_binding::{is_binary_project_route, parse_proxy_target};
-use aimux_core::request_actor::{RemoteAccessDecision, RemoteActor};
-use aimux_core::wire::http::{DaemonResponseBody, PreparedDaemonResponse, prepare_daemon_response};
-use aimux_core::wire::routing::DaemonRouteUrl;
-use aimux_core::wire::scheduler::{
-    DaemonPeriodicTask, DaemonSchedulerContext, DaemonSchedulerHandle, PeriodicTaskFuture,
-    daemon_scheduler_handle, spawn_daemon_scheduler,
-};
-use aimux_core::wire::server::DaemonHttpRequest;
+use crate::request_actor::{RemoteAccessDecision, RemoteActor};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -395,7 +395,7 @@ fn drain_hosted_outbox(
     let events = match outbox.try_drain_outbox() {
         Ok(events) => events,
         Err(error) => {
-            aimux_core::debug_logging::log_lifecycle_always(
+            crate::debug_logging::log_lifecycle_always(
                 "hosted outbox drain failed",
                 "hosted-outbox",
                 Some(json!({ "error": error.to_string() })),
@@ -422,7 +422,7 @@ fn drain_hosted_outbox(
 }
 
 fn respool_drained_events(outbox: &HostedOutboxStore, events: &[HostedEvent], error: &str) {
-    aimux_core::debug_logging::log_lifecycle_always(
+    crate::debug_logging::log_lifecycle_always(
         "hosted outbox delivery handoff failed",
         "hosted-outbox",
         Some(json!({
@@ -558,8 +558,8 @@ where
         );
     }
 
-    Ok(Some(aimux_core::async_runtime::spawn_named(
-        aimux_core::async_runtime::task_name("hosted", "listener"),
+    Ok(Some(crate::async_runtime::spawn_named(
+        crate::async_runtime::task_name("hosted", "listener"),
         async move {
             let listener = match TcpListener::from_std(listener) {
                 Ok(listener) => listener,
@@ -590,8 +590,8 @@ where
                         let handle_state = Arc::clone(&serve_state);
                         let intercept_runtime = Arc::clone(&stream_runtime);
                         let intercept_state = Arc::clone(&stream_state);
-                        aimux_core::async_runtime::spawn_named(
-                            aimux_core::async_runtime::scoped_task_name(
+                        crate::async_runtime::spawn_named(
+                            crate::async_runtime::scoped_task_name(
                                 "hosted",
                                 "connection",
                                 peer_address.as_deref().unwrap_or("unknown"),
@@ -612,7 +612,7 @@ where
                                 )
                                 .await
                                 {
-                                    aimux_core::debug_logging::log_lifecycle_always(
+                                    crate::debug_logging::log_lifecycle_always(
                                         "hosted connection handler failed",
                                         "hosted",
                                         Some(json!({
@@ -762,8 +762,8 @@ where
             let handle_state = Arc::clone(&route_state);
             let peer_address = route_peer_address.clone();
             Box::pin(async move {
-                aimux_core::async_runtime::spawn_blocking_named(
-                    aimux_core::async_runtime::task_name("hosted", "route"),
+                crate::async_runtime::spawn_blocking_named(
+                    crate::async_runtime::task_name("hosted", "route"),
                     move || {
                         let mut runtime = handle_runtime
                             .lock()
@@ -1090,8 +1090,8 @@ where
     Runtime: DaemonRouteRuntime + Send + 'static,
 {
     let runtime = Arc::clone(runtime);
-    aimux_core::async_runtime::spawn_blocking_named(
-        aimux_core::async_runtime::task_name("hosted", "stream-route"),
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("hosted", "stream-route"),
         move || {
             let runtime = runtime
                 .lock()
@@ -1818,7 +1818,7 @@ fn record_authenticated_bookkeeping(
 }
 
 fn prepare_hosted_route_response(
-    response: aimux_core::wire::routing::DaemonRouteResponse,
+    response: crate::daemon::routing::DaemonRouteResponse,
     config: &HostedConfig,
 ) -> PreparedDaemonResponse {
     match response.body {

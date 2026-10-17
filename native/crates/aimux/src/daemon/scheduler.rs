@@ -1,19 +1,9 @@
-use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::daemon_state::AimuxDaemonInfo;
 use crate::paths::PathResolver;
 use crate::periodic_scheduler as periodic;
-
-/// What a running daemon reports about itself.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct AimuxDaemonInfo {
-    pub pid: i32,
-    pub port: u16,
-    pub started_at: String,
-    pub updated_at: String,
-}
 
 pub use crate::periodic_scheduler::{
     PeriodicTaskFuture, PeriodicTaskHealthSnapshot, PeriodicTaskRunResult, scheduler_now_ms,
