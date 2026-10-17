@@ -2,7 +2,7 @@
   "$comment": "Places that mutate a runtime-identity variable process-wide. Entries are scoped to one function, never a whole file. Every entry needs a reason. A test that only needs its own home should state it through an explicit seam instead: PathResolver::new, TmuxRuntimeConfig.control_plane_args, or the child process's own env.",
   "entries": [
     {
-      "file": "native/crates/aimux/src/launcher_env.rs",
+      "file": "native/crates/aimux-core/src/launcher_env.rs",
       "function": "prepare_stable_process_env",
       "reason": "Production startup. It runs in main before Aimux creates worker threads, which is the one point where a process-wide export has no reader to race."
     },

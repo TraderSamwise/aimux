@@ -73,7 +73,7 @@ describe("the chat header says which tool", () => {
 
   it("asks the agent, not the route, which tool it is", () => {
     // `agentToolName` is the one answer, mirrored in
-    // `native/crates/aimux/src/agent_display.rs`. A header that read
+    // `native/crates/aimux-core/src/agent_display.rs`. A header that read
     // `toolConfigKey` itself would be a second opinion.
     expect(screenSource).not.toMatch(/session\?\.(toolConfigKey|command)/);
     expect(screenSource).toContain(

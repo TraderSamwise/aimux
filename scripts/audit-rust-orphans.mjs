@@ -206,7 +206,7 @@ function parseFunctions(file) {
       nameEnd: nameStart + name.length,
       public: /\bpub(?:\s|\(crate\))/.test(prefix),
       body: source.slice(bodyStart + 1, bodyEnd),
-      productionFile: rel.startsWith('native/crates/aimux/src/'),
+      productionFile: productionSrcPrefixes.some((prefix) => rel.startsWith(prefix)),
       testFile: rel.startsWith('native/crates/aimux/tests/'),
     });
     pattern.lastIndex = bodyEnd + 1;
@@ -301,8 +301,8 @@ function loadFixtureDispatcherAllowlist() {
   return parsed;
 }
 
-const sourceFiles = [...walk(srcRoot), ...walk(coreSrcRoot), ...walk(testsRoot)];
 const productionSrcPrefixes = ['native/crates/aimux/src/', 'native/crates/aimux-core/src/'];
+const sourceFiles = [...walk(srcRoot), ...walk(coreSrcRoot), ...walk(testsRoot)];
 const productionSourceFiles = sourceFiles.filter((file) => productionSrcPrefixes.some((prefix) => relative(repoRoot, file).startsWith(prefix)));
 const testSourceFiles = sourceFiles.filter((file) => relative(repoRoot, file).startsWith('native/crates/aimux/tests/'));
 const defs = sourceFiles.flatMap(parseFunctions);

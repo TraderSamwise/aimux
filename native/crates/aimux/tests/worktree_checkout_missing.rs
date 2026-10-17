@@ -289,11 +289,18 @@ fn every_surface_says_the_checkout_is_missing_the_same_way() {
         ),
         (
             "core_text/worktrees.rs",
-            include_str!("../src/core_text/worktrees.rs"),
+            include_str!("../../aimux-core/src/core_text/worktrees.rs"),
         ),
     ] {
+        // Declaring or re-exporting the name is not rendering it, so the
+        // declaration lines do not count towards this.
+        let uses = source
+            .lines()
+            .filter(|line| line.contains("WORKTREE_CHECKOUT_MISSING_LABEL"))
+            .filter(|line| !line.contains("pub use") && !line.contains("pub const"))
+            .count();
         assert!(
-            source.contains("WORKTREE_CHECKOUT_MISSING_LABEL"),
+            uses > 0,
             "{path} has to render the shared label, not its own spelling"
         );
     }

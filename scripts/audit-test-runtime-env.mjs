@@ -16,7 +16,11 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const allowlistPath = resolve(repoRoot, "scripts/test-runtime-env-allowlist.json");
 
-const SCAN_ROOTS = ["native/crates/aimux/src", "native/crates/aimux/tests"];
+const SCAN_ROOTS = [
+  "native/crates/aimux/src",
+  "native/crates/aimux-core/src",
+  "native/crates/aimux/tests",
+];
 const SKIP_DIRECTORIES = new Set(["node_modules", "target", ".git"]);
 
 // The variables that decide which runtime, home, and daemon a process talks to.

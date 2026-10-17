@@ -37,7 +37,7 @@ const RECENT_IDLE_MS: u128 = 2 * 60 * 1000;
 /// different ways across four surfaces in this codebase before someone compared
 /// them, and the app's copy of this word is pinned against this constant by a
 /// test rather than by intention.
-pub const WORKTREE_CHECKOUT_MISSING_LABEL: &str = "checkout missing";
+pub use aimux_core::core_text::WORKTREE_CHECKOUT_MISSING_LABEL;
 
 const COL_SELECT: usize = 2;
 const COL_DOT: usize = 2;
