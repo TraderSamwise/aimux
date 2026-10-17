@@ -463,10 +463,21 @@ function moduleSourceFile(moduleName) {
   if (existsSync(core)) {
     return relative(repoRoot, core);
   }
+  const coreDir = join(coreSrcRoot, moduleName, 'mod.rs');
+  if (existsSync(coreDir)) {
+    return relative(repoRoot, coreDir);
+  }
   return relative(repoRoot, join(srcRoot, moduleName, 'mod.rs'));
 }
 
 function publicLibModules() {
+  return [...libModulesIn(libPath), ...libModulesIn(join(coreSrcRoot, 'lib.rs'))];
+}
+
+// Core declares modules the binary does not re-export (`wire`,
+// `attachment_uploader`), so reading only the binary's lib.rs left that
+// surface outside this gate.
+function libModulesIn(libPath) {
   if (!existsSync(libPath)) {
     return [];
   }

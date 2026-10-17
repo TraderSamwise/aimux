@@ -71,6 +71,18 @@ const AUDITED_LOCAL_PACKAGE_IDENTITIES = [
   "registry+https://github.com/rust-lang/crates.io-index#zmij@1.0.23",
 ];
 
+// What aimux-core itself may reach directly. Frozen separately because the
+// binary's edge set does not change when the shared crate gains one.
+const AUDITED_CORE_DEPENDENCY_EDGES = [
+  "anyhow->registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
+  "libc->registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+  "serde->registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+  "serde_json->registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+  "sha2->registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
+  "time->registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
+  "tokio->registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+];
+
 const AUDITED_LOCAL_ROOT_DEPENDENCY_EDGES = [
   "aimux_core->path#aimux-core@0.1.0",
   "anyhow->registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
@@ -621,11 +633,12 @@ function localRustSrcDirs() {
 function allRustSource() {
   if (allRustSourceText !== null) return allRustSourceText;
   const chunks = [];
-  for (const srcDir of localRustSrcDirs()) {
-    walk(srcDir, (path) => {
-      if (path.endsWith(".rs")) chunks.push(readFileSync(path, "utf8"));
-    });
-  }
+  // Only the crate that owns the socket, because this text is what EXCUSES a
+  // bind. Letting a comment in the shared crate satisfy it would be a hole,
+  // not wider coverage.
+  walk(join(sourceRoot, "native/crates/aimux/src"), (path) => {
+    if (path.endsWith(".rs")) chunks.push(readFileSync(path, "utf8"));
+  });
   allRustSourceText = chunks.join("\n");
   return allRustSourceText;
 }
@@ -648,6 +661,7 @@ function collectCurrentPackageSurface() {
     return {
       packages: readList(packageIdentitiesFile),
       rootEdges: rootDependencyEdgesFile ? readList(rootDependencyEdgesFile) : [],
+      coreEdges: [],
     };
   }
 
@@ -673,11 +687,16 @@ function collectCurrentPackageSurface() {
     }
   }
   visit(aimuxPackage.id);
+  const corePackage = parsed.packages.find((pkg) => pkg.name === "aimux-core");
+  const coreNode = corePackage ? nodes.get(corePackage.id) : undefined;
+  const edgesOf = (node) =>
+    (node?.deps ?? [])
+      .map((dep) => `${dep.name}->${normalizePackageIdentity(packages.get(dep.pkg))}`)
+      .sort();
   return {
     packages: [...visited].map((id) => normalizePackageIdentity(packages.get(id))).sort(),
-    rootEdges: (aimuxNode?.deps ?? [])
-      .map((dep) => `${dep.name}->${normalizePackageIdentity(packages.get(dep.pkg))}`)
-      .sort(),
+    rootEdges: edgesOf(aimuxNode),
+    coreEdges: edgesOf(coreNode),
   };
 }
 
@@ -725,6 +744,13 @@ function checkPackageIdentitySurface() {
     expected: expectedRootDependencyEdges(),
     consequence:
       "This also freezes which audited transitive crates are directly usable from aimux source, so making an already-present network-capable transitive crate a direct dependency still requires review.",
+  });
+  compareAuditedList({
+    label: "aimux-core direct dependency edge set",
+    current: current.coreEdges,
+    expected: [...AUDITED_CORE_DEPENDENCY_EDGES].sort(),
+    consequence:
+      "aimux-core is shared with the remote half, so a crate becoming directly usable from it needs review even when the binary's own edges and the audited package list are unchanged.",
   });
 }
 
@@ -1043,11 +1069,23 @@ function containsTypeBackedLoopbackEvidence(statement, window) {
 // saying so is not a check.
 const CORE_SOCKET_CONSTRUCTS = [
   "TcpListener",
+  "TcpSocket",
   "TcpStream",
   "UdpSocket",
+  "UnixDatagram",
   "UnixListener",
   "UnixStream",
   "to_socket_addrs",
+  // Core takes libc directly and already uses `unsafe` for legitimate things,
+  // so naming the types is not enough: the raw route has to be refused too.
+  "libc::socket",
+  "libc::connect",
+  "libc::bind",
+  "libc::accept",
+  "libc::sendto",
+  "libc::recvfrom",
+  "socket2",
+  "AsyncFd",
 ];
 
 function checkCoreCrateHasNoSockets() {
@@ -1055,10 +1093,12 @@ function checkCoreCrateHasNoSockets() {
   walk(coreSrc, (path) => {
     if (!path.endsWith(".rs")) return;
     const rel = relative(sourceRoot, path).split("\\").join("/");
-    const text = removeCfgTestItems(readFileSync(path, "utf8"));
+    const raw = readFileSync(path, "utf8");
+    const text = removeCfgTestItems(raw);
     for (const construct of CORE_SOCKET_CONSTRUCTS) {
       if (!new RegExp(`\\b${construct}\\b`).test(text)) continue;
-      const line = text.split(/\r?\n/).findIndex((candidate) => candidate.includes(construct)) + 1;
+      // Report against the real file, not the cfg(test)-stripped copy.
+      const line = raw.split(/\r?\n/).findIndex((candidate) => candidate.includes(construct)) + 1;
       fail(
         `${rel}:${line} uses ${construct}. aimux-core is shared with the remote half, so opening or accepting a connection belongs in the local crate instead.`,
       );

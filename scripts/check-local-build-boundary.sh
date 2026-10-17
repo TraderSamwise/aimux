@@ -97,8 +97,11 @@ need grep
 need strings
 
 check_source_remote_gate() {
-  local src_dir lib_file gate_count ungated_remote old_path
+  local src_dir core_src_dir lib_file gate_count ungated_remote old_path
   src_dir="$ROOT_DIR/native/crates/aimux/src"
+  # aimux-core compiles into every local build, so a remote module placed
+  # there would be outside src/remote and outside this check.
+  core_src_dir="$ROOT_DIR/native/crates/aimux-core/src"
   lib_file="$src_dir/lib.rs"
   gate_count="$(
     awk '
@@ -147,6 +150,10 @@ check_source_remote_gate() {
   do
     if [ -e "$src_dir/$old_path" ]; then
       printf 'Source boundary found remote-control code outside src/remote: %s\n' "$src_dir/$old_path" >&2
+      exit 1
+    fi
+    if [ -e "$core_src_dir/$old_path" ]; then
+      printf 'Source boundary found remote-control code in the shared crate: %s\n' "$core_src_dir/$old_path" >&2
       exit 1
     fi
   done

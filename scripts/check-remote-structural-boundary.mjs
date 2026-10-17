@@ -132,11 +132,18 @@ function assertSingleGatedRemoteModule(sourceRoot) {
   if (remoteFiles.length === 0) {
     fail(`expected remote source tree with Rust files at ${relative(sourceRoot, remoteRoot)}`);
   }
+  const coreSrcRoot = join(sourceRoot, "native/crates/aimux-core/src");
   const oldPaths = oldRemoteModulePaths.filter((path) => {
     try {
-      return statSync(join(srcRoot, path)).isFile();
+      return (
+        statSync(join(srcRoot, path)).isFile() || statSync(join(coreSrcRoot, path)).isFile()
+      );
     } catch {
-      return false;
+      try {
+        return statSync(join(coreSrcRoot, path)).isFile();
+      } catch {
+        return false;
+      }
     }
   });
   if (oldPaths.length > 0) {

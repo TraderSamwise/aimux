@@ -64,7 +64,7 @@ Primary source check:
   which returns nothing; a non-empty result would mean remote code is present
   in a local build regardless of the feature flag, and would invalidate this
   section.
-- `native/crates/aimux/src/request_actor.rs` should remain outside
+- `native/crates/aimux-core/src/request_actor.rs` should remain outside
   `src/remote`; it is core request-context/shared-chat actor plumbing, not a
   remote-control transport module.
 - `native/Cargo.toml` currently has one workspace member, `crates/aimux`.
@@ -194,7 +194,7 @@ Source locations:
 - `native/crates/aimux/src/remote/mod.rs`
 - `native/crates/aimux/src/remote/`
 - `native/crates/aimux/src/remote/cli.rs`
-- `native/crates/aimux/src/request_actor.rs`
+- `native/crates/aimux-core/src/request_actor.rs`
 - `native/Cargo.toml`
 - `native/crates/aimux/Cargo.toml`
 - `scripts/check-remote-structural-boundary.mjs`
@@ -212,7 +212,7 @@ rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src/remote ||
 rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src \
   | cut -d: -f1 | sort | uniq -c | sort -nr
 find native/crates/aimux/src/remote -maxdepth 1 -name '*.rs' -type f | sort
-sed -n '1,120p' native/crates/aimux/src/request_actor.rs
+sed -n '1,120p' native/crates/aimux-core/src/request_actor.rs
 grep -n '^members' -A5 native/Cargo.toml
 
 cargo tree --manifest-path native/Cargo.toml -p aimux --no-default-features

@@ -1,6 +1,6 @@
 {
   "native/crates/aimux/src/attachment_store_contract.rs": "DEAD TWIN: production attachment routing and storage live in native/crates/aimux/src/project_service/attachments.rs:25, :129, and :1047.",
-  "native/crates/aimux/src/cli_attachment_contract.rs": "DEAD TWIN: production MIME and relay URL handling live in native/crates/aimux/src/project_service/attachments.rs:1047 and native/crates/aimux-core/src/attachment_hosting.rs:28.",
+  "native/crates/aimux/src/cli_attachment_contract.rs": "DEAD TWIN: production MIME and relay URL handling live in native/crates/aimux/src/project_service/attachments.rs:1047 and native/crates/aimux/src/attachment_hosting.rs:28.",
   "native/crates/aimux/src/plugin_runtime_contract.rs": "Tracked plugin parity fixture; keep until plugin behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/transport_security_contract.rs": "Tracked transport-security parity fixture; keep until transport-security behavior is production-consumed natively or culled."
 }
