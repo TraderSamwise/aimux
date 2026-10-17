@@ -667,7 +667,7 @@ function collectCurrentPackageSurface() {
     return {
       packages: readList(packageIdentitiesFile),
       rootEdges: rootDependencyEdgesFile ? readList(rootDependencyEdgesFile) : [],
-      coreEdges: coreDependencyEdgesFile ? readList(coreDependencyEdgesFile) : [],
+      coreEdges: coreDependencyEdgesFile ? readList(coreDependencyEdgesFile) : null,
     };
   }
 
@@ -756,13 +756,18 @@ function checkPackageIdentitySurface() {
     consequence:
       "This also freezes which audited transitive crates are directly usable from aimux source, so making an already-present network-capable transitive crate a direct dependency still requires review.",
   });
-  compareAuditedList({
-    label: "aimux-core direct dependency edge set",
-    current: current.coreEdges,
-    expected: expectedCoreDependencyEdges(),
+  // `null` means this run was handed pre-computed lists and never measured
+  // core's edges. Comparing that against the audited set would fail every
+  // time, which is how the evidence bundle's proofs went vacuous.
+  if (current.coreEdges !== null) {
+    compareAuditedList({
+      label: "aimux-core direct dependency edge set",
+      current: current.coreEdges,
+      expected: expectedCoreDependencyEdges(),
     consequence:
-      "aimux-core is shared with the remote half, so a crate becoming directly usable from it needs review even when the binary's own edges and the audited package list are unchanged.",
-  });
+        "aimux-core is shared with the remote half, so a crate becoming directly usable from it needs review even when the binary's own edges and the audited package list are unchanged.",
+    });
+  }
 }
 
 function normalizeSpawnMarker(value) {
@@ -1088,34 +1093,80 @@ function containsTypeBackedLoopbackEvidence(statement, window) {
 // naming one, `use libc::{socket, connect}` never spells `libc::socket`, and a
 // raw fd becomes a stream with no socket type in sight. Comments and strings
 // are stripped first, so this file's own prose does not trip it.
+const CORE_SOCKET_CRATES = "socket2|nix|mio";
+const LIBC_SOCKET_CALLS =
+  "socket|socketpair|connect|bind|accept|listen|sendto|recvfrom|sendmsg|recvmsg|setsockopt|getsockopt|getaddrinfo|getpeername|getsockname";
+
 const CORE_SOCKET_PATTERNS = [
   { pattern: /\b(?:Tcp|Udp|Unix)(?:Listener|Socket|Stream|Datagram)\b/, what: "a socket type" },
   { pattern: /\bto_socket_addrs\b|\blookup_host\b/, what: "name resolution" },
+  // Constructing something FROM a descriptor is how a socket arrives unnamed.
+  // Handing out a descriptor you already own is not: `stdout().as_raw_fd()` for
+  // the terminal size is ordinary, and refusing it made this gate cry wolf.
   {
-    pattern: /\b(?:from_raw_fd|FromRawFd|IntoRawFd|AsRawFd|OwnedFd|BorrowedFd)\b/,
-    what: "a raw file descriptor, which is how a socket arrives without being named",
+    pattern: /\b(?:from_raw_fd|FromRawFd|AsyncFd)\b/,
+    what: "a descriptor turned into a stream, which is how a socket arrives without being named",
   },
+  { pattern: new RegExp(`\\blibc\\s*::\\s*(?:${LIBC_SOCKET_CALLS})\\b`), what: "a libc socket call" },
   {
-    pattern:
-      /\blibc\s*::\s*(?:socket|socketpair|connect|bind|accept|listen|sendto|recvfrom|sendmsg|recvmsg|setsockopt|getsockopt|getaddrinfo|getpeername|getsockname)\b/,
-    what: "a libc socket call",
-  },
-  {
-    pattern:
-      /\buse\s+libc\s*::\s*\{[^}]*\b(?:socket|socketpair|connect|bind|accept|listen|sendto|recvfrom|sendmsg|recvmsg|setsockopt|getsockopt|getaddrinfo|getpeername|getsockname)\b/,
+    pattern: new RegExp(`\\buse\\s+libc\\s*::\\s*\\{[^}]*\\b(?:${LIBC_SOCKET_CALLS})\\b`),
     what: "a libc socket call imported by name",
   },
-  { pattern: /\buse\s+libc\s+as\b/, what: "libc under an alias, which hides the calls above" },
-  { pattern: /\b(?:socket2|nix|mio)\s*::/, what: "a socket crate" },
+  { pattern: new RegExp(`\\b(?:${CORE_SOCKET_CRATES})\\s*::`), what: "a socket crate" },
+  // An alias hides every path form above, so the aliasing itself is refused.
+  {
+    pattern: new RegExp(`\\buse\\s+(?:libc|${CORE_SOCKET_CRATES})\\s+as\\b`),
+    what: "a socket crate under an alias, which hides the calls above",
+  },
   { pattern: /\.accept\s*\(/, what: "accepting a connection" },
 ];
 
-/// Comments and string literals removed, so prose about sockets is not a socket.
-function stripRustCommentsAndStrings(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/\/\/[^\n]*/g, " ")
-    .replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+/// Line numbers of `#[cfg(test)]` items, which do not ship.
+function cfgTestLineNumbers(lines) {
+  const skipped = new Set();
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/^\s*#\[cfg\(test\)\]/.test(lines[index])) continue;
+    let depth = 0;
+    let seenBrace = false;
+    for (let cursor = index; cursor < lines.length; cursor += 1) {
+      skipped.add(cursor);
+      for (const character of lines[cursor]) {
+        if (character === "{") {
+          depth += 1;
+          seenBrace = true;
+        } else if (character === "}") {
+          depth -= 1;
+        }
+      }
+      if (seenBrace && depth <= 0) break;
+    }
+  }
+  return skipped;
+}
+
+/// Each line with comments and string literals blanked, block comments tracked
+/// across lines, so this file's own prose about sockets is not a socket.
+function codeLines(source) {
+  const lines = source.split(/\r?\n/);
+  const skipped = cfgTestLineNumbers(lines);
+  let inBlockComment = false;
+  return lines.map((rawLine, index) => {
+    let line = rawLine;
+    if (inBlockComment) {
+      const close = line.indexOf("*/");
+      if (close < 0) return "";
+      line = line.slice(close + 2);
+      inBlockComment = false;
+    }
+    line = line.replace(/\/\*[\s\S]*?\*\//g, " ");
+    const open = line.indexOf("/*");
+    if (open >= 0) {
+      inBlockComment = true;
+      line = line.slice(0, open);
+    }
+    line = line.replace(/\/\/[^\n]*/g, " ").replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+    return skipped.has(index) ? "" : line;
+  });
 }
 
 function checkCoreCrateHasNoSockets() {
@@ -1123,9 +1174,7 @@ function checkCoreCrateHasNoSockets() {
   walk(coreSrc, (path) => {
     if (!path.endsWith(".rs")) return;
     const rel = relative(sourceRoot, path).split("\\").join("/");
-    const lines = readFileSync(path, "utf8").split(/\r?\n/);
-    lines.forEach((rawLine, index) => {
-      const line = stripRustCommentsAndStrings(rawLine);
+    codeLines(readFileSync(path, "utf8")).forEach((line, index) => {
       for (const { pattern, what } of CORE_SOCKET_PATTERNS) {
         if (!pattern.test(line)) continue;
         fail(

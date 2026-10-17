@@ -275,7 +275,21 @@ RUST
     --expected-root-dependency-edges-file "$mutation_root/root-edges.txt" \
     --core-dependency-edges-file "$mutation_root/core-edges.txt" \
     --expected-core-dependency-edges-file "$mutation_root/core-edges.txt" || {
-      fail_bundle "mutation $name correctly failed $id with exit $?"
+      local status=$?
+      # A proof has to fail for its own reason. Any non-zero exit used to read
+      # as proof here, so a flag mismatch looked exactly like a caught leak.
+      local expected
+      case "$name" in
+        network-surface-nonloopback) expected="non-loopback network target" ;;
+        remote-control-cfg-macro) expected='uses cfg!(feature = "remote-control")' ;;
+        core-crate-socket) expected="aimux-core is shared with the remote half" ;;
+        *) expected="" ;;
+      esac
+      if [ -n "$expected" ] && ! grep -F "$expected" \
+        "$OUT_DIR/logs/$id/stdout.txt" "$OUT_DIR/logs/$id/stderr.txt" >/dev/null 2>&1; then
+        fail_bundle "mutation $name failed $id with exit $status but not for its own reason: $expected"
+      fi
+      fail_bundle "mutation $name correctly failed $id with exit $status"
     }
   fail_bundle "mutation $name unexpectedly passed"
 }
