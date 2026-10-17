@@ -30,7 +30,7 @@ impl RelaySupervisor {
         token: &str,
         machine: MachineIdentity,
         force: bool,
-        bridge: Arc<dyn DaemonRelayBridge>,
+        build_bridge: impl FnOnce() -> Arc<dyn DaemonRelayBridge>,
     ) {
         if relay_url.is_empty() || token.is_empty() {
             return;
@@ -52,7 +52,7 @@ impl RelaySupervisor {
             }
         }
 
-        let runner = RelayRunner::new(relay_url, token, machine, bridge);
+        let runner = RelayRunner::new(relay_url, token, machine, build_bridge());
         let handle = runner.handle();
         if let Ok(mut current) = self.current.lock() {
             *current = Some((Arc::clone(&runner), handle.clone()));

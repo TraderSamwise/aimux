@@ -142,6 +142,7 @@ check_source_remote_gate() {
     mobile_push_bridge.rs \
     relay_client.rs \
     relay_runner.rs \
+    relay_supervisor.rs \
     remote_credentials.rs \
     remote_login.rs \
     remote_security_devices.rs \

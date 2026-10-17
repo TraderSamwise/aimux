@@ -349,13 +349,10 @@ mod enabled_state {
                 env_url.as_deref(),
                 env_token.as_deref(),
             ) {
-                self.relay.connect(
-                    &url,
-                    &token,
-                    self.machine_identity(resolver),
-                    force,
-                    std::sync::Arc::new(crate::relay_bridge::LoopbackRelayBridge::default()),
-                );
+                self.relay
+                    .connect(&url, &token, self.machine_identity(resolver), force, || {
+                        std::sync::Arc::new(crate::relay_bridge::LoopbackRelayBridge::default())
+                    });
             }
         }
 

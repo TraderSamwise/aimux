@@ -22,6 +22,7 @@ const oldRemoteModulePaths = [
   "hosted_rate_limit.rs",
   "hosted_server.rs",
   "relay_client.rs",
+  "relay_supervisor.rs",
   "relay_runner.rs",
   "remote_credentials.rs",
   "remote_login.rs",

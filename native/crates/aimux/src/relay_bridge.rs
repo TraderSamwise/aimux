@@ -24,7 +24,7 @@ use tokio::time::Instant;
 use crate::desktop_notifier::{DesktopNotificationPayload, send_desktop_notification_and_wait};
 use crate::project_service::lifecycle_mutation_queue::queued_lifecycle_timeout_ms;
 use aimux_core::async_runtime::{spawn_blocking_named, task_name};
-use aimux_core::launcher_env::DEFAULT_DAEMON_PORT;
+use aimux_core::launcher_env::resolved_daemon_port;
 use aimux_core::proxy_project_binding::parse_proxy_target;
 use aimux_core::relay_bridge::BoxFuture;
 use aimux_core::relay_bridge::{
@@ -60,11 +60,7 @@ pub const MAX_RELAY_EVENT_SUBSCRIPTIONS: usize = 16;
 pub const MAX_RELAY_SSE_BUFFER_BYTES: usize = 256 * 1024;
 
 pub fn daemon_loopback_port() -> String {
-    std::env::var("AIMUX_DAEMON_PORT")
-        .ok()
-        .map(|port| port.trim().to_owned())
-        .filter(|port| !port.is_empty())
-        .unwrap_or_else(|| DEFAULT_DAEMON_PORT.to_owned())
+    resolved_daemon_port().to_string()
 }
 
 pub struct LoopbackRelayBridge {
@@ -83,7 +79,7 @@ impl Default for LoopbackRelayBridge {
 
 impl LoopbackRelayBridge {
     fn port_number(&self) -> u16 {
-        self.port.parse().unwrap_or(43_190)
+        self.port.parse().unwrap_or_else(|_| resolved_daemon_port())
     }
 
     fn acquire_event_subscription(&self) -> Result<EventSubscriptionPermit, (u16, String)> {
