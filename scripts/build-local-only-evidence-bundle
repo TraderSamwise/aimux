@@ -20,6 +20,7 @@ Runs the local-only security gates and writes one reviewer-facing evidence bundl
 Mutations:
   network-surface-nonloopback  prove the bundle refuses a non-loopback socket gate failure
   remote-control-cfg-macro     prove the bundle refuses a cfg!(feature = "remote-control") gate failure
+  core-crate-socket            prove the bundle refuses a socket in the shared aimux-core crate
 USAGE
 }
 
@@ -46,7 +47,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$MUTATE" in
-  "" | network-surface-nonloopback | remote-control-cfg-macro) ;;
+  "" | network-surface-nonloopback | remote-control-cfg-macro | core-crate-socket) ;;
   *)
     printf 'Unsupported --mutate value: %s\n' "$MUTATE" >&2
     exit 2
@@ -231,8 +232,24 @@ build_asset() {
 run_mutation() {
   local name="$1"
   local mutation_root="$OUT_DIR/mutation-source"
-  mkdir -p "$mutation_root/native/crates/aimux/src"
-  if [ "$name" = remote-control-cfg-macro ]; then
+  mkdir -p "$mutation_root/native/crates/aimux/src" "$mutation_root/native/crates/aimux-core/src"
+  cat > "$mutation_root/native/crates/aimux-core/src/lib.rs" <<'RUST'
+pub fn shared_floor() -> bool {
+    true
+}
+RUST
+  if [ "$name" = core-crate-socket ]; then
+    cat > "$mutation_root/native/crates/aimux/src/lib.rs" <<'RUST'
+pub fn local_boundary() -> bool {
+    true
+}
+RUST
+    cat > "$mutation_root/native/crates/aimux-core/src/lib.rs" <<'RUST'
+pub async fn shared_floor_opens_a_socket() {
+    let _ = tokio::net::TcpStream::connect(("127.0.0.1", 1)).await;
+}
+RUST
+  elif [ "$name" = remote-control-cfg-macro ]; then
     cat > "$mutation_root/native/crates/aimux/src/lib.rs" <<'RUST'
 pub fn local_boundary() -> bool {
     cfg!(feature = "remote-control")
