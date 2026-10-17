@@ -296,7 +296,7 @@ mod enabled_state {
     #[derive(Default)]
     pub struct RemoteDaemonState {
         auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
-        relay: Arc<crate::remote::daemon_relay::RelaySupervisor>,
+        relay: Arc<crate::remote::relay_supervisor::RelaySupervisor>,
         /// Resolved once per process; see `machine_identity`.
         machine_identity: OnceLock<MachineIdentity>,
     }
@@ -318,7 +318,7 @@ mod enabled_state {
             &self.auth_flows
         }
 
-        pub fn relay(&self) -> &Arc<crate::remote::daemon_relay::RelaySupervisor> {
+        pub fn relay(&self) -> &Arc<crate::remote::relay_supervisor::RelaySupervisor> {
             &self.relay
         }
 
@@ -342,15 +342,20 @@ mod enabled_state {
         ) {
             let env_url = std::env::var("AIMUX_RELAY_URL").ok();
             let env_token = std::env::var("AIMUX_RELAY_TOKEN").ok();
-            if let Some((url, token)) = crate::remote::daemon_relay::resolve_relay_target(
+            if let Some((url, token)) = crate::relay_bridge::resolve_relay_target(
                 Some(credentials.relay_url.as_str()),
                 Some(credentials.token.as_str()),
                 credentials.remote_enabled,
                 env_url.as_deref(),
                 env_token.as_deref(),
             ) {
-                self.relay
-                    .connect(&url, &token, self.machine_identity(resolver), force);
+                self.relay.connect(
+                    &url,
+                    &token,
+                    self.machine_identity(resolver),
+                    force,
+                    std::sync::Arc::new(crate::relay_bridge::LoopbackRelayBridge::default()),
+                );
             }
         }
 

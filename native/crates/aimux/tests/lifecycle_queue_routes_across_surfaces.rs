@@ -20,7 +20,7 @@ const FIXTURE: &str =
     include_str!("../../../../testdata/contracts/v1/lifecycle-queue/queued-routes.json");
 const CONTRACT_SOURCE: &str = include_str!("../../aimux-core/src/project_api_contract.rs");
 const DAEMON_JSON_SOURCE: &str = include_str!("../src/daemon/json.rs");
-const DAEMON_RELAY_SOURCE: &str = include_str!("../src/remote/daemon_relay.rs");
+const DAEMON_RELAY_SOURCE: &str = include_str!("../src/relay_bridge.rs");
 const CLI_WORKTREES_SOURCE: &str = include_str!("../src/daemon/text/worktrees.rs");
 
 fn fixture_budgets() -> BTreeMap<String, u64> {

@@ -103,6 +103,7 @@ pub mod project_service;
 pub mod project_service_manifest;
 pub use aimux_core::proxy_project_binding;
 pub mod recording_cleanup;
+pub mod relay_bridge;
 pub mod release_version_contract;
 #[cfg(feature = "remote-control")]
 pub mod remote;

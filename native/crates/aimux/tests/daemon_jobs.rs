@@ -17,7 +17,7 @@ use aimux::jobs::{
     JobStoreError, JobTmuxTarget,
 };
 use aimux::paths::{PathResolver, ProjectEntry, ProjectsRegistry, compute_project_id};
-use aimux::remote::daemon_relay::build_request_head;
+use aimux::relay_bridge::build_request_head;
 use aimux::request_actor::RELAY_FORWARDED_HEADER;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
