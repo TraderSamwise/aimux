@@ -10,7 +10,7 @@
 use serde_json::{Value, json};
 
 use crate::core_cli_executor::RealCoreCliRuntime;
-use crate::paths::PathResolver;
+use aimux_core::paths::PathResolver;
 
 impl crate::remote::cli::RemoteCliRuntime for RealCoreCliRuntime {
     fn credentials_for_status(&self) -> Option<Value> {

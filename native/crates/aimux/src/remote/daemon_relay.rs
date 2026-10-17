@@ -21,11 +21,7 @@ use tokio::io::{
 use tokio::net::TcpStream;
 use tokio::time::Instant;
 
-use crate::async_runtime::{spawn_blocking_named, task_name};
-use crate::daemon::routing::DaemonRouteUrl;
 use crate::desktop_notifier::{DesktopNotificationPayload, send_desktop_notification_and_wait};
-use crate::launcher_env::DEFAULT_DAEMON_PORT;
-use crate::machine_identity::MachineIdentity;
 use crate::project_service::lifecycle_mutation_queue::queued_lifecycle_timeout_ms;
 use crate::proxy_project_binding::parse_proxy_target;
 use crate::remote::relay_client::{project_event_frame, split_sse_frames};
@@ -35,6 +31,10 @@ use crate::remote::relay_runner::{
 };
 use crate::remote::websocket::{BoxFuture, TokioTungsteniteConnector};
 use crate::request_actor::RELAY_FORWARDED_HEADER;
+use aimux_core::async_runtime::{spawn_blocking_named, task_name};
+use aimux_core::launcher_env::DEFAULT_DAEMON_PORT;
+use aimux_core::machine_identity::MachineIdentity;
+use aimux_core::wire::routing::DaemonRouteUrl;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -514,7 +514,7 @@ impl RelaySupervisor {
         if let Ok(mut current) = self.current.lock() {
             *current = Some((Arc::clone(&runner), handle.clone()));
         }
-        crate::async_runtime::spawn_named(task_name("daemon", "relay"), async move {
+        aimux_core::async_runtime::spawn_named(task_name("daemon", "relay"), async move {
             let mut connector = TokioTungsteniteConnector;
             runner.run(&mut connector).await;
         });
@@ -606,7 +606,7 @@ const PROXY_ALLOWED_HOSTS: &[&str] = &["127.0.0.1", "localhost"];
 /// than some other project-service endpoint. Skipping any of them turns the
 /// relay into an open proxy into the user's machine.
 pub fn resolve_project_event_stream(path: &str, headers: &Value) -> Result<String, (u16, String)> {
-    let route_url = crate::daemon::routing::DaemonRouteUrl::parse(path);
+    let route_url = aimux_core::wire::routing::DaemonRouteUrl::parse(path);
     let pathname = route_url.pathname().to_owned();
 
     let header_map = headers
@@ -646,7 +646,7 @@ pub fn resolve_project_event_stream(path: &str, headers: &Value) -> Result<Strin
     if !PROXY_ALLOWED_HOSTS.contains(&host.as_str()) {
         return Err((403, "proxy host not allowed".to_owned()));
     }
-    if sub_path != crate::project_api_contract::routes::EVENTS {
+    if sub_path != aimux_core::project_api_contract::routes::EVENTS {
         return Err((403, "route is not a project event stream".to_owned()));
     }
     Ok(format!(
@@ -774,9 +774,9 @@ mod tests {
 
     #[test]
     fn relay_daemon_request_timeout_after_full_write_reports_unknown_commit() {
-        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        aimux_core::async_runtime::init_process_runtime().expect("runtime initialized");
         // aimux-async-seam: test - daemon relay unit test drives async loopback bridge
-        crate::async_runtime::block_on_named("daemon-relay:test-committed-timeout", async {
+        aimux_core::async_runtime::block_on_named("daemon-relay:test-committed-timeout", async {
             let (mut client, mut server) = tokio::io::duplex(4096);
             let captured = Arc::new(Mutex::new(Vec::new()));
             let read_started = Arc::new(Notify::new());
@@ -828,9 +828,9 @@ mod tests {
 
     #[test]
     fn relay_daemon_request_connect_failure_is_not_reported_as_committed() {
-        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        aimux_core::async_runtime::init_process_runtime().expect("runtime initialized");
         // aimux-async-seam: test - daemon relay unit test drives async loopback bridge
-        crate::async_runtime::block_on_named("daemon-relay:test-connect-failure", async {
+        aimux_core::async_runtime::block_on_named("daemon-relay:test-connect-failure", async {
             let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind free port");
             let port = listener.local_addr().expect("addr").port();
             drop(listener);

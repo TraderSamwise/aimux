@@ -14,10 +14,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
-use crate::backlog_metrics::{
-    BacklogMetric, BacklogMetricSnapshot, BacklogMetricStatus, RELAY_OUTBOX_BACKLOG, backlog_metric,
-};
-use crate::machine_identity::MachineIdentity;
 use crate::remote::relay_client::{
     CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close,
     decide_connect_error, handle_frame, project_events_error_frame,
@@ -28,6 +24,10 @@ use crate::remote::websocket::{
     WebSocketConnector, WebSocketEvent, WebSocketReader, WebSocketWriter, next_retry_ms,
     relay_subprotocols,
 };
+use aimux_core::backlog_metrics::{
+    BacklogMetric, BacklogMetricSnapshot, BacklogMetricStatus, RELAY_OUTBOX_BACKLOG, backlog_metric,
+};
+use aimux_core::machine_identity::MachineIdentity;
 
 /// The pump drains the outbox before every socket read. Five hundred twelve
 /// frames allows short stalls and bursty project events, but a dead relay cannot
@@ -811,7 +811,7 @@ mod tests {
         ProjectEventStreamItem, RelayRunner, RelaySubscriptions, daemon_connect_url,
         push_front_outbox_frame, push_outbox_frame,
     };
-    use crate::machine_identity::MachineIdentity;
+    use aimux_core::machine_identity::MachineIdentity;
 
     fn test_machine() -> MachineIdentity {
         MachineIdentity {
@@ -852,7 +852,7 @@ mod tests {
             "a trailing slash must not double up on the handshake path"
         );
         assert_eq!(
-            crate::machine_identity::RESERVED_UNIDENTIFIED_MACHINE_ID,
+            aimux_core::machine_identity::RESERVED_UNIDENTIFIED_MACHINE_ID,
             contract["reservedUnidentifiedMachineId"]
                 .as_str()
                 .expect("reservedUnidentifiedMachineId")
@@ -1004,7 +1004,7 @@ mod tests {
     /// while the runner dials a machine-less URL, which is the eviction bug.
     #[test]
     fn the_runner_dials_the_machine_it_was_constructed_with() {
-        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        aimux_core::async_runtime::init_process_runtime().expect("runtime initialized");
         let runner = RelayRunner::new(
             "wss://relay.example",
             "tok",
@@ -1018,7 +1018,7 @@ mod tests {
         };
 
         // aimux-async-seam: test - drives the dial loop with no real sleeping
-        crate::async_runtime::block_on_named("relay:test-dial-url", async {
+        aimux_core::async_runtime::block_on_named("relay:test-dial-url", async {
             let mut sleep = |_: Duration| Box::pin(async {}) as BoxFuture<'static, ()>;
             runner.run_with_sleep(&mut connector, &mut sleep).await;
         });
@@ -1031,7 +1031,7 @@ mod tests {
 
     #[test]
     fn relay_route_stop_after_dispatch_still_sends_response_frame() {
-        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        aimux_core::async_runtime::init_process_runtime().expect("runtime initialized");
         let bridge = Arc::new(StopAfterRouteBridge {
             handle: Mutex::new(None),
         });
@@ -1061,7 +1061,7 @@ mod tests {
         };
 
         // aimux-async-seam: test - relay runner unit test drives async pump
-        crate::async_runtime::block_on_named("relay:test-route-stop-response", async {
+        aimux_core::async_runtime::block_on_named("relay:test-route-stop-response", async {
             let close = runner.pump(connection).await;
             assert!(close.code.is_none());
         });
@@ -1077,7 +1077,7 @@ mod tests {
 
     #[test]
     fn relay_outbox_write_cancel_keeps_frame_queued_until_send_completes() {
-        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        aimux_core::async_runtime::init_process_runtime().expect("runtime initialized");
         let runner = RelayRunner::new(
             "wss://relay.example/",
             "tok",
@@ -1097,7 +1097,7 @@ mod tests {
         let pump_runner = Arc::clone(&runner);
 
         // aimux-async-seam: test - relay runner unit test drives async pump
-        crate::async_runtime::block_on_named("relay:test-outbox-cancel", async {
+        aimux_core::async_runtime::block_on_named("relay:test-outbox-cancel", async {
             let task = tokio::spawn(async move {
                 let _ = pump_runner.pump(connection).await;
             });
@@ -1116,7 +1116,7 @@ mod tests {
 
     #[test]
     fn relay_subscription_set_polls_multiple_streams_in_one_task() {
-        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        aimux_core::async_runtime::init_process_runtime().expect("runtime initialized");
         let mut subscriptions = RelaySubscriptions::default();
         subscriptions.insert(
             "pending".to_owned(),
@@ -1134,7 +1134,7 @@ mod tests {
         );
 
         // aimux-async-seam: test - relay runner unit test drives async polling
-        let delivery = crate::async_runtime::block_on_named(
+        let delivery = aimux_core::async_runtime::block_on_named(
             "relay:test-subscription-poll",
             subscriptions.next_event(),
         );
@@ -1149,7 +1149,7 @@ mod tests {
 
     #[test]
     fn relay_subscription_set_removes_closed_stream_and_reports_error() {
-        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        aimux_core::async_runtime::init_process_runtime().expect("runtime initialized");
         let mut subscriptions = RelaySubscriptions::default();
         subscriptions.insert(
             "sub-1".to_owned(),
@@ -1160,7 +1160,7 @@ mod tests {
         );
 
         // aimux-async-seam: test - relay runner unit test drives async polling
-        let delivery = crate::async_runtime::block_on_named(
+        let delivery = aimux_core::async_runtime::block_on_named(
             "relay:test-subscription-close",
             subscriptions.next_event(),
         );

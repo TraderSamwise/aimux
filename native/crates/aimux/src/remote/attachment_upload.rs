@@ -1,13 +1,13 @@
 //! The uploader that actually reaches the relay.
 //!
 //! The decision about whether and what to upload is local -- see
-//! `crate::attachment_hosting`, which a reviewer can read without reading
+//! the local crate's `attachment_hosting`, which a reviewer can read without
 //! this. This is the part that needs an HTTP client, and it is the only reason
 //! `ureq` was ever a dependency of the local build.
 
 use serde_json::Value;
 
-use crate::attachment_hosting::{AttachmentUploader, UPLOAD_TIMEOUT_SECS};
+use aimux_core::attachment_uploader::{AttachmentUploader, UPLOAD_TIMEOUT_SECS};
 
 pub struct HttpAttachmentUploader;
 

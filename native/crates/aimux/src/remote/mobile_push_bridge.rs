@@ -12,14 +12,14 @@ use std::time::Duration;
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
-use crate::config::load_config_for_project;
 use crate::desktop_notifier::external_notifications_disabled;
-use crate::launcher_env::DEFAULT_DAEMON_PORT;
 use crate::notification_delivery_guard::{
     external_notification_refusal_reason_for_event, fixture_notification_refusal_reason_for_event,
     mark_cargo_test_notification_payload,
 };
 use crate::project_service::desktop_alerts::should_deliver_external_alert_with_config;
+use aimux_core::config::load_config_for_project;
+use aimux_core::launcher_env::DEFAULT_DAEMON_PORT;
 
 const PUSH_TIMEOUT: Duration = Duration::from_secs(5);
 
