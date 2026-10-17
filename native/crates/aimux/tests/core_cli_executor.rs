@@ -121,6 +121,16 @@ impl Default for FakeRuntime {
     }
 }
 
+impl aimux_core::core_cli_runtime::CoreCommandRequester for FakeRuntime {
+    fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
+        self.commands.push(request.clone());
+        if self.fail_commands {
+            return Err("offline".into());
+        }
+        Ok(command_ok(request.command, response_for(request)))
+    }
+}
+
 impl CoreCliRuntime for FakeRuntime {
     fn cwd(&self) -> String {
         self.cwd.clone()
@@ -164,14 +174,6 @@ impl CoreCliRuntime for FakeRuntime {
         output_mode: CoreCliOutputMode,
     ) -> Result<CoreCliExecution, String> {
         aimux::remote::cli::run_remote_cli_action(action, output_mode, self)
-    }
-
-    fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
-        self.commands.push(request.clone());
-        if self.fail_commands {
-            return Err("offline".into());
-        }
-        Ok(command_ok(request.command, response_for(request)))
     }
 
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String> {

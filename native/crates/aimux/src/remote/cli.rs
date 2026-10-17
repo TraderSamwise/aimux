@@ -1,9 +1,10 @@
-use crate::core_cli::{
-    CoreCliAction, CoreCliContext, CoreCliFallback, CoreCliOperation, CoreCliOutputMode,
-    CoreCliPlanError, CoreCommandCall, CoreCommandRequestOptions,
-};
-use crate::core_cli_executor::{CoreCliExecution, CoreCliRuntime};
 use crate::remote::daemon_auth_text::AuthFlowResult;
+use aimux_core::core_cli_runtime::{CoreCliExecution, CoreCommandRequester};
+use aimux_core::core_cli_transport::{CoreCommandCall, CoreCommandRequestOptions};
+use aimux_core::core_cli_vocabulary::{
+    CoreCliAction, CoreCliContext, CoreCliFallback, CoreCliOperation, CoreCliOutputMode,
+    CoreCliPlanError,
+};
 use aimux_core::core_command_contract::CORE_COMMAND_NAMES;
 use aimux_core::core_text::{
     core_whoami_json, render_core_login_lines, render_core_logout_lines,
@@ -17,11 +18,11 @@ use serde_json::{Value, json};
 // this build can carry them out, and keeping the names here made the local
 // crate's own enums carry remote-typed variants. Re-exported so this module's
 // callers are unchanged.
-pub use crate::remote_cli_vocabulary::{
+pub use aimux_core::remote_cli_vocabulary::{
     RemoteCliAction, RemoteCliFallback, RemoteCliOperation, is_remote_core_cli_command,
 };
 
-pub trait RemoteCliRuntime: CoreCliRuntime {
+pub trait RemoteCliRuntime: CoreCommandRequester {
     fn credentials_for_status(&self) -> Option<Value>;
     fn whoami_payload(&self) -> Value;
     fn set_remote_enabled(&self, enabled: bool) -> Result<(), String>;

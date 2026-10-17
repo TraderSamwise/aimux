@@ -13,7 +13,6 @@ use std::time::Duration;
 pub const DEFAULT_DAEMON_PORT: u16 = 43190;
 pub const DEFAULT_DAEMON_HOST: &str = "127.0.0.1";
 const METADATA_ENDPOINT_TMP_STALE_MS: u128 = 5 * 60 * 1000;
-const EPOCH_ISO: &str = "1970-01-01T00:00:00.000Z";
 const DAEMON_INFO_LOCK_WAIT_MS: u128 = 5_000;
 
 pub use aimux_core::wire::scheduler::AimuxDaemonInfo;
@@ -84,24 +83,7 @@ pub struct EnsureDaemonRunningOptions {
 
 /// The loader preserves every readable project-service record whose root is
 /// still eligible to be a project, including fields a newer supervisor added.
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct DaemonState {
-    pub version: u8,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<Value>,
-    pub projects: Map<String, Value>,
-}
-
-impl DaemonState {
-    pub fn empty() -> Self {
-        Self {
-            version: 1,
-            updated_at: Some(Value::String(EPOCH_ISO.into())),
-            projects: Map::new(),
-        }
-    }
-}
+pub use aimux_core::daemon_state_contract::DaemonState;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
