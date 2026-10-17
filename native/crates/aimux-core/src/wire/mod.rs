@@ -6,7 +6,9 @@
 //! accepting stay in the local crate, so a reviewer reading this directory is
 //! not reading network setup.
 
+pub mod exchange;
 pub mod http;
 pub mod routing;
 pub mod scheduler;
 pub mod server;
+pub mod stream;
