@@ -13,6 +13,7 @@ pub mod attachment_uploader;
 pub mod backlog_metrics;
 pub mod config;
 pub mod core_cli_routing;
+pub mod core_cli_runtime;
 pub mod core_cli_transport;
 pub mod core_cli_vocabulary;
 pub mod core_command_contract;
