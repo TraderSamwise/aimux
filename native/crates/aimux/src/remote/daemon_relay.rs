@@ -9,8 +9,8 @@
 use std::collections::VecDeque;
 use std::io::Read;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -23,14 +23,16 @@ use tokio::time::Instant;
 
 use crate::desktop_notifier::{DesktopNotificationPayload, send_desktop_notification_and_wait};
 use crate::project_service::lifecycle_mutation_queue::queued_lifecycle_timeout_ms;
-use aimux_core::async_runtime::{spawn_blocking_named, task_name};
-use aimux_core::launcher_env::resolved_daemon_port;
-use aimux_core::proxy_project_binding::parse_proxy_target;
-use aimux_core::relay_bridge::BoxFuture;
-use aimux_core::relay_bridge::{
+use crate::remote::relay_client::{project_event_frame, split_sse_frames};
+use crate::remote::relay_runner::{
     DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem,
+    RelayHandle, RelayRunner,
 };
-use aimux_core::relay_bridge::{project_event_frame, split_sse_frames};
+use crate::remote::websocket::{BoxFuture, TokioTungsteniteConnector};
+use aimux_core::async_runtime::{spawn_blocking_named, task_name};
+use aimux_core::launcher_env::DEFAULT_DAEMON_PORT;
+use aimux_core::machine_identity::MachineIdentity;
+use aimux_core::proxy_project_binding::parse_proxy_target;
 use aimux_core::request_actor::RELAY_FORWARDED_HEADER;
 use aimux_core::wire::routing::DaemonRouteUrl;
 
@@ -60,7 +62,11 @@ pub const MAX_RELAY_EVENT_SUBSCRIPTIONS: usize = 16;
 pub const MAX_RELAY_SSE_BUFFER_BYTES: usize = 256 * 1024;
 
 pub fn daemon_loopback_port() -> String {
-    resolved_daemon_port().to_string()
+    std::env::var("AIMUX_DAEMON_PORT")
+        .ok()
+        .map(|port| port.trim().to_owned())
+        .filter(|port| !port.is_empty())
+        .unwrap_or_else(|| DEFAULT_DAEMON_PORT.to_owned())
 }
 
 pub struct LoopbackRelayBridge {
@@ -79,7 +85,7 @@ impl Default for LoopbackRelayBridge {
 
 impl LoopbackRelayBridge {
     fn port_number(&self) -> u16 {
-        self.port.parse().unwrap_or_else(|_| resolved_daemon_port())
+        self.port.parse().unwrap_or(43_190)
     }
 
     fn acquire_event_subscription(&self) -> Result<EventSubscriptionPermit, (u16, String)> {
@@ -471,6 +477,88 @@ fn security_notification(title: &str, message: &str) {
     });
 }
 
+/// Owns the relay client for the life of the daemon.
+#[derive(Default)]
+pub struct RelaySupervisor {
+    current: Mutex<Option<(Arc<RelayRunner>, RelayHandle)>>,
+}
+
+impl RelaySupervisor {
+    /// Node skipped a reconnect unless forced, or unless the existing client
+    /// had already given up — otherwise every status poll would restart it.
+    pub fn connect(&self, relay_url: &str, token: &str, machine: MachineIdentity, force: bool) {
+        if relay_url.is_empty() || token.is_empty() {
+            return;
+        }
+        {
+            let current = self.current.lock().ok();
+            if let Some(current) = current.as_ref()
+                && let Some((_, handle)) = current.as_ref()
+            {
+                let status = handle.status().status;
+                let finished = matches!(
+                    status,
+                    Some(crate::remote::relay_client::RelayStatus::AuthFailed)
+                        | Some(crate::remote::relay_client::RelayStatus::Disconnected)
+                );
+                if !force && !finished {
+                    return;
+                }
+                handle.stop();
+            }
+        }
+
+        let bridge = Arc::new(LoopbackRelayBridge::default());
+        let runner = RelayRunner::new(relay_url, token, machine, bridge);
+        let handle = runner.handle();
+        if let Ok(mut current) = self.current.lock() {
+            *current = Some((Arc::clone(&runner), handle.clone()));
+        }
+        aimux_core::async_runtime::spawn_named(task_name("daemon", "relay"), async move {
+            let mut connector = TokioTungsteniteConnector;
+            runner.run(&mut connector).await;
+        });
+    }
+
+    pub fn disconnect(&self) {
+        if let Ok(mut current) = self.current.lock()
+            && let Some((_, handle)) = current.take()
+        {
+            handle.stop();
+        }
+    }
+
+    /// Send a notification over the live relay, or say why it could not go.
+    ///
+    /// The caller reports this to the project service, so the reason has to
+    /// distinguish "no relay configured" from "relay is configured but down" —
+    /// otherwise a broken connection looks like an intentional setting.
+    pub fn push(&self, notification: &Value) -> Result<(), String> {
+        let Ok(current) = self.current.lock() else {
+            return Err("relay_unavailable".to_owned());
+        };
+        let Some((runner, handle)) = current.as_ref() else {
+            return Err("relay_off".to_owned());
+        };
+        if handle.status().status != Some(crate::remote::relay_client::RelayStatus::Connected) {
+            return Err("relay_disconnected".to_owned());
+        }
+        runner.push_notification(notification)
+    }
+
+    /// `off` means there is no client at all, which is a different thing from a
+    /// client that exists and is disconnected.
+    pub fn status(&self) -> Value {
+        match self.current.lock() {
+            Ok(current) => match current.as_ref() {
+                Some((_, handle)) => handle.status().to_json(),
+                None => json!({ "status": "off" }),
+            },
+            Err(_) => json!({ "status": "off" }),
+        }
+    }
+}
+
 /// Where the relay is and what proves us, resolved the way Node did.
 ///
 /// An env override wins over stored credentials, and when either env var is
@@ -610,7 +698,7 @@ mod tests {
         MAX_RELAY_EVENT_SUBSCRIPTIONS, MAX_RELAY_SSE_BUFFER_BYTES, append_limited_sse_chunk,
         read_status_and_body, route_request_over_stream,
     };
-    use aimux_core::relay_bridge::DaemonRelayBridge;
+    use crate::remote::relay_runner::DaemonRelayBridge;
     use std::io::Cursor;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant as StdInstant};

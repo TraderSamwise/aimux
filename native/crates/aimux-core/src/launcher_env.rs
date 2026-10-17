@@ -110,18 +110,3 @@ pub fn launcher_wrapper_contract(source_path: &str) -> Option<LauncherWrapperCon
 fn blank(value: Option<&String>) -> bool {
     value.is_none_or(|value| value.trim().is_empty())
 }
-
-/// The daemon's port for this process, as the environment says or the default.
-///
-/// Both halves resolve it: the local side to decide whether a push is a test
-/// harness's, the remote side to address the request. One derivation so they
-/// cannot disagree.
-pub fn resolved_daemon_port() -> u16 {
-    std::env::var("AIMUX_DAEMON_PORT")
-        .ok()
-        .map(|port| port.trim().to_owned())
-        .filter(|port| !port.is_empty())
-        .unwrap_or_else(|| DEFAULT_DAEMON_PORT.to_owned())
-        .parse::<u16>()
-        .unwrap_or(43_190)
-}

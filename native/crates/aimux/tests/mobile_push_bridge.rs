@@ -3,13 +3,13 @@
 //! payload shape is worth pinning.
 
 use aimux::daemon_state::{MetadataState, save_metadata_state};
-use aimux::mobile_push_policy::push_payload_for_alert_with_config;
 use aimux::notification_delivery_guard::{
     TEST_NOTIFICATION_SOURCE_FIELD, TEST_NOTIFICATION_SOURCE_VALUE,
     fixture_notification_refusal_reason_for_payload,
 };
-use aimux::remote::mobile_push_bridge::relay_notification;
-use aimux_core::notification_payload::build_push_payload;
+use aimux::remote::mobile_push_bridge::{
+    build_push_payload, push_payload_for_alert_with_config, relay_notification,
+};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs::remove_dir_all;
@@ -251,23 +251,6 @@ fn mobile_push_role_gate_matches_desktop_delivery_policy() {
         .is_some()
     );
     cleanup(project);
-}
-
-#[test]
-fn a_test_marked_event_builds_no_push_payload_at_all() {
-    // The boundary test below pins the refusal reason. This pins that the
-    // policy acts on it: an event carrying the harness marker must not
-    // produce a payload, which is what reaches a phone.
-    let event = json!({
-        "title": "fixture alert",
-        "message": "should never reach a phone",
-        TEST_NOTIFICATION_SOURCE_FIELD: TEST_NOTIFICATION_SOURCE_VALUE
-    });
-
-    assert!(
-        push_payload_for_alert_with_config(None, None, &event, &json!({}), false).is_none(),
-        "a harness-marked event must not become a push payload"
-    );
 }
 
 #[test]

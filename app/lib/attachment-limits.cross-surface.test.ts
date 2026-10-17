@@ -19,16 +19,17 @@ const ATTACHMENTS_SOURCE = join(
   "..",
   "native",
   "crates",
-  "aimux-core",
+  "aimux",
   "src",
-  "attachment_uploader.rs",
+  "project_service",
+  "attachments.rs",
 );
 
 /** `pub const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;` */
 function serviceAttachmentMaxBytes(): number {
   const source = readFileSync(ATTACHMENTS_SOURCE, "utf8");
   const match = source.match(/MAX_ATTACHMENT_BYTES:\s*usize\s*=\s*([0-9_ *]+);/);
-  expect(match, "MAX_ATTACHMENT_BYTES must be findable in attachment_uploader.rs").toBeTruthy();
+  expect(match, "MAX_ATTACHMENT_BYTES must be findable in attachments.rs").toBeTruthy();
   const expression = match![1].replace(/_/g, "").trim();
   // Only the `N * N * N` form the constant is written in; anything else should
   // fail loudly rather than be guessed at.

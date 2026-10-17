@@ -78,24 +78,19 @@ mod enabled {
     }
 
     pub fn forward_alert_to_mobile_push(event: &serde_json::Value) {
-        forward_alert_to_mobile_push_with_context(None, None, event);
+        crate::remote::mobile_push_bridge::forward_alert_to_mobile_push(event);
     }
 
-    // The decision is local and the send is not, so it is made here and the
-    // far side is handed a payload or never called.
     pub fn forward_alert_to_mobile_push_with_context(
         project_root: Option<&std::path::Path>,
         project_state_dir: Option<&std::path::Path>,
         event: &serde_json::Value,
     ) {
-        let Some(payload) = crate::mobile_push_policy::push_payload_for_alert(
+        crate::remote::mobile_push_bridge::forward_alert_to_mobile_push_with_context(
             project_root,
             project_state_dir,
             event,
-        ) else {
-            return;
-        };
-        crate::remote::mobile_push_bridge::forward_payload_to_mobile_push(payload);
+        );
     }
 
     /// Upload a published attachment to the relay, if this machine is set up
@@ -296,7 +291,7 @@ mod enabled_state {
     #[derive(Default)]
     pub struct RemoteDaemonState {
         auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
-        relay: Arc<crate::remote::relay_supervisor::RelaySupervisor>,
+        relay: Arc<crate::remote::daemon_relay::RelaySupervisor>,
         /// Resolved once per process; see `machine_identity`.
         machine_identity: OnceLock<MachineIdentity>,
     }
@@ -318,7 +313,7 @@ mod enabled_state {
             &self.auth_flows
         }
 
-        pub fn relay(&self) -> &Arc<crate::remote::relay_supervisor::RelaySupervisor> {
+        pub fn relay(&self) -> &Arc<crate::remote::daemon_relay::RelaySupervisor> {
             &self.relay
         }
 
@@ -342,7 +337,7 @@ mod enabled_state {
         ) {
             let env_url = std::env::var("AIMUX_RELAY_URL").ok();
             let env_token = std::env::var("AIMUX_RELAY_TOKEN").ok();
-            if let Some((url, token)) = crate::relay_bridge::resolve_relay_target(
+            if let Some((url, token)) = crate::remote::daemon_relay::resolve_relay_target(
                 Some(credentials.relay_url.as_str()),
                 Some(credentials.token.as_str()),
                 credentials.remote_enabled,
@@ -350,9 +345,7 @@ mod enabled_state {
                 env_token.as_deref(),
             ) {
                 self.relay
-                    .connect(&url, &token, self.machine_identity(resolver), force, || {
-                        std::sync::Arc::new(crate::relay_bridge::LoopbackRelayBridge::default())
-                    });
+                    .connect(&url, &token, self.machine_identity(resolver), force);
             }
         }
 

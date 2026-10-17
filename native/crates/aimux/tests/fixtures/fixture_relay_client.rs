@@ -6,7 +6,7 @@
 //! implementation.
 
 use aimux::machine_identity::MachineIdentity;
-use aimux::relay_bridge::resolve_project_event_stream;
+use aimux::remote::daemon_relay::resolve_project_event_stream;
 use aimux::remote::relay_client::{RelayStatus, project_event_frame, project_events_error_frame};
 use aimux::remote::relay_runner::{
     DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem, RelayRunner,

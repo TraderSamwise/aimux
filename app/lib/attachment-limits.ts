@@ -2,7 +2,7 @@
  * How large an attachment may be, as the project service defines it.
  *
  * This number is `MAX_ATTACHMENT_BYTES` in
- * `native/crates/aimux-core/src/attachment_uploader.rs`, and
+ * `native/crates/aimux/src/project_service/attachments.rs`, and
  * `attachment-limits.cross-surface.test.ts` reads it out of that file and
  * fails if the two drift. It is duplicated rather than fetched because the
  * check has to run before the upload — asking the service how large a file
