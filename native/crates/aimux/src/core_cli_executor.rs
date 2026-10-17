@@ -82,9 +82,32 @@ pub const JOB_STREAM_LOST_EXIT_CODE: i32 = 23;
 pub const JOB_ADDRESS_CONFLICT_EXIT_CODE: i32 = 24;
 const JOB_STREAM_READ_TIMEOUT_MS: u64 = 250;
 
-pub use aimux_core::core_cli_runtime::{CoreCliExecution, CoreCommandRequester};
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoreCliExecution {
+    pub code: i32,
+    pub stdout: Vec<String>,
+    pub stderr: Vec<String>,
+}
 
-pub trait CoreCliRuntime: CoreCommandRequester {
+impl CoreCliExecution {
+    pub(crate) fn ok(stdout: Vec<String>) -> Self {
+        Self {
+            code: 0,
+            stdout,
+            stderr: Vec::new(),
+        }
+    }
+
+    pub(crate) fn error(message: impl Into<String>, code: i32) -> Self {
+        Self {
+            code,
+            stdout: Vec::new(),
+            stderr: vec![message.into()],
+        }
+    }
+}
+
+pub trait CoreCliRuntime {
     fn cwd(&self) -> String;
     fn resolve_project_root(&self, path: &str) -> String;
     fn load_daemon_info(&self) -> Option<AimuxDaemonInfo>;
@@ -102,6 +125,7 @@ pub trait CoreCliRuntime: CoreCommandRequester {
         action: crate::remote_cli_vocabulary::RemoteCliAction,
         output_mode: CoreCliOutputMode,
     ) -> Result<CoreCliExecution, String>;
+    fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String>;
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String>;
     fn request_existing_daemon_text(
         &mut self,
@@ -200,13 +224,6 @@ pub trait CoreCliRuntime: CoreCommandRequester {
 #[derive(Debug, Default)]
 pub struct RealCoreCliRuntime;
 
-impl CoreCommandRequester for RealCoreCliRuntime {
-    fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
-        request_core_command(request.command, request.payload.clone(), request.options)
-            .map_err(|error| error.to_string())
-    }
-}
-
 impl CoreCliRuntime for RealCoreCliRuntime {
     fn cwd(&self) -> String {
         std::env::current_dir()
@@ -247,6 +264,11 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         output_mode: CoreCliOutputMode,
     ) -> Result<CoreCliExecution, String> {
         crate::remote_control_edge::run_remote_cli_action(action, output_mode, self)
+    }
+
+    fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
+        request_core_command(request.command, request.payload.clone(), request.options)
+            .map_err(|error| error.to_string())
     }
 
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String> {

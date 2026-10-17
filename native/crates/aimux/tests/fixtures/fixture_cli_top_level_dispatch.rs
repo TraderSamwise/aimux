@@ -107,18 +107,6 @@ struct FakeRuntime {
     text_routes: Vec<Value>,
 }
 
-impl aimux_core::core_cli_runtime::CoreCommandRequester for FakeRuntime {
-    fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
-        Ok(CoreCommandOk {
-            ok: true,
-            id: "test".into(),
-            command: request.command.to_owned(),
-            issued_at: "2026-09-08T00:00:00.000Z".into(),
-            result: json!({ "ok": true }),
-        })
-    }
-}
-
 impl CoreCliRuntime for FakeRuntime {
     fn cwd(&self) -> String {
         "/repo".into()
@@ -159,6 +147,16 @@ impl CoreCliRuntime for FakeRuntime {
         output_mode: CoreCliOutputMode,
     ) -> Result<CoreCliExecution, String> {
         aimux::remote::cli::run_remote_cli_action(action, output_mode, self)
+    }
+
+    fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
+        Ok(CoreCommandOk {
+            ok: true,
+            id: "test".into(),
+            command: request.command.to_owned(),
+            issued_at: "2026-09-08T00:00:00.000Z".into(),
+            result: json!({ "ok": true }),
+        })
     }
 
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String> {

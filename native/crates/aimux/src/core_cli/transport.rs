@@ -1,12 +1,11 @@
-/// How long a diagnostic core command waits before giving up.
-pub const CORE_DIAGNOSTIC_TIMEOUT_MS: u64 = 1_000;
-
 use crate::core_command_contract::{CORE_API_ROUTES, is_core_command_name};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+
+use super::CORE_DIAGNOSTIC_TIMEOUT_MS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,7 +25,7 @@ impl Default for CoreCommandRequestOptions {
 }
 
 impl CoreCommandRequestOptions {
-    pub fn existing_daemon() -> Self {
+    pub(crate) fn existing_daemon() -> Self {
         Self {
             ensure_daemon: false,
             timeout_ms: Some(CORE_DIAGNOSTIC_TIMEOUT_MS),
@@ -183,7 +182,7 @@ pub fn validate_core_command_response(
     Ok(parsed)
 }
 
-pub fn call(
+pub(super) fn call(
     command: &'static str,
     payload: Option<Value>,
     options: CoreCommandRequestOptions,
