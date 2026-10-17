@@ -18,6 +18,7 @@ pub mod core_text;
 pub mod debug_logging;
 pub mod launcher_env;
 pub mod machine_identity;
+pub mod notification_payload;
 pub mod paths;
 pub mod periodic_scheduler;
 pub mod project_api_contract;

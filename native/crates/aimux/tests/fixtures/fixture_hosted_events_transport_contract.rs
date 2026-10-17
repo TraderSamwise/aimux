@@ -4,7 +4,7 @@ use aimux::remote::hosted_events::{
     HostedEventDeliveryConfig, HostedEventSender, SeenDeviceInput, client_address,
     device_fingerprint, sign_hosted_event,
 };
-use aimux::remote::mobile_push_bridge::build_push_payload;
+use aimux_core::notification_payload::build_push_payload;
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, VecDeque};

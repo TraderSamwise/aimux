@@ -16,31 +16,9 @@ use super::agent_input::hosted_attachment_from_body;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 
-pub const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
-
-/// The request body an upload of `MAX_ATTACHMENT_BYTES` actually needs.
-///
-/// The bytes arrive base64 in a JSON body, so the budget is the 4/3 expansion
-/// plus the envelope -- `kind`, `filename`, `mimeType`, `sessionId` and the
-/// JSON itself. Derived rather than written down twice: the body cap used to
-/// be a flat 1 MiB for every route, which rejected an upload at about 786 KB
-/// of image and made the 10 MB limit this module declares unreachable. The
-/// limit that fires should be the limit that is written down.
-/// What the service says when a decoded attachment is over the policy.
-///
-/// Derived, because written as a literal it kept saying "10 MB" whatever the
-/// constant became, and nothing noticed.
-pub fn attachment_too_large_message() -> String {
-    format!(
-        "attachment exceeds {} MB",
-        MAX_ATTACHMENT_BYTES / (1024 * 1024)
-    )
-}
-
-pub fn attachment_upload_body_limit() -> usize {
-    const ENVELOPE_BYTES: usize = 8 * 1024;
-    MAX_ATTACHMENT_BYTES.div_ceil(3) * 4 + ENVELOPE_BYTES
-}
+pub use aimux_core::attachment_uploader::{
+    MAX_ATTACHMENT_BYTES, attachment_too_large_message, attachment_upload_body_limit,
+};
 const RECENT_PUBLISHED_PER_SESSION: usize = 5;
 const UNANCHORED_HYDRATE_GRACE_MS: u128 = 2 * 60 * 1000;
 static ATTACHMENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);

@@ -78,19 +78,24 @@ mod enabled {
     }
 
     pub fn forward_alert_to_mobile_push(event: &serde_json::Value) {
-        crate::remote::mobile_push_bridge::forward_alert_to_mobile_push(event);
+        forward_alert_to_mobile_push_with_context(None, None, event);
     }
 
+    // The decision is local and the send is not, so it is made here and the
+    // far side is handed a payload or never called.
     pub fn forward_alert_to_mobile_push_with_context(
         project_root: Option<&std::path::Path>,
         project_state_dir: Option<&std::path::Path>,
         event: &serde_json::Value,
     ) {
-        crate::remote::mobile_push_bridge::forward_alert_to_mobile_push_with_context(
+        let Some(payload) = crate::mobile_push_policy::push_payload_for_alert(
             project_root,
             project_state_dir,
             event,
-        );
+        ) else {
+            return;
+        };
+        crate::remote::mobile_push_bridge::forward_payload_to_mobile_push(payload);
     }
 
     /// Upload a published attachment to the relay, if this machine is set up

@@ -79,6 +79,7 @@ pub mod logs;
 pub mod loop_watcher;
 pub use aimux_core::machine_identity;
 pub mod managed_launch_env;
+pub mod mobile_push_policy;
 pub mod native_cli_dispatch;
 pub mod native_plugin_gh_pr_context;
 pub mod native_plugin_transcript_length;
