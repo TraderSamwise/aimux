@@ -297,7 +297,12 @@ fn every_surface_says_the_checkout_is_missing_the_same_way() {
         let uses = source
             .lines()
             .filter(|line| line.contains("WORKTREE_CHECKOUT_MISSING_LABEL"))
-            .filter(|line| !line.contains("use ") && !line.contains("pub const"))
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                !trimmed.starts_with("use ")
+                    && !trimmed.starts_with("pub use ")
+                    && !trimmed.starts_with("pub const ")
+            })
             .count();
         assert!(
             uses > 0,

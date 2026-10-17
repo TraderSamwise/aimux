@@ -562,7 +562,9 @@ let manifestPath = join(repoRoot, "native/Cargo.toml");
 let packageIdentitiesFile = null;
 let expectedPackageIdentitiesFile = null;
 let rootDependencyEdgesFile = null;
+let coreDependencyEdgesFile = null;
 let expectedRootDependencyEdgesFile = null;
+let expectedCoreDependencyEdgesFile = null;
 let cargoMetadataFile = null;
 let skipPackageIdentityCheck = false;
 
@@ -580,6 +582,10 @@ for (let i = 0; i < args.length; i += 1) {
     rootDependencyEdgesFile = resolve(args[++i]);
   } else if (arg === "--expected-root-dependency-edges-file") {
     expectedRootDependencyEdgesFile = resolve(args[++i]);
+  } else if (arg === "--core-dependency-edges-file") {
+    coreDependencyEdgesFile = resolve(args[++i]);
+  } else if (arg === "--expected-core-dependency-edges-file") {
+    expectedCoreDependencyEdgesFile = resolve(args[++i]);
   } else if (arg === "--cargo-metadata-file") {
     cargoMetadataFile = resolve(args[++i]);
   } else if (arg === "--skip-package-identity-check") {
@@ -661,7 +667,7 @@ function collectCurrentPackageSurface() {
     return {
       packages: readList(packageIdentitiesFile),
       rootEdges: rootDependencyEdgesFile ? readList(rootDependencyEdgesFile) : [],
-      coreEdges: [],
+      coreEdges: coreDependencyEdgesFile ? readList(coreDependencyEdgesFile) : [],
     };
   }
 
@@ -710,6 +716,11 @@ function expectedRootDependencyEdges() {
   return readList(expectedRootDependencyEdgesFile);
 }
 
+function expectedCoreDependencyEdges() {
+  if (!expectedCoreDependencyEdgesFile) return [...AUDITED_CORE_DEPENDENCY_EDGES].sort();
+  return readList(expectedCoreDependencyEdgesFile);
+}
+
 function compareAuditedList({ label, current, expected, consequence }) {
   const currentSet = new Set(current);
   const expectedSet = new Set(expected);
@@ -748,7 +759,7 @@ function checkPackageIdentitySurface() {
   compareAuditedList({
     label: "aimux-core direct dependency edge set",
     current: current.coreEdges,
-    expected: [...AUDITED_CORE_DEPENDENCY_EDGES].sort(),
+    expected: expectedCoreDependencyEdges(),
     consequence:
       "aimux-core is shared with the remote half, so a crate becoming directly usable from it needs review even when the binary's own edges and the audited package list are unchanged.",
   });
@@ -1067,42 +1078,61 @@ function containsTypeBackedLoopbackEvidence(statement, window) {
 // against, so a reviewer reads it once and has to be able to stop worrying
 // about it. Keeping it socket-free is what makes that true, and a comment
 // saying so is not a check.
-const CORE_SOCKET_CONSTRUCTS = [
-  "TcpListener",
-  "TcpSocket",
-  "TcpStream",
-  "UdpSocket",
-  "UnixDatagram",
-  "UnixListener",
-  "UnixStream",
-  "to_socket_addrs",
-  // Core takes libc directly and already uses `unsafe` for legitimate things,
-  // so naming the types is not enough: the raw route has to be refused too.
-  "libc::socket",
-  "libc::connect",
-  "libc::bind",
-  "libc::accept",
-  "libc::sendto",
-  "libc::recvfrom",
-  "socket2",
-  "AsyncFd",
+// `aimux-core` is the crate both the local build and the remote half compile
+// against, so a reviewer reads it once and has to be able to stop worrying
+// about it. Keeping it socket-free is what makes that true, and a comment
+// saying so is not a check.
+//
+// Patterns, not bare words, because the first version of this was defeated
+// three ways: `TcpSocket::new_v4()?.connect()` yields a `TcpStream` without
+// naming one, `use libc::{socket, connect}` never spells `libc::socket`, and a
+// raw fd becomes a stream with no socket type in sight. Comments and strings
+// are stripped first, so this file's own prose does not trip it.
+const CORE_SOCKET_PATTERNS = [
+  { pattern: /\b(?:Tcp|Udp|Unix)(?:Listener|Socket|Stream|Datagram)\b/, what: "a socket type" },
+  { pattern: /\bto_socket_addrs\b|\blookup_host\b/, what: "name resolution" },
+  {
+    pattern: /\b(?:from_raw_fd|FromRawFd|IntoRawFd|AsRawFd|OwnedFd|BorrowedFd)\b/,
+    what: "a raw file descriptor, which is how a socket arrives without being named",
+  },
+  {
+    pattern:
+      /\blibc\s*::\s*(?:socket|socketpair|connect|bind|accept|listen|sendto|recvfrom|sendmsg|recvmsg|setsockopt|getsockopt|getaddrinfo|getpeername|getsockname)\b/,
+    what: "a libc socket call",
+  },
+  {
+    pattern:
+      /\buse\s+libc\s*::\s*\{[^}]*\b(?:socket|socketpair|connect|bind|accept|listen|sendto|recvfrom|sendmsg|recvmsg|setsockopt|getsockopt|getaddrinfo|getpeername|getsockname)\b/,
+    what: "a libc socket call imported by name",
+  },
+  { pattern: /\buse\s+libc\s+as\b/, what: "libc under an alias, which hides the calls above" },
+  { pattern: /\b(?:socket2|nix|mio)\s*::/, what: "a socket crate" },
+  { pattern: /\.accept\s*\(/, what: "accepting a connection" },
 ];
+
+/// Comments and string literals removed, so prose about sockets is not a socket.
+function stripRustCommentsAndStrings(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/[^\n]*/g, " ")
+    .replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+}
 
 function checkCoreCrateHasNoSockets() {
   const coreSrc = join(sourceRoot, "native/crates/aimux-core/src");
   walk(coreSrc, (path) => {
     if (!path.endsWith(".rs")) return;
     const rel = relative(sourceRoot, path).split("\\").join("/");
-    const raw = readFileSync(path, "utf8");
-    const text = removeCfgTestItems(raw);
-    for (const construct of CORE_SOCKET_CONSTRUCTS) {
-      if (!new RegExp(`\\b${construct}\\b`).test(text)) continue;
-      // Report against the real file, not the cfg(test)-stripped copy.
-      const line = raw.split(/\r?\n/).findIndex((candidate) => candidate.includes(construct)) + 1;
-      fail(
-        `${rel}:${line} uses ${construct}. aimux-core is shared with the remote half, so opening or accepting a connection belongs in the local crate instead.`,
-      );
-    }
+    const lines = readFileSync(path, "utf8").split(/\r?\n/);
+    lines.forEach((rawLine, index) => {
+      const line = stripRustCommentsAndStrings(rawLine);
+      for (const { pattern, what } of CORE_SOCKET_PATTERNS) {
+        if (!pattern.test(line)) continue;
+        fail(
+          `${rel}:${index + 1} uses ${what}. aimux-core is shared with the remote half, so opening or accepting a connection belongs in the local crate instead.`,
+        );
+      }
+    });
   });
 }
 

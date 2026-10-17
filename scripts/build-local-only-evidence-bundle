@@ -247,6 +247,7 @@ RUST
   fi
   printf 'path#aimux@0.1.0\n' > "$mutation_root/packages.txt"
   : > "$mutation_root/root-edges.txt"
+  : > "$mutation_root/core-edges.txt"
   local id="mutation-$name"
   run_command "$id" "Mutation Proof: $name" \
     "$ROOT_DIR/scripts/check-local-network-surface" \
@@ -254,7 +255,9 @@ RUST
     --package-identities-file "$mutation_root/packages.txt" \
     --expected-package-identities-file "$mutation_root/packages.txt" \
     --root-dependency-edges-file "$mutation_root/root-edges.txt" \
-    --expected-root-dependency-edges-file "$mutation_root/root-edges.txt" || {
+    --expected-root-dependency-edges-file "$mutation_root/root-edges.txt" \
+    --core-dependency-edges-file "$mutation_root/core-edges.txt" \
+    --expected-core-dependency-edges-file "$mutation_root/core-edges.txt" || {
       fail_bundle "mutation $name correctly failed $id with exit $?"
     }
   fail_bundle "mutation $name unexpectedly passed"

@@ -471,7 +471,13 @@ function moduleSourceFile(moduleName) {
 }
 
 function publicLibModules() {
-  return [...libModulesIn(libPath), ...libModulesIn(join(coreSrcRoot, 'lib.rs'))];
+  const seen = new Set();
+  return [...libModulesIn(libPath), ...libModulesIn(join(coreSrcRoot, 'lib.rs'))].filter((module) => {
+    const key = `${module.file}\0${module.name}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 // Core declares modules the binary does not re-export (`wire`,
