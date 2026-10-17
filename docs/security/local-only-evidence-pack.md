@@ -205,7 +205,7 @@ Independent confirmation:
 
 ```bash
 rg -n 'relay|hosted|remote_login|remote_credentials|remote_security|mobile_push_bridge|websocket' \
-  native/crates/aimux/src/remote native/crates/aimux/src/lib.rs native/crates/aimux/Cargo.toml
+  native/crates/aimux/src/remote native/crates/aimux/src/relay_bridge.rs native/crates/aimux/src/lib.rs native/crates/aimux/Cargo.toml
 rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src
 rg -l '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src | sort
 rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src/remote || true

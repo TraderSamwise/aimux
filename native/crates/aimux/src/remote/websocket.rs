@@ -6,9 +6,7 @@
 //! subsystem, which is exactly the work this cutover moves off blocking I/O.
 
 use std::borrow::Cow;
-use std::future::Future;
 use std::io;
-use std::pin::Pin;
 
 use futures_util::{SinkExt, StreamExt, stream::SplitSink, stream::SplitStream};
 use tokio::net::TcpStream;
@@ -27,7 +25,7 @@ pub const MAX_RETRY_MS: u64 = 30_000;
 /// client stops, rather than hammering the relay forever.
 pub const MAX_HANDSHAKE_FAILURES: u32 = 5;
 
-pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+pub use aimux_core::relay_bridge::BoxFuture;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WebSocketEvent {
