@@ -9,6 +9,7 @@ use crate::request_actor::{
     RemoteAccessContext, RemoteAccessDecision, RemoteActor, RemoteActorRole,
     assert_operator_stream_allowed, assert_remote_access_allowed, parse_remote_actor,
 };
+pub use aimux_core::wire::stream::HostedOperatorStreamTarget;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -66,12 +67,6 @@ pub fn build_daemon_route_context_for_actor(
         headers,
         access_decision: Some(access_decision),
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HostedOperatorStreamTarget {
-    pub url: String,
-    pub project_root: String,
 }
 
 pub fn resolve_hosted_operator_stream(

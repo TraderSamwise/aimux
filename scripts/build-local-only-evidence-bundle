@@ -20,6 +20,7 @@ Runs the local-only security gates and writes one reviewer-facing evidence bundl
 Mutations:
   network-surface-nonloopback  prove the bundle refuses a non-loopback socket gate failure
   remote-control-cfg-macro     prove the bundle refuses a cfg!(feature = "remote-control") gate failure
+  core-crate-socket            prove the bundle refuses a socket in the shared aimux-core crate
 USAGE
 }
 
@@ -46,7 +47,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$MUTATE" in
-  "" | network-surface-nonloopback | remote-control-cfg-macro) ;;
+  "" | network-surface-nonloopback | remote-control-cfg-macro | core-crate-socket) ;;
   *)
     printf 'Unsupported --mutate value: %s\n' "$MUTATE" >&2
     exit 2
@@ -231,8 +232,24 @@ build_asset() {
 run_mutation() {
   local name="$1"
   local mutation_root="$OUT_DIR/mutation-source"
-  mkdir -p "$mutation_root/native/crates/aimux/src"
-  if [ "$name" = remote-control-cfg-macro ]; then
+  mkdir -p "$mutation_root/native/crates/aimux/src" "$mutation_root/native/crates/aimux-core/src"
+  cat > "$mutation_root/native/crates/aimux-core/src/lib.rs" <<'RUST'
+pub fn shared_floor() -> bool {
+    true
+}
+RUST
+  if [ "$name" = core-crate-socket ]; then
+    cat > "$mutation_root/native/crates/aimux/src/lib.rs" <<'RUST'
+pub fn local_boundary() -> bool {
+    true
+}
+RUST
+    cat > "$mutation_root/native/crates/aimux-core/src/lib.rs" <<'RUST'
+pub async fn shared_floor_opens_a_socket() {
+    let _ = tokio::net::TcpStream::connect(("127.0.0.1", 1)).await;
+}
+RUST
+  elif [ "$name" = remote-control-cfg-macro ]; then
     cat > "$mutation_root/native/crates/aimux/src/lib.rs" <<'RUST'
 pub fn local_boundary() -> bool {
     cfg!(feature = "remote-control")
@@ -247,6 +264,7 @@ RUST
   fi
   printf 'path#aimux@0.1.0\n' > "$mutation_root/packages.txt"
   : > "$mutation_root/root-edges.txt"
+  : > "$mutation_root/core-edges.txt"
   local id="mutation-$name"
   run_command "$id" "Mutation Proof: $name" \
     "$ROOT_DIR/scripts/check-local-network-surface" \
@@ -254,8 +272,24 @@ RUST
     --package-identities-file "$mutation_root/packages.txt" \
     --expected-package-identities-file "$mutation_root/packages.txt" \
     --root-dependency-edges-file "$mutation_root/root-edges.txt" \
-    --expected-root-dependency-edges-file "$mutation_root/root-edges.txt" || {
-      fail_bundle "mutation $name correctly failed $id with exit $?"
+    --expected-root-dependency-edges-file "$mutation_root/root-edges.txt" \
+    --core-dependency-edges-file "$mutation_root/core-edges.txt" \
+    --expected-core-dependency-edges-file "$mutation_root/core-edges.txt" || {
+      local status=$?
+      # A proof has to fail for its own reason. Any non-zero exit used to read
+      # as proof here, so a flag mismatch looked exactly like a caught leak.
+      local expected
+      case "$name" in
+        network-surface-nonloopback) expected="non-loopback network target" ;;
+        remote-control-cfg-macro) expected='uses cfg!(feature = "remote-control")' ;;
+        core-crate-socket) expected="aimux-core is shared with the remote half" ;;
+        *) expected="" ;;
+      esac
+      if [ -n "$expected" ] && ! grep -F "$expected" \
+        "$OUT_DIR/logs/$id/stdout.txt" "$OUT_DIR/logs/$id/stderr.txt" >/dev/null 2>&1; then
+        fail_bundle "mutation $name failed $id with exit $status but not for its own reason: $expected"
+      fi
+      fail_bundle "mutation $name correctly failed $id with exit $status"
     }
   fail_bundle "mutation $name unexpectedly passed"
 }

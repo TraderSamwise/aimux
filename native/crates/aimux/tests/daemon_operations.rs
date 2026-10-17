@@ -535,7 +535,7 @@ fn json_text(response: DaemonRouteResponse) -> Value {
 fn wait_for_async_task(name: &str) -> Option<()> {
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(1) {
-        let found = aimux::async_runtime::doctor_tasks_report()
+        let found = aimux::async_runtime_doctor::doctor_tasks_report()
             .tasks
             .iter()
             .any(|task| task.name == name);

@@ -11,6 +11,7 @@ use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::project_api_contract::routes as project_routes;
 use crate::project_service::lifecycle_mutation_queue::queued_lifecycle_timeout_ms;
 use crate::proxy_project_binding::{is_binary_project_route, parse_proxy_target};
+pub use aimux_core::wire::stream::ProjectEventStreamTarget;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -44,12 +45,6 @@ pub struct ProxyBinaryResponse {
     pub status: u16,
     pub body: Vec<u8>,
     pub content_type: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectEventStreamTarget {
-    pub url: String,
-    pub headers: BTreeMap<String, String>,
 }
 
 pub trait DaemonJsonRouteRuntime: DaemonCoreCommandRuntime {

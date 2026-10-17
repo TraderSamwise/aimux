@@ -1,4 +1,4 @@
-use crate::paths::PathResolver;
+use aimux_core::paths::PathResolver;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};

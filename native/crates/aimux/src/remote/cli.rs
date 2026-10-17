@@ -3,14 +3,14 @@ use crate::core_cli::{
     CoreCliPlanError, CoreCommandCall, CoreCommandRequestOptions,
 };
 use crate::core_cli_executor::{CoreCliExecution, CoreCliRuntime};
-use crate::core_command_contract::CORE_COMMAND_NAMES;
-use crate::core_text::{
+use crate::remote::daemon_auth_text::AuthFlowResult;
+use aimux_core::core_command_contract::CORE_COMMAND_NAMES;
+use aimux_core::core_text::{
     core_whoami_json, render_core_login_lines, render_core_logout_lines,
     render_core_remote_disable_lines, render_core_remote_enable_lines,
     render_core_remote_security_device_mutation_line, render_core_remote_security_devices_lines,
     render_core_remote_status_lines, render_core_security_unlock_lines, render_core_whoami_lines,
 };
-use crate::remote::daemon_auth_text::AuthFlowResult;
 use serde_json::{Value, json};
 
 // The vocabulary is local: the CLI has to name these commands whether or not

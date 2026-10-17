@@ -26,7 +26,7 @@ use crate::daemon::text::system::{DaemonSystemTextRuntime, route_system_text_req
 use crate::daemon::text::team::{DaemonTeamTextRuntime, route_team_text_request};
 use crate::daemon::text::worktrees::{DaemonWorktreeTextRuntime, route_worktree_text_request};
 use crate::debug_logging::{LogLevel, log_at};
-use crate::request_actor::RemoteAccessDecision;
+pub use aimux_core::wire::routing::DaemonRouteRequestContext;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -70,13 +70,6 @@ impl<T> DaemonRouteRuntime for T where
         + DaemonJsonRouteRuntime
         + DaemonJobRouteRuntime
 {
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct DaemonRouteRequestContext {
-    pub actor_present: bool,
-    pub headers: BTreeMap<String, String>,
-    pub access_decision: Option<RemoteAccessDecision>,
 }
 
 pub fn route_daemon_request(

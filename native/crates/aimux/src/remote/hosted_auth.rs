@@ -1,5 +1,5 @@
 use crate::remote::hosted_principals::{HostedPrincipal, HostedPrincipalsStore};
-use crate::request_actor::{
+use aimux_core::request_actor::{
     RemoteActor, RemoteActorRole, RemoteOperatorGrant, RemoteOperatorPrincipal,
 };
 use anyhow::Result;

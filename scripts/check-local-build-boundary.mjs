@@ -99,7 +99,7 @@ function checkRuntimeScripts() {
 }
 
 function checkProjectGitignoreBoundary() {
-  const config = read("native/crates/aimux/src/config.rs");
+  const config = read("native/crates/aimux-core/src/config.rs");
   const requiredIgnoredStores = [
     "context/",
     "history/",

@@ -1,0 +1,23 @@
+[package]
+name = "aimux-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The floor both halves of the product stand on: paths, config, logging,
+# atomic writes, the async runtime. It is here so `aimux-remote` can compile
+# against it without depending on `aimux`, which is what makes the
+# local/remote boundary one dependency edge instead of a set of cfg gates.
+
+[dependencies]
+anyhow.workspace = true
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+time.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

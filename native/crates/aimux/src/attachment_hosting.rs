@@ -8,9 +8,7 @@
 use serde_json::Value;
 use std::path::Path;
 
-/// Longest we wait for the relay to take an upload. Publishing is interactive,
-/// so a stalled relay must fail the hosting rather than the publish.
-pub const UPLOAD_TIMEOUT_SECS: u64 = 15;
+pub use aimux_core::attachment_uploader::{AttachmentUploader, UPLOAD_TIMEOUT_SECS};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HostedAttachment {
@@ -84,11 +82,6 @@ pub fn mime_type_for_published_attachment(file_path: &Path) -> &'static str {
         "webp" => "image/webp",
         _ => "application/octet-stream",
     }
-}
-
-/// What the uploader needs, so the decision logic can be tested without a relay.
-pub trait AttachmentUploader {
-    fn post_json(&self, url: &str, token: &str, body: &Value) -> Result<(u16, Value), String>;
 }
 
 // The decision is local. Only the uploader that reaches the network needed the

@@ -20,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ROOTS = [
     ROOT / "native" / "crates" / "aimux" / "src",
+    ROOT / "native" / "crates" / "aimux-core" / "src",
     ROOT / "native" / "crates" / "aimux" / "tests",
 ]
 SEAM_CALL = re.compile(

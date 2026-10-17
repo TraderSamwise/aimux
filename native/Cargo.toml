@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/aimux",
+  "crates/aimux-core",
 ]
 
 [workspace.package]

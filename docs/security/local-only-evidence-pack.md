@@ -64,7 +64,7 @@ Primary source check:
   which returns nothing; a non-empty result would mean remote code is present
   in a local build regardless of the feature flag, and would invalidate this
   section.
-- `native/crates/aimux/src/request_actor.rs` should remain outside
+- `native/crates/aimux-core/src/request_actor.rs` should remain outside
   `src/remote`; it is core request-context/shared-chat actor plumbing, not a
   remote-control transport module.
 - `native/Cargo.toml` currently has one workspace member, `crates/aimux`.
@@ -194,7 +194,7 @@ Source locations:
 - `native/crates/aimux/src/remote/mod.rs`
 - `native/crates/aimux/src/remote/`
 - `native/crates/aimux/src/remote/cli.rs`
-- `native/crates/aimux/src/request_actor.rs`
+- `native/crates/aimux-core/src/request_actor.rs`
 - `native/Cargo.toml`
 - `native/crates/aimux/Cargo.toml`
 - `scripts/check-remote-structural-boundary.mjs`
@@ -212,7 +212,7 @@ rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src/remote ||
 rg -n '#\[cfg\(feature = "remote-control"\)\]' native/crates/aimux/src \
   | cut -d: -f1 | sort | uniq -c | sort -nr
 find native/crates/aimux/src/remote -maxdepth 1 -name '*.rs' -type f | sort
-sed -n '1,120p' native/crates/aimux/src/request_actor.rs
+sed -n '1,120p' native/crates/aimux-core/src/request_actor.rs
 grep -n '^members' -A5 native/Cargo.toml
 
 cargo tree --manifest-path native/Cargo.toml -p aimux --no-default-features
@@ -376,9 +376,9 @@ artifacts are explicit exceptions: `.aimux/worktrees`, `.aimux/plugins`, and
 
 Source locations:
 
-- `native/crates/aimux/src/secure_permissions.rs`
-- `native/crates/aimux/src/atomic_write.rs`
-- `native/crates/aimux/src/config.rs`
+- `native/crates/aimux-core/src/secure_permissions.rs`
+- `native/crates/aimux-core/src/atomic_write.rs`
+- `native/crates/aimux-core/src/config.rs`
 - `native/crates/aimux/src/daemon/runtime.rs`
 - `native/crates/aimux/src/project_service/process.rs`
 - `native/crates/aimux/tests/secure_permissions.rs`
@@ -386,9 +386,9 @@ Source locations:
 Independent confirmation:
 
 ```bash
-sed -n '1,260p' native/crates/aimux/src/secure_permissions.rs
+sed -n '1,260p' native/crates/aimux-core/src/secure_permissions.rs
 rg -n 'repair_global_aimux_home|repair_registered_project_local_stores|repair_project_state_store|ensure_private_dir|PRIVATE_FILE_MODE|PRIVATE_DIR_MODE' \
-  native/crates/aimux/src native/crates/aimux/tests/secure_permissions.rs
+  native/crates/aimux/src native/crates/aimux-core/src native/crates/aimux/tests/secure_permissions.rs
 
 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/aimux-local-review-target \
   cargo test --manifest-path native/Cargo.toml -p aimux --test secure_permissions -- --test-threads=1
@@ -412,7 +412,7 @@ into the user's repository.
 
 Source locations:
 
-- `native/crates/aimux/src/config.rs`
+- `native/crates/aimux-core/src/config.rs`
 - `native/crates/aimux/tests/config.rs`
 - `scripts/check-local-build-boundary.mjs`
 - `scripts/installed-runtime-gate.py`
@@ -421,7 +421,7 @@ Independent confirmation:
 
 ```bash
 rg -n 'context/|history/|tasks/|status/|threads/|attachments/|graveyard/|recordings/|plans/|worktrees/|ROOT_GITIGNORE' \
-  native/crates/aimux/src/config.rs native/crates/aimux/tests/config.rs scripts/check-local-build-boundary.mjs
+  native/crates/aimux-core/src/config.rs native/crates/aimux/tests/config.rs scripts/check-local-build-boundary.mjs
 
 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/aimux-local-review-target \
   cargo test --manifest-path native/Cargo.toml -p aimux --test config

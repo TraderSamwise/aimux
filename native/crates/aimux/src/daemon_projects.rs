@@ -1,29 +1,9 @@
 use crate::project_catalog::DesktopProjectInfo;
 use crate::team_contract::is_project_control_session;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectsRouteProject {
-    pub id: String,
-    pub name: String,
-    pub path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_seen: Option<String>,
-    pub dashboard_session_name: String,
-    pub service: Option<Value>,
-    pub service_alive: bool,
-    /// Whether this project has a live tmux dashboard. `None` means tmux could
-    /// not be asked, which is not the same answer as "no dashboard" -- a client
-    /// that renders unknown as offline would call a whole fleet dead on one
-    /// failed query. Always serialized so a client can tell the three apart.
-    pub dashboard_alive: Option<bool>,
-    pub service_endpoint: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub online_agent_count: Option<usize>,
-}
+pub use aimux_core::project_route::ProjectsRouteProject;
 
 pub fn build_projects_route_projects(
     projects: &[DesktopProjectInfo],

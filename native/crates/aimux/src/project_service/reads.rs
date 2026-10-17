@@ -61,7 +61,7 @@ pub fn route_read_request(
                 // The service's own async runtime, including the tasks that
                 // died. Without this the only process that knows a serve task
                 // panicked is the one that can no longer be asked.
-                "asyncRuntime": crate::async_runtime::doctor_tasks_report(),
+                "asyncRuntime": crate::async_runtime_doctor::doctor_tasks_report(),
             }),
         ));
     }
