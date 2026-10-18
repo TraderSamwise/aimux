@@ -78,6 +78,7 @@ fn run_case_controller(case: &Value) -> (DashboardController, Value) {
                 | DashboardControllerEffect::OpenAgentToolPicker(_)
                 | DashboardControllerEffect::OpenRelevantThread { .. }
                 | DashboardControllerEffect::WorktreeCacheCleanupPreview(_)
+                | DashboardControllerEffect::BulkGraveyardPreview(_)
                 | DashboardControllerEffect::WorktreeCacheCleanupApply(_)
                 | DashboardControllerEffect::LoadWorkOutlineOverlay { .. }
                 | DashboardControllerEffect::LoadOrchestrationRoutes { .. }

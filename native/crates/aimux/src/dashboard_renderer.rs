@@ -247,7 +247,7 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
         ));
     }
     footer_lines.extend(render_footer_hints(
-        &build_dashboard_footer_hints(input),
+        &build_dashboard_footer_hints(input, input.preview_source),
         input.cols.saturating_sub(2),
     ));
     let focus_line = find_focus_line(&content);
@@ -396,10 +396,23 @@ fn dashboard_alert_line(alert: &DashboardFooterAlert<'_>) -> String {
     line
 }
 
-fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterHint<'static>> {
+fn build_dashboard_footer_hints(
+    input: &DashboardRenderInput<'_>,
+    preview_source: &str,
+) -> Vec<FooterHint<'static>> {
     let selected_session = selected_session(input);
     let selected_service = selected_service(input);
     let enter_verb = footer::dashboard_enter_verb(selected_session, selected_service);
+    let restart_hint = selected_session
+        .is_some_and(|session| {
+            session.status == SessionStatus::Offline
+                && session.extra.contains_key("restartLaunchOptions")
+        })
+        .then_some(FooterHint {
+            key: "A",
+            label: "restart args",
+            tone: None,
+        });
     let kill_verb = if selected_service.is_some() {
         Some("stop")
     } else if selected_session.is_some_and(|session| session.status == SessionStatus::Offline) {
@@ -417,7 +430,7 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
     if has_live_scribe(input) {
         scribe_controls.push(FooterHint {
             key: "V",
-            label: if input.preview_source == "scribe" {
+            label: if preview_source == "scribe" {
                 "preview output"
             } else {
                 "preview scribe"
@@ -547,6 +560,7 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
                 tone: None,
             },
         ];
+        hints.extend(restart_hint);
         hints.extend(visibility);
         hints.extend(talk);
         hints.extend(scribe_controls);
@@ -586,6 +600,11 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
                 tone: Some(KeyTone::Danger),
             });
         }
+        hints.push(FooterHint {
+            key: "K/^K",
+            label: "graveyard offline",
+            tone: Some(KeyTone::Danger),
+        });
         hints.extend(system);
         return hints;
     }
@@ -658,6 +677,11 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
             },
         ]);
         hints.extend(visibility);
+        hints.push(FooterHint {
+            key: "K/^K",
+            label: "graveyard offline",
+            tone: Some(KeyTone::Danger),
+        });
         hints.extend(system);
         return hints;
     }
@@ -724,6 +748,7 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
                 tone: None,
             },
         ];
+        hints.extend(restart_hint);
         hints.extend(visibility);
         hints.extend(talk);
         hints.extend(scribe_controls);
@@ -759,6 +784,11 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
                 tone: None,
             });
         }
+        hints.push(FooterHint {
+            key: "K/^K",
+            label: "graveyard offline",
+            tone: Some(KeyTone::Danger),
+        });
         hints.extend(system);
         return hints;
     }
@@ -2970,7 +3000,18 @@ pub fn render_dashboard_footer_hints_contract(
     input: &DashboardRenderInput<'_>,
     preview_source: &str,
 ) -> serde_json::Value {
-    footer::dashboard_footer_hint_values_for_contract(input, preview_source)
+    Value::Array(
+        build_dashboard_footer_hints(input, preview_source)
+            .into_iter()
+            .map(|hint| {
+                if matches!(hint.tone, Some(KeyTone::Danger)) {
+                    json!([hint.key, hint.label, "danger"])
+                } else {
+                    json!([hint.key, hint.label])
+                }
+            })
+            .collect(),
+    )
 }
 
 fn render_help_content() -> Vec<String> {
@@ -2986,12 +3027,12 @@ fn render_help_content() -> Vec<String> {
         "    [c] coordination".into(),
         "    [p] project".into(),
         "    [L] library".into(),
-        "    [t] topology".into(),
-        "    [g] graveyard".into(),
+        "    [t] topology  [g] graveyard".into(),
         String::new(),
         format!("  {}", style("Actions", Tone::Strong)),
         "    [n] agent  [v] service  [f] fork  [S] switch tool".into(),
         "    [a] hide/show offline agents  [A] edit offline restart args  [x] stop/kill".into(),
+        "    [K] graveyard offline in worktree  [Ctrl-K] whole project (confirm)".into(),
         "    [O] overseer menu  [O then p] pause/resume loop alerts".into(),
     ]
 }
