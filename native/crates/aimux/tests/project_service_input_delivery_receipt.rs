@@ -19,6 +19,7 @@ use aimux::project_service::input_delivery_receipt::{
     finish_input_delivery, projected_input_delivery,
 };
 use aimux::project_service::router::ProjectServiceRequestContext;
+use aimux::project_service::session_semantics::{SessionSemanticsInput, derive_session_semantics};
 use aimux::project_service::statusline::{
     build_statusline_snapshot, render_tmux_statusline_contract,
 };
@@ -224,6 +225,256 @@ fn receipts_follow_actual_window_identity_and_clear_on_foreign_window_or_absence
         );
     }
     assert!(projected_input_delivery(&json!({"tmuxTarget":{"windowId":"@1"}}), None).is_none());
+}
+
+#[test]
+fn urgent_attention_remains_visible_after_unverified_submission_across_surfaces() {
+    let isolation = support::TestIsolation::new("input-receipt-urgent-attention");
+    let timestamp = "2026-10-18T00:00:00.000Z";
+    let topology = coerce_runtime_topology(&json!({
+        "version":1,"generatedAt":timestamp,
+        "rigs":[{"id":"rig","name":"aimux-test","projectRoot":isolation.root(),"createdAt":timestamp,"updatedAt":timestamp}],
+        "nodes":[{"id":"node","rigId":"rig","logicalId":"worker","toolConfigKey":"codex","label":"polymarket-worker","createdAt":timestamp}],
+        "bindings":[{"id":"binding","nodeId":"node","tmuxSession":"aimux-test","tmuxWindowId":"@1","tmuxWindowIndex":1,"updatedAt":timestamp}],
+        "sessions":[{"id":"worker","nodeId":"node","status":"running","command":"codex","createdAt":timestamp,"updatedAt":timestamp}]
+    })).unwrap();
+    let live = support::live_windows("aimux-test", &["@1"]);
+    let directory = isolation.root().join("state");
+    let exchange = json!({"tasks":[],"threads":[],"messages":[]});
+    for (attention, expected_hint, expected_badge) in [
+        ("error", "error", "✗"),
+        ("blocked", "blocked", "!"),
+        ("needs_input", "on you", "?"),
+        ("needs_response", "answer", "?"),
+    ] {
+        let metadata = BTreeMap::from([(
+            "worker".to_owned(),
+            json!({
+                "inputDelivery": {
+                    "windowId":"@1","state":"delivered","verified":false,
+                    "notice":UNVERIFIED_SUBMISSION_NOTICE,"displayLabel":UNVERIFIED_SUBMISSION_LABEL,
+                },
+                "derived":{"activity":"idle","attention":attention},
+            }),
+        )]);
+        save_metadata_state(
+            &directory,
+            &MetadataState {
+                version: 1,
+                sessions: metadata.clone(),
+            },
+        )
+        .unwrap();
+        let desktop = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: isolation.root().to_string_lossy().into_owned(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange,
+            },
+            Some(&live),
+        );
+        let row = &desktop["sessions"][0];
+        assert_eq!(row["semantic"]["user"]["attention"], attention);
+        assert_eq!(
+            row["semantic"]["presentation"]["compactHint"],
+            expected_hint
+        );
+        assert_eq!(
+            row["semantic"]["presentation"]["rowChips"][0]["label"],
+            UNVERIFIED_SUBMISSION_LABEL
+        );
+        assert_eq!(row["inputDelivery"]["notice"], UNVERIFIED_SUBMISSION_NOTICE);
+        let context =
+            ProjectServiceRequestContext::with_project_state_dir(isolation.root(), &directory)
+                .with_desktop_state(desktop);
+        let snapshot = build_statusline_snapshot(&context).unwrap();
+        let footer = render_tmux_statusline_contract(&json!({
+            "data":snapshot,"projectRoot":isolation.root(),"line":"bottom",
+            "options":{"currentWindowId":"@1","currentPath":isolation.root()},
+        }));
+        let text = footer["text"].as_str().unwrap();
+        assert!(text.contains(expected_hint), "{attention}: {text}");
+        assert!(text.contains(expected_badge), "{attention}: {text}");
+        assert!(
+            !text.contains(UNVERIFIED_SUBMISSION_LABEL),
+            "{attention}: {text}"
+        );
+    }
+}
+
+#[test]
+fn actionable_pressure_keeps_its_hint_after_unverified_submission_across_surfaces() {
+    let isolation = support::TestIsolation::new("input-receipt-actionable-pressure");
+    let timestamp = "2026-10-18T00:00:00.000Z";
+    let topology = coerce_runtime_topology(&json!({
+        "version":1,"generatedAt":timestamp,
+        "rigs":[{"id":"rig","name":"aimux-test","projectRoot":isolation.root(),"createdAt":timestamp,"updatedAt":timestamp}],
+        "nodes":[{"id":"node","rigId":"rig","logicalId":"worker","toolConfigKey":"codex","label":"polymarket-worker","createdAt":timestamp}],
+        "bindings":[{"id":"binding","nodeId":"node","tmuxSession":"aimux-test","tmuxWindowId":"@1","tmuxWindowIndex":1,"updatedAt":timestamp}],
+        "sessions":[{"id":"worker","nodeId":"node","status":"running","command":"codex","createdAt":timestamp,"updatedAt":timestamp}]
+    })).unwrap();
+    let live = support::live_windows("aimux-test", &["@1"]);
+    let directory = isolation.root().join("state");
+    let metadata = BTreeMap::from([(
+        "worker".to_owned(),
+        json!({
+            "inputDelivery": {
+                "windowId":"@1","state":"delivered","verified":false,
+                "notice":UNVERIFIED_SUBMISSION_NOTICE,"displayLabel":UNVERIFIED_SUBMISSION_LABEL,
+            },
+            "derived":{"activity":"idle","attention":"normal"},
+        }),
+    )]);
+    save_metadata_state(
+        &directory,
+        &MetadataState {
+            version: 1,
+            sessions: metadata.clone(),
+        },
+    )
+    .unwrap();
+    for (name, exchange, expected_pressure, expected_hint, footer_hint, count_field) in [
+        (
+            "ordinary idle lane",
+            json!({"tasks":[],"threads":[],"messages":[]}),
+            "none",
+            UNVERIFIED_SUBMISSION_LABEL,
+            UNVERIFIED_SUBMISSION_LABEL,
+            None,
+        ),
+        (
+            "blocked workflow",
+            json!({"tasks":[{"id":"task","status":"blocked"}],"threads":[{"id":"thread","taskId":"task","participants":["worker"]}],"messages":[]}),
+            "blocked",
+            "blocked task",
+            "blocked",
+            Some("workflowBlockedCount"),
+        ),
+        (
+            "workflow waiting on this lane",
+            json!({"tasks":[{"id":"task","status":"pending"}],"threads":[{"id":"thread","taskId":"task","participants":["worker"],"waitingOn":["worker"]}],"messages":[]}),
+            "waiting_on_user",
+            "on you",
+            "on you",
+            Some("workflowOnMeCount"),
+        ),
+        (
+            "thread waiting on this lane",
+            json!({"tasks":[],"threads":[{"id":"thread","participants":["worker"],"waitingOn":["worker"]}],"messages":[]}),
+            "waiting_on_user",
+            "on you",
+            "on you",
+            Some("threadWaitingOnMeCount"),
+        ),
+        (
+            "thread waiting on someone else",
+            json!({"tasks":[],"threads":[{"id":"thread","participants":["worker"],"owner":"worker","waitingOn":["peer"]}],"messages":[]}),
+            "waiting_on_them",
+            UNVERIFIED_SUBMISSION_LABEL,
+            UNVERIFIED_SUBMISSION_LABEL,
+            Some("threadWaitingOnThemCount"),
+        ),
+    ] {
+        let desktop = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: isolation.root().to_string_lossy().into_owned(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange,
+            },
+            Some(&live),
+        );
+        let row = &desktop["sessions"][0];
+        assert_eq!(row["semantic"]["user"]["label"], "ready", "{name}");
+        assert_eq!(row["semantic"]["user"]["attention"], "none", "{name}");
+        assert_eq!(
+            row["semantic"]["orchestration"]["pressure"], expected_pressure,
+            "{name}"
+        );
+        assert_eq!(
+            row["semantic"]["presentation"]["compactHint"], expected_hint,
+            "{name}"
+        );
+        assert_eq!(
+            row["semantic"]["presentation"]["rowChips"][0]["label"], UNVERIFIED_SUBMISSION_LABEL,
+            "{name}"
+        );
+        assert_eq!(
+            row["inputDelivery"]["notice"], UNVERIFIED_SUBMISSION_NOTICE,
+            "{name}"
+        );
+        if let Some(field) = count_field {
+            assert_eq!(
+                row[field], 1,
+                "{name}: {field} must drive the real projection"
+            );
+        }
+        let context =
+            ProjectServiceRequestContext::with_project_state_dir(isolation.root(), &directory)
+                .with_desktop_state(desktop);
+        let snapshot = build_statusline_snapshot(&context).unwrap();
+        let footer = render_tmux_statusline_contract(&json!({
+            "data":snapshot,"projectRoot":isolation.root(),"line":"bottom",
+            "options":{"currentWindowId":"@1","currentPath":isolation.root()},
+        }));
+        let text = footer["text"].as_str().unwrap();
+        assert!(text.contains(footer_hint), "{name}: {text}");
+        if expected_hint != UNVERIFIED_SUBMISSION_LABEL {
+            assert!(
+                !text.contains(UNVERIFIED_SUBMISSION_LABEL),
+                "{name}: {text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn receipt_compact_hint_preserves_working_done_and_lifecycle_badges() {
+    let isolation = support::TestIsolation::new("input-receipt-status-badges");
+    let delivery = json!({
+        "windowId":"@1","state":"delivered","verified":false,
+        "notice":UNVERIFIED_SUBMISSION_NOTICE,"displayLabel":UNVERIFIED_SUBMISSION_LABEL,
+    });
+    for (activity, pending_action, expected_badge) in [
+        ("running", None, "↻"),
+        ("done", None, "✓"),
+        ("idle", Some("starting"), "…"),
+        ("idle", Some("stopping"), "…"),
+        ("idle", Some("graveyarding"), "…"),
+    ] {
+        let semantic = derive_session_semantics(SessionSemanticsInput {
+            status: "running".into(),
+            activity: Some(activity.into()),
+            attention: Some("normal".into()),
+            pending_action: pending_action.map(str::to_owned),
+            input_delivery: Some(delivery.clone()),
+            ..SessionSemanticsInput::default()
+        });
+        let desktop = json!({"sessions":[{
+            "id":"worker","label":"polymarket-worker","command":"codex","status":"running",
+            "tmuxWindowId":"@1","tmuxSession":"aimux-test","semantic":semantic,"inputDelivery":delivery,
+        }]});
+        let context = ProjectServiceRequestContext::with_project_state_dir(
+            isolation.root(),
+            isolation.root().join("state"),
+        )
+        .with_desktop_state(desktop);
+        let snapshot = build_statusline_snapshot(&context).unwrap();
+        let footer = render_tmux_statusline_contract(&json!({
+            "data":snapshot,"projectRoot":isolation.root(),"line":"bottom",
+            "options":{"currentWindowId":"@1","currentPath":isolation.root()},
+        }));
+        let text = footer["text"].as_str().unwrap();
+        assert!(
+            text.contains(UNVERIFIED_SUBMISSION_LABEL),
+            "{activity}/{pending_action:?}: {text}"
+        );
+        assert!(
+            text.contains(expected_badge),
+            "{activity}/{pending_action:?}: {text}"
+        );
+    }
 }
 
 #[test]

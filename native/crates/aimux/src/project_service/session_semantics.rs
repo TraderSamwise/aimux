@@ -63,22 +63,29 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
         "assignedTask": input.has_active_task,
         "canBeAssignedWork": can_receive_input && !input.has_active_task,
     });
-    let compact_hint =
+    let default_compact_hint = compact_hint(CompactHintInput {
+        user: &user,
+        notifications: &notifications,
+        thread_unread_count,
+        activity_new_count,
+        pending_delivery_count,
+        waiting_on_me_count,
+        waiting_on_them_count,
+        blocked_count,
+        has_active_task: input.has_active_task,
+    });
+    let urgent_attention = matches!(
+        user.get("attention").and_then(Value::as_str),
+        Some("error" | "blocked" | "needs_input" | "needs_response")
+    );
+    let actionable_pressure = matches!(pressure, "blocked" | "waiting_on_user");
+    let compact_hint = if urgent_attention || actionable_pressure {
+        default_compact_hint
+    } else {
         super::input_delivery_receipt::delivery_display_label(input.input_delivery.as_ref())
             .map(|label| Value::String(label.to_owned()))
-            .unwrap_or_else(|| {
-                compact_hint(CompactHintInput {
-                    user: &user,
-                    notifications: &notifications,
-                    thread_unread_count,
-                    activity_new_count,
-                    pending_delivery_count,
-                    waiting_on_me_count,
-                    waiting_on_them_count,
-                    blocked_count,
-                    has_active_task: input.has_active_task,
-                })
-            });
+            .unwrap_or(default_compact_hint)
+    };
     // The row's chips, decided here so the dashboard row and the app row stop
     // answering "what is going on with this agent" differently.
     let mut row_chips =

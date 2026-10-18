@@ -1292,8 +1292,13 @@ fn session_chip_label(
         super::input_delivery_receipt::delivery_display_label(session.get("inputDelivery"))
         && hint.as_deref() == Some(label)
     {
-        let identity_budget = 28usize.saturating_sub(label.chars().count() + 1);
-        return format!("{} {label}", trim_text(&identity, identity_budget));
+        let suffix = [Some(label.to_owned()), badge]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let identity_budget = 28usize.saturating_sub(suffix.chars().count() + 1);
+        return format!("{} {suffix}", trim_text(&identity, identity_budget));
     }
     trim_text(
         &[Some(identity), hint, badge]

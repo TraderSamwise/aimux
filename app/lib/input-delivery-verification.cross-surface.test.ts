@@ -30,6 +30,7 @@ const fixture = JSON.parse(
 };
 const chat = source("../components/screens/AgentChatScreen.tsx");
 const monitor = source("../app/(main)/monitor.tsx");
+const nativeMonitor = source("../components/MonitorCapturePanel.native.tsx");
 const multipartPrompt = `${fixture.prompt}\n${"a".repeat(4577)}\n${"b".repeat(3941)}`;
 
 function source(path: string): ts.SourceFile {
@@ -259,4 +260,79 @@ describe("submission receipts stay consistent across app surfaces", () => {
       }
     }
   });
+
+  it.each(fixture.cases)(
+    "native Monitor counts $name as accepted without claiming confirmed delivery",
+    async (entry) => {
+      for (const kind of ["project-agent", "shared-chat"]) {
+        const parent = callback(monitor, "handleSampleCaptured", {
+          selectedTarget: {
+            id: "target",
+            kind,
+            endpoint: {},
+            sessionId: "lane",
+            ownerUserId: "owner",
+          },
+          getToken: async () => null,
+          user: null,
+          userId: "user",
+          settings: {},
+          formatMonitorSampleText: () => multipartPrompt,
+          sendLivePaneInput: vi.fn(async () => ({
+            ok: true,
+            accepted: true,
+            delivery: entry.delivery,
+          })),
+          resolveSharedChatActor: vi.fn(),
+          formatLivePaneInputResponseRefusal,
+          sendDeliveryStateAfterResponse,
+          setDeliveryNotice: vi.fn(),
+          setLastDelivery: vi.fn(),
+          setDeliveryTargetId: vi.fn(),
+        });
+        const bindings = {
+          deliveryEnabled: true,
+          onSampleCaptured: parent,
+          setDelivering: vi.fn(),
+          setDeliveryError: vi.fn(),
+          setDeliveryCount: vi.fn(),
+          lastDeliveredSpeechRef: { current: "" },
+        };
+        await callback(nativeMonitor, "deliverSample", bindings)({ transcript: "speech sample" });
+        if (entry.expectedOutcome === "failed") {
+          expect(bindings.setDeliveryCount).not.toHaveBeenCalled();
+          expect(bindings.lastDeliveredSpeechRef.current).toBe("");
+          expect(bindings.setDeliveryError).toHaveBeenLastCalledWith(entry.expectedNotice);
+        } else {
+          expect(bindings.setDeliveryCount).toHaveBeenCalledOnce();
+          expect(bindings.setDeliveryCount.mock.calls[0][0](0)).toBe(1);
+          expect(bindings.lastDeliveredSpeechRef.current).toBe("speech sample");
+        }
+      }
+      let counter: ts.JsxElement | undefined;
+      function findCounter(node: ts.Node) {
+        if (
+          ts.isJsxElement(node) &&
+          node.children.some(
+            (child) =>
+              ts.isJsxExpression(child) &&
+              child.expression?.getText(nativeMonitor) === "deliveryCount",
+          )
+        )
+          counter = node;
+        ts.forEachChild(node, findCounter);
+      }
+      findCounter(nativeMonitor);
+      expect(counter).toBeDefined();
+      const label = evaluate(counter!, nativeMonitor, {
+        React: {
+          createElement: (_component: string, _props: unknown, ...children: unknown[]) =>
+            children.join(""),
+        },
+        Text: "Text",
+        deliveryCount: entry.expectedOutcome === "failed" ? 0 : 1,
+      });
+      expect(label).toBe(`${entry.expectedOutcome === "failed" ? 0 : 1} accepted`);
+    },
+  );
 });
