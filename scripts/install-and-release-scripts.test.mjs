@@ -2579,11 +2579,7 @@ describe("release workflow", () => {
   it("repairs PATH before inline archive checks use tar gzip mode", () => {
     const workflow = readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8");
 
-    for (const step of [
-      "Verify release asset has no source maps",
-      "Verify Darwin notifier helper",
-      "Stage macOS native assets for npm package",
-    ]) {
+    for (const step of ["Verify release asset has no source maps", "Verify Darwin notifier helper"]) {
       const stepStart = workflow.indexOf(`- name: ${step}`);
       expect(stepStart, `${step} missing`).toBeGreaterThanOrEqual(0);
       const nextStep = workflow.indexOf("\n      - name:", stepStart + 1);
@@ -2694,20 +2690,20 @@ describe("release workflow", () => {
     expect(renderer).toContain('(bin/"aimux").write_env_script libexec/"bin/aimux", {}');
     expect(renderer).not.toContain("bin.install_symlink");
     const npmStage = workflow.slice(
-      workflow.indexOf("- name: Stage macOS native assets for npm package"),
-      workflow.indexOf("- name: Verify npm package has no source maps"),
+      workflow.indexOf("- name: Stage full native assets for npm package"),
+      workflow.indexOf("- name: Pack and verify npm runtime payload"),
     );
-    // npm ships the full darwin build only, and the arches come from the build
-    // matrix. This step interpolated `aimux-darwin-${arch}` over a hardcoded
-    // `arm64 x64`, so after Intel was dropped the download found nothing and
-    // v0.1.61's npm publish failed with every asset already published.
-    expect(npmStage).toContain('[ "$platform" = darwin ] || continue');
+    expect(npmStage).not.toContain('[ "$platform" = darwin ] || continue');
     expect(npmStage).toContain('[ "$variant" = full ] || continue');
-    expect(npmStage).toContain("done < <(python3 scripts/release-asset-matrix.py)");
+    expect(npmStage).toContain('python3 scripts/release-asset-matrix.py > "$TMP_DIR/matrix.tsv"');
+    expect(npmStage).toContain('done < "$TMP_DIR/matrix.tsv"');
+    expect(npmStage).toContain('python3 scripts/stage-npm-assets.py "$TMP_DIR"');
     expect(npmStage).not.toMatch(/for arch in /);
     expect(npmStage).not.toContain("aimux-local");
-    // A matrix that lists no darwin full asset must say so rather than publish
-    // an npm package with no macOS binary in it.
-    expect(npmStage).toContain("the build matrix lists no darwin full asset to stage for npm");
+    expect(npmStage).toContain("the build matrix lists no full asset to stage for npm");
+    expect(npmJob).toContain("scripts/run-yarn prepack");
+    expect(npmJob).toContain("npm pack --ignore-scripts --json");
+    expect(npmJob).toContain('node scripts/verify-npm-package.mjs "$PACKAGE"');
+    expect(npmJob).toContain('npm publish "$AIMUX_NPM_PACKAGE" --access public --provenance');
   });
 });

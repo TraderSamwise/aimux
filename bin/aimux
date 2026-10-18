@@ -27,7 +27,8 @@ if [ -n "${AIMUX_NATIVE_BIN:-}" ]; then
   if [ -x "$AIMUX_NATIVE_BIN" ]; then
     exec "$AIMUX_NATIVE_BIN" "$@"
   fi
-  printf 'aimux: native binary is not executable: %s\n' "$AIMUX_NATIVE_BIN" >&2
+  printf 'aimux: native binary is not executable for %s-%s: %s\n' \
+    "$(detect_platform)" "$(detect_arch)" "$AIMUX_NATIVE_BIN" >&2
   exit 127
 fi
 
@@ -61,10 +62,10 @@ ROOT_DIR="$(CDPATH= cd -P -- "$(dirname -- "$LAUNCHER_PATH")/.." && pwd)"
 PLATFORM="$(detect_platform)"
 ARCH="$(detect_arch)"
 
-for candidate in \
-  "$ROOT_DIR/native/$PLATFORM-$ARCH/aimux" \
-  "$ROOT_DIR/native/target/release/aimux" \
-  "$ROOT_DIR/native/target/debug/aimux"
+PACKAGED_NATIVE="$ROOT_DIR/native/$PLATFORM-$ARCH/aimux"
+RELEASE_NATIVE="$ROOT_DIR/native/target/release/aimux"
+DEBUG_NATIVE="$ROOT_DIR/native/target/debug/aimux"
+for candidate in "$PACKAGED_NATIVE" "$RELEASE_NATIVE" "$DEBUG_NATIVE"
 do
   if [ -x "$candidate" ]; then
     export AIMUX_ROOT="${AIMUX_ROOT:-$ROOT_DIR}"
@@ -73,5 +74,6 @@ do
   fi
 done
 
-printf 'aimux: native binary not found; run `cargo build --manifest-path native/Cargo.toml -p aimux` or install a release asset\n' >&2
+printf 'aimux: no executable native binary for %s-%s; searched:\n  %s\n  %s\n  %s\nReinstall aimux-cli or use the standalone release installer.\n' \
+  "$PLATFORM" "$ARCH" "$PACKAGED_NATIVE" "$RELEASE_NATIVE" "$DEBUG_NATIVE" >&2
 exit 127

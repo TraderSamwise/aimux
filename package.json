@@ -15,6 +15,8 @@
     "scripts/install-cargo-sweep-schedule.sh",
     "scripts/tmux-open-hyperlink.sh",
     "native/darwin-arm64",
+    "native/linux-x64",
+    "native/linux-arm64",
     "LICENSE",
     "README.md"
   ],
@@ -89,13 +91,13 @@
     "audit:test-classification": "python3 scripts/native-test-runner.py --check-classification",
     "native:cargo-sweep": "bash scripts/cargo-sweep-stale-targets.sh",
     "native:cargo-sweep:install-schedule": "bash scripts/install-cargo-sweep-schedule.sh",
-    "prepack": "scripts/run-yarn build:release && scripts/run-yarn build:ui:local",
+    "prepack": "node scripts/verify-npm-package.mjs --staged-natives && scripts/run-yarn build:ui:local",
     "prepare": "husky",
     "check:hosted": "scripts/run-yarn native:build && ./scripts/hosted-check.mjs",
     "hook:attest": "bash scripts/check-commit-hook-attestations.sh",
     "audit:agent-ordering": "./scripts/audit-agent-ordering.mjs",
     "audit:test-runtime-env": "./scripts/audit-test-runtime-env.mjs",
-    "audit:release-asset-lists": "./scripts/audit-release-asset-list-copies.mjs",
+    "audit:release-asset-lists": "./scripts/audit-release-asset-list-copies.mjs && ./scripts/audit-runtime-package.mjs",
     "audit:transient-channel": "./scripts/audit-transient-channel.mjs"
   },
   "lint-staged": {

@@ -2660,7 +2660,7 @@ impl TmuxRuntimeManager {
         } else {
             build_default_root_mouse_bindings_install_config(
                 &config.project_state_dir,
-                &repo_script_path("tmux-open-hyperlink.sh"),
+                &resolve_repo_script_path("scripts/tmux-open-hyperlink.sh").to_string_lossy(),
             )
         };
         let write_result = fs::write(&file, bindings)
@@ -3883,15 +3883,13 @@ pub fn statusline_format_args(line: &str, project_state_dir: &str) -> String {
     common
 }
 
-fn repo_script_path(name: &str) -> String {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("..")
-        .join("scripts")
-        .join(name)
-        .to_string_lossy()
-        .into_owned()
+pub(crate) fn resolve_repo_script_path(relative: &str) -> PathBuf {
+    let candidate = std::env::var_os("AIMUX_ROOT")
+        .filter(|root| !root.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
+        .join(relative);
+    fs::canonicalize(&candidate).unwrap_or(candidate)
 }
 
 fn default_open_hyperlink_command() -> String {
