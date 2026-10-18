@@ -362,7 +362,7 @@ pub fn loop_delivery_queue(
         .max(FAILED_BUFFER_RETRY_FLOOR_MS);
     let mut recipients = BTreeMap::<String, VecDeque<LoopSend>>::new();
     for send in watcher
-        .buffered_sends_to_deliver(usize::MAX)
+        .buffered_sends_for_input(input, usize::MAX)
         .into_iter()
         .chain(sends)
     {

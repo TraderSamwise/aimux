@@ -365,6 +365,7 @@ impl LoopWatcher {
     ) -> Vec<LoopSend> {
         let mut sends = Vec::new();
         self.gc_stale_pauses(input);
+        self.refresh_buffered_work(input);
         let loop_exit_summary = self.plan_loop_exit_summary(overseer_id.as_deref(), input, now_ms);
         // The fleet scan still excludes the overseer, because it also answers
         // "who is spare capacity" -- an idle overseer under a goal would read
@@ -857,6 +858,121 @@ impl LoopWatcher {
             .collect()
     }
 
+    pub fn buffered_sends_for_input(&self, input: &Value, limit: usize) -> Vec<LoopSend> {
+        self.buffered_sends
+            .values()
+            .filter_map(buffered_send_to_loop_send)
+            .filter_map(|send| self.current_buffered_work_send(&send, input))
+            .chain(
+                self.recipient_watchers
+                    .values()
+                    .flat_map(|watcher| watcher.buffered_sends_for_input(input, limit)),
+            )
+            .take(limit)
+            .collect()
+    }
+
+    fn refresh_buffered_work(&mut self, input: &Value) {
+        let updates = self
+            .buffered_sends
+            .iter()
+            .filter_map(|(key, buffered)| {
+                let send = buffered_send_to_loop_send(buffered)?;
+                Some((key.clone(), self.current_buffered_work_send(&send, input)))
+            })
+            .collect::<Vec<_>>();
+        for (key, send) in updates {
+            if let Some(send) = send {
+                if let Some(buffered) = self.buffered_sends.get_mut(&key) {
+                    buffered.text = send.text;
+                }
+            } else if let Some(buffered) = self.buffered_sends.remove(&key) {
+                self.pending_loop_exits.remove(&buffered.signature);
+            }
+        }
+    }
+
+    fn current_buffered_work_send(&self, send: &LoopSend, input: &Value) -> Option<LoopSend> {
+        if matches!(
+            send.kind,
+            LoopSendKind::OverseerBriefing | LoopSendKind::DirectNudge
+        ) && self
+            .buffered_sends
+            .get(&buffered_send_key(send))
+            .is_some_and(|buffered| {
+                buffered.candidate_keys.iter().any(|key| {
+                    array_field(input, "sessions").iter().any(|session| {
+                        str_field(session, "id") == key.session_id
+                            && session_is_parked(input, session)
+                    })
+                })
+            })
+        {
+            return None;
+        }
+        let overseer = Some(send.session_id.as_str());
+        let mut candidates = find_loop_candidates_with_overseer(input, overseer);
+        let paused = self.extract_paused_candidates(&mut candidates);
+        let text = match send.kind {
+            LoopSendKind::Reconciliation => match find_visible_unowned_work(input) {
+                Err(error) => {
+                    if send.signature != format!("work-inventory-unavailable:{error}") {
+                        return None;
+                    }
+                    build_inventory_unavailable_briefing(&error)
+                }
+                Ok(work) => {
+                    let available = find_idle_loop_capacity(input, overseer, &paused);
+                    if work.is_empty()
+                        || available.is_empty()
+                        || send.signature != reconciliation_signature(&work, &available)
+                    {
+                        return None;
+                    }
+                    build_reconciliation_briefing(&work, &available)
+                }
+            },
+            LoopSendKind::IdleFleet => {
+                let work = match find_idle_fleet_waiting_work(input, overseer) {
+                    Ok(work) => work,
+                    // The fresh reconciliation reports the error; old work must not flush.
+                    Err(_) => return None,
+                };
+                let available = find_idle_fleet_capacity(input, overseer);
+                if work.is_empty()
+                    || available.is_empty()
+                    || !fleet_is_fully_idle(input, overseer)
+                    || !find_idle_loop_capacity(input, overseer, &paused).is_empty()
+                {
+                    return None;
+                }
+                build_idle_fleet_briefing(&work, &available)
+            }
+            LoopSendKind::LoopExit => {
+                let keys = self.pending_loop_exits.get(&send.signature)?;
+                let candidates = find_loop_exit_candidates_with_overseer(input, overseer)
+                    .into_iter()
+                    .filter(|candidate| keys.contains(&loop_exit_candidate_signature(candidate)))
+                    .collect::<Vec<_>>();
+                if candidates.is_empty() {
+                    return None;
+                }
+                build_loop_exit_briefing(&candidates)
+            }
+            LoopSendKind::PausedSummary => {
+                if paused.is_empty() {
+                    return None;
+                }
+                build_paused_summary(&paused)
+            }
+            _ => return Some(send.clone()),
+        };
+        Some(LoopSend {
+            text,
+            ..send.clone()
+        })
+    }
+
     pub fn remove_buffered_send(&mut self, send: &LoopSend) {
         if self.owns_buffered_send(send) {
             self.buffered_sends.remove(&buffered_send_key(send));
@@ -1105,9 +1221,7 @@ impl LoopWatcher {
         Some(LoopSend {
             session_id: overseer_id.to_owned(),
             text: match unavailable {
-                Some(error) => format!(
-                    "[aimux loop check] Work inventory unavailable: {error}\nCould not determine whether work is waiting. Repair the inventory before assigning or closing work."
-                ),
+                Some(error) => build_inventory_unavailable_briefing(&error),
                 None => build_reconciliation_briefing(&work, &available),
             },
             signature,
@@ -1960,6 +2074,7 @@ pub fn find_loop_exit_candidates_with_overseer(
             if overseer_id == Some(id)
                 || overseer_ids.iter().any(|overseer| overseer == id)
                 || !is_known_loop_exit_session_status(session)
+                || session_is_parked(input, session)
             {
                 return None;
             }
@@ -2141,6 +2256,12 @@ fn build_paused_summary(candidates: &[Value]) -> String {
     )]);
     lines.extend(candidates.iter().map(describe_candidate));
     lines.join("\n")
+}
+
+fn build_inventory_unavailable_briefing(error: &str) -> String {
+    format!(
+        "[aimux loop check] Work inventory unavailable: {error}\nCould not determine whether work is waiting. Repair the inventory before assigning or closing work."
+    )
 }
 
 fn build_reconciliation_briefing(work: &[Value], available: &[Value]) -> String {

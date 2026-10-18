@@ -8,12 +8,14 @@ use aimux::daemon::text::agents::{
 };
 use aimux::daemon::text::params::ProjectServiceJsonResult;
 use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
-use aimux::loop_watcher::{LoopSendKind, LoopWatcher};
+use aimux::loop_watcher::{LoopDeliveryOutcome, LoopSendKind, LoopWatcher};
 use aimux::project_api_contract::routes;
 use aimux::project_service::coordination_worklist::{
     build_coordination_thread_entries, build_coordination_view,
 };
-use aimux::project_service::loop_watcher_task::{LoopWatcherTask, stopped_metadata_session_ids};
+use aimux::project_service::loop_watcher_task::{
+    LoopWatcherTask, loop_delivery_queue, stopped_metadata_session_ids,
+};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::{
     runtime_exchange_path, try_read_runtime_exchange, write_runtime_exchange,
@@ -790,5 +792,221 @@ fn stale_scan_cannot_erase_a_newer_deliberate_park() {
     assert_eq!(
         load_metadata_state(&state).sessions[WORKER]["loopAlertsParked"],
         newer
+    );
+}
+
+fn write_self_exit(state: &Path, action: &str) {
+    let mut metadata = load_metadata_state(state);
+    metadata.sessions.get_mut(WORKER).unwrap()["loopLastAction"] = json!({
+        "action": action, "source": "agent", "updatedBySessionId": WORKER,
+        "at": "2026-10-18T00:00:00.000Z", "goal": "finished old loop work",
+        "reason": "self-reported loop exit"
+    });
+    save_metadata_state(state, &metadata).expect("write self-exit metadata");
+}
+
+#[test]
+fn parked_self_exited_agents_stay_quiet_for_fresh_and_new_overseer_recipients() {
+    with_fixture(
+        "parking-self-exit-quiet",
+        "done",
+        |context, state, exchange| {
+            for action in ["done", "block"] {
+                write_self_exit(state, action);
+                assert_eq!(pause(context).status, 200);
+                let mut input = scan_input(state, &exchange);
+                let mut watcher = LoopWatcher::new();
+                assert!(
+                    watcher.plan_sends(&input, NOW).is_empty(),
+                    "{action}: a parked self-exit must not generate a first-scan notification"
+                );
+                input["sessions"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({ "id": "new-overseer", "status": "running", "tool": "codex" }));
+                input["metadata"]["sessions"]["new-overseer"] =
+                    json!({ "overseer": true, "derived": { "activity": "busy" } });
+                for now in [NOW + 1, NOW + 90_000] {
+                    assert!(
+                        watcher.plan_sends(&input, now).is_empty(),
+                        "{action}: a new recipient must respect existing parking"
+                    );
+                }
+                assert!(
+                    LoopWatcher::new()
+                        .plan_sends(&input, NOW + 120_000)
+                        .is_empty(),
+                    "{action}: watcher restart must preserve parked quietness"
+                );
+            }
+        },
+    );
+}
+
+#[test]
+fn nonparked_self_exited_agents_still_notify_the_overseer() {
+    with_fixture("unparked-self-exit-notice", "done", |_, state, exchange| {
+        for action in ["done", "block"] {
+            write_self_exit(state, action);
+            let sends = LoopWatcher::new().plan_sends(&scan_input(state, &exchange), NOW);
+            assert!(
+                sends
+                    .iter()
+                    .any(|send| send.kind == LoopSendKind::LoopExit && send.session_id == "boss"),
+                "{action}: a genuine unparked self-exit must still notify: {sends:?}"
+            );
+        }
+    });
+}
+
+fn buffer_exit_and_idle_fleet(input: &Value) -> LoopWatcher {
+    let mut watcher = LoopWatcher::new();
+    watcher.plan_sends(input, NOW);
+    let sends = watcher.plan_sends(input, NOW + 30_000);
+    assert!(sends.iter().any(|send| send.kind == LoopSendKind::LoopExit));
+    assert!(
+        sends
+            .iter()
+            .any(|send| send.kind == LoopSendKind::IdleFleet)
+    );
+    for send in sends
+        .iter()
+        .filter(|send| matches!(send.kind, LoopSendKind::LoopExit | LoopSendKind::IdleFleet))
+    {
+        watcher.buffer_send(send, NOW + 30_000);
+        watcher.commit_send_result(send, NOW + 30_000, LoopDeliveryOutcome::Buffered);
+    }
+    assert_eq!(watcher.buffered_send_count(), 2);
+    watcher
+}
+
+#[test]
+fn buffered_old_exit_and_idle_fleet_alerts_do_not_flush_after_parking_and_closed_work() {
+    with_fixture(
+        "parking-buffered-stale-alerts",
+        "done",
+        |context, state, mut exchange| {
+            write_self_exit(state, "done");
+            let watcher = buffer_exit_and_idle_fleet(&scan_input(state, &exchange));
+            assert_eq!(pause(context).status, 200);
+            exchange["tasks"][0]["status"] = json!("done");
+            write_runtime_exchange(runtime_exchange_path(state), &exchange)
+                .expect("close old queued work");
+            let queue = loop_delivery_queue(
+                &watcher,
+                &scan_input(state, &exchange),
+                vec![],
+                NOW + 90_000,
+                8,
+            );
+            assert!(
+                queue.is_empty(),
+                "buffered old alerts must not bypass parking or closed-work checks: {queue:?}"
+            );
+        },
+    );
+}
+
+#[test]
+fn buffered_idle_fleet_alert_does_not_flush_when_work_closed_without_parking() {
+    with_fixture("buffered-closed-work", "idle", |_, state, mut exchange| {
+        let input = scan_input(state, &exchange);
+        let mut watcher = LoopWatcher::new();
+        watcher.plan_sends(&input, NOW);
+        let send = watcher
+            .plan_sends(&input, NOW + 30_000)
+            .into_iter()
+            .find(|send| send.kind == LoopSendKind::IdleFleet)
+            .expect("idle-fleet alert");
+        watcher.buffer_send(&send, NOW + 30_000);
+        watcher.commit_send_result(&send, NOW + 30_000, LoopDeliveryOutcome::Buffered);
+        exchange["tasks"][0]["status"] = json!("done");
+        let queue = loop_delivery_queue(
+            &watcher,
+            &scan_input(state, &exchange),
+            vec![],
+            NOW + 90_000,
+            8,
+        );
+        assert!(
+            queue.is_empty(),
+            "closed work must invalidate an old buffered alert even with an unparked worker: {queue:?}"
+        );
+    });
+}
+
+#[test]
+fn buffered_exit_and_idle_fleet_alerts_still_flush_for_current_unparked_conditions() {
+    with_fixture("buffered-live-alerts", "done", |_, state, exchange| {
+        write_self_exit(state, "done");
+        let input = scan_input(state, &exchange);
+        let watcher = buffer_exit_and_idle_fleet(&input);
+        let queue = loop_delivery_queue(&watcher, &input, vec![], NOW + 90_000, 8);
+        assert_eq!(
+            queue.len(),
+            2,
+            "current buffered conditions must still flush: {queue:?}"
+        );
+        assert!(queue.iter().any(|send| send.kind == LoopSendKind::LoopExit));
+        assert!(
+            queue
+                .iter()
+                .any(|send| send.kind == LoopSendKind::IdleFleet)
+        );
+    });
+}
+
+#[test]
+fn buffered_active_loop_briefing_cannot_resurrect_an_agent_after_loop_removal_and_parking() {
+    with_fixture(
+        "parking-buffered-managed-loop",
+        "idle",
+        |context, state, exchange| {
+            let mut metadata = load_metadata_state(state);
+            metadata.sessions.get_mut(WORKER).unwrap()["loop"] = json!({
+                "active": true, "since": "2026-10-18T00:00:00.000Z",
+                "goal": "finish the old managed loop", "source": "human"
+            });
+            save_metadata_state(state, &metadata).expect("start managed loop");
+            let input = scan_input(state, &exchange);
+            let mut watcher = LoopWatcher::new();
+            let briefing = watcher
+                .plan_sends(&input, NOW)
+                .into_iter()
+                .find(|send| send.kind == LoopSendKind::OverseerBriefing)
+                .expect("stopped managed-loop briefing");
+            watcher.buffer_send(&briefing, NOW);
+            watcher.commit_send_result(&briefing, NOW, LoopDeliveryOutcome::Buffered);
+            let queue = loop_delivery_queue(&watcher, &input, vec![], NOW + 90_000, 8);
+            assert!(
+                queue
+                    .iter()
+                    .any(|send| send.kind == LoopSendKind::OverseerBriefing),
+                "a current unparked briefing must remain deliverable"
+            );
+
+            let removed = route_project_service_request(
+                context,
+                "POST",
+                routes::agents::LOOP,
+                Some(&json!({
+                    "sessionId": WORKER, "active": false, "action": "done", "source": "human",
+                    "reason": "old loop is finished"
+                })),
+            );
+            assert_eq!(removed.status, 200, "{}", removed.body);
+            assert_eq!(pause(context).status, 200);
+            let queue = loop_delivery_queue(
+                &watcher,
+                &scan_input(state, &exchange),
+                vec![],
+                NOW + 90_000,
+                8,
+            );
+            assert!(
+                queue.is_empty(),
+                "an actual buffered candidate must not bypass later deliberate parking: {queue:?}"
+            );
+        },
     );
 }
