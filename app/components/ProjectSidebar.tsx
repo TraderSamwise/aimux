@@ -737,6 +737,7 @@ export function ProjectSidebar() {
           token={token}
           projectStateKey={routeProjectStateKey}
           groups={createGroups}
+          agentCreation={desktopState?.agentCreation}
           onDismiss={() => setCreateOpen(false)}
         />
       ) : null}

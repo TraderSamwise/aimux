@@ -9,6 +9,7 @@ use serde_json::json;
 #[test]
 fn selected_agent_tool_maps_to_project_service_spawn_request() {
     let intent = DashboardCreateIntent::Agent(DashboardAgentCreateIntent {
+        role: None,
         tool: Some("codex".into()),
         session_id: Some("codex-7f2e1a".into()),
         worktree_path: Some("/repo/feature".into()),
@@ -46,6 +47,7 @@ fn selected_agent_tool_maps_to_project_service_spawn_request() {
 #[test]
 fn agent_without_selected_tool_requires_the_picker() {
     let intent = DashboardCreateIntent::Agent(DashboardAgentCreateIntent {
+        role: None,
         tool: None,
         session_id: Some("codex-7f2e1a".into()),
         worktree_path: None,
@@ -114,6 +116,7 @@ fn blank_service_command_maps_to_interactive_shell_create() {
 #[test]
 fn backend_generated_ids_remain_available_without_inventing_values() {
     let agent = DashboardCreateIntent::Agent(DashboardAgentCreateIntent {
+        role: None,
         tool: Some("claude".into()),
         session_id: None,
         worktree_path: None,

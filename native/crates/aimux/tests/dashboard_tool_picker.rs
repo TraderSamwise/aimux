@@ -45,7 +45,10 @@ fn create_selected_maps_default_launch_override() {
         })),
     );
     let tools = enabled_dashboard_tools(&config);
-    let mut picker = DashboardToolPickerState::with_mode(tools, DashboardToolPickerMode::Create);
+    let mut picker = DashboardToolPickerState::with_mode(
+        tools,
+        DashboardToolPickerMode::Create(creation_policy()),
+    );
     picker.index = 1;
 
     let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
@@ -59,7 +62,7 @@ fn create_selected_maps_default_launch_override() {
         request.body,
         json!({
             "tool": "codex",
-            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "role": "control",
             "launchOverride": {
                 "args": ["--base", "--extra"],
                 "env": { "CODEX_MODE": "fast" }
@@ -120,7 +123,7 @@ fn create_overseer_mode_marks_spawn_request_as_overseer() {
 fn digit_selects_and_creates_tool() {
     let config = merge_config_layers(None, None);
     let tools = enabled_dashboard_tools(&config);
-    let mut picker = DashboardToolPickerState::new(tools);
+    let mut picker = DashboardToolPickerState::new(tools, creation_policy());
 
     let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
         picker.select_digit('2', None)
@@ -129,7 +132,10 @@ fn digit_selects_and_creates_tool() {
     };
 
     assert_eq!(picker.index, 1);
-    assert_eq!(request.body, json!({ "tool": "codex", "open": false }));
+    assert_eq!(
+        request.body,
+        json!({ "tool": "codex", "open": false, "role": "control" })
+    );
 }
 
 #[test]
@@ -191,7 +197,7 @@ fn switch_mode_maps_selected_tool_to_switch_request() {
 #[test]
 fn render_picker_overlay_lists_tools() {
     let tools = enabled_dashboard_tools(&merge_config_layers(None, None));
-    let picker = DashboardToolPickerState::new(tools);
+    let picker = DashboardToolPickerState::new(tools, creation_policy());
 
     let output = render_tool_picker_overlay(&picker, 80, 24);
 
@@ -199,4 +205,38 @@ fn render_picker_overlay_lists_tools() {
     assert!(output.contains("claude"));
     assert!(output.contains("codex"));
     assert!(output.contains("start"));
+}
+
+fn creation_policy() -> aimux::dashboard_create::DashboardAgentCreationPolicy {
+    serde_json::from_value(
+        json!({ "defaultTarget": "supervisor", "defaultRole": "control", "worktreeRole": "coder" }),
+    )
+    .unwrap()
+}
+
+#[test]
+fn picker_consumes_service_destination_and_custom_roles() {
+    let policy = aimux::dashboard_create::DashboardAgentCreationPolicy::parse(json!({
+        "defaultTarget":"worktree", "defaultRole":"review-control", "worktreeRole":"custom-coder"
+    }))
+    .unwrap();
+    let mut picker = DashboardToolPickerState::new(
+        enabled_dashboard_tools(&merge_config_layers(None, None)),
+        policy,
+    );
+    let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
+        picker.create_selected(Some("/repo/feature"))
+    else {
+        panic!("spawn request");
+    };
+    assert_eq!(request.body["role"], "custom-coder");
+    assert_eq!(request.body["worktreePath"], "/repo/feature");
+    picker.create_in_worktree = false;
+    let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
+        picker.create_selected(Some("/repo/feature"))
+    else {
+        panic!("spawn request");
+    };
+    assert_eq!(request.body["role"], "review-control");
+    assert!(request.body.get("worktreePath").is_none());
 }

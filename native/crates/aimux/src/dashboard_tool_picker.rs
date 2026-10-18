@@ -1,6 +1,7 @@
 use crate::dashboard_actions::DashboardActionRequest;
 use crate::dashboard_create::{
-    DashboardAgentCreateIntent, DashboardCreateIntent, DashboardCreatePlan, plan_dashboard_create,
+    DashboardAgentCreateIntent, DashboardAgentCreationPolicy, DashboardAgentCreationTarget,
+    DashboardCreateIntent, DashboardCreatePlan, plan_dashboard_create,
 };
 use crate::dashboard_launch_options::LaunchOverride;
 use crate::project_api_contract::routes;
@@ -22,11 +23,12 @@ pub struct DashboardToolPickerState {
     pub tools: Vec<DashboardToolEntry>,
     pub index: usize,
     pub mode: DashboardToolPickerMode,
+    pub create_in_worktree: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardToolPickerMode {
-    Create,
+    Create(DashboardAgentCreationPolicy),
     CreateOverseer,
     CreateScribe,
     Fork { source_session_id: String },
@@ -41,15 +43,18 @@ pub enum DashboardToolPickerEffect {
 }
 
 impl DashboardToolPickerState {
-    pub fn new(tools: Vec<DashboardToolEntry>) -> Self {
-        Self::with_mode(tools, DashboardToolPickerMode::Create)
+    pub fn new(tools: Vec<DashboardToolEntry>, policy: DashboardAgentCreationPolicy) -> Self {
+        Self::with_mode(tools, DashboardToolPickerMode::Create(policy))
     }
 
     pub fn with_mode(tools: Vec<DashboardToolEntry>, mode: DashboardToolPickerMode) -> Self {
+        let create_in_worktree = matches!(&mode, DashboardToolPickerMode::Create(policy)
+            if policy.default_target != DashboardAgentCreationTarget::Worktree);
         Self {
             tools,
             index: 0,
             mode,
+            create_in_worktree,
         }
     }
 
@@ -116,20 +121,43 @@ impl DashboardToolPickerState {
         launch_override: Option<Value>,
     ) -> DashboardToolPickerEffect {
         match &self.mode {
-            DashboardToolPickerMode::Create
-            | DashboardToolPickerMode::CreateOverseer
-            | DashboardToolPickerMode::CreateScribe => DashboardToolPickerEffect::Create(
-                plan_dashboard_create(&DashboardCreateIntent::Agent(DashboardAgentCreateIntent {
-                    tool: Some(tool.key.clone()),
-                    session_id: None,
-                    worktree_path: worktree_path.map(str::to_owned),
-                    launch_override,
-                    overseer: matches!(self.mode, DashboardToolPickerMode::CreateOverseer)
-                        .then_some(true),
-                    scribe: matches!(self.mode, DashboardToolPickerMode::CreateScribe)
-                        .then_some(true),
-                })),
-            ),
+            DashboardToolPickerMode::Create(policy) => {
+                let role = if self.create_in_worktree {
+                    &policy.worktree_role
+                } else {
+                    &policy.default_role
+                };
+                DashboardToolPickerEffect::Create(plan_dashboard_create(
+                    &DashboardCreateIntent::Agent(DashboardAgentCreateIntent {
+                        role: Some(role.clone()),
+                        tool: Some(tool.key.clone()),
+                        session_id: None,
+                        worktree_path: if self.create_in_worktree {
+                            worktree_path.map(str::to_owned)
+                        } else {
+                            None
+                        },
+                        launch_override,
+                        overseer: None,
+                        scribe: None,
+                    }),
+                ))
+            }
+            DashboardToolPickerMode::CreateOverseer | DashboardToolPickerMode::CreateScribe => {
+                DashboardToolPickerEffect::Create(plan_dashboard_create(
+                    &DashboardCreateIntent::Agent(DashboardAgentCreateIntent {
+                        role: None,
+                        tool: Some(tool.key.clone()),
+                        session_id: None,
+                        worktree_path: worktree_path.map(str::to_owned),
+                        launch_override,
+                        overseer: matches!(self.mode, DashboardToolPickerMode::CreateOverseer)
+                            .then_some(true),
+                        scribe: matches!(self.mode, DashboardToolPickerMode::CreateScribe)
+                            .then_some(true),
+                    }),
+                ))
+            }
             DashboardToolPickerMode::Fork { source_session_id } => {
                 DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(
                     dashboard_agent_tool_request(
@@ -181,7 +209,7 @@ pub fn render_tool_picker_overlay(
     rows: usize,
 ) -> String {
     let title = match &state.mode {
-        DashboardToolPickerMode::Create => "Select tool".to_owned(),
+        DashboardToolPickerMode::Create(_) => "Select tool".to_owned(),
         DashboardToolPickerMode::CreateOverseer => "Select overseer".to_owned(),
         DashboardToolPickerMode::CreateScribe => "Select scribe".to_owned(),
         DashboardToolPickerMode::Fork { source_session_id } => {
@@ -202,6 +230,20 @@ pub fn render_tool_picker_overlay(
             variant: OverlayVariant::Red,
             icon: None,
         });
+    }
+    if let DashboardToolPickerMode::Create(policy) = &state.mode {
+        let target = if state.create_in_worktree {
+            "Focused worktree"
+        } else {
+            "Supervisor lane"
+        };
+        let role = if state.create_in_worktree {
+            &policy.worktree_role
+        } else {
+            &policy.default_role
+        };
+        body.push(format!("  {target} · {role}  [Tab] change destination"));
+        body.push(String::new());
     }
     for (index, tool) in state.tools.iter().enumerate() {
         let selected = index == state.index;

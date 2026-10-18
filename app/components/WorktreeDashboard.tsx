@@ -51,6 +51,7 @@ import {
 import { worktreeToneForBucket } from "@/lib/worktree-tone";
 import {
   desktopStateErrorFamily,
+  desktopStateAgentCreationFamily,
   desktopStateOperationFailuresFamily,
   desktopStatePresentFamily,
   worktreeGroupsFamily,
@@ -751,6 +752,10 @@ export function WorktreeCard({
             />
           ))}
         </View>
+      ) : bucket.isSupervisorLane ? (
+        <Text className="border-t border-[#202127] px-3 py-3 text-xs text-[#7c7e88]">
+          No supervisor agents. Create an agent to get started.
+        </Text>
       ) : null}
     </>
   );
@@ -983,6 +988,7 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
   // Subscribing to the whole desktop state re-rendered every row whenever any
   // field changed, including ones this view never shows.
   const desktopStatePresent = useAtomValue(desktopStatePresentFamily(stateProjectKey));
+  const agentCreation = useAtomValue(desktopStateAgentCreationFamily(stateProjectKey));
   const operationFailures = useAtomValue(desktopStateOperationFailuresFamily(stateProjectKey));
   const desktopStateError = useAtomValue(desktopStateErrorFamily(stateProjectKey));
   const groups = useAtomValue(worktreeGroupsFamily(stateProjectKey));
@@ -1158,6 +1164,7 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
         groups={groups}
       />
       <AgentCreatePanel
+        agentCreation={agentCreation}
         projectStateKey={stateProjectKey}
         endpoint={endpoint}
         token={token}

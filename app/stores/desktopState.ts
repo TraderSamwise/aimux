@@ -253,6 +253,10 @@ export const desktopStatePresentFamily = atomFamily((projectStateKey: ProjectSta
   atom((get) => get(desktopStateFamily(projectStateKey)) !== null),
 );
 
+export const desktopStateAgentCreationFamily = atomFamily((projectStateKey: ProjectStateKey) =>
+  atom((get) => get(desktopStateFamily(projectStateKey))?.agentCreation),
+);
+
 export const desktopStateOperationFailuresFamily = atomFamily((projectStateKey: ProjectStateKey) =>
   atom((get) => get(desktopStateFamily(projectStateKey))?.operationFailures),
 );

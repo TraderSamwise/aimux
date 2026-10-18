@@ -4,7 +4,7 @@ use crate::dashboard_model::{
 };
 use crate::project_service::desktop_state::{path_basename, worktree_path_identity};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 pub const DASHBOARD_QUICK_JUMP_LIMIT: usize = 9;
 
@@ -597,12 +597,12 @@ fn is_project_control_session(session: &DashboardSession) -> bool {
 pub fn dashboard_navigation_groups<'a>(
     snapshot: &'a DesktopStateSnapshot,
 ) -> Vec<DashboardNavigationGroup<'a>> {
-    if snapshot.worktree_groups.is_empty() {
+    if snapshot.worktree_groups.is_empty() && !snapshot.extra.contains_key("supervisorLane") {
         return Vec::new();
     }
     let mut groups = Vec::new();
     let supervisor_sessions = supervisor_sessions(snapshot);
-    if !supervisor_sessions.is_empty() {
+    if snapshot.extra.contains_key("supervisorLane") {
         groups.push(DashboardNavigationGroup {
             kind: DashboardNavigationGroupKind::Supervisor,
             digit: Some(0),
@@ -824,23 +824,30 @@ fn default_navigation_group_index(groups: &[DashboardNavigationGroup<'_>]) -> us
 }
 
 fn supervisor_sessions(snapshot: &DesktopStateSnapshot) -> Vec<&DashboardSession> {
-    let mut seen = BTreeSet::new();
-    let mut sessions = Vec::new();
-    for session in snapshot.sessions.iter().chain(
-        snapshot
-            .worktree_groups
-            .iter()
-            .flat_map(|group| group.sessions.iter()),
-    ) {
-        if is_project_control_session(session) && seen.insert(session.id.as_str()) {
-            sessions.push(session);
-        }
-    }
-    // The supervisor lane is a plane, not a ranking. Ordering it by role
-    // display order put the overseer first here while Exposé and the chips
-    // rendered the same agents in window order.
-    sort_sessions_by_created(&mut sessions);
+    let Some(sessions) = snapshot
+        .extra
+        .get("supervisorLane")
+        .and_then(|lane| lane.get("sessions"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
     sessions
+        .iter()
+        .filter_map(|entry| {
+            let id = entry.get("id")?.as_str()?;
+            snapshot
+                .sessions
+                .iter()
+                .chain(
+                    snapshot
+                        .worktree_groups
+                        .iter()
+                        .flat_map(|group| &group.sessions),
+                )
+                .find(|session| session.id == id)
+        })
+        .collect()
 }
 
 struct NavigationWorktreeInput<'a> {

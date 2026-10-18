@@ -17,6 +17,9 @@ import { Text } from "@/components/ui/text";
 import { createWorktree, spawnAgent } from "@/lib/api";
 import {
   AGENT_TOOL_CHOICES,
+  agentCreationRole,
+  agentCreationPolicyIsAvailable,
+  type AgentCreationTarget,
   AGENT_CREATION_REFRESH_VIEWS,
   WORKTREE_CREATION_REFRESH_VIEWS,
   creatableWorktreeChoices,
@@ -33,6 +36,8 @@ import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
+
+import type { AgentCreationPolicy } from "../../src/project-api-contract";
 
 type CreateKind = "agent" | "worktree";
 
@@ -91,16 +96,20 @@ export function CreateInProjectDialog({
   token,
   projectStateKey,
   groups,
+  agentCreation,
   onDismiss,
 }: {
   endpoint: ServiceEndpoint | null;
   token: string | null;
   projectStateKey: ProjectStateKey;
   groups: WorktreeBucket[];
+  agentCreation?: AgentCreationPolicy;
   onDismiss: () => void;
 }) {
   const [kind, setKind] = useState<CreateKind>("agent");
   const [tool, setTool] = useState<AgentToolChoice>("claude");
+  const [targetOverride, setTarget] = useState<AgentCreationTarget | null>(null);
+  const target = targetOverride ?? agentCreation?.defaultTarget;
   const [worktreePath, setWorktreePath] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -125,7 +134,10 @@ export function CreateInProjectDialog({
     ? worktreePath
     : null;
   const trimmedName = name.trim();
-  const canSubmit = canSubmitCreation({ kind, hasEndpoint: Boolean(endpoint), busy, name });
+  const policyUnavailable = !agentCreationPolicyIsAvailable(agentCreation);
+  const canSubmit =
+    canSubmitCreation({ kind, hasEndpoint: Boolean(endpoint), busy, name }) &&
+    (kind !== "agent" || !policyUnavailable);
 
   async function submit() {
     // Keyed on the project, not on this component: two taps 40ms apart both
@@ -141,7 +153,12 @@ export function CreateInProjectDialog({
       if (kind === "agent") {
         const response = await spawnAgent(
           endpoint,
-          { tool, worktreePath: selectedWorktreePath ?? undefined, open: false },
+          {
+            tool,
+            role: agentCreationRole(agentCreation, target),
+            worktreePath: target === "worktree" ? (selectedWorktreePath ?? undefined) : undefined,
+            open: false,
+          },
           { token },
         );
         recordTransition({
@@ -149,7 +166,7 @@ export function CreateInProjectDialog({
           transition: response.transition,
           label: response.sessionId,
           tool,
-          worktreePath: selectedWorktreePath ?? undefined,
+          worktreePath: target === "worktree" ? (selectedWorktreePath ?? undefined) : undefined,
         });
         kickDesktopRefresh();
         kickProjectViewRefresh(AGENT_CREATION_REFRESH_VIEWS);
@@ -178,6 +195,7 @@ export function CreateInProjectDialog({
       setCreated(createdPath ? { name: trimmedName, path: createdPath, alreadyUnderway } : null);
       setName("");
       setWorktreePath(createdPath);
+      setTarget("worktree");
       setKind("agent");
     } catch (e) {
       // Shown verbatim: the route is the thing that knows a name is taken,
@@ -254,16 +272,27 @@ export function CreateInProjectDialog({
               <ScrollView className="mt-2 max-h-40" keyboardShouldPersistTaps="handled">
                 <View className="flex-row flex-wrap gap-2">
                   <ChoiceChip
+                    label="Supervisor Lane"
+                    active={target === "supervisor"}
+                    onPress={() => setTarget("supervisor")}
+                  />
+                  <ChoiceChip
                     label="Main checkout"
-                    active={selectedWorktreePath === null}
-                    onPress={() => setWorktreePath(null)}
+                    active={target === "worktree" && selectedWorktreePath === null}
+                    onPress={() => {
+                      setTarget("worktree");
+                      setWorktreePath(null);
+                    }}
                   />
                   {worktreeChoices.map((choice) => (
                     <ChoiceChip
                       key={choice.key}
                       label={choice.label}
-                      active={selectedWorktreePath === choice.path}
-                      onPress={() => setWorktreePath(choice.path)}
+                      active={target === "worktree" && selectedWorktreePath === choice.path}
+                      onPress={() => {
+                        setTarget("worktree");
+                        setWorktreePath(choice.path);
+                      }}
                     />
                   ))}
                 </View>
@@ -293,6 +322,16 @@ export function CreateInProjectDialog({
                 ? `${created.name} was already being created — this did not start a second one.`
                 : `Created ${created.name}.`}{" "}
               It stays empty until something runs in it — launch an agent to see it in the sidebar.
+            </Text>
+          ) : null}
+
+          {kind === "agent" && policyUnavailable ? (
+            <Text
+              className="mt-4 text-[12px] text-destructive"
+              accessibilityLabel="Creation policy unavailable"
+            >
+              Agent creation policy is unavailable from the project host. Refresh project state
+              before launching an agent.
             </Text>
           ) : null}
 
