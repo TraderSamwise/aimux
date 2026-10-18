@@ -76,12 +76,20 @@ For each case, both executors must stage exactly the original composed bytes,
 not merely agree with each other. Success must use one load and one paste.
 The existing load/paste failure and cleanup comparisons still apply.
 
-Scoped runs passed all 14 staged-prompt tests, the existing multiline input-route
-test, and six idle-fleet watcher tests. Deliberately truncating loop prompts in
+At the investigation baseline, scoped runs passed all 14 staged-prompt tests,
+the existing multiline input-route test, and six idle-fleet watcher tests.
+Deliberately truncating loop prompts in
 the shared staging writer failed the extended parity test even though both
 executors staged the same truncated bytes. Removing `paste-buffer -r` failed
 the existing single-load/paste argv test. Restoring pristine source passed all
-14 staged tests after each mutation. Verification logs are summarized with the PR.
+14 staged tests after each mutation.
+
+Item 146's async delivery-seam work subsequently merged as PR #467. Integrating
+it retains the paste-time privacy assertions inside every new prompt/failure
+case. All 13 staged tests on that merged source passed, as did
+`production_delivery_executors_preserve_payload_and_failures`, which exercises
+30 scenarios through concrete sync, bounded, and async delivery executors.
+Verification logs are summarized with the PR.
 
 These tests observe staged bytes and tmux command arguments. They do not
 exercise a live Claude/Codex composer, prove receiver acceptance, or prove the
