@@ -14,6 +14,13 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, sleep, timeout};
 
+mod body_limit;
+
+pub use body_limit::{
+    ReadHttpRequestOutcome, read_http_request_with_body_limit_async,
+    read_http_request_with_body_limit_blocking,
+};
+
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 pub const DAEMON_RESPONSE_WRITE_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 pub type DaemonInterceptFuture<'a> =
@@ -609,137 +616,6 @@ pub async fn read_http_request_async(
         if find_bytes(&bytes, b"\r\n\r\n").is_none() && bytes.len() > MAX_HEADER_BYTES {
             return Err(DaemonListenerError::InvalidRequest(
                 "HTTP request headers are too large".into(),
-            ));
-        }
-    }
-}
-
-enum ReadHttpRequestOutcome {
-    Request(Vec<u8>),
-    Rejected(PreparedDaemonResponse),
-}
-
-fn read_http_request_with_body_limit_blocking(
-    reader: &mut impl Read,
-    body_limit: &mut impl FnMut(&DaemonRequestHead) -> Option<DaemonRequestBodyLimit>,
-) -> Result<ReadHttpRequestOutcome, DaemonListenerError> {
-    let mut bytes = Vec::new();
-    let mut one = [0_u8; 1];
-    let header_end = loop {
-        if let Some(header_end) = find_bytes(&bytes, b"\r\n\r\n") {
-            break header_end;
-        }
-        let count = reader.read(&mut one)?;
-        if count == 0 {
-            if bytes.is_empty() {
-                return Err(DaemonListenerError::InvalidRequest(
-                    "empty HTTP request".into(),
-                ));
-            }
-            return Ok(ReadHttpRequestOutcome::Request(bytes));
-        }
-        bytes.push(one[0]);
-        if bytes.len() > MAX_HEADER_BYTES {
-            return Err(DaemonListenerError::InvalidRequest(
-                "HTTP request headers are too large".into(),
-            ));
-        }
-    };
-
-    let head = parse_daemon_request_head(&bytes[..header_end])?;
-    let limit = body_limit(&head);
-    let headers_text = std::str::from_utf8(&bytes[..header_end]).map_err(|error| {
-        DaemonListenerError::InvalidRequest(format!("invalid HTTP request headers: {error}"))
-    })?;
-    if let Some(limit) = limit.as_ref()
-        && !transfer_encoding_chunked(headers_text)
-        && content_length(headers_text)? > limit.max_bytes
-    {
-        return Ok(ReadHttpRequestOutcome::Rejected(
-            limit.too_large_response.clone(),
-        ));
-    }
-
-    let body_start = header_end + 4;
-    let mut buffer = [0_u8; 8192];
-    loop {
-        if let Some(length) = complete_request_len(&bytes)? {
-            bytes.truncate(length);
-            return Ok(ReadHttpRequestOutcome::Request(bytes));
-        }
-        let count = reader.read(&mut buffer)?;
-        if count == 0 {
-            return Ok(ReadHttpRequestOutcome::Request(bytes));
-        }
-        bytes.extend_from_slice(&buffer[..count]);
-        if let Some(limit) = limit.as_ref()
-            && bytes.len().saturating_sub(body_start) > limit.max_bytes
-        {
-            return Ok(ReadHttpRequestOutcome::Rejected(
-                limit.too_large_response.clone(),
-            ));
-        }
-    }
-}
-
-async fn read_http_request_with_body_limit_async(
-    reader: &mut (impl AsyncRead + Unpin),
-    body_limit: &mut impl FnMut(&DaemonRequestHead) -> Option<DaemonRequestBodyLimit>,
-) -> Result<ReadHttpRequestOutcome, DaemonListenerError> {
-    let mut bytes = Vec::new();
-    let mut one = [0_u8; 1];
-    let header_end = loop {
-        if let Some(header_end) = find_bytes(&bytes, b"\r\n\r\n") {
-            break header_end;
-        }
-        let count = reader.read(&mut one).await?;
-        if count == 0 {
-            if bytes.is_empty() {
-                return Err(DaemonListenerError::InvalidRequest(
-                    "empty HTTP request".into(),
-                ));
-            }
-            return Ok(ReadHttpRequestOutcome::Request(bytes));
-        }
-        bytes.push(one[0]);
-        if bytes.len() > MAX_HEADER_BYTES {
-            return Err(DaemonListenerError::InvalidRequest(
-                "HTTP request headers are too large".into(),
-            ));
-        }
-    };
-
-    let head = parse_daemon_request_head(&bytes[..header_end])?;
-    let limit = body_limit(&head);
-    let headers_text = std::str::from_utf8(&bytes[..header_end]).map_err(|error| {
-        DaemonListenerError::InvalidRequest(format!("invalid HTTP request headers: {error}"))
-    })?;
-    if let Some(limit) = limit.as_ref()
-        && !transfer_encoding_chunked(headers_text)
-        && content_length(headers_text)? > limit.max_bytes
-    {
-        return Ok(ReadHttpRequestOutcome::Rejected(
-            limit.too_large_response.clone(),
-        ));
-    }
-
-    let body_start = header_end + 4;
-    let mut buffer = [0_u8; 8192];
-    loop {
-        if let Some(length) = complete_request_len(&bytes)? {
-            bytes.truncate(length);
-            return Ok(ReadHttpRequestOutcome::Request(bytes));
-        }
-        let count = reader.read(&mut buffer).await?;
-        if count == 0 {
-            return Ok(ReadHttpRequestOutcome::Request(bytes));
-        }
-        bytes.extend_from_slice(&buffer[..count]);
-        if let Some(limit) = limit.as_ref()
-            && bytes.len().saturating_sub(body_start) > limit.max_bytes
-        {
-            return Ok(ReadHttpRequestOutcome::Rejected(
-                limit.too_large_response.clone(),
             ));
         }
     }
