@@ -20,7 +20,9 @@ use crate::backlog_metrics::{
 use crate::config::load_config_for_project;
 use crate::daemon::http::PreparedDaemonResponse;
 use crate::daemon::listener::{
-    DaemonListenerError, parse_daemon_http_request, prepared_response_bytes, read_http_request,
+    DaemonListenerError, DaemonRequestBodyLimit, DaemonRequestHead, ReadHttpRequestOutcome,
+    parse_daemon_http_request, prepared_response_bytes, read_http_request_with_body_limit_async,
+    read_http_request_with_body_limit_blocking,
 };
 use crate::daemon::server::DaemonHttpRequest;
 use crate::daemon_state::{
@@ -73,7 +75,7 @@ use super::dispatcher::{
 };
 use super::event_streams::{encode_sse_event, encode_sse_keepalive};
 use super::http::{
-    PreparedProjectServiceResponse, ProjectServiceBodyError, body_limit_for_route,
+    BodyTooLarge, PreparedProjectServiceResponse, ProjectServiceBodyError, body_limit_for_route,
     prepare_project_service_empty_response, prepare_project_service_json_response,
     project_service_cors_headers, read_json_body_limited, reject_project_service_cors_response,
 };
@@ -412,7 +414,7 @@ async fn handle_project_service_tcp_connection_async(
     handle_project_service_connection_with_remote_async(&mut stream, context, remote_address).await
 }
 
-async fn handle_project_service_connection_with_remote_async<Stream>(
+pub async fn handle_project_service_connection_with_remote_async<Stream>(
     stream: &mut Stream,
     context: Arc<ProjectServiceRequestContext>,
     remote_address: Option<String>,
@@ -421,7 +423,21 @@ where
     Stream: AsyncRead + AsyncWrite + Unpin + Send,
 {
     let (mut reader, mut writer) = tokio::io::split(stream);
-    let bytes = read_http_request_async(&mut reader).await?;
+    let bytes = match read_http_request_with_body_limit_async(
+        &mut reader,
+        &mut project_service_request_body_limit,
+    )
+    .await?
+    {
+        ReadHttpRequestOutcome::Request(bytes) => bytes,
+        ReadHttpRequestOutcome::Rejected(response) => {
+            writer
+                .write_all(&prepared_response_bytes(&response))
+                .await?;
+            writer.flush().await?;
+            return Ok(());
+        }
+    };
     let request = parse_daemon_http_request(&bytes)?;
     let request = project_request_from_daemon(request);
     let mut request_context = (*context)
@@ -467,7 +483,21 @@ where
         + Send
         + 'static,
 {
-    let bytes = read_http_request_async(stream).await?;
+    let bytes = match read_http_request_with_body_limit_async(
+        stream,
+        &mut project_service_request_body_limit,
+    )
+    .await?
+    {
+        ReadHttpRequestOutcome::Request(bytes) => bytes,
+        ReadHttpRequestOutcome::Rejected(response) => {
+            stream
+                .write_all(&prepared_response_bytes(&response))
+                .await?;
+            stream.flush().await?;
+            return Ok(());
+        }
+    };
     let request = parse_daemon_http_request(&bytes)?;
     let request = project_request_from_daemon(request);
     let mut request_context = (*context)
@@ -1022,7 +1052,17 @@ fn handle_project_service_connection_with_remote<Stream>(
 where
     Stream: std::io::Read + std::io::Write,
 {
-    let bytes = read_http_request(stream)?;
+    let bytes = match read_http_request_with_body_limit_blocking(
+        stream,
+        &mut project_service_request_body_limit,
+    )? {
+        ReadHttpRequestOutcome::Request(bytes) => bytes,
+        ReadHttpRequestOutcome::Rejected(response) => {
+            stream.write_all(&prepared_response_bytes(&response))?;
+            stream.flush()?;
+            return Ok(());
+        }
+    };
     let request = parse_daemon_http_request(&bytes)?;
     let request = project_request_from_daemon(request);
     let mut request_context = context
@@ -2019,129 +2059,26 @@ fn bind_project_service_listener(desired_port: u16) -> Result<StdTcpListener> {
         .context("bind project-service listener")
 }
 
-async fn read_http_request_async(
-    reader: &mut (impl AsyncRead + Unpin),
-) -> Result<Vec<u8>, DaemonListenerError> {
-    const MAX_HEADER_BYTES: usize = 64 * 1024;
-    let mut bytes = Vec::new();
-    let mut buffer = [0_u8; 8192];
-    loop {
-        if let Some(length) = complete_http_request_len(&bytes)? {
-            bytes.truncate(length);
-            return Ok(bytes);
-        }
-        let count = reader.read(&mut buffer).await?;
-        if count == 0 {
-            if bytes.is_empty() {
-                return Err(DaemonListenerError::InvalidRequest(
-                    "empty HTTP request".into(),
-                ));
-            }
-            return Ok(bytes);
-        }
-        bytes.extend_from_slice(&buffer[..count]);
-        if find_bytes(&bytes, b"\r\n\r\n").is_none() && bytes.len() > MAX_HEADER_BYTES {
-            return Err(DaemonListenerError::InvalidRequest(
-                "HTTP request headers are too large".into(),
-            ));
-        }
-    }
-}
-
-fn complete_http_request_len(bytes: &[u8]) -> Result<Option<usize>, DaemonListenerError> {
-    let Some(header_end) = find_bytes(bytes, b"\r\n\r\n") else {
-        return Ok(None);
+// Carry transport rejection as a prepared response: InvalidRequest remains a 400,
+// while the existing route policy and CORS policy still own the 413 response.
+fn project_service_request_body_limit(head: &DaemonRequestHead) -> Option<DaemonRequestBodyLimit> {
+    let max_bytes = body_limit_for_route(&head.method, &head.path);
+    let response = match project_service_cors_headers(&head.headers) {
+        Some(cors) => prepare_project_service_json_response(
+            413,
+            json!({ "ok": false, "error": BodyTooLarge { limit: max_bytes }.to_string() }),
+            cors,
+        ),
+        None => reject_project_service_cors_response(),
     };
-    let headers = std::str::from_utf8(&bytes[..header_end]).map_err(|error| {
-        DaemonListenerError::InvalidRequest(format!("invalid HTTP request headers: {error}"))
-    })?;
-    if transfer_encoding_chunked(headers) {
-        return Ok(complete_chunked_body_len(&bytes[header_end + 4..])
-            .map(|length| header_end + 4 + length));
-    }
-    let content_length = content_length(headers)?;
-    let body_start = header_end + 4;
-    let total = body_start.checked_add(content_length).ok_or_else(|| {
-        DaemonListenerError::InvalidRequest("request body length overflows usize".into())
-    })?;
-    Ok((bytes.len() >= total).then_some(total))
-}
-
-fn content_length(headers: &str) -> Result<usize, DaemonListenerError> {
-    let mut length = None;
-    for line in headers.split("\r\n").skip(1) {
-        let Some((name, value)) = line.split_once(':') else {
-            if line.is_empty() {
-                continue;
-            }
-            return Err(DaemonListenerError::InvalidRequest(format!(
-                "invalid HTTP header: {line}"
-            )));
-        };
-        if name.trim().eq_ignore_ascii_case("content-length") {
-            let parsed = value.trim().parse::<usize>().map_err(|_| {
-                DaemonListenerError::InvalidRequest(format!(
-                    "invalid content-length: {}",
-                    value.trim()
-                ))
-            })?;
-            length = Some(parsed);
-        }
-    }
-    Ok(length.unwrap_or(0))
-}
-
-fn transfer_encoding_chunked(headers: &str) -> bool {
-    headers
-        .split("\r\n")
-        .skip(1)
-        .filter_map(|line| line.split_once(':'))
-        .any(|(name, value)| {
-            name.trim().eq_ignore_ascii_case("transfer-encoding")
-                && value
-                    .split(',')
-                    .any(|part| part.trim().eq_ignore_ascii_case("chunked"))
-        })
-}
-
-fn complete_chunked_body_len(bytes: &[u8]) -> Option<usize> {
-    let mut index = 0;
-    loop {
-        let line_end = find_bytes(&bytes[index..], b"\r\n")? + index;
-        let line = std::str::from_utf8(&bytes[index..line_end]).ok()?;
-        let size = chunk_size(line).ok()?;
-        index = line_end + 2;
-        if size == 0 {
-            let trailer_end =
-                find_bytes(&bytes[index..], b"\r\n\r\n").map(|offset| index + offset + 4);
-            return trailer_end.or_else(|| {
-                bytes
-                    .get(index..index + 2)
-                    .filter(|value| *value == b"\r\n")
-                    .map(|_| index + 2)
-            });
-        }
-        index = index.checked_add(size)?.checked_add(2)?;
-        if bytes.get(index - 2..index)? != b"\r\n" {
-            return None;
-        }
-    }
-}
-
-fn chunk_size(line: &str) -> Result<usize, DaemonListenerError> {
-    let size = line
-        .split_once(';')
-        .map(|(size, _)| size)
-        .unwrap_or(line)
-        .trim();
-    usize::from_str_radix(size, 16)
-        .map_err(|_| DaemonListenerError::InvalidRequest(format!("invalid chunk size: {size}")))
-}
-
-fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
+    Some(DaemonRequestBodyLimit {
+        max_bytes,
+        too_large_response: PreparedDaemonResponse {
+            status: response.status,
+            headers: response.headers,
+            body: response.body,
+        },
+    })
 }
 
 #[cfg(unix)]

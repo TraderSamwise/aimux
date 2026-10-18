@@ -91,6 +91,7 @@ fixture_runtime_contracts
 fixture_tmux_tui_contracts
 git_delivery
 hosted_lock
+http_body_limits
 install_cleanup
 launcher_env
 lifecycle_queue_routes_across_surfaces
