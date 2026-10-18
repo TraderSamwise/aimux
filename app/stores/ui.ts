@@ -19,3 +19,7 @@ export const sidebarProjectPickerShowAllAtom = atom<boolean>(false);
 export const chatChromeVisibleAtom = atom<boolean>(true);
 
 export const chatComposerDraftFamily = atomFamily((_key: string) => atom<string>(""));
+
+export const chatComposerSendOperationFamily = atomFamily((_key: string) =>
+  atom<symbol | null>(null),
+);

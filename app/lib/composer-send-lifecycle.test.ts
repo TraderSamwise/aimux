@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { createStore } from "jotai";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
-import { chatComposerDraftFamily } from "@/stores/ui";
+import { chatComposerDraftFamily, chatComposerSendOperationFamily } from "@/stores/ui";
 import {
   formatComposerSendFailure,
   normalizeComposerDraft,
@@ -25,7 +25,14 @@ type Attachment = {
   mimeType: string;
   uploadedAttachmentId?: string;
 };
-type Ack = PendingComposerAckLike & { id: number };
+type Ack = PendingComposerAckLike;
+type ComposerRefs = {
+  sendBusyRef: { current: boolean };
+  sendOperationIdRef: { current: number };
+  activeComposerDraftKeyRef: { current: string | null };
+  composerDraftTextRef: { current: string };
+  pendingAttachmentsRef: { current: Attachment[] };
+};
 const screenPath = join(__dirname, "../components/screens/AgentChatScreen.tsx");
 
 function screenAst() {
@@ -84,25 +91,48 @@ const attachment = (id = "one"): Attachment => ({
 });
 const confirmed = [{ role: "user", parts: [{ type: "text", text: "original prompt" }] }];
 
-function harness(initialAttachments: Attachment[] = []) {
+function runtime() {
+  return {
+    store: createStore(),
+    drafts: new Map(),
+    seeded: new Set<string>(),
+    sendLivePaneInput: vi.fn(async (..._args: unknown[]) => ({ accepted: true })),
+    uploadAttachment: vi.fn(async (..._args: unknown[]) => ({
+      attachment: { id: "uploaded-one" },
+    })),
+  };
+}
+
+function harness(
+  initialAttachments: Attachment[] = [],
+  shared = runtime(),
+  key = "lifecycle:session",
+  reusedRefs?: ComposerRefs,
+) {
   const source = screenAst();
-  const store = createStore();
-  const draftAtom = chatComposerDraftFamily("lifecycle:session");
-  store.set(draftAtom, "original prompt");
+  const { store, drafts, sendLivePaneInput, uploadAttachment } = shared;
+  const draftAtom = chatComposerDraftFamily(key);
+  const composerSendOperationAtom = chatComposerSendOperationFamily(key);
+  if (!shared.seeded.has(key)) {
+    store.set(draftAtom, "original prompt");
+    shared.seeded.add(key);
+  }
   const state = {
-    busy: false,
     error: null as string | null,
     ack: null as Ack | null,
     attachments: initialAttachments,
     accepted: [] as unknown[],
   };
-  const sendBusyRef = { current: false };
+  const sendBusyRef = reusedRefs?.sendBusyRef ?? { current: false };
   const releasePickedAttachment = vi.fn();
-  const sendLivePaneInput = vi.fn(async (..._args: unknown[]) => ({ accepted: true }));
-  const uploadAttachment = vi.fn(async (..._args: unknown[]) => ({
-    attachment: { id: "uploaded-one" },
-  }));
-  const drafts = new Map();
+  const refs = reusedRefs ?? {
+    sendBusyRef,
+    sendOperationIdRef: { current: 0 },
+    activeComposerDraftKeyRef: { current: key as string | null },
+    composerDraftTextRef: { current: store.get(draftAtom) },
+    pendingAttachmentsRef: { current: state.attachments },
+  };
+  const clearLocalInterruptHold = vi.fn();
   const base = {
     chatComposerDraftFamily,
     composerDraftsByKey: drafts,
@@ -138,29 +168,24 @@ function harness(initialAttachments: Attachment[] = []) {
     return {
       ...base,
       jotaiStore: store,
-      composerDraftKey: "lifecycle:session",
+      composerDraftKey: key,
+      composerSendOperationAtom,
+      ...refs,
       serviceEndpoint: "http://project.test",
       sessionId: "session",
       session: { id: "session" },
       sessionKey: "session",
       agentKey: "project:session",
       ownerShareStatusPending: false,
-      composerAwaitingAck: false,
       sendBusyRef,
-      sendOperationIdRef: { current: 0 },
-      activeComposerDraftKeyRef: { current: "lifecycle:session" },
-      composerDraftTextRef: { current: store.get(draftAtom) },
       userMessageCountRef: { current: 0 },
       parsedMessageCountRef: { current: 0 },
       parsedUserMessageCountRef: { current: 0 },
       pendingAttachments: state.attachments,
       pendingComposerAck: state.ack,
-      clearLocalInterruptHold: vi.fn(),
+      clearLocalInterruptHold,
       chatViewportRef: { current: { showNewest: vi.fn() } },
       terminalViewportRef: { current: { showNewest: vi.fn() } },
-      setSendBusy: (value: boolean) => {
-        state.busy = value;
-      },
       setSendError: (value: string | null) => {
         state.error = value;
       },
@@ -170,9 +195,10 @@ function harness(initialAttachments: Attachment[] = []) {
       },
       setPendingAttachments: (value: Attachment[]) => {
         state.attachments = value;
+        refs.pendingAttachmentsRef.current = value;
       },
-      setAcceptedComposerMessages: (update: (old: unknown[]) => unknown[]) => {
-        state.accepted = update(state.accepted);
+      setAcceptedComposerMessages: (update: unknown[] | ((old: unknown[]) => unknown[])) => {
+        state.accepted = typeof update === "function" ? update(state.accepted) : update;
       },
       pickedAttachmentDataBase64: vi.fn(async () => "aW1hZ2U="),
       uploadAttachment,
@@ -192,8 +218,8 @@ function harness(initialAttachments: Attachment[] = []) {
     `${helpers}\nconst callback = ${arrow.getText()};`,
     context(),
   );
-  function acknowledge(messages = confirmed) {
-    const effect = exactlyOne(source, (node): node is ts.CallExpression => {
+  function effectUsing(...identifiers: string[]) {
+    return exactlyOne(source, (node): node is ts.CallExpression => {
       if (!ts.isCallExpression(node) || node.expression.getText() !== "useEffect") return false;
       const callback = node.arguments[0];
       if (!callback || !ts.isArrowFunction(callback)) return false;
@@ -203,8 +229,17 @@ function harness(initialAttachments: Attachment[] = []) {
         ts.forEachChild(child, visit);
       }
       visit(callback);
-      return names.has("pendingComposerAck") && names.has("composerSendAcknowledged");
+      return identifiers.every((name) => names.has(name));
     });
+  }
+  function effectCallback(effect: ts.CallExpression) {
+    return compile<() => void | (() => void)>(
+      `${helpers}\nconst callback = ${effect.arguments[0]!.getText()};`,
+      context(),
+    );
+  }
+  function acknowledge(messages = confirmed) {
+    const effect = effectUsing("pendingComposerAck", "composerSendAcknowledged");
     const acknowledged = declaration(source, "composerSendAcknowledged").initializer!;
     compile<() => void>(
       `${helpers}\nconst composerSendAcknowledged = ${acknowledged.getText()};\nconst callback = ${effect.arguments[0]!.getText()};`,
@@ -212,6 +247,26 @@ function harness(initialAttachments: Attachment[] = []) {
     )();
   }
   return {
+    reset: () =>
+      effectCallback(
+        effectUsing("previousKey", "activeComposerDraftKeyRef", "setPendingComposerAck"),
+      )(),
+    unmount: () => {
+      const cleanup = effectCallback(
+        effectUsing("activeKey", "rememberComposerDraft", "pendingAttachmentsRef"),
+      )();
+      expect(cleanup).toBeTypeOf("function");
+      (cleanup as () => void)();
+    },
+    uiBusy: () =>
+      compile<() => boolean>(
+        `const callback = () => (${declaration(source, "sendBusy").initializer!.getText()});`,
+        { ...context(), useAtomValue: (atom: typeof composerSendOperationAtom) => store.get(atom) },
+      )(),
+    shared,
+    refs,
+    composerSendOperationAtom,
+    clearLocalInterruptHold,
     state,
     send: callback,
     sendBusyRef,
@@ -242,7 +297,7 @@ describe("the screen's composer send lifecycle without a renderer", () => {
     try {
       expect(h.sendLivePaneInput).toHaveBeenCalledTimes(1);
       expect(h.sendBusyRef.current).toBe(true);
-      expect(h.state.busy).toBe(true);
+      expect(h.uiBusy()).toBe(true);
     } finally {
       response.resolve({ accepted: true });
       await Promise.all([first, second]);
@@ -274,7 +329,7 @@ describe("the screen's composer send lifecycle without a renderer", () => {
       if (outcome === "failure") h.sendLivePaneInput.mockRejectedValueOnce(new Error("denied"));
       await h.send();
       expect(h.sendBusyRef.current).toBe(false);
-      expect(h.state.busy).toBe(false);
+      expect(h.uiBusy()).toBe(false);
       h.setDraft("next prompt");
       await h.send();
       expect(h.sendLivePaneInput).toHaveBeenCalledTimes(2);
@@ -347,5 +402,126 @@ describe("the screen's composer send lifecycle without a renderer", () => {
     expect(h.state.attachments[0]?.uploadedAttachmentId).toBe("uploaded-one");
     expect(h.state.ack).toBeNull();
     expect(h.state.error).toBe("Send failed: permission denied");
+  });
+});
+
+describe("composer reservations across screen instances", () => {
+  it("blocks another send after the pending composer unmounts and remounts", async () => {
+    const shared = runtime();
+    const firstScreen = harness([], shared);
+    const response = deferred<{ accepted: boolean }>();
+    shared.sendLivePaneInput.mockImplementation(() => response.promise);
+    const first = firstScreen.send();
+    firstScreen.unmount();
+    const remounted = harness([], shared);
+    remounted.reset();
+    const second = remounted.send();
+    try {
+      expect(shared.sendLivePaneInput).toHaveBeenCalledTimes(1);
+      expect(remounted.uiBusy()).toBe(true);
+    } finally {
+      response.resolve({ accepted: true });
+      await Promise.all([first, second]);
+    }
+    expect(remounted.uiBusy()).toBe(false);
+    remounted.setDraft("after settled");
+    await remounted.send();
+    expect(shared.sendLivePaneInput).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks a stale callback from another already mounted instance", async () => {
+    const shared = runtime();
+    const a = harness([], shared);
+    const b = harness([], shared);
+    const response = deferred<{ accepted: boolean }>();
+    shared.sendLivePaneInput.mockImplementation(() => response.promise);
+    const first = a.send();
+    const second = b.send();
+    try {
+      expect(shared.sendLivePaneInput).toHaveBeenCalledTimes(1);
+    } finally {
+      response.resolve({ accepted: true });
+      await Promise.all([first, second]);
+    }
+  });
+
+  it("releases the old key after the reused screen sends on a newer route", async () => {
+    const shared = runtime();
+    const a = harness([], shared, "A");
+    const response = deferred<{ accepted: boolean }>();
+    shared.sendLivePaneInput.mockImplementationOnce(() => response.promise);
+    const pending = a.send();
+    const b = harness([], shared, "B", a.refs);
+    b.reset();
+    b.setDraft("different route");
+    try {
+      await b.send();
+      expect(a.refs.sendOperationIdRef.current).toBe(2);
+      expect(a.uiBusy()).toBe(true);
+    } finally {
+      response.resolve({ accepted: true });
+      await pending;
+    }
+    expect(a.uiBusy()).toBe(false);
+    expect(b.uiBusy()).toBe(false);
+  });
+
+  it("allows an independent composer key while the first key is pending", async () => {
+    const shared = runtime();
+    const a = harness([], shared, "A");
+    const b = harness([], shared, "B");
+    const response = deferred<{ accepted: boolean }>();
+    shared.sendLivePaneInput.mockImplementationOnce(() => response.promise);
+    const pending = a.send();
+    try {
+      await b.send();
+      expect(shared.sendLivePaneInput).toHaveBeenCalledTimes(2);
+      expect(a.uiBusy()).toBe(true);
+      expect(b.uiBusy()).toBe(false);
+    } finally {
+      response.resolve({ accepted: true });
+      await pending;
+    }
+  });
+
+  it("publishes busy reservation changes reactively to another instance", async () => {
+    const shared = runtime();
+    const a = harness([], shared);
+    const b = harness([], shared);
+    const observed: boolean[] = [];
+    const stop = shared.store.sub(b.composerSendOperationAtom, () => observed.push(b.uiBusy()));
+    try {
+      await a.send();
+      expect(observed).toEqual([true, false]);
+      expect(b.uiBusy()).toBe(false);
+    } finally {
+      stop();
+    }
+  });
+
+  it("does not let a late completion release a replacement owner's token", async () => {
+    const h = harness();
+    const response = deferred<{ accepted: boolean }>();
+    h.sendLivePaneInput.mockImplementationOnce(() => response.promise);
+    const pending = h.send();
+    const newer = Symbol("newer send owner");
+    h.shared.store.set(h.composerSendOperationAtom, newer);
+    response.resolve({ accepted: true });
+    await pending;
+    expect(h.shared.store.get(h.composerSendOperationAtom)).toBe(newer);
+  });
+
+  it("releases reservation and local guard when synchronous send setup throws", async () => {
+    const h = harness();
+    h.clearLocalInterruptHold.mockImplementationOnce(() => {
+      throw new Error("setup exploded");
+    });
+    await h.send();
+    expect(h.state.error).toBe("Send failed: setup exploded");
+    expect(h.sendBusyRef.current).toBe(false);
+    expect(h.shared.store.get(h.composerSendOperationAtom)).toBeNull();
+    h.setDraft("retry after setup error");
+    await h.send();
+    expect(h.sendLivePaneInput).toHaveBeenCalledTimes(1);
   });
 });

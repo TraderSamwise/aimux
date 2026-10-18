@@ -174,7 +174,7 @@ describe("the composer footer is wired to the derived state", () => {
     expect(call).toContain("heldNotice: heldDeliveryNotice");
     expect(call).toContain("error: sendError");
     // Omitted before, so a bare constant here survived.
-    expect(call).toContain("sending: sendBusy || composerAwaitingAck");
+    expect(call).toContain("sending: sendBusy");
   });
 });
 
