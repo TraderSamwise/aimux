@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { createStore } from "jotai";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 
@@ -12,6 +13,7 @@ import {
   sendDeliveryStateAfterResponse,
 } from "@/lib/input-delivery";
 import { AGENT_OUTPUT_VIEW_MODES } from "@/stores/settings";
+import { chatComposerSendOperationFamily } from "@/stores/ui";
 
 const fixture = JSON.parse(
   readFileSync(
@@ -82,7 +84,8 @@ function chatBindings(delivery: LivePaneInputDelivery) {
   return {
     normalizeComposerDraft: (text: string) => text,
     readComposerDraft: () => multipartPrompt,
-    jotaiStore: {},
+    jotaiStore: createStore(),
+    composerSendOperationAtom: chatComposerSendOperationFamily("lane"),
     composerDraftKey: "lane",
     pendingAttachments: [],
     serviceEndpoint: {},
@@ -91,7 +94,6 @@ function chatBindings(delivery: LivePaneInputDelivery) {
     session: { state: fixture.state },
     ownerShareStatusPending: false,
     sendBusyRef: { current: false },
-    composerAwaitingAck: false,
     firstOversizedAttachment: () => null,
     sendOperationIdRef: { current: 0 },
     activeComposerDraftKeyRef: { current: "lane" },
@@ -102,7 +104,6 @@ function chatBindings(delivery: LivePaneInputDelivery) {
     parsedUserMessageCountRef: { current: 0 },
     chatViewportRef: { current: null },
     terminalViewportRef: { current: null },
-    setSendBusy: vi.fn(),
     setSendError: vi.fn(),
     setSendWarning: vi.fn(),
     setHeldDelivery: vi.fn(),
@@ -167,7 +168,6 @@ describe("submission receipts stay consistent across app surfaces", () => {
         agentOutputViewMode: mode,
         canUseOwnerControls: true,
         sendBusy: false,
-        composerAwaitingAck: false,
         chatSplitWidth: 1400,
       });
       expect(footer).toEqual({ kind: "warning", text: entry.expectedNotice });

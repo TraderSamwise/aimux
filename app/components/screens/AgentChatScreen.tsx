@@ -235,7 +235,11 @@ import {
   type AgentOutputViewMode,
   type ActiveSharedSession,
 } from "@/stores/settings";
-import { chatChromeVisibleAtom, chatComposerDraftFamily } from "@/stores/ui";
+import {
+  chatChromeVisibleAtom,
+  chatComposerDraftFamily,
+  chatComposerSendOperationFamily,
+} from "@/stores/ui";
 import type { ChatMessage, HistoryPart } from "@/lib/events";
 
 const MAX_PENDING_ATTACHMENTS = 4;
@@ -377,10 +381,8 @@ type PendingComposerAck = {
   attachmentCount: number;
   attachmentIds: string[];
   baselineUserMessageCount: number;
-  id: number;
   text: string;
   attachmentFilenames: string[];
-  timedOut: boolean;
 };
 
 type AcceptedComposerMessage = AcceptedComposerEcho;
@@ -557,7 +559,6 @@ export default function ChatScreen() {
     AcceptedComposerMessage[]
   >([]);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
-  const [sendBusy, setSendBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendWarning, setSendWarning] = useState<string | null>(null);
@@ -752,6 +753,8 @@ export default function ChatScreen() {
     if (stateProjectKey) return ["project", stateProjectKey, sessionId].join(":");
     return ["session", sessionId].join(":");
   }, [activeShareForRoute, sessionId, stateProjectKey]);
+  const composerSendOperationAtom = chatComposerSendOperationFamily(composerDraftKey ?? "");
+  const sendBusy = useAtomValue(composerSendOperationAtom) !== null;
 
   useEffect(() => {
     // Seeded from the transcript the store already holds for THIS agent, not
@@ -804,7 +807,6 @@ export default function ChatScreen() {
     setPendingAttachments(saved?.pendingAttachments ? [...saved.pendingAttachments] : []);
     setPendingComposerAck(null);
     setAcceptedComposerMessages([]);
-    setSendBusy(false);
     sendBusyRef.current = false;
     setSendError(null);
     setSendWarning(null);
@@ -1271,7 +1273,6 @@ export default function ChatScreen() {
   const composerSendAcknowledged = pendingComposerAck
     ? userMessageAcknowledgesComposerSend(allMessages, pendingComposerAck)
     : false;
-  const composerAwaitingAck = pendingComposerAck !== null && !pendingComposerAck.timedOut;
   // A send is confirmed by the message appearing in the transcript, and
   // terminal mode does not mount that pane -- so a send that worked looked
   // exactly like one that did nothing, and the ten-second echo timeout then
@@ -1291,7 +1292,7 @@ export default function ChatScreen() {
     warningNotice: sendWarning,
     mode: agentOutputViewMode,
     rawOutputAllowed: canUseOwnerControls,
-    sending: sendBusy || composerAwaitingAck,
+    sending: sendBusy,
     width: chatSplitWidth,
   });
 
@@ -1390,12 +1391,7 @@ export default function ChatScreen() {
     : [headerWorktreeBranch, session?.status ?? "unknown"].filter(Boolean).join(" · ");
   const hasPendingAttachments = pendingAttachments.length > 0;
   const canSendMessageBase = Boolean(
-    serviceEndpoint &&
-    sessionId &&
-    session &&
-    !sendBusy &&
-    !composerAwaitingAck &&
-    !ownerShareStatusPending,
+    serviceEndpoint && sessionId && session && !sendBusy && !ownerShareStatusPending,
   );
 
   const handleSendMessage = useCallback(
@@ -1409,7 +1405,7 @@ export default function ChatScreen() {
         !session ||
         ownerShareStatusPending ||
         sendBusyRef.current ||
-        composerAwaitingAck ||
+        jotaiStore.get(composerSendOperationAtom) !== null ||
         (!text && attachments.length === 0)
       ) {
         return;
@@ -1433,24 +1429,22 @@ export default function ChatScreen() {
       const sendOperationId = sendOperationIdRef.current + 1;
       sendOperationIdRef.current = sendOperationId;
       const sendComposerDraftKey = composerDraftKey;
-      clearLocalInterruptHold(agentKey);
+      const sendOperation = Symbol("composer-send");
       const baselineUserMessageCount = userMessageCountRef.current;
       const baselineParsedMessageCount = parsedMessageCountRef.current;
       const baselineParsedUserMessageCount = parsedUserMessageCountRef.current;
-      // Whichever pane is on screen. Only the mounted one has a ref, and in
-      // split view both are and both should move: sending is an explicit ask
-      // to see what happens next, which is why it overrides the freeze that
-      // holds output back while a reader has scrolled up.
-      chatViewportRef.current?.showNewest();
-      terminalViewportRef.current?.showNewest();
-      setSendBusy(true);
-      setSendError(null);
-      setSendWarning(null);
-      setHeldDelivery(null);
       const sendStillOwnsActiveComposer = () =>
         sendOperationIdRef.current === sendOperationId &&
         activeComposerDraftKeyRef.current === sendComposerDraftKey;
       try {
+        jotaiStore.set(composerSendOperationAtom, sendOperation);
+        clearLocalInterruptHold(agentKey);
+        // An explicit send follows the newest output in each mounted pane.
+        chatViewportRef.current?.showNewest();
+        terminalViewportRef.current?.showNewest();
+        setSendError(null);
+        setSendWarning(null);
+        setHeldDelivery(null);
         for (let idx = 0; idx < attachments.length; idx += 1) {
           const attachment = attachments[idx];
           if (attachment.uploadedAttachmentId) continue;
@@ -1556,9 +1550,7 @@ export default function ChatScreen() {
                   .filter((id): id is string => Boolean(id)),
                 attachmentFilenames: attachments.map((attachment) => attachment.filename),
                 baselineUserMessageCount,
-                id: Date.now(),
                 text,
-                timedOut: true,
               }
             : null,
         );
@@ -1567,9 +1559,11 @@ export default function ChatScreen() {
         setPendingAttachments(attachments);
         setSendError(formatComposerSendFailure(err));
       } finally {
+        if (jotaiStore.get(composerSendOperationAtom) === sendOperation) {
+          jotaiStore.set(composerSendOperationAtom, null);
+        }
         if (sendOperationIdRef.current === sendOperationId) {
           sendBusyRef.current = false;
-          setSendBusy(false);
         }
         if (preserveFocus) {
           requestAnimationFrame(() => composerInputRef.current?.focus());
@@ -1579,8 +1573,8 @@ export default function ChatScreen() {
     [
       agentKey,
       clearLocalInterruptHold,
-      composerAwaitingAck,
       composerDraftKey,
+      composerSendOperationAtom,
       jotaiStore,
       ownerShareStatusPending,
       pendingAttachments,
@@ -1593,7 +1587,6 @@ export default function ChatScreen() {
       setPendingAttachments,
       setHeldDelivery,
       setPendingComposerAck,
-      setSendBusy,
       setSendError,
       setSendWarning,
       sharedChatActor,
@@ -1627,7 +1620,7 @@ export default function ChatScreen() {
   );
 
   const handleAttachAttachment = useCallback(async () => {
-    if (sendBusy || sendBusyRef.current || composerAwaitingAck) return;
+    if (sendBusy || sendBusyRef.current) return;
     setSendError(null);
     try {
       const remainingSlots = MAX_PENDING_ATTACHMENTS - pendingAttachments.length;
@@ -1640,24 +1633,18 @@ export default function ChatScreen() {
     } catch (err) {
       setSendError(err instanceof Error ? err.message : String(err));
     }
-  }, [
-    appendPendingAttachments,
-    composerAwaitingAck,
-    pendingAttachments.length,
-    sendBusy,
-    setSendError,
-  ]);
+  }, [appendPendingAttachments, pendingAttachments.length, sendBusy, setSendError]);
 
   const handleDropAttachments = useCallback(
     (attachments: PickedAttachment[]) => {
-      if (sendBusy || sendBusyRef.current || composerAwaitingAck) {
+      if (sendBusy || sendBusyRef.current) {
         releasePendingAttachmentPreviews(attachments);
         return;
       }
       setSendError(null);
       appendPendingAttachments(attachments);
     },
-    [appendPendingAttachments, composerAwaitingAck, sendBusy, setSendError],
+    [appendPendingAttachments, sendBusy, setSendError],
   );
 
   const handleComposerPaste = useCallback(
@@ -1666,7 +1653,7 @@ export default function ChatScreen() {
       nativeEvent?: { clipboardData?: ClipboardFileSource | null };
       preventDefault?: () => void;
     }) => {
-      if (Platform.OS !== "web" || sendBusy || sendBusyRef.current || composerAwaitingAck) return;
+      if (Platform.OS !== "web" || sendBusy || sendBusyRef.current) return;
       const clipboardData = event.clipboardData ?? event.nativeEvent?.clipboardData;
       if (!clipboardDataHasFile(clipboardData)) return;
       event.preventDefault?.();
@@ -1682,7 +1669,7 @@ export default function ChatScreen() {
         setSendError(err instanceof Error ? err.message : String(err));
       }
     },
-    [appendPendingAttachments, composerAwaitingAck, sendBusy, setSendError],
+    [appendPendingAttachments, sendBusy, setSendError],
   );
 
   const removePendingAttachment = useCallback(
@@ -2136,9 +2123,7 @@ export default function ChatScreen() {
       is the part that needs it.
     */}
         <AttachmentDropZone
-          disabled={
-            sendBusy || composerAwaitingAck || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
-          }
+          disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
           onDropAttachments={handleDropAttachments}
           onDropRejected={setSendError}
           onPasteAttachments={handleDropAttachments}
@@ -2147,7 +2132,7 @@ export default function ChatScreen() {
           {({ dragging }) => (
             <ComposerFocusShell
               dragging={dragging}
-              sending={sendBusy || composerAwaitingAck}
+              sending={sendBusy}
               onLayout={(event: LayoutChangeEvent) => {
                 const nextWidth = event.nativeEvent.layout.width;
                 setComposerWidth((currentWidth) =>
@@ -2162,7 +2147,7 @@ export default function ChatScreen() {
                     draftKey={composerDraftKey ?? ""}
                     composerKeyboardProps={composerKeyboardProps}
                     composerPasteProps={composerPasteProps}
-                    disabled={sendBusy || composerAwaitingAck}
+                    disabled={sendBusy}
                     onFocus={() => setComposerNativeFocus(true, onFocus)}
                     onBlur={() => setComposerNativeFocus(false, onBlur)}
                     onDraftChange={handleComposerDraftChange}
@@ -2173,11 +2158,7 @@ export default function ChatScreen() {
                       label="Attach"
                       accessibilityLabel="Attach a file"
                       icon={<Plus size={17} color={CONTROL_INK} />}
-                      disabled={
-                        sendBusy ||
-                        composerAwaitingAck ||
-                        pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
-                      }
+                      disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
                       onPress={handleAttachAttachment}
                     />
                     <View className="min-w-0 flex-1 px-1">
@@ -2217,7 +2198,6 @@ export default function ChatScreen() {
     ),
     [
       canSendMessageBase,
-      composerAwaitingAck,
       composerFooterStateValue,
       composerDraftKey,
       composerFooterBottomPadding,

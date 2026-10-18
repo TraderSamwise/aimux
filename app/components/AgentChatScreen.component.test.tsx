@@ -137,8 +137,11 @@ const viewport = createResponsiveViewportValue({
   isDesktopNative: false,
 });
 
-async function mountChat(mode: AgentOutputViewMode = "terminal") {
-  const store = createStore();
+async function mountChat(
+  mode: AgentOutputViewMode = "terminal",
+  options: { store?: ReturnType<typeof createStore>; draft?: string | null } = {},
+) {
+  const store = options.store ?? createStore();
   await waitFor(() => expect(store.get(settingsHydratedAtom)).toBe(true));
   const project = projectStateKey({ path: "/repo" });
   const agent = agentStateKey(project, sessionId);
@@ -152,7 +155,7 @@ async function mountChat(mode: AgentOutputViewMode = "terminal") {
   store.set(outputBufferFamily(agent), "terminal fixture output");
   store.set(outputAvailableFamily(agent), true);
   store.set(agentOutputViewModeAtom, mode);
-  render(
+  const mounted = render(
     <Provider store={store}>
       <ResponsiveViewportProvider value={viewport}>
         <ChatScreen />
@@ -165,10 +168,22 @@ async function mountChat(mode: AgentOutputViewMode = "terminal") {
   );
   expect(store.get(agentOutputViewModeAtom)).toBe(mode);
   const input = screen.getByRole("textbox", { name: "Message the agent" });
-  fireEvent.change(input, { target: { value: "Please inspect this component" } });
+  if (options.draft !== null)
+    fireEvent.change(input, {
+      target: { value: options.draft ?? "Please inspect this component" },
+    });
   const send = screen.getByRole("button", { name: "Send the message" });
-  expect(send.getAttribute("aria-disabled")).not.toBe("true");
-  return { input, send };
+  if (options.draft !== null) expect(send.getAttribute("aria-disabled")).not.toBe("true");
+  return { input, send, store, unmount: mounted.unmount };
+}
+
+function deferredSend() {
+  let resolve!: (value: unknown) => void;
+  const promise = new Promise((complete) => {
+    resolve = complete;
+  });
+  boundary.sendLivePaneInput.mockReturnValueOnce(promise);
+  return () => resolve({ ok: true, sessionId, accepted: true, delivery: { state: "delivered" } });
 }
 
 async function sendMessage(mode: AgentOutputViewMode = "terminal") {
@@ -194,6 +209,59 @@ describe("AgentChatScreen mounted web composer footer", () => {
       accepted: true,
       delivery: { state: "delivered" },
     });
+  });
+
+  it("disables the mounted send button while input is pending and permits the next send", async () => {
+    const complete = deferredSend();
+    const { input, send } = await mountChat();
+    try {
+      await act(async () => fireEvent.click(send));
+      await waitFor(() => expect(boundary.sendLivePaneInput).toHaveBeenCalledTimes(1));
+      expect(send.getAttribute("aria-disabled")).toBe("true");
+      expect(
+        screen.getByRole("button", { name: "Attach a file" }).getAttribute("aria-disabled"),
+      ).toBe("true");
+      expect(screen.getByText("Sending...")).toBeTruthy();
+      await act(async () => fireEvent.click(send));
+      expect(boundary.sendLivePaneInput).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => complete());
+    }
+    await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe(""));
+    expect(screen.queryByText("Sending...")).toBeNull();
+    fireEvent.change(input, { target: { value: "Send after the first request settles" } });
+    expect(send.getAttribute("aria-disabled")).not.toBe("true");
+    await act(async () => fireEvent.click(send));
+    await waitFor(() => expect(boundary.sendLivePaneInput).toHaveBeenCalledTimes(2));
+    expect(boundary.sendLivePaneInput.mock.calls[1]?.[2]).toBe(
+      "Send after the first request settles",
+    );
+  });
+
+  it("keeps the mounted send button disabled across a pending remount", async () => {
+    const complete = deferredSend();
+    const first = await mountChat();
+    let remounted: Awaited<ReturnType<typeof mountChat>> | undefined;
+    try {
+      await act(async () => fireEvent.click(first.send));
+      await waitFor(() => expect(boundary.sendLivePaneInput).toHaveBeenCalledTimes(1));
+      first.unmount();
+      remounted = await mountChat("terminal", { store: first.store, draft: null });
+      expect((remounted.input as HTMLTextAreaElement).value).toBe("Please inspect this component");
+      expect(remounted.send.getAttribute("aria-disabled")).toBe("true");
+      expect(screen.getByText("Sending...")).toBeTruthy();
+      await act(async () => fireEvent.click(remounted!.send));
+      expect(boundary.sendLivePaneInput).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => complete());
+    }
+    expect(remounted).toBeDefined();
+    await waitFor(() => expect(screen.queryByText("Sending...")).toBeNull());
+    fireEvent.change(remounted!.input, { target: { value: "Send from the remounted composer" } });
+    expect(remounted!.send.getAttribute("aria-disabled")).not.toBe("true");
+    await act(async () => fireEvent.click(remounted!.send));
+    await waitFor(() => expect(boundary.sendLivePaneInput).toHaveBeenCalledTimes(2));
+    expect(boundary.sendLivePaneInput.mock.calls[1]?.[2]).toBe("Send from the remounted composer");
   });
 
   it("renders an accepted send awaiting its echo in terminal mode", async () => {
