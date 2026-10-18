@@ -459,7 +459,7 @@ fn run_child(case: &str) {
         .collect::<Vec<_>>();
     let expected_steps: &[&str] = match outcome {
         "verified" | "head-loss" | "two-markers" | "unreadable" | "stuck" | "capture-fail" => {
-            &["load-buffer", "paste-buffer", "send-keys"]
+            &["load-buffer", "set-option", "send-keys"]
         }
         "ok" if kind == "route" => &["load-buffer", "paste-buffer", "send-keys"],
         "ok" => &["load-buffer", "paste-buffer"],
@@ -468,6 +468,16 @@ fn run_child(case: &str) {
         "expired" | "cancelled" => &["delete-buffer"],
         _ => panic!("unknown outcome {outcome}"),
     };
+    let expected_steps = expected_steps
+        .iter()
+        .map(|step| {
+            if kind == "route" && *step == "paste-buffer" {
+                "if-shell"
+            } else {
+                *step
+            }
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
         delivery_steps, expected_steps,
         "{case}: no carriage return after failure"
@@ -624,6 +634,17 @@ fn run_receipt_failure_child(
             fs::read_to_string(recorder.join("loaded")).unwrap(),
             expected
         );
+        assert_eq!(
+            fs::read_to_string(recorder.join("file-existed-at-paste")).unwrap(),
+            "false"
+        );
+        assert!(!recorder.join("buffer-bytes").exists());
+        assert!(!recorder.join("open-frame").exists());
+        let staged = fs::read_to_string(recorder.join("staged-path")).unwrap();
+        assert!(
+            !Path::new(&staged).exists(),
+            "receipt path leaked staged body"
+        );
         Some(expected)
     } else {
         assert_eq!(response.status, 500, "{}", response.body);
@@ -736,8 +757,8 @@ fn route_fixture(
         "sharedChatActor":{"role":"owner", "displayName":"Sam Reviewer"}
     });
     let expected = format!(
-        "[aimux context] page=/delivery mode=review [/aimux context] [Sam Reviewer] {} Attached files: - notes.md (text/markdown, 4 bytes): {}",
-        text.replace('\n', " "),
+        "[aimux context] page=/delivery mode=review [/aimux context] [Sam Reviewer] {}\n\nAttached files:\n- notes.md (text/markdown, 4 bytes): {}",
+        text,
         content.display()
     );
     (
@@ -752,6 +773,13 @@ set -eu
 fail() { printf '%s\n' "recorder rejected command: $*" >&2; exit 97; }
 dir=${AIMUX_DELIVERY_TEST_DIR:?}
 outcome=${AIMUX_DELIVERY_TEST_OUTCOME:?}
+record_paste() {
+  staged=$(/bin/cat "$dir/staged-path")
+  if [ -e "$staged" ]; then printf '%s' true; else printf '%s' false; fi > "$dir/file-existed-at-paste"
+  [ -f "$dir/buffer-bytes" ] || fail "paste without loaded buffer"
+  if [ "$outcome" = paste-fail ]; then printf '%s\n' 'injected paste-buffer child failure' >&2; exit 74; fi
+  /bin/rm "$dir/buffer-bytes"
+}
 [ "$#" -ge 3 ] || fail "missing private socket"
 [ "$1" = -S ] && [ "$2" = "${AIMUX_TMUX_SOCKET_PATH:?}" ] || fail "foreign socket"
 [ "$2" = "${dir%/recorder}/tmux.sock" ] || fail "socket outside owned isolation"
@@ -775,14 +803,41 @@ load-buffer)
       ;;
   esac
   ;;
-paste-buffer)
+set-option)
+  [ "$#" -eq 46 ] || fail "framed command count"
+  token=$6
+  case "$token" in aimux-prompt-*) ;; *) fail "foreign frame token" ;; esac
+  buffer=$(/bin/cat "$dir/buffer-name")
+  expected="set-option -p -t @1 @aimux-input-paste-frame $token ; send-keys -t @1 -H 1b 5b 32 30 30 7e ; paste-buffer -d -r -b $buffer -t @1 ; send-keys -t @1 -H 1b 5b 32 30 31 7e ; set-option -pu -t @1 @aimux-input-paste-frame ; display-message -p AIMUX_FRAMED_PASTE_OK"
+  [ "$*" = "$expected" ] || fail "framed group argv"
+  printf '%s' "$token" > "$dir/open-frame"
+  record_paste
+  /bin/rm "$dir/open-frame"
+  printf 'AIMUX_FRAMED_PASTE_OK\n'
+  ;;
+paste-buffer|if-shell)
+  if [ "$1" = if-shell ]; then
+    case "$5" in
+      '#{==:#{@aimux-input-paste-frame},aimux-prompt-'*)
+        [ "$#" -eq 6 ] && [ "$2" = -F ] && [ "$3" = -t ] && [ "$4" = @1 ] || fail "frame cleanup argv"
+        [ "$6" = "'send-keys' '-t' '@1' '-H' '1b' '5b' '32' '30' '31' '7e'; 'set-option' '-pu' '-t' '@1' '@aimux-input-paste-frame'" ] || fail "frame cleanup command"
+        if [ -f "$dir/open-frame" ]; then
+          token=$(/bin/cat "$dir/open-frame")
+          if [ "$5" = "#{==:#{@aimux-input-paste-frame},$token}" ]; then /bin/rm "$dir/open-frame"; fi
+        fi
+        exit 0
+        ;;
+    esac
+    [ "$#" -eq 7 ] && [ "$2" = -F ] && [ "$3" = -t ] && [ "$4" = @1 ] && [ "$5" = '#{==:#{bracket_paste_flag},1}' ] || fail "atomic paste guard argv"
+    buffer=$(/bin/cat "$dir/buffer-name")
+    [ "$6" = "'paste-buffer' '-d' '-p' '-r' '-b' '$buffer' '-t' '@1'; display-message -p AIMUX_GUARDED_PASTE_OK" ] || fail "guarded paste command"
+    [ "$7" = "'if-shell' '-F' '-t' '@1' '#{==:#{bracket_paste_flag},0}' 'display-message -p AIMUX_GUARDED_PASTE_REFUSED' 'display-message -p AIMUX_GUARDED_PASTE_UNAVAILABLE'" ] || fail "guard refusal or unavailable marker"
+  else
   [ "$#" -eq 8 ] && [ "$2" = -d ] && [ "$3" = -p ] && [ "$4" = -r ] && [ "$5" = -b ] && [ "$7" = -t ] && [ "$8" = @1 ] || fail "paste argv"
   [ "$6" = "$(/bin/cat "$dir/buffer-name")" ] || fail "wrong paste buffer"
-  staged=$(/bin/cat "$dir/staged-path")
-  if [ -e "$staged" ]; then printf '%s' true; else printf '%s' false; fi > "$dir/file-existed-at-paste"
-  [ -f "$dir/buffer-bytes" ] || fail "paste without loaded buffer"
-  if [ "$outcome" = paste-fail ]; then printf '%s\n' 'injected paste-buffer child failure' >&2; exit 74; fi
-  /bin/rm "$dir/buffer-bytes"
+  fi
+  record_paste
+  if [ "$1" = if-shell ]; then printf 'AIMUX_GUARDED_PASTE_OK\n'; fi
   ;;
 delete-buffer)
   [ "$#" -eq 3 ] && [ "$2" = -b ] || fail "cleanup argv"
@@ -809,7 +864,10 @@ capture-pane)
       *) printf '> \n' ;;
     esac
   else
+    # This artificial complete-display peer is not a provider TUI.
+    # Only its rendered whitespace folds; loaded transport bytes remain literal.
     case "$outcome" in
+      verified|receipt-after|receipt-after-missing) printf '> '; /usr/bin/tr '\n' ' ' < "$dir/loaded"; printf '\n' ;;
       head-loss) printf '> '; /usr/bin/tail -c 200 "$dir/loaded"; printf '\n' ;;
       two-markers) printf '> [Pasted Content 4577 chars][Pasted Content 3941 chars]\n' ;;
       unreadable) printf 'Custom opaque TUI\n' ;;

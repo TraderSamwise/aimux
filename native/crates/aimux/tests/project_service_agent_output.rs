@@ -121,6 +121,18 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
         Ok(())
     }
 
+    fn paste_text_with_mode(
+        &mut self,
+        window_id: &str,
+        text: &str,
+        mode: aimux::agent_prompt_delivery::PromptPasteMode,
+    ) -> Result<(), String> {
+        if mode == aimux::agent_prompt_delivery::PromptPasteMode::Guarded {
+            return Err("test receiver has not advertised bracketed paste".into());
+        }
+        self.paste_text(window_id, text)
+    }
+
     fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
         self.actions.push(FakeRuntimeAction::Text(
             window_id.to_owned(),
@@ -183,6 +195,18 @@ impl AgentOutputCaptureRuntime for FakeActivityRuntime {
 
     fn resize_window(&mut self, window_id: &str, cols: i64, rows: i64) -> Result<(), String> {
         self.inner.resize_window(window_id, cols, rows)
+    }
+
+    fn paste_text_with_mode(
+        &mut self,
+        window_id: &str,
+        text: &str,
+        mode: aimux::agent_prompt_delivery::PromptPasteMode,
+    ) -> Result<(), String> {
+        if mode == aimux::agent_prompt_delivery::PromptPasteMode::Guarded {
+            return Err("test receiver has not advertised bracketed paste".into());
+        }
+        self.paste_text(window_id, text)
     }
 
     fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
@@ -2125,16 +2149,9 @@ fn shared_guest_input_is_limited_to_live_pane_shared_session() {
     cleanup(project);
 }
 
-/// What a user's own multi-line message does on the two input routes.
-///
-/// It is FLATTENED, not carried: `normalize_submitted_prompt` collapses any
-/// whitespace run holding a line break to one space before delivery. The
-/// paste can carry newlines -- internal pokes rely on that -- so it is worth
-/// being plain that a user's are gone by the time it runs, and worth pinning
-/// that flattening never becomes dropping: the reported bug was a message
-/// that arrived starting at item 12, so both ends are named here.
+/// Both input routes preserve a numbered list in one delivery per turn.
 #[test]
-fn a_users_multiline_message_is_flattened_but_never_shortened() {
+fn a_users_multiline_message_arrives_as_a_list_on_both_input_routes() {
     let project = temp_project("multiline-user-input");
     let state_dir = project.join("state");
     write_state(&state_dir);
@@ -2173,8 +2190,8 @@ fn a_users_multiline_message_is_flattened_but_never_shortened() {
     );
     for text in delivered {
         assert!(
-            !text.contains('\n'),
-            "normalize_submitted_prompt flattens a user's newlines: {text}"
+            text == &message,
+            "the numbered list must arrive with its original newlines: {text}"
         );
         assert!(
             text.starts_with("1. item number 1"),
@@ -3742,7 +3759,7 @@ fn input_formats_session_bound_attachments_into_submitted_prompt() {
             FakeRuntimeAction::Text(
                 "@1".into(),
                 format!(
-                    "Review this Attached files: - notes.md (text/markdown, 42 bytes): {}",
+                    "Review this\n\nAttached files:\n- notes.md (text/markdown, 42 bytes): {}",
                     content_path.display()
                 )
             ),
@@ -3864,7 +3881,7 @@ fn live_pane_resize_interrupt_and_input_send_tmux_commands() {
         vec![
             FakeRuntimeAction::Resize("@1".into(), 100, 32),
             FakeRuntimeAction::Escape("@1".into()),
-            FakeRuntimeAction::Text("@1".into(), "[Shared User] line one line two".into()),
+            FakeRuntimeAction::Text("@1".into(), "[Shared User] line one\nline two".into()),
             FakeRuntimeAction::CarriageReturn("@1".into()),
         ]
     );
@@ -3875,14 +3892,23 @@ fn live_pane_resize_interrupt_and_input_send_tmux_commands() {
 fn prompt_normalization_matches_submitted_tmux_prompt_contract() {
     assert_eq!(
         normalize_submitted_prompt("Aimux task\n\nRun:\n  aimux task show t1\n"),
-        "Aimux task Run: aimux task show t1"
+        "Aimux task\n\nRun:\n  aimux task show t1"
     );
     assert_eq!(
         normalize_submitted_prompt("  keep  spacing  "),
         "  keep  spacing  "
     );
-    assert_eq!(normalize_submitted_prompt("a  \n  b"), "a b");
+    assert_eq!(normalize_submitted_prompt("a  \n  b"), "a  \n  b");
     assert_eq!(normalize_submitted_prompt("single line"), "single line");
+    assert_eq!(
+        normalize_submitted_prompt("one\r\n\r\n  two\rthree\r\n"),
+        "one\n\n  two\nthree"
+    );
+    assert_eq!(normalize_submitted_prompt("\r\n\n"), "");
+    assert_eq!(
+        normalize_submitted_prompt("one\n\t  two\n\nthree"),
+        "one\n\t  two\n\nthree"
+    );
 }
 
 fn write_state(state_dir: &PathBuf) {

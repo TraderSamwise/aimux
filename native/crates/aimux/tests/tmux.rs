@@ -4,19 +4,19 @@ use aimux::tmux::{
     MANAGED_TMUX_TERMINAL_FEATURES, TmuxCommandSpec, append_session_option_argv,
     attach_session_argv, build_default_root_mouse_bindings_config,
     build_default_root_mouse_bindings_install_config, capture_pane_argv, clear_history_argv,
-    delete_buffer_argv, is_dashboard_window_name, is_meta_dashboard_window_name,
-    is_tmux_client_session_for_host, is_tmux_client_session_name, kill_session_argv,
-    kill_window_argv, legacy_project_session_name, link_window_argv, list_clients_argv,
-    list_windows_argv, load_buffer_argv, modified_enter_binding_argv, move_window_argv,
-    new_dashboard_window_argv, new_session_argv, new_window_argv, packed_argv_bytes,
-    paste_buffer_argv, project_client_session_name, project_session, prompt_buffer_name,
-    refresh_status_argv, rename_session_argv, resize_window_argv, respawn_window_argv,
-    select_window_argv, send_carriage_return_argv, send_client_carriage_return_argv,
-    send_client_enter_argv, send_enter_argv, send_escape_argv, send_focus_in_argv, send_key_argv,
-    send_modified_enter_argv, session_window_id_target, session_window_target,
-    set_session_option_argv, should_install_modified_enter_binding, start_pane_pipe_argv,
-    stop_pane_pipe_argv, swap_window_argv, switch_client_argv, switch_client_to_target_argv,
-    unlink_window_argv,
+    delete_buffer_argv, guarded_paste_buffer_argv, is_dashboard_window_name,
+    is_meta_dashboard_window_name, is_tmux_client_session_for_host, is_tmux_client_session_name,
+    kill_session_argv, kill_window_argv, legacy_project_session_name, link_window_argv,
+    list_clients_argv, list_windows_argv, load_buffer_argv, modified_enter_binding_argv,
+    move_window_argv, new_dashboard_window_argv, new_session_argv, new_window_argv,
+    packed_argv_bytes, paste_buffer_argv, project_client_session_name, project_session,
+    prompt_buffer_name, refresh_status_argv, rename_session_argv, resize_window_argv,
+    respawn_window_argv, select_window_argv, send_carriage_return_argv,
+    send_client_carriage_return_argv, send_client_enter_argv, send_enter_argv, send_escape_argv,
+    send_focus_in_argv, send_key_argv, send_modified_enter_argv, session_window_id_target,
+    session_window_target, set_session_option_argv, should_install_modified_enter_binding,
+    start_pane_pipe_argv, stop_pane_pipe_argv, swap_window_argv, switch_client_argv,
+    switch_client_to_target_argv, unlink_window_argv,
 };
 use serde_json::Value;
 
@@ -290,6 +290,19 @@ fn normalize_mouse_bindings_install_config(config: &str) -> String {
 /// times. `a\nb\nc` reaches the pty as `61 0d 62 0d 63` without it.
 #[test]
 fn a_prompt_paste_keeps_linefeeds_as_linefeeds() {
+    let paste = paste_buffer_argv("aimux-prompt-1", "@3");
+    assert_eq!(
+        guarded_paste_buffer_argv(&paste, "@3"),
+        [
+            "if-shell",
+            "-F",
+            "-t",
+            "@3",
+            "#{==:#{bracket_paste_flag},1}",
+            "'paste-buffer' '-d' '-p' '-r' '-b' 'aimux-prompt-1' '-t' '@3'; display-message -p AIMUX_GUARDED_PASTE_OK",
+            "'if-shell' '-F' '-t' '@3' '#{==:#{bracket_paste_flag},0}' 'display-message -p AIMUX_GUARDED_PASTE_REFUSED' 'display-message -p AIMUX_GUARDED_PASTE_UNAVAILABLE'"
+        ]
+    );
     assert_eq!(
         load_buffer_argv("aimux-prompt-1", "/tmp/aimux-prompt-1"),
         ["load-buffer", "-b", "aimux-prompt-1", "/tmp/aimux-prompt-1"]

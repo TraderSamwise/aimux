@@ -3054,6 +3054,171 @@ pub fn load_buffer_argv(buffer_name: &str, path: &str) -> Vec<String> {
     ]
 }
 
+pub const GUARDED_PASTE_SUCCESS: &str = "AIMUX_GUARDED_PASTE_OK\n";
+pub const GUARDED_PASTE_REFUSED: &str = "AIMUX_GUARDED_PASTE_REFUSED\n";
+pub const GUARDED_PASTE_UNAVAILABLE: &str = "AIMUX_GUARDED_PASTE_UNAVAILABLE\n";
+pub const FRAMED_PASTE_SUCCESS: &str = "AIMUX_FRAMED_PASTE_OK\n";
+pub const PASTE_FRAME_OPTION: &str = "@aimux-input-paste-frame";
+
+fn paste_marker_argv(window_id: &str, closing: bool) -> Vec<String> {
+    [
+        "send-keys",
+        "-t",
+        window_id,
+        "-H",
+        "1b",
+        "5b",
+        "32",
+        "30",
+        if closing { "31" } else { "30" },
+        "7e",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+fn unset_paste_frame_argv(window_id: &str) -> Vec<String> {
+    ["set-option", "-pu", "-t", window_id, PASTE_FRAME_OPTION]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A late client error must not close an already finished or newer paste frame.
+pub fn close_paste_frame_argv(window_id: &str, frame_id: &str) -> Vec<String> {
+    let closing = paste_marker_argv(window_id, true)
+        .iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let unset = unset_paste_frame_argv(window_id)
+        .iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<_>>()
+        .join(" ");
+    vec![
+        "if-shell".to_owned(),
+        "-F".to_owned(),
+        "-t".to_owned(),
+        window_id.to_owned(),
+        format!("#{{==:#{{{PASTE_FRAME_OPTION}}},{frame_id}}}"),
+        format!("{closing}; {unset}"),
+    ]
+}
+
+/// Frame one staged body paste without letting editor key bindings see its LF.
+/// Keep tmux's existing body sanitation; markers travel as hex keys, not body data.
+pub fn framed_paste_buffer_argv(
+    paste_argv: &[String],
+    window_id: &str,
+    frame_id: &str,
+) -> Vec<String> {
+    let mut argv = [
+        "set-option",
+        "-p",
+        "-t",
+        window_id,
+        PASTE_FRAME_OPTION,
+        frame_id,
+        ";",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    argv.extend(paste_marker_argv(window_id, false));
+    argv.push(";".to_owned());
+    argv.extend(
+        paste_argv
+            .iter()
+            .filter(|argument| argument.as_str() != "-p")
+            .cloned(),
+    );
+    argv.push(";".to_owned());
+    argv.extend(paste_marker_argv(window_id, true));
+    argv.push(";".to_owned());
+    argv.extend(unset_paste_frame_argv(window_id));
+    argv.extend(
+        [
+            ";",
+            "display-message",
+            "-p",
+            FRAMED_PASTE_SUCCESS.trim_end(),
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    argv
+}
+
+pub fn validate_framed_paste_output(window_id: &str, stdout: &[u8]) -> Result<(), String> {
+    if stdout == FRAMED_PASTE_SUCCESS.as_bytes() {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid tmux framed-paste response for {window_id}: {stdout:?}"
+        ))
+    }
+}
+
+/// Check the receiver mode and paste in the same tmux command-queue turn.
+/// `if-shell -F` does not spawn a shell or yield before its paste branch, so a
+/// receiver cannot disable paste mode between a client-side query and paste.
+pub fn guarded_paste_buffer_argv(paste_argv: &[String], window_id: &str) -> Vec<String> {
+    let paste = paste_argv
+        .iter()
+        .map(|argument| shell_quote(argument))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let refusal = [
+        "if-shell".to_owned(),
+        "-F".to_owned(),
+        "-t".to_owned(),
+        window_id.to_owned(),
+        "#{==:#{bracket_paste_flag},0}".to_owned(),
+        format!("display-message -p {}", GUARDED_PASTE_REFUSED.trim_end()),
+        format!(
+            "display-message -p {}",
+            GUARDED_PASTE_UNAVAILABLE.trim_end()
+        ),
+    ]
+    .iter()
+    .map(|argument| shell_quote(argument))
+    .collect::<Vec<_>>()
+    .join(" ");
+    vec![
+        "if-shell".to_owned(),
+        "-F".to_owned(),
+        "-t".to_owned(),
+        window_id.to_owned(),
+        "#{==:#{bracket_paste_flag},1}".to_owned(),
+        format!(
+            "{paste}; display-message -p {}",
+            GUARDED_PASTE_SUCCESS.trim_end()
+        ),
+        refusal,
+    ]
+}
+
+/// A successful process is insufficient: the refusal branch also exits zero.
+pub fn validate_guarded_paste_output(window_id: &str, stdout: &[u8]) -> Result<(), String> {
+    if stdout == GUARDED_PASTE_SUCCESS.as_bytes() {
+        Ok(())
+    } else if stdout == GUARDED_PASTE_REFUSED.as_bytes() {
+        Err(format!(
+            "multiline prompt not delivered to {window_id}: receiver must enable bracketed paste; its LF input behavior is unknown"
+        ))
+    } else if stdout == GUARDED_PASTE_UNAVAILABLE.as_bytes() {
+        Err(format!(
+            "multiline prompt not delivered to {window_id}: tmux cannot query bracketed paste capability; this receiver's LF input behavior cannot be established"
+        ))
+    } else {
+        Err(format!(
+            "invalid tmux guarded-paste response for {window_id}: {stdout:?}"
+        ))
+    }
+}
+
 /// Paste a named buffer into a window, and delete the buffer.
 ///
 /// `-r` is the flag this cannot ship without. `paste-buffer` REPLACES every
@@ -4488,6 +4653,180 @@ mod staged_prompt_tests {
     };
     use std::cell::RefCell;
 
+    #[test]
+    fn framed_paste_wraps_one_sanitized_body_paste_without_advertised_mode() {
+        let paste = super::paste_buffer_argv("aimux-prompt-test", "@1");
+        let argv = super::framed_paste_buffer_argv(&paste, "@1", "frame-123");
+        assert_eq!(
+            argv,
+            vec![
+                "set-option",
+                "-p",
+                "-t",
+                "@1",
+                "@aimux-input-paste-frame",
+                "frame-123",
+                ";",
+                "send-keys",
+                "-t",
+                "@1",
+                "-H",
+                "1b",
+                "5b",
+                "32",
+                "30",
+                "30",
+                "7e",
+                ";",
+                "paste-buffer",
+                "-d",
+                "-r",
+                "-b",
+                "aimux-prompt-test",
+                "-t",
+                "@1",
+                ";",
+                "send-keys",
+                "-t",
+                "@1",
+                "-H",
+                "1b",
+                "5b",
+                "32",
+                "30",
+                "31",
+                "7e",
+                ";",
+                "set-option",
+                "-pu",
+                "-t",
+                "@1",
+                "@aimux-input-paste-frame",
+                ";",
+                "display-message",
+                "-p",
+                "AIMUX_FRAMED_PASTE_OK",
+            ]
+        );
+        let close = super::close_paste_frame_argv("@1", "frame-123");
+        assert_eq!(
+            close,
+            vec![
+                "if-shell",
+                "-F",
+                "-t",
+                "@1",
+                "#{==:#{@aimux-input-paste-frame},frame-123}",
+                "'send-keys' '-t' '@1' '-H' '1b' '5b' '32' '30' '31' '7e'; 'set-option' '-pu' '-t' '@1' '@aimux-input-paste-frame'"
+            ]
+        );
+        assert_eq!(
+            close.len(),
+            6,
+            "already closed or another owner has no else action"
+        );
+        let newer = super::close_paste_frame_argv("@1", "frame-456");
+        assert_ne!(close[4], newer[4], "cleanup matches the exact owner token");
+        assert_eq!(
+            super::validate_framed_paste_output("@1", super::FRAMED_PASTE_SUCCESS.as_bytes()),
+            Ok(())
+        );
+        for stdout in [
+            b"".as_slice(),
+            b"AIMUX_FRAMED_PASTE_OK",
+            b"AIMUX_FRAMED_PASTE_OK\nextra\n",
+            &[0xff],
+        ] {
+            assert!(super::validate_framed_paste_output("@1", stdout).is_err());
+        }
+    }
+
+    #[test]
+    fn guarded_paste_checks_mode_and_requires_an_exact_success_acknowledgement() {
+        let paste = super::paste_buffer_argv("aimux-prompt-test", "@1");
+        assert_eq!(
+            super::guarded_paste_buffer_argv(&paste, "@1"),
+            vec![
+                "if-shell",
+                "-F",
+                "-t",
+                "@1",
+                "#{==:#{bracket_paste_flag},1}",
+                "'paste-buffer' '-d' '-p' '-r' '-b' 'aimux-prompt-test' '-t' '@1'; display-message -p AIMUX_GUARDED_PASTE_OK",
+                "'if-shell' '-F' '-t' '@1' '#{==:#{bracket_paste_flag},0}' 'display-message -p AIMUX_GUARDED_PASTE_REFUSED' 'display-message -p AIMUX_GUARDED_PASTE_UNAVAILABLE'",
+            ]
+        );
+        assert_eq!(
+            super::validate_guarded_paste_output("@1", super::GUARDED_PASTE_SUCCESS.as_bytes()),
+            Ok(())
+        );
+        assert!(
+            super::validate_guarded_paste_output("@1", super::GUARDED_PASTE_REFUSED.as_bytes())
+                .expect_err("refusal is not a successful paste")
+                .contains("multiline prompt not delivered")
+        );
+        assert!(
+            super::validate_guarded_paste_output("@1", super::GUARDED_PASTE_UNAVAILABLE.as_bytes())
+                .expect_err("missing capability is not mode-off or a successful paste")
+                .contains("cannot query bracketed paste capability")
+        );
+        for stdout in [
+            b"".as_slice(),
+            b"1\n",
+            b"AIMUX_GUARDED_PASTE_UNAVAILABLE",
+            b"AIMUX_GUARDED_PASTE_OK",
+            b"AIMUX_GUARDED_PASTE_OK\nextra\n",
+            &[0xff],
+        ] {
+            assert!(
+                super::validate_guarded_paste_output("@1", stdout)
+                    .expect_err("only the exact acknowledgement proves the paste ran")
+                    .contains("invalid tmux guarded-paste response")
+            );
+        }
+    }
+
+    #[test]
+    fn a_refused_guarded_paste_cleans_the_buffer_and_retains_the_refusal() {
+        let mut steps = Vec::new();
+        let mut loaded_path = None;
+        let outcome = deliver_staged_prompt("@1", "one\ntwo", |step, argv, _| {
+            steps.push(step);
+            match step {
+                StagedPromptStep::Load => {
+                    loaded_path = Some(std::path::PathBuf::from(&argv[3]));
+                    Ok(())
+                }
+                StagedPromptStep::Paste => {
+                    assert!(
+                        !loaded_path.as_ref().unwrap().exists(),
+                        "file is gone before guard"
+                    );
+                    let guarded = super::guarded_paste_buffer_argv(&argv, "@1");
+                    assert_eq!(guarded[0], "if-shell");
+                    super::validate_guarded_paste_output(
+                        "@1",
+                        super::GUARDED_PASTE_REFUSED.as_bytes(),
+                    )
+                }
+                StagedPromptStep::Cleanup => Err("cleanup also failed".to_owned()),
+            }
+        });
+        assert_eq!(
+            steps,
+            vec![
+                StagedPromptStep::Load,
+                StagedPromptStep::Paste,
+                StagedPromptStep::Cleanup
+            ]
+        );
+        assert!(
+            outcome
+                .expect_err("refusal")
+                .contains("multiline prompt not delivered")
+        );
+    }
+
     /// Longer than the chunk the old path cut on, because a prompt that fits
     /// in one chunk cannot show truncation.
     fn long_numbered_list() -> String {
@@ -4527,7 +4866,8 @@ mod staged_prompt_tests {
             Some("Check all agents before assigning work."),
         );
         let normalized = crate::agent_prompt_delivery::normalize_submitted_prompt(&contextualized);
-        assert!(!normalized.contains('\n'));
+        assert_eq!(normalized, contextualized);
+        assert!(normalized.contains('\n'));
         for prompt in [&briefing, &normalized] {
             assert!(prompt.len() > super::TMUX_SEND_TEXT_CHUNK_BYTES);
             assert!(prompt.contains("worker-1 "));

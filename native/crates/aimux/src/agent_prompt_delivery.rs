@@ -228,41 +228,65 @@ fn normalize_words(value: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Collapse a prompt into the single-line shape an agent composer accepts.
-///
-/// Only a whitespace run CONTAINING a line break becomes a space; horizontal
-/// whitespace is preserved exactly, which is what Node did and what keeps an
-/// indented snippet readable in the pane.
+/// Preserve line structure while reserving carriage return for the final submit.
+/// Trailing line endings remain framing, and CRLF/bare CR become literal LF.
 pub fn normalize_submitted_prompt(data: &str) -> String {
-    let trimmed = data.trim_end_matches(['\r', '\n']);
-    let mut output = String::with_capacity(trimmed.len());
-    let mut whitespace = String::new();
-    let mut whitespace_has_line_break = false;
-    for character in trimmed.chars() {
-        if character.is_whitespace() {
-            if character == '\r' || character == '\n' {
-                whitespace_has_line_break = true;
-            }
-            whitespace.push(character);
-        } else {
-            if !whitespace.is_empty() {
-                if whitespace_has_line_break {
-                    output.push(' ');
-                } else {
-                    output.push_str(&whitespace);
-                }
-                whitespace.clear();
-                whitespace_has_line_break = false;
-            }
-            output.push(character);
+    data.trim_end_matches(['\r', '\n'])
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+}
+
+/// A body must not be able to open or close the terminal's paste frame.
+/// Older tmux releases forward these controls without escaping them.
+pub fn validate_submitted_prompt(prompt: &str) -> Result<(), String> {
+    if ["\u{1b}[200~", "\u{1b}[201~", "\u{9b}200~", "\u{9b}201~"]
+        .iter()
+        .any(|delimiter| prompt.contains(delimiter))
+    {
+        return Err(
+            "agent input contains a terminal paste delimiter; replace its escape byte with a printable spelling before sending"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PromptPasteMode {
+    Raw,
+    Framed,
+    Guarded,
+}
+
+/// Known agent parsers accept explicit paste frames independently of key bindings.
+/// Other receivers must advertise that they understand those frames.
+pub fn prompt_paste_mode(prompt: &str, tool: Option<&str>) -> PromptPasteMode {
+    if !prompt.contains('\n') {
+        PromptPasteMode::Raw
+    } else if matches!(tool.map(str::trim), Some("claude" | "codex")) {
+        PromptPasteMode::Framed
+    } else {
+        PromptPasteMode::Guarded
+    }
+}
+
+#[cfg(test)]
+mod paste_mode_tests {
+    use super::*;
+
+    #[test]
+    fn multiline_known_receivers_are_framed_instead_of_using_key_bindings() {
+        for tool in [Some("claude"), Some("codex")] {
+            assert_eq!(prompt_paste_mode("one\ntwo", tool), PromptPasteMode::Framed);
+        }
+        for tool in [None, Some("shell"), Some("custom")] {
+            assert_eq!(
+                prompt_paste_mode("one\ntwo", tool),
+                PromptPasteMode::Guarded
+            );
+        }
+        for tool in [None, Some("shell"), Some("claude"), Some("codex")] {
+            assert_eq!(prompt_paste_mode("one", tool), PromptPasteMode::Raw);
         }
     }
-    if !whitespace.is_empty() {
-        if whitespace_has_line_break {
-            output.push(' ');
-        } else {
-            output.push_str(&whitespace);
-        }
-    }
-    output
 }

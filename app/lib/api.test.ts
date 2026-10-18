@@ -257,6 +257,27 @@ describe("api relay routing", () => {
     });
   });
 
+  it("keeps the same multiline prompt in direct and relay input on both API names", async () => {
+    const text = "1. fix the header\n\n  2. then the footer\n3. push";
+    const fetchMock = installFetchMock({ ok: true, accepted: true });
+    for (const send of [sendAgentInput, sendLivePaneInput]) {
+      await send(endpoint, "agent-1", text);
+    }
+    const directBodies = fetchMock.mock.calls.map((call) =>
+      JSON.parse(String((call[1] as RequestInit).body)),
+    );
+    const request = installRelayMock({ ok: true, accepted: true });
+    for (const send of [sendAgentInput, sendLivePaneInput]) {
+      await send(endpoint, "agent-1", text);
+    }
+    const relayBodies = request.mock.calls.map((call) => call[2]);
+    expect(directBodies).toEqual([
+      { sessionId: "agent-1", text },
+      { sessionId: "agent-1", text },
+    ]);
+    expect(relayBodies).toEqual(directBodies);
+  });
+
   it.each(["local", "relay"] as const)(
     "preserves the post-Enter failure receipt and original cause through %s input HTTP errors",
     async (transport) => {
