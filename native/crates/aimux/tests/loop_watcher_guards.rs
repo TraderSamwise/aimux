@@ -3737,13 +3737,73 @@ fn buffered_token_notices_keep_their_owner_across_promotion_demotion_and_reload(
     }
 }
 
-fn buffered_fleet_notice(recipient: &str) -> LoopSend {
-    LoopSend {
-        session_id: recipient.into(),
-        text: "fleet work".into(),
-        signature: "shared-fleet-signature".into(),
-        kind: LoopSendKind::OverseerBriefing,
+fn buffered_fleet_input(recipients: &[&str], cooldown_ms: i64) -> Value {
+    let mut sessions = recipients
+        .iter()
+        .map(|id| {
+            json!({
+                "id": id, "status": "idle", "overseer": true, "projectControl": true
+            })
+        })
+        .collect::<Vec<_>>();
+    let (worker, worker_meta) =
+        looping_session_with_status("stalled-worker", Some("running"), "idle");
+    sessions.push(worker);
+    input_with_config(
+        sessions,
+        json!({ "sessions": { "stalled-worker": worker_meta } }),
+        json!({ "stoppedDwellMs": 0, "nudgeCooldownMs": cooldown_ms }),
+    )
+}
+
+fn buffer_actual_fleet_notices(watcher: &mut LoopWatcher, input: &Value) -> Vec<LoopSend> {
+    let sends = watcher
+        .plan_sends(input, NOW)
+        .into_iter()
+        .filter(|send| send.kind == LoopSendKind::OverseerBriefing)
+        .collect::<Vec<_>>();
+    assert!(
+        !sends.is_empty(),
+        "the fixture must produce real fleet work"
+    );
+    for send in &sends {
+        watcher.buffer_send(send, NOW);
+        watcher.commit_send_result(send, NOW, LoopDeliveryOutcome::Buffered);
     }
+    sends
+}
+
+fn move_recipient_buffer_to_root(
+    watcher: &LoopWatcher,
+    recipient: &str,
+    label: &str,
+) -> LoopWatcher {
+    let directory = temp_state_dir(label);
+    let path = loop_watcher_state_path(&directory);
+    save_loop_watcher_state(&path, watcher).expect("save real recipient buffers");
+    let mut state: Value = serde_json::from_slice(&fs::read(&path).expect("read saved watcher"))
+        .expect("decode saved watcher");
+    let buffers = state["recipientWatchers"][recipient]["bufferedSends"].take();
+    assert!(
+        !buffers
+            .as_object()
+            .expect("recipient buffer map")
+            .is_empty()
+    );
+    assert!(
+        state["bufferedSends"]
+            .as_object()
+            .expect("root buffer map")
+            .is_empty()
+    );
+    state["recipientWatchers"][recipient]["bufferedSends"] = json!({});
+    state["bufferedSends"] = buffers;
+    fs::write(
+        &path,
+        serde_json::to_vec(&state).expect("encode legacy root fixture"),
+    )
+    .expect("write legacy root fixture");
+    load_loop_watcher_state(&path).expect("load real candidate keys under legacy root ownership")
 }
 
 #[test]
@@ -3752,20 +3812,14 @@ fn production_queue_skips_eight_offline_buffers_before_its_eight_send_cap_on_eve
         FAILED_BUFFER_RETRY_FLOOR_MS, loop_delivery_queue,
     };
     let mut watcher = LoopWatcher::new();
-    // Create recipient engines so their otherwise identical notices remain
-    // separately buffered, as a real paused fleet scan does.
-    let sessions = (0..9).map(|index| json!({
-        "id": format!("overseer-{index}"), "status": "idle", "overseer": true, "projectControl": true
-    })).collect::<Vec<_>>();
-    let mut input = json!({ "sessions": sessions, "metadata": { "sessions": {} }, "config": { "nudgeCooldownMs": 0 } });
-    watcher.plan_sends(&input, NOW);
-    for index in 0..9 {
-        let send = buffered_fleet_notice(&format!("overseer-{index}"));
-        watcher.buffer_send(&send, NOW);
-        watcher.commit_send_result(&send, NOW, LoopDeliveryOutcome::Buffered);
-        if index < 8 {
-            input["sessions"][index]["status"] = json!("offline");
-        }
+    let recipients = (0..9)
+        .map(|index| format!("overseer-{index}"))
+        .collect::<Vec<_>>();
+    let recipient_refs = recipients.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut input = buffered_fleet_input(&recipient_refs, 0);
+    assert_eq!(buffer_actual_fleet_notices(&mut watcher, &input).len(), 9);
+    for index in 0..8 {
+        input["sessions"][index]["status"] = json!("offline");
     }
     assert_eq!(watcher.buffered_send_count(), 9);
     let directory = temp_state_dir("queue-offline-eight-fairness");
@@ -3800,19 +3854,9 @@ fn production_queue_skips_eight_offline_buffers_before_its_eight_send_cap_on_eve
 #[test]
 fn production_queue_rotates_after_actual_attempt_when_one_slow_failure_spends_the_tick_budget() {
     use aimux::project_service::loop_watcher_task::loop_delivery_queue;
-    let sessions = ["a", "b", "c"].map(|id| {
-        json!({
-            "id": id, "status": "idle", "overseer": true, "projectControl": true
-        })
-    });
-    let input = json!({ "sessions": sessions, "metadata": { "sessions": {} }, "config": { "nudgeCooldownMs": 60_000 } });
+    let input = buffered_fleet_input(&["a", "b", "c"], 60_000);
     let mut watcher = LoopWatcher::new();
-    watcher.plan_sends(&input, NOW);
-    for id in ["a", "b", "c"] {
-        let send = buffered_fleet_notice(id);
-        watcher.buffer_send(&send, NOW);
-        watcher.commit_send_result(&send, NOW, LoopDeliveryOutcome::Buffered);
-    }
+    assert_eq!(buffer_actual_fleet_notices(&mut watcher, &input).len(), 3);
     let directory = temp_state_dir("queue-slow-recipient-rotation");
     let path = loop_watcher_state_path(&directory);
     let mut attempted = Vec::new();
@@ -3849,20 +3893,17 @@ fn buffered_pause_flushes_immediately_but_failed_buffers_wait_across_reload() {
     use aimux::project_service::loop_watcher_task::{
         FAILED_BUFFER_RETRY_FLOOR_MS, loop_delivery_queue,
     };
-    let input = json!({ "sessions": [{ "id": "a", "status": "idle", "overseer": true, "projectControl": true }],
-        "metadata": { "sessions": {} }, "config": { "nudgeCooldownMs": 0 } });
+    let input = buffered_fleet_input(&["a"], 0);
     let mut watcher = LoopWatcher::new();
-    watcher.plan_sends(&input, NOW);
-    let notice = buffered_fleet_notice("a");
-    watcher.buffer_send(&notice, NOW);
-    watcher.commit_send_result(&notice, NOW, LoopDeliveryOutcome::Buffered);
+    let notices = buffer_actual_fleet_notices(&mut watcher, &input);
+    let notice = &notices[0];
     assert_eq!(
         loop_delivery_queue(&watcher, &input, vec![], NOW + 1, 8).len(),
         1,
         "global-pause buffering does not impose failure backoff"
     );
     watcher.commit_send_result(
-        &notice,
+        notice,
         NOW + 1,
         LoopDeliveryOutcome::Failed {
             error: "unavailable".into(),
@@ -3891,18 +3932,19 @@ fn current_control_identity_filters_stale_root_and_child_fleet_buffers_but_keeps
  {
     use aimux::project_service::loop_watcher_task::loop_delivery_queue;
     let mut input = multiple_overseer_met_token_input();
+    let (stalled_worker, stalled_meta) = looping_session("stalled-worker", "idle");
+    input["sessions"]
+        .as_array_mut()
+        .unwrap()
+        .push(stalled_worker);
+    input["metadata"]["sessions"]["stalled-worker"] = stalled_meta;
     let mut watcher = LoopWatcher::new();
-    let mut root_fleet = buffered_fleet_notice("control-a");
-    // Buffer before engines exist, modelling a root entry retained on disk.
-    watcher.buffer_send(&root_fleet, NOW);
-    watcher.commit_send_result(&root_fleet, NOW, LoopDeliveryOutcome::Buffered);
-    let budgets = watcher.plan_sends(&input, NOW);
+    assert_eq!(buffer_actual_fleet_notices(&mut watcher, &input).len(), 2);
+    watcher = move_recipient_buffer_to_root(&watcher, "control-a", "queue-stale-root-identity");
+    let budgets = watcher.plan_sends(&input, NOW + 1);
     assert_eq!(budgets.len(), 1);
     watcher.buffer_send(&budgets[0], NOW);
     watcher.commit_send_result(&budgets[0], NOW, LoopDeliveryOutcome::Buffered);
-    root_fleet.session_id = "control-b".into();
-    watcher.buffer_send(&root_fleet, NOW);
-    watcher.commit_send_result(&root_fleet, NOW, LoopDeliveryOutcome::Buffered);
     for id in ["control-a", "control-b"] {
         input["metadata"]["sessions"][id]["overseer"] = json!(false);
         input["metadata"]["sessions"][id]["projectControl"] = json!(false);
@@ -3925,16 +3967,14 @@ fn a_failed_root_buffer_does_not_back_off_or_get_removed_by_a_siblings_identical
     use aimux::project_service::loop_watcher_task::loop_delivery_queue;
     let input = multiple_overseer_input(json!({ "stoppedDwellMs": 0, "nudgeCooldownMs": 60_000 }));
     let mut watcher = LoopWatcher::new();
-    let first = buffered_fleet_notice("control-a");
-    watcher.buffer_send(&first, NOW);
-    watcher.commit_send_result(&first, NOW, LoopDeliveryOutcome::Buffered);
-    watcher.plan_sends(&input, NOW);
-    let second = buffered_fleet_notice("control-b");
-    watcher.buffer_send(&second, NOW);
-    watcher.commit_send_result(&second, NOW, LoopDeliveryOutcome::Buffered);
+    let notices = buffer_actual_fleet_notices(&mut watcher, &input);
+    let first = send_to(&notices, "control-a", LoopSendKind::OverseerBriefing);
+    let second = send_to(&notices, "control-b", LoopSendKind::OverseerBriefing);
+    assert_eq!(first.signature, second.signature);
+    watcher = move_recipient_buffer_to_root(&watcher, "control-a", "queue-root-sibling-backoff");
     assert_eq!(watcher.buffered_send_count(), 2);
     watcher.commit_send_result(
-        &first,
+        first,
         NOW,
         LoopDeliveryOutcome::Failed {
             error: "old root buffer failed".into(),
@@ -3946,8 +3986,8 @@ fn a_failed_root_buffer_does_not_back_off_or_get_removed_by_a_siblings_identical
         queue[0].session_id, "control-b",
         "a failed sibling's signature is not this recipient's backoff"
     );
-    watcher.commit_send_result(&second, NOW + 1, LoopDeliveryOutcome::Delivered);
-    watcher.remove_buffered_send(&second);
+    watcher.commit_send_result(second, NOW + 1, LoopDeliveryOutcome::Delivered);
+    watcher.remove_buffered_send(second);
     assert_eq!(
         watcher.buffered_send_count(),
         1,
@@ -3968,21 +4008,11 @@ fn a_real_delivery_future_deadline_persists_failure_and_rotates_to_healthy_overs
     aimux::async_runtime::init_process_runtime().expect("async runtime initialized");
     // aimux-async-seam: test - drive the production future deadline and queue
     aimux::async_runtime::block_on_named("test:loop-delivery-budget-rotation", async {
-        let sessions = ["a", "b", "c"].map(|id| {
-            json!({
-                "id": id, "status": "idle", "overseer": true, "projectControl": true
-            })
-        });
-        let input = json!({ "sessions": sessions, "metadata": { "sessions": {} }, "config": { "nudgeCooldownMs": 60_000 } });
+        let input = buffered_fleet_input(&["a", "b", "c"], 60_000);
         let directory = temp_state_dir("actual-delivery-deadline-rotation");
         let path = loop_watcher_state_path(&directory);
         let mut watcher = LoopWatcher::new();
-        watcher.plan_sends(&input, NOW);
-        for id in ["a", "b", "c"] {
-            let send = buffered_fleet_notice(id);
-            watcher.buffer_send(&send, NOW);
-            watcher.commit_send_result(&send, NOW, LoopDeliveryOutcome::Buffered);
-        }
+        assert_eq!(buffer_actual_fleet_notices(&mut watcher, &input).len(), 3);
         let queue = loop_delivery_queue(&watcher, &input, vec![], NOW, 8);
         assert_eq!(queue[0].session_id, "a");
         let budget = TickLoopBudget::new(Duration::from_millis(20));
@@ -4038,15 +4068,18 @@ fn fast_delivery_succeeds_within_the_remaining_budget_and_preparation_cannot_res
     aimux::async_runtime::init_process_runtime().expect("async runtime initialized");
     // aimux-async-seam: test - check production deadline success and spent inverse
     aimux::async_runtime::block_on_named("test:loop-delivery-budget-success", async {
-        let send = buffered_fleet_notice("healthy");
+        let input = buffered_fleet_input(&["healthy"], 0);
+        let mut watcher = LoopWatcher::new();
+        let sends = buffer_actual_fleet_notices(&mut watcher, &input);
+        let send = &sends[0];
         let budget = TickLoopBudget::new(Duration::from_secs(1));
         assert_eq!(
-            deliver_loop_send_with_budget(&send, &budget, std::future::ready(true)).await,
+            deliver_loop_send_with_budget(send, &budget, std::future::ready(true)).await,
             LoopDeliveryOutcome::Delivered
         );
         let spent_by_preparation = TickLoopBudget::new(Duration::ZERO);
         let outcome =
-            deliver_loop_send_with_budget(&send, &spent_by_preparation, std::future::ready(true))
+            deliver_loop_send_with_budget(send, &spent_by_preparation, std::future::ready(true))
                 .await;
         let LoopDeliveryOutcome::Failed { error } = outcome else {
             panic!("an already spent scan cannot begin a fresh delivery allowance");

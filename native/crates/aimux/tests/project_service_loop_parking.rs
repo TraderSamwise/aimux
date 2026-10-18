@@ -8,7 +8,10 @@ use aimux::daemon::text::agents::{
 };
 use aimux::daemon::text::params::ProjectServiceJsonResult;
 use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
-use aimux::loop_watcher::{LoopDeliveryOutcome, LoopSendKind, LoopWatcher};
+use aimux::loop_watcher::{
+    LoopDeliveryOutcome, LoopSendKind, LoopWatcher, load_loop_watcher_state,
+    loop_watcher_state_path, save_loop_watcher_state,
+};
 use aimux::project_api_contract::routes;
 use aimux::project_service::coordination_worklist::{
     build_coordination_thread_entries, build_coordination_view,
@@ -1009,4 +1012,170 @@ fn buffered_active_loop_briefing_cannot_resurrect_an_agent_after_loop_removal_an
             );
         },
     );
+}
+
+fn start_managed_loop(state: &Path, id: &str) {
+    let mut metadata = load_metadata_state(state);
+    let session = metadata
+        .sessions
+        .entry(id.to_owned())
+        .or_insert(json!({ "derived": { "activity": "idle" } }));
+    session["loop"] = json!({
+        "active": true, "since": "2026-10-18T00:00:00.000Z",
+        "goal": "complete the unfinished managed work", "source": "human"
+    });
+    save_metadata_state(state, &metadata).expect("start managed loop");
+}
+
+fn buffer_managed_briefing(state: &Path, exchange: &Value) -> LoopWatcher {
+    let mut watcher = LoopWatcher::new();
+    let briefing = watcher
+        .plan_sends(&scan_input(state, exchange), NOW)
+        .into_iter()
+        .find(|send| send.kind == LoopSendKind::OverseerBriefing)
+        .expect("managed worker briefing");
+    watcher.buffer_send(&briefing, NOW);
+    watcher.commit_send_result(&briefing, NOW, LoopDeliveryOutcome::Buffered);
+    save_loop_watcher_state(loop_watcher_state_path(state), &watcher)
+        .expect("persist buffered briefing");
+    watcher
+}
+
+#[test]
+fn buffered_aggregate_briefing_keeps_unfinished_worker_after_another_worker_is_removed_and_parked()
+{
+    const OTHER: &str = "codex-unfinished";
+    with_fixture(
+        "parking-aggregate-briefing",
+        "idle",
+        |context, state, exchange| {
+            let mut topology = topology();
+            topology["nodes"].as_array_mut().unwrap().push(json!({
+            "id": "node-other", "rigId": "rig-1", "logicalId": OTHER, "toolConfigKey": "codex", "createdAt": "2026-10-18T00:00:00.000Z"
+        }));
+            topology["bindings"].as_array_mut().unwrap().push(json!({
+            "id": "binding-other", "nodeId": "node-other", "tmuxSession": "aimux-repo", "tmuxWindowId": "@3", "tmuxWindowIndex": 3, "tmuxWindowName": "codex", "updatedAt": "2026-10-18T00:00:00.000Z"
+        }));
+            topology["sessions"].as_array_mut().unwrap().push(json!({
+            "id": OTHER, "nodeId": "node-other", "status": "running", "command": "codex", "createdAt": "2026-10-18T00:00:00.000Z", "updatedAt": "2026-10-18T00:00:00.000Z"
+        }));
+            write_runtime_topology(runtime_topology_path(state), &topology)
+                .expect("add second worker");
+            start_managed_loop(state, WORKER);
+            start_managed_loop(state, OTHER);
+            let mut watcher = buffer_managed_briefing(state, &exchange);
+            let original =
+                loop_delivery_queue(&watcher, &scan_input(state, &exchange), vec![], NOW + 1, 8);
+            let original = original
+                .iter()
+                .find(|send| send.kind == LoopSendKind::OverseerBriefing)
+                .expect("unchanged aggregate must flush");
+            assert!(original.text.contains(WORKER));
+            assert!(original.text.contains(OTHER));
+
+            let removed = route_project_service_request(
+                context,
+                "POST",
+                routes::agents::LOOP,
+                Some(&json!({
+                    "sessionId": WORKER, "active": false, "action": "done", "source": "human"
+                })),
+            );
+            assert_eq!(removed.status, 200, "{}", removed.body);
+            assert_eq!(pause(context).status, 200);
+            let queue =
+                loop_delivery_queue(&watcher, &scan_input(state, &exchange), vec![], NOW + 1, 8);
+            let remaining = queue
+                .iter()
+                .find(|send| send.kind == LoopSendKind::OverseerBriefing)
+                .expect("parking one worker must not silence another unfinished worker");
+            assert!(remaining.text.contains(OTHER), "{}", remaining.text);
+            assert!(
+                !remaining.text.contains(WORKER),
+                "a parked worker must be removed from the aggregate: {}",
+                remaining.text
+            );
+            let current = scan_input(state, &exchange);
+            let fresh = watcher.plan_sends(&current, NOW + 60_001);
+            assert!(
+                fresh
+                    .iter()
+                    .any(|send| send.kind == LoopSendKind::OverseerBriefing
+                        && send.text.contains(OTHER)),
+                "the duplicate gate must actually plan a fresh B briefing: {fresh:?}"
+            );
+            let queue = loop_delivery_queue(&watcher, &current, fresh, NOW + 60_001, 8);
+            let briefings = queue
+                .iter()
+                .filter(|send| send.kind == LoopSendKind::OverseerBriefing)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                briefings.len(),
+                1,
+                "refreshed buffered B and newly planned B must share one delivery: {queue:?}"
+            );
+            assert!(briefings[0].text.contains(OTHER), "{}", briefings[0].text);
+            assert!(
+                !briefings[0].text.contains(WORKER),
+                "a fresh scan must not reintroduce the parked aggregate member: {}",
+                briefings[0].text
+            );
+        },
+    );
+}
+
+fn assert_buffered_single_briefing_discarded_after_action(action: &str) {
+    with_fixture(
+        &format!("buffered-managed-{action}"),
+        "idle",
+        |context, state, exchange| {
+            start_managed_loop(state, WORKER);
+            let watcher = buffer_managed_briefing(state, &exchange);
+            let unchanged =
+                loop_delivery_queue(&watcher, &scan_input(state, &exchange), vec![], NOW + 1, 8);
+            assert!(
+                unchanged
+                    .iter()
+                    .any(|send| send.kind == LoopSendKind::OverseerBriefing),
+                "a genuine unchanged managed-loop reminder must still flush"
+            );
+            let response = if action == "pause" {
+                pause(context)
+            } else {
+                route_project_service_request(
+                    context,
+                    "POST",
+                    routes::agents::LOOP,
+                    Some(&json!({
+                        "sessionId": WORKER, "active": false, "action": "done", "source": "human"
+                    })),
+                )
+            };
+            assert_eq!(response.status, 200, "{}", response.body);
+            assert!(
+                load_metadata_state(state).sessions[WORKER]
+                    .get("loopAlertsParked")
+                    .is_none(),
+                "this inverse must not rely on non-loop parking"
+            );
+            let watcher = load_loop_watcher_state(loop_watcher_state_path(state))
+                .expect("reload route-mutated pause state and buffered candidate keys");
+            let queue =
+                loop_delivery_queue(&watcher, &scan_input(state, &exchange), vec![], NOW + 1, 8);
+            assert!(
+                queue.is_empty(),
+                "{action} must invalidate an old single-worker briefing without parking: {queue:?}"
+            );
+        },
+    );
+}
+
+#[test]
+fn buffered_managed_loop_briefing_is_discarded_after_active_loop_pause() {
+    assert_buffered_single_briefing_discarded_after_action("pause");
+}
+
+#[test]
+fn buffered_managed_loop_briefing_is_discarded_after_loop_removal_without_parking() {
+    assert_buffered_single_briefing_discarded_after_action("remove");
 }

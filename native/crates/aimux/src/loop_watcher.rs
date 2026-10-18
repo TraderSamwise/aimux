@@ -859,15 +859,22 @@ impl LoopWatcher {
     }
 
     pub fn buffered_sends_for_input(&self, input: &Value, limit: usize) -> Vec<LoopSend> {
+        self.buffered_sends_for_input_with_pauses(input, limit, &self.paused_loop_alerts)
+    }
+
+    fn buffered_sends_for_input_with_pauses(
+        &self,
+        input: &Value,
+        limit: usize,
+        pauses: &BTreeMap<String, LoopAlertPause>,
+    ) -> Vec<LoopSend> {
         self.buffered_sends
             .values()
             .filter_map(buffered_send_to_loop_send)
-            .filter_map(|send| self.current_buffered_work_send(&send, input))
-            .chain(
-                self.recipient_watchers
-                    .values()
-                    .flat_map(|watcher| watcher.buffered_sends_for_input(input, limit)),
-            )
+            .filter_map(|send| self.current_buffered_work_send(&send, input, pauses))
+            .chain(self.recipient_watchers.values().flat_map(|watcher| {
+                watcher.buffered_sends_for_input_with_pauses(input, limit, pauses)
+            }))
             .take(limit)
             .collect()
     }
@@ -878,7 +885,10 @@ impl LoopWatcher {
             .iter()
             .filter_map(|(key, buffered)| {
                 let send = buffered_send_to_loop_send(buffered)?;
-                Some((key.clone(), self.current_buffered_work_send(&send, input)))
+                Some((
+                    key.clone(),
+                    self.current_buffered_work_send(&send, input, &self.paused_loop_alerts),
+                ))
             })
             .collect::<Vec<_>>();
         for (key, send) in updates {
@@ -892,28 +902,51 @@ impl LoopWatcher {
         }
     }
 
-    fn current_buffered_work_send(&self, send: &LoopSend, input: &Value) -> Option<LoopSend> {
-        if matches!(
-            send.kind,
-            LoopSendKind::OverseerBriefing | LoopSendKind::DirectNudge
-        ) && self
-            .buffered_sends
-            .get(&buffered_send_key(send))
-            .is_some_and(|buffered| {
-                buffered.candidate_keys.iter().any(|key| {
-                    array_field(input, "sessions").iter().any(|session| {
-                        str_field(session, "id") == key.session_id
-                            && session_is_parked(input, session)
-                    })
-                })
-            })
-        {
-            return None;
-        }
+    fn current_buffered_work_send(
+        &self,
+        send: &LoopSend,
+        input: &Value,
+        pauses: &BTreeMap<String, LoopAlertPause>,
+    ) -> Option<LoopSend> {
         let overseer = Some(send.session_id.as_str());
         let mut candidates = find_loop_candidates_with_overseer(input, overseer);
-        let paused = self.extract_paused_candidates(&mut candidates);
+        if matches!(
+            send.kind,
+            LoopSendKind::DirectNudge | LoopSendKind::PausedSummary
+        ) {
+            candidates.extend(find_loop_candidates_only(input, &send.session_id));
+        }
+        let paused = extract_paused_candidates_with_pauses(&mut candidates, pauses);
         let text = match send.kind {
+            LoopSendKind::OverseerBriefing | LoopSendKind::DirectNudge => {
+                let buffered = self.buffered_sends.get(&buffered_send_key(send))?;
+                candidates.retain(|candidate| {
+                    dwell_key(candidate).is_some_and(|key| {
+                        buffered
+                            .candidate_keys
+                            .iter()
+                            .any(|stored| stored.to_dwell_key() == key)
+                    })
+                });
+                if candidates.is_empty() {
+                    return None;
+                }
+                if send.kind == LoopSendKind::OverseerBriefing {
+                    build_overseer_briefing(
+                        &candidates,
+                        config_string(input, "overseerBriefingTemplate"),
+                    )
+                } else {
+                    let candidate = candidates
+                        .iter()
+                        .find(|candidate| str_field(candidate, "id") == send.session_id)?;
+                    if candidate_token_goal_reached(candidate) {
+                        build_token_goal_met_notice(candidate)
+                    } else {
+                        build_canned_nudge(candidate)
+                    }
+                }
+            }
             LoopSendKind::Reconciliation => match find_visible_unowned_work(input) {
                 Err(error) => {
                     if send.signature != format!("work-inventory-unavailable:{error}") {
@@ -965,7 +998,6 @@ impl LoopWatcher {
                 }
                 build_paused_summary(&paused)
             }
-            _ => return Some(send.clone()),
         };
         Some(LoopSend {
             text,
@@ -1096,25 +1128,7 @@ impl LoopWatcher {
     }
 
     fn extract_paused_candidates(&self, candidates: &mut Vec<Value>) -> Vec<Value> {
-        let mut paused = Vec::new();
-        candidates.retain(|candidate| {
-            let id = str_field(candidate, "id");
-            let is_paused = loop_pause_key(candidate)
-                .as_deref()
-                .and_then(|key| {
-                    self.paused_loop_alerts
-                        .get(id)
-                        .map(|pause| pause.loop_key == key)
-                })
-                .unwrap_or(false);
-            if is_paused {
-                paused.push(candidate.clone());
-                false
-            } else {
-                true
-            }
-        });
-        paused
+        extract_paused_candidates_with_pauses(candidates, &self.paused_loop_alerts)
     }
 
     fn gc_stale_pauses(&mut self, input: &Value) {
@@ -2146,6 +2160,27 @@ fn loop_candidate_condition(
         }
         Some(_) => None,
     }
+}
+
+fn extract_paused_candidates_with_pauses(
+    candidates: &mut Vec<Value>,
+    pauses: &BTreeMap<String, LoopAlertPause>,
+) -> Vec<Value> {
+    let mut paused = Vec::new();
+    candidates.retain(|candidate| {
+        let id = str_field(candidate, "id");
+        let is_paused = loop_pause_key(candidate)
+            .as_deref()
+            .and_then(|key| pauses.get(id).map(|pause| pause.loop_key == key))
+            .unwrap_or(false);
+        if is_paused {
+            paused.push(candidate.clone());
+            false
+        } else {
+            true
+        }
+    });
+    paused
 }
 
 fn active_loop_pause_keys(input: &Value) -> BTreeMap<String, String> {

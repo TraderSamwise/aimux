@@ -382,10 +382,10 @@ pub fn loop_delivery_queue(
             continue;
         }
         let queue = recipients.entry(send.session_id.clone()).or_default();
-        if !queue
-            .iter()
-            .any(|queued| queued.kind == send.kind && queued.signature == send.signature)
-        {
+        if !queue.iter().any(|queued| {
+            queued.kind == send.kind
+                && (queued.signature == send.signature || queued.text == send.text)
+        }) {
             queue.push_back(send);
         }
     }

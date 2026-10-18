@@ -445,7 +445,7 @@
             },
             {
               "sessionId": "boss",
-              "text": "[aimux loop check] Runtime-exchange/worklist work visible to the project service is waiting while loop capacity is idle.\nThis does not include external queue files such as Sam's gqaapg queue unless they are imported into runtime exchange.\n\nVisible unowned work:\n- worklist-contract coordination-worklist-contract (unassigned-worklist) — coordinationWorklist missing from loop watcher input\n\nAvailable watched loop capacity:\n- a — goal: ship it\n\nAssign or pause agents intentionally. If these runtime-exchange/worklist items are no longer real, close or update them so the worklist matches the work."
+              "text": "[aimux loop check] Work inventory unavailable: coordinationWorklist missing from loop watcher input\nCould not determine whether work is waiting. Repair the inventory before assigning or closing work."
             }
           ]
         }
