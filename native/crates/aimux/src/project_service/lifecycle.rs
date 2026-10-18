@@ -19,6 +19,7 @@ mod agent_session_launch;
 mod agent_topology;
 mod bulk_graveyard;
 mod default_scribe;
+mod fork_cleanup;
 mod ids;
 mod json_helpers;
 mod response_helpers;
@@ -70,8 +71,8 @@ pub(crate) use restore_snapshot::{
 pub(crate) use runtime_adapter::AsyncProjectLifecycleRuntime;
 pub(crate) use runtime_adapter::remote_worktree_name_from_source;
 pub use runtime_adapter::{
-    PreparedPullRequestWorktree, PreparedRemoteSourceWorktree, ProjectLifecycleRuntime,
-    SystemProjectLifecycleRuntime,
+    AgentSessionLaunchError, PreparedPullRequestWorktree, PreparedRemoteSourceWorktree,
+    ProjectLifecycleRuntime, SystemProjectLifecycleRuntime, UncertainAgentWindow,
 };
 use services::*;
 use session_state::*;

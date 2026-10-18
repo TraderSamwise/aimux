@@ -111,6 +111,7 @@ pub(super) fn route_agent_create_teammate(
             allow_replace_session: false,
             supervisor_role: None,
         },
+        false,
     ) {
         Ok(result) => result,
         Err(error) => return json_error(500, user_facing_error_message(&error)),

@@ -92,7 +92,9 @@ fn seed_fork_artifacts_does_not_copy_source_live_snapshot_as_target_live_context
         "claude",
         Some("/repo/worktree"),
         &snapshot,
-    );
+    )
+    .expect("seed fork artifacts")
+    .commit();
 
     let target_context = root.join(".aimux/context/claude-target");
     assert!(
@@ -120,6 +122,15 @@ fn seed_fork_artifacts_does_not_copy_source_live_snapshot_as_target_live_context
 
 fn preamble_output_matches(case: &Value, actual: &Value) -> bool {
     let expected = &case["output"];
+    // Node silently truncates when overflow storage fails; Rust must preserve the full context or fail.
+    if case["id"].as_str() == Some("session-bootstrap-preamble-007") {
+        return actual["wroteOverflow"] == false
+            && actual.get("capped").is_none()
+            && actual["error"].as_str().is_some_and(|error| {
+                error.contains("ensure launch preamble directory")
+                    && error.contains("file-where-a-repo-should-be/.aimux/context/claude-fork")
+            });
+    }
     if case["id"].as_str() != Some("session-bootstrap-preamble-006") {
         return actual == expected;
     }
@@ -344,7 +355,8 @@ fn cap_preamble_actual(case: &Value) -> Value {
     match mode {
         "fits" => {
             let preamble = case["input"]["preamble"].as_str().expect("preamble");
-            let capped = cap_launch_preamble_for_argv(Path::new("."), "claude-fits", preamble);
+            let capped = cap_launch_preamble_for_argv(Path::new("."), "claude-fits", preamble)
+                .expect("short preamble fits without writing");
             json!({
                 "capped": capped,
                 "cappedByteLength": capped.len(),
@@ -358,7 +370,8 @@ fn cap_preamble_actual(case: &Value) -> Value {
                 .map(|index| format!("line {index} of carried-over context"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            let capped = cap_launch_preamble_for_argv(&root, "claude-fork", &preamble);
+            let capped = cap_launch_preamble_for_argv(&root, "claude-fork", &preamble)
+                .expect("preserve overflow preamble");
             let overflow_path = root
                 .join(".aimux")
                 .join("context")
@@ -393,10 +406,10 @@ fn cap_preamble_actual(case: &Value) -> Value {
                 .as_str()
                 .expect("repeat text")
                 .repeat(count.as_u64().expect("repeat count") as usize);
-            let capped = cap_launch_preamble_for_argv(&not_a_directory, "claude-fork", &preamble);
+            let error = cap_launch_preamble_for_argv(&not_a_directory, "claude-fork", &preamble)
+                .expect_err("overflow failure must not silently discard context");
             let output = json!({
-                "capped": capped,
-                "cappedByteLength": capped.len(),
+                "error": error,
                 "wroteOverflow": not_a_directory
                     .join(".aimux")
                     .join("context")

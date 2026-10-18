@@ -122,6 +122,7 @@ fn supervisor_lane_visibility_and_new_agent_defaults_match_the_app() {
     )
     .expect("write observations");
     let project = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let report = directory.0.join("surface-comparison.json");
     let result = Command::new(project.join("scripts/run-yarn"))
         .current_dir(&project)
         .args([
@@ -130,6 +131,11 @@ fn supervisor_lane_visibility_and_new_agent_defaults_match_the_app() {
             "vitest",
             "run",
             "lib/supervisor-lane.cross-surface.test.ts",
+            "--reporter=json",
+            &format!(
+                "--outputFile={}",
+                report.to_str().expect("comparison report path is utf8")
+            ),
         ])
         .env("AIMUX_SUPERVISOR_SURFACE_PROBE", &probe)
         .output()
@@ -140,5 +146,24 @@ fn supervisor_lane_visibility_and_new_agent_defaults_match_the_app() {
         result.status,
         String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr)
+    );
+    // The comparison skips itself when the probe is absent, and a skipped
+    // suite exits 0 -- so a lost probe or a renamed env var would read as
+    // agreement. Count what actually ran.
+    let summary: Value = fs::read(&report)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_else(|| {
+            panic!(
+                "the surface comparison wrote no report:\n{}\n{}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            )
+        });
+    let passed = summary["numPassedTests"].as_u64().unwrap_or(0);
+    let pending = summary["numPendingTests"].as_u64().unwrap_or(0);
+    assert!(
+        passed > 0 && pending == 0,
+        "the surface comparison did not run: {passed} passed, {pending} skipped"
     );
 }

@@ -1,10 +1,12 @@
 use serde_json::Value;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::atomic_write::write_text_atomic;
 use crate::project_service::plans::{
-    plan_authority_path_for_project_root, read_plan_content, write_plan_content,
+    plan_authority_path_for_project_root, read_plan_content, validate_plan_session_id,
+    write_plan_content,
 };
 use crate::secure_permissions;
 
@@ -261,33 +263,44 @@ pub fn cap_launch_preamble_for_argv(
     project_root: &Path,
     session_id: &str,
     preamble: &str,
-) -> String {
+) -> Result<String, String> {
     if preamble.len() <= LAUNCH_PREAMBLE_ARGV_BUDGET_BYTES {
-        return preamble.to_owned();
+        return Ok(preamble.to_owned());
     }
-    let mut pointer = "\n\n[Preamble truncated to fit the terminal launch limit.]".to_owned();
     let overflow_path = context_dir(project_root)
         .join(session_id)
         .join("launch-preamble.md");
-    if let Some(parent) = overflow_path.parent()
-        && secure_permissions::ensure_private_dir(parent).is_ok()
-        && write_text_atomic(
-            &overflow_path,
-            if preamble.ends_with('\n') {
-                preamble.to_owned()
-            } else {
-                format!("{preamble}\n")
-            },
+    let parent = overflow_path.parent().ok_or_else(|| {
+        format!(
+            "launch preamble path has no parent: {}",
+            overflow_path.display()
         )
-        .is_ok()
-    {
-        pointer = format!(
-            "\n\n[Preamble truncated to fit the terminal launch limit. Read {} for the full text before you start.]",
-            overflow_path.to_string_lossy()
-        );
-    }
+    })?;
+    secure_permissions::ensure_private_dir(parent).map_err(|error| {
+        format!(
+            "ensure launch preamble directory {}: {error}",
+            parent.display()
+        )
+    })?;
+    write_text_atomic(
+        &overflow_path,
+        if preamble.ends_with('\n') {
+            preamble.to_owned()
+        } else {
+            format!("{preamble}\n")
+        },
+    )
+    .map_err(|error| format!("write launch preamble {}: {error}", overflow_path.display()))?;
+    let pointer = format!(
+        "\n\n[Preamble truncated to fit the terminal launch limit. Read {} for the full text before you start.]",
+        overflow_path.to_string_lossy()
+    );
     let budget = LAUNCH_PREAMBLE_ARGV_BUDGET_BYTES.saturating_sub(pointer.len());
-    format!("{}{}", truncate_to_char_boundary(preamble, budget), pointer)
+    Ok(format!(
+        "{}{}",
+        truncate_to_char_boundary(preamble, budget),
+        pointer
+    ))
 }
 
 pub fn ensure_default_plan(
@@ -312,16 +325,287 @@ pub fn ensure_default_plan(
 pub fn read_fork_source_snapshot(
     project_root: &Path,
     source_session_id: &str,
-) -> ForkSourceSnapshot {
-    ForkSourceSnapshot {
-        history_text: read_history_text(project_root, source_session_id, 20),
+) -> Result<ForkSourceSnapshot, String> {
+    validate_fork_session_id(source_session_id)?;
+    Ok(ForkSourceSnapshot {
+        history_text: read_history_text(project_root, source_session_id, 20)?,
         live_text: read_trimmed(
             context_dir(project_root)
                 .join(source_session_id)
                 .join("live.md"),
-        ),
-        plan_text: read_non_stub_plan_body(project_root, source_session_id),
-        status_text: read_trimmed(status_dir(project_root).join(format!("{source_session_id}.md"))),
+        )?,
+        plan_text: read_non_stub_plan_body(project_root, source_session_id)?,
+        status_text: read_trimmed(
+            status_dir(project_root).join(format!("{source_session_id}.md")),
+        )?,
+    })
+}
+
+#[derive(Debug)]
+#[must_use = "commit fork artifacts after launch succeeds, or roll them back explicitly"]
+pub struct ForkArtifacts {
+    project_root: PathBuf,
+    target_session_id: String,
+    context: Option<PathBuf>,
+    files: Vec<PathBuf>,
+}
+
+impl ForkArtifacts {
+    pub fn prepare(project_root: &Path, target_session_id: &str) -> Result<Self, String> {
+        validate_fork_session_id(target_session_id)?;
+        let target_context = context_dir(project_root).join(target_session_id);
+        require_absent_fork_artifact(&target_context)?;
+        let files = vec![
+            history_dir(project_root).join(format!("{target_session_id}.jsonl")),
+            status_dir(project_root).join(format!("{target_session_id}.md")),
+            plan_authority_path_for_project_root(project_root, target_session_id)?,
+        ];
+        for path in &files {
+            require_absent_fork_artifact(path)?;
+        }
+        secure_permissions::ensure_private_dir(context_dir(project_root))
+            .map_err(|error| format!("prepare fork context parent: {error}"))?;
+        fs::create_dir(&target_context).map_err(|error| {
+            format!("reserve fork context {}: {error}", target_context.display())
+        })?;
+        let mut transaction = Self {
+            project_root: project_root.to_owned(),
+            target_session_id: target_session_id.to_owned(),
+            context: Some(target_context.clone()),
+            files: Vec::new(),
+        };
+        if let Err(error) = secure_permissions::ensure_private_dir(&target_context) {
+            return Err(transaction.rollback_error(format!(
+                "set private fork context permissions {}: {error}",
+                target_context.display()
+            )));
+        }
+        Ok(transaction)
+    }
+
+    pub fn reserve_file(&mut self, path: impl AsRef<Path>) -> Result<(), String> {
+        self.write_new_file(path.as_ref(), b"")
+    }
+
+    pub fn reserve_runtime_files(&mut self) -> Result<(), String> {
+        if self.context.is_none() {
+            return Err("fork artifact transaction is no longer active".to_owned());
+        }
+        for path in [
+            history_dir(&self.project_root).join(format!("{}.jsonl", self.target_session_id)),
+            status_dir(&self.project_root).join(format!("{}.md", self.target_session_id)),
+        ] {
+            if !self.files.contains(&path) {
+                self.write_new_file(&path, b"")?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn write_default_plan(
+        &mut self,
+        command: &str,
+        worktree_path: Option<&str>,
+    ) -> Result<(), String> {
+        let path =
+            plan_authority_path_for_project_root(&self.project_root, &self.target_session_id)?;
+        let content = default_plan_content(&self.target_session_id, command, worktree_path);
+        self.write_new_file(&path, content.as_bytes())
+    }
+
+    pub fn seed(
+        &mut self,
+        source_session_id: &str,
+        target_tool_config_key: &str,
+        source_worktree_path: Option<&str>,
+        snapshot: &ForkSourceSnapshot,
+    ) -> Result<(), String> {
+        if let Err(error) = self.seed_inner(
+            source_session_id,
+            target_tool_config_key,
+            source_worktree_path,
+            snapshot,
+        ) {
+            return Err(self.rollback_error(error));
+        }
+        Ok(())
+    }
+
+    fn seed_inner(
+        &mut self,
+        source_session_id: &str,
+        target_tool_config_key: &str,
+        source_worktree_path: Option<&str>,
+        snapshot: &ForkSourceSnapshot,
+    ) -> Result<(), String> {
+        validate_fork_session_id(source_session_id)?;
+        if source_session_id == self.target_session_id {
+            return Err("fork source and target session IDs must differ".to_owned());
+        }
+        let project_root = self.project_root.clone();
+        let project_root = project_root.as_path();
+        let target_session_id = self.target_session_id.clone();
+        let target_session_id = target_session_id.as_str();
+        let target_context = self
+            .context
+            .clone()
+            .ok_or_else(|| "fork artifact transaction is no longer active".to_owned())?;
+        if let Some(history) = read_optional_text(
+            &history_dir(project_root).join(format!("{source_session_id}.jsonl")),
+        )? {
+            self.write_new_file(
+                &history_dir(project_root).join(format!("{target_session_id}.jsonl")),
+                history.as_bytes(),
+            )?;
+        }
+        let source_status = status_dir(project_root).join(format!("{source_session_id}.md"));
+        if let Some(status) = read_optional_text(&source_status)?.or_else(|| {
+            snapshot
+                .status_text
+                .as_ref()
+                .map(|status| format!("{status}\n"))
+        }) {
+            self.write_new_file(
+                &status_dir(project_root).join(format!("{target_session_id}.md")),
+                status.as_bytes(),
+            )?;
+        }
+        let activity_summary = summarize_fork_source_activity(snapshot);
+        let handoff_plan = format!(
+            "---\nsessionId: {target_session_id}\ntool: {target_tool_config_key}\nworktree: {}\nupdatedAt: {}\n---\n\n# Goal\n\n{}\n\n# Current Status\n\n{}\n\n# Steps\n\n- [ ] Review .aimux/context/{target_session_id}/summary.md\n- [ ] Continue the forked line of work\n\n# Notes\n\n- Forked from {source_session_id}\n{}{}",
+            source_worktree_path.unwrap_or("main"),
+            now_iso(),
+            if snapshot.plan_text.is_some() {
+                "Continue the forked work described below."
+            } else {
+                "Continue work forked from the source session."
+            },
+            snapshot
+                .status_text
+                .as_deref()
+                .or(activity_summary.as_deref())
+                .unwrap_or("Forked from an existing agent with carried-over context."),
+            activity_summary
+                .as_deref()
+                .map(|summary| format!("- Recent carried-over activity: {summary}\n"))
+                .unwrap_or_default(),
+            snapshot
+                .plan_text
+                .as_deref()
+                .map(|plan| format!("- Source plan carried below\n\n## Source Plan\n\n{plan}\n"))
+                .unwrap_or_default(),
+        );
+        self.write_new_file(
+            &plan_authority_path_for_project_root(project_root, target_session_id)?,
+            handoff_plan.as_bytes(),
+        )?;
+        let summary = [
+            format!("# Forked from {source_session_id}"),
+            String::new(),
+            format!("Target session: {target_session_id}"),
+            String::new(),
+            "Treat this file as carried-over prior context from the source session.".to_owned(),
+            "Do not describe yourself as a fresh session if this file contains prior interaction."
+                .to_owned(),
+            "A blank source plan does not mean there was no prior context.".to_owned(),
+            optional_section("Source Status", snapshot.status_text.as_deref()),
+            optional_section("Recent Activity Summary", activity_summary.as_deref()),
+            optional_section("Source Plan", snapshot.plan_text.as_deref()),
+            optional_section("Recent History", snapshot.history_text.as_deref()),
+            optional_section("Live Terminal Snapshot", snapshot.live_text.as_deref()),
+        ]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+        self.write_new_file(&target_context.join("summary.md"), summary.as_bytes())?;
+        Ok(())
+    }
+
+    fn write_new_file(&mut self, path: &Path, data: &[u8]) -> Result<(), String> {
+        if self.context.is_none() {
+            return Err("fork artifact transaction is no longer active".to_owned());
+        }
+        secure_permissions::ensure_private_parent(path)
+            .map_err(|error| format!("prepare fork artifact {}: {error}", path.display()))?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(secure_permissions::PRIVATE_FILE_MODE);
+        }
+        let mut file = options
+            .open(path)
+            .map_err(|error| format!("create fork artifact {}: {error}", path.display()))?;
+        self.files.push(path.to_owned());
+        file.write_all(data)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| format!("write fork artifact {}: {error}", path.display()))
+    }
+
+    pub fn rollback(&mut self) -> Result<(), String> {
+        let mut errors = Vec::new();
+        self.files.retain(|path| match fs::remove_file(path) {
+            Ok(()) => false,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(error) => {
+                errors.push(format!("remove fork artifact {}: {error}", path.display()));
+                true
+            }
+        });
+        if let Some(context) = self.context.take() {
+            match fs::remove_dir_all(&context) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    errors.push(format!(
+                        "remove fork context {}: {error}",
+                        context.display()
+                    ));
+                    self.context = Some(context);
+                }
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+
+    fn rollback_error(&mut self, error: String) -> String {
+        match self.rollback() {
+            Ok(()) => error,
+            Err(cleanup) => format!("{error}; rollback failed: {cleanup}"),
+        }
+    }
+
+    pub fn commit(mut self) {
+        self.context = None;
+        self.files.clear();
+    }
+}
+
+impl Drop for ForkArtifacts {
+    fn drop(&mut self) {
+        if let Err(error) = self.rollback() {
+            eprintln!("aimux: fork artifact rollback failed: {error}");
+        }
+    }
+}
+
+fn validate_fork_session_id(session_id: &str) -> Result<(), String> {
+    validate_plan_session_id(session_id)
+        .map(|_| ())
+        .ok_or_else(|| format!("invalid fork sessionId: {session_id:?}"))
+}
+
+fn require_absent_fork_artifact(path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Err(format!("fork artifact already exists: {}", path.display())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("inspect fork artifact {}: {error}", path.display())),
     }
 }
 
@@ -332,79 +616,16 @@ pub fn seed_fork_artifacts(
     target_tool_config_key: &str,
     source_worktree_path: Option<&str>,
     snapshot: &ForkSourceSnapshot,
-) {
-    let source_history = history_dir(project_root).join(format!("{source_session_id}.jsonl"));
-    let target_history = history_dir(project_root).join(format!("{target_session_id}.jsonl"));
-    if source_history.exists() && !target_history.exists() {
-        if let Some(parent) = target_history.parent() {
-            let _ = secure_permissions::ensure_private_dir(parent);
-        }
-        if fs::copy(source_history, &target_history).is_ok() {
-            let _ = secure_permissions::set_private_file_mode(&target_history);
-        }
-    }
-    let target_context = context_dir(project_root).join(target_session_id);
-    let _ = secure_permissions::ensure_private_dir(&target_context);
-    let source_status = status_dir(project_root).join(format!("{source_session_id}.md"));
-    let target_status = status_dir(project_root).join(format!("{target_session_id}.md"));
-    if source_status.exists() && !target_status.exists() {
-        if let Some(parent) = target_status.parent() {
-            let _ = secure_permissions::ensure_private_dir(parent);
-        }
-        if fs::copy(source_status, &target_status).is_ok() {
-            let _ = secure_permissions::set_private_file_mode(&target_status);
-        }
-    } else if !target_status.exists()
-        && let Some(status) = snapshot.status_text.as_deref()
-    {
-        let _ = write_text_atomic(&target_status, format!("{status}\n"));
-    }
-    let activity_summary = summarize_fork_source_activity(snapshot);
-    let handoff_plan = format!(
-        "---\nsessionId: {target_session_id}\ntool: {target_tool_config_key}\nworktree: {}\nupdatedAt: {}\n---\n\n# Goal\n\n{}\n\n# Current Status\n\n{}\n\n# Steps\n\n- [ ] Review .aimux/context/{target_session_id}/summary.md\n- [ ] Continue the forked line of work\n\n# Notes\n\n- Forked from {source_session_id}\n{}{}",
-        source_worktree_path.unwrap_or("main"),
-        now_iso(),
-        if snapshot.plan_text.is_some() {
-            "Continue the forked work described below."
-        } else {
-            "Continue work forked from the source session."
-        },
-        snapshot
-            .status_text
-            .as_deref()
-            .or(activity_summary.as_deref())
-            .unwrap_or("Forked from an existing agent with carried-over context."),
-        activity_summary
-            .as_deref()
-            .map(|summary| format!("- Recent carried-over activity: {summary}\n"))
-            .unwrap_or_default(),
-        snapshot
-            .plan_text
-            .as_deref()
-            .map(|plan| format!("- Source plan carried below\n\n## Source Plan\n\n{plan}\n"))
-            .unwrap_or_default(),
-    );
-    let _ = write_plan_content(project_root, target_session_id, &handoff_plan);
-    let summary = [
-        format!("# Forked from {source_session_id}"),
-        String::new(),
-        format!("Target session: {target_session_id}"),
-        String::new(),
-        "Treat this file as carried-over prior context from the source session.".to_owned(),
-        "Do not describe yourself as a fresh session if this file contains prior interaction."
-            .to_owned(),
-        "A blank source plan does not mean there was no prior context.".to_owned(),
-        optional_section("Source Status", snapshot.status_text.as_deref()),
-        optional_section("Recent Activity Summary", activity_summary.as_deref()),
-        optional_section("Source Plan", snapshot.plan_text.as_deref()),
-        optional_section("Recent History", snapshot.history_text.as_deref()),
-        optional_section("Live Terminal Snapshot", snapshot.live_text.as_deref()),
-    ]
-    .into_iter()
-    .filter(|part| !part.is_empty())
-    .collect::<Vec<_>>()
-    .join("\n");
-    let _ = write_text_atomic(target_context.join("summary.md"), summary);
+) -> Result<ForkArtifacts, String> {
+    validate_fork_session_id(source_session_id)?;
+    let mut transaction = ForkArtifacts::prepare(project_root, target_session_id)?;
+    transaction.seed(
+        source_session_id,
+        target_tool_config_key,
+        source_worktree_path,
+        snapshot,
+    )?;
+    Ok(transaction)
 }
 
 pub fn build_fork_preamble(
@@ -780,14 +1001,28 @@ fn is_decoration_char(ch: char) -> bool {
     matches!(ch as u32, 0x2500..=0x259f)
 }
 
-fn read_history_text(project_root: &Path, session_id: &str, last_n: usize) -> Option<String> {
-    let text =
-        fs::read_to_string(history_dir(project_root).join(format!("{session_id}.jsonl"))).ok()?;
+fn read_history_text(
+    project_root: &Path,
+    session_id: &str,
+    last_n: usize,
+) -> Result<Option<String>, String> {
+    let path = history_dir(project_root).join(format!("{session_id}.jsonl"));
+    let Some(text) = read_optional_text(&path)? else {
+        return Ok(None);
+    };
     let mut turns = Vec::new();
-    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
             continue;
-        };
+        }
+        let value: Value = serde_json::from_str(line).map_err(|error| {
+            format!(
+                "parse fork history {} line {}: {error}",
+                path.display(),
+                index + 1
+            )
+        })?;
         turns.push(value);
     }
     if turns.len() > last_n {
@@ -807,17 +1042,21 @@ fn read_history_text(project_root: &Path, session_id: &str, last_n: usize) -> Op
         })
         .collect::<Vec<_>>()
         .join("\n");
-    (!rendered.is_empty()).then_some(rendered)
+    Ok((!rendered.is_empty()).then_some(rendered))
 }
 
-fn read_non_stub_plan_body(project_root: &Path, session_id: &str) -> Option<String> {
-    let raw = read_plan_content(project_root, session_id).ok().flatten()?;
+fn read_non_stub_plan_body(
+    project_root: &Path,
+    session_id: &str,
+) -> Result<Option<String>, String> {
+    let path = plan_authority_path_for_project_root(project_root, session_id)?;
+    let Some(raw) = read_plan_content(project_root, session_id)
+        .map_err(|error| format!("read fork plan {}: {error}", path.display()))?
+    else {
+        return Ok(None);
+    };
     let body = strip_frontmatter(&raw).trim().to_owned();
-    if body.is_empty() || is_default_plan_body(&body) {
-        None
-    } else {
-        Some(body)
-    }
+    Ok((!body.is_empty() && !is_default_plan_body(&body)).then_some(body))
 }
 
 fn strip_frontmatter(raw: &str) -> &str {
@@ -837,11 +1076,18 @@ fn is_default_plan_body(content: &str) -> bool {
         && normalized.contains("# Steps\n\n- [ ] TBD")
 }
 
-fn read_trimmed(path: PathBuf) -> Option<String> {
-    fs::read_to_string(path)
-        .ok()
+fn read_optional_text(path: &Path) -> Result<Option<String>, String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("read fork context {}: {error}", path.display())),
+    }
+}
+
+fn read_trimmed(path: PathBuf) -> Result<Option<String>, String> {
+    Ok(read_optional_text(&path)?
         .map(|text| text.trim().to_owned())
-        .filter(|text| !text.is_empty())
+        .filter(|text| !text.is_empty()))
 }
 
 fn optional_section(title: &str, body: Option<&str>) -> String {

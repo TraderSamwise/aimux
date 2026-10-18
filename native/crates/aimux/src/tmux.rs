@@ -720,12 +720,13 @@ impl TmuxRuntimeManager {
         cwd: &str,
         command: &str,
         args: &[String],
+        detached: bool,
     ) -> Result<TmuxTarget, String> {
         self.create_window_from_argv(
             session_name,
             name,
             cwd,
-            restart_window_argv(session_name, name, cwd, command, args),
+            restart_window_argv(session_name, name, cwd, command, args, detached),
         )
     }
 
@@ -2931,8 +2932,9 @@ pub fn restart_window_argv(
     cwd: &str,
     command: &str,
     args: &[String],
+    detached: bool,
 ) -> Vec<String> {
-    let mut argv = new_window_argv(session_name, name, cwd, command, args, true);
+    let mut argv = new_window_argv(session_name, name, cwd, command, args, detached);
     argv.extend([
         ";".into(),
         "set-window-option".into(),

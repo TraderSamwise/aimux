@@ -982,7 +982,7 @@ fn route_agent_spawn_reports_window_disappearing_before_topology_success() {
     )
     .expect("spawn route handles request");
 
-    let expected = "agent launch failed: tmux window @spawn for session codex-window-gone disappeared before startup completed";
+    let expected = "agent launch failed: tmux window @spawn for session codex-window-gone disappeared before startup completed: pane exited before startup";
     assert_eq!(response.status, 500);
     assert_eq!(response.body["ok"], false);
     assert_eq!(response.body["error"], expected);
