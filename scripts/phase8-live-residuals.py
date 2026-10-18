@@ -3238,7 +3238,7 @@ def run_graveyard_lifecycle_smoke(aimux_bin: Path, mutation: str | None) -> dict
         run([tmux, "-L", socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
         scope.init_git_project()
         run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
-        install_shell_tool_config(scope)
+        install_agent_tool_config(scope, "shell", receives_preamble=True)
         project_root = scope.project.resolve()
         spawn = run(
             [str(aimux_bin), "spawn", "--tool", "shell", "--no-open", "--json"],
@@ -3254,6 +3254,11 @@ def run_graveyard_lifecycle_smoke(aimux_bin: Path, mutation: str | None) -> dict
             timeout=10,
             label="graveyard spawned shell in aimux ps",
         )
+        source_context = "phase8 graveyard lifecycle source context"
+        source_history = scope.project / ".aimux" / "history" / f"{session_id}.jsonl"
+        source_history.parent.mkdir(parents=True, exist_ok=True)
+        with source_history.open("a", encoding="utf-8") as history:
+            history.write(json.dumps({"type": "prompt", "content": source_context}) + "\n")
         fork = run(
             [str(aimux_bin), "fork", session_id, "--tool", "shell", "--json"],
             cwd=scope.project,
@@ -3264,6 +3269,9 @@ def run_graveyard_lifecycle_smoke(aimux_bin: Path, mutation: str | None) -> dict
         fork_session_id = str(fork_payload.get("sessionId") or "")
         if not fork_session_id:
             raise LiveResidualFailure(f"graveyard shell fork did not return a session id: {fork.stdout}")
+        fork_summary = scope.project / ".aimux" / "context" / fork_session_id / "summary.md"
+        if source_context not in fork_summary.read_text(encoding="utf-8"):
+            raise LiveResidualFailure("graveyard fork did not carry the configured source context")
         if mutation == "graveyard-fork-missing-session":
             fork_session_id = "phase8-missing-fork-session"
         wait_until(
@@ -3864,7 +3872,7 @@ def install_shell_tool_config(scope: Scope) -> None:
     install_agent_tool_config(scope, "shell")
 
 
-def install_agent_tool_config(scope: Scope, tool: str) -> None:
+def install_agent_tool_config(scope: Scope, tool: str, *, receives_preamble: bool = False) -> None:
     config_path = scope.project / ".aimux" / "config.json"
     config = json.loads(config_path.read_text())
     tools = config.setdefault("tools", {})
@@ -3878,6 +3886,9 @@ def install_agent_tool_config(scope: Scope, tool: str) -> None:
         "promptPatterns": ["^[$#] "],
         "turnPatterns": [],
     }
+    if receives_preamble:
+        tools[tool]["preambleFlag"] = ["--"]
+        tools[tool]["args"][1] = 'printf "%s\\n" "${1-}"; ' + tools[tool]["args"][1]
     config_path.write_text(json.dumps(config, indent=2) + "\n")
 
 

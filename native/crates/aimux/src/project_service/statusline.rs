@@ -577,6 +577,7 @@ fn statusline_sessions(sessions: Vec<Value>, kind: &str) -> Vec<Value> {
             );
             for key in [
                 "label",
+                "toolConfigKey",
                 "launchCommandLine",
                 "tmuxWindowId",
                 "tmuxWindowIndex",

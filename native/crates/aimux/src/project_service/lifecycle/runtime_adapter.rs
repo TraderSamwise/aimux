@@ -6,7 +6,7 @@ use crate::claude_background_sessions::{BackgroundSessionIds, parse_background_s
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::tmux::{
     CapturePaneOptions, LiveWindowIndex, TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo,
-    clear_history_argv, kill_window_argv, new_window_argv, rename_window_argv,
+    clear_history_argv, kill_window_argv, list_windows_argv, new_window_argv, rename_window_argv,
     set_window_option_argv, tmux_command_from_env,
 };
 use serde_json::Value;
@@ -15,6 +15,273 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 const LIFECYCLE_SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UncertainAgentWindow {
+    pub session_name: String,
+    pub window_id: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct AgentSessionLaunchError {
+    pub message: String,
+    pub unreaped_target: Option<TmuxTarget>,
+    pub uncertain_creation: Option<Box<UncertainAgentWindow>>,
+}
+
+impl From<String> for AgentSessionLaunchError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            unreaped_target: None,
+            uncertain_creation: None,
+        }
+    }
+}
+
+impl std::ops::Deref for AgentSessionLaunchError {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.message
+    }
+}
+
+impl std::fmt::Display for AgentSessionLaunchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for AgentSessionLaunchError {}
+
+pub(super) fn cleanup_launched_window(
+    runtime: &mut (impl ProjectLifecycleRuntime + ?Sized),
+    target: &TmuxTarget,
+    message: String,
+) -> AgentSessionLaunchError {
+    match runtime.kill_window(&target.window_id) {
+        Ok(()) => message.into(),
+        Err(cleanup) => AgentSessionLaunchError {
+            message: format!(
+                "{message}; cleanup of {} failed: {cleanup}",
+                target.window_id
+            ),
+            unreaped_target: Some(target.clone()),
+            uncertain_creation: None,
+        },
+    }
+}
+
+fn valid_emitted_window_id(id: &str) -> bool {
+    id.strip_prefix('@').is_some_and(|digits| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    })
+}
+
+fn parse_retained_tmux_target(session_name: &str, stdout: &str) -> Result<TmuxTarget, String> {
+    let target = parse_tmux_target(session_name, stdout)?;
+    if stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count()
+        != 1
+        || !valid_emitted_window_id(&target.window_id)
+    {
+        return Err(format!(
+            "invalid tmux new-window output: expected one target record with an @digits window id; received {stdout:?}"
+        ));
+    }
+    Ok(target)
+}
+
+fn parse_verified_window_inventory(
+    raw: &str,
+    session_name: &str,
+) -> Result<Vec<TmuxWindowInfo>, String> {
+    let mut ids = BTreeSet::new();
+    raw.lines()
+        .enumerate()
+        .map(|(row, line)| {
+            let context = format!(
+                "invalid tmux window inventory for session {session_name} row {}",
+                row + 1
+            );
+            let fields = line.split('\t').collect::<Vec<_>>();
+            if fields.len() != 6 {
+                return Err(format!(
+                    "{context}: expected 6 columns, received {}",
+                    fields.len()
+                ));
+            }
+            let id = fields[0];
+            if !valid_emitted_window_id(id) {
+                return Err(format!("{context}: window id {id:?} must be @digits"));
+            }
+            if !ids.insert(id.to_owned()) {
+                return Err(format!("{context}: duplicate window id {id}"));
+            }
+            let index = fields[1].parse::<i64>().map_err(|error| {
+                format!("{context}: invalid window index {:?}: {error}", fields[1])
+            })?;
+            if index < 0 {
+                return Err(format!(
+                    "{context}: window index {index} must be nonnegative"
+                ));
+            }
+            let active = match fields[3] {
+                "0" => false,
+                "1" => true,
+                value => {
+                    return Err(format!(
+                        "{context}: window_active must be 0 or 1, received {value:?}"
+                    ));
+                }
+            };
+            let activity = if fields[4].is_empty() {
+                None
+            } else {
+                Some(fields[4].parse::<i64>().map_err(|error| {
+                    format!(
+                        "{context}: invalid window_activity {:?}: {error}",
+                        fields[4]
+                    )
+                })?)
+            };
+            let pane_dead = match fields[5] {
+                "0" => false,
+                "1" => true,
+                value => {
+                    return Err(format!(
+                        "{context}: pane_dead must be 0 or 1, received {value:?}"
+                    ));
+                }
+            };
+            Ok(TmuxWindowInfo {
+                id: id.to_owned(),
+                index,
+                name: fields[2].to_owned(),
+                active,
+                activity,
+                pane_dead: Some(pane_dead),
+            })
+        })
+        .collect()
+}
+
+fn recover_malformed_retained_creation(
+    runtime: &mut impl ProjectLifecycleRuntime,
+    session_name: &str,
+    stdout: &str,
+    message: String,
+) -> AgentSessionLaunchError {
+    let ids = stdout
+        .lines()
+        .filter_map(|line| line.split('\t').next())
+        .map(str::trim)
+        .filter(|id| valid_emitted_window_id(id))
+        .collect::<BTreeSet<_>>();
+    let window_id = if ids.len() == 1 {
+        ids.first().map(|id| (*id).to_owned())
+    } else {
+        None
+    };
+    let Some(window_id) = window_id else {
+        return AgentSessionLaunchError {
+            message: format!("{message}; created window identity is unavailable or ambiguous"),
+            unreaped_target: None,
+            uncertain_creation: Some(Box::new(UncertainAgentWindow {
+                session_name: session_name.to_owned(),
+                window_id: None,
+            })),
+        };
+    };
+    let cleanup = match runtime.kill_window(&window_id) {
+        Ok(()) => return message.into(),
+        Err(error) => error,
+    };
+    let message = format!("{message}; cleanup of {window_id} failed: {cleanup}");
+    match runtime.list_windows(session_name) {
+        Ok(windows) => match windows.into_iter().find(|window| window.id == window_id) {
+            Some(window) => AgentSessionLaunchError {
+                message,
+                unreaped_target: Some(TmuxTarget {
+                    session_name: session_name.to_owned(),
+                    window_id: window.id,
+                    window_index: window.index,
+                    window_name: window.name,
+                    pane_dead: window.pane_dead,
+                }),
+                uncertain_creation: None,
+            },
+            None => format!(
+                "{message}; verified window {window_id} is absent from session {session_name}"
+            )
+            .into(),
+        },
+        Err(inventory) => AgentSessionLaunchError {
+            message: format!("{message}; inventory of session {session_name} failed: {inventory}"),
+            unreaped_target: None,
+            uncertain_creation: Some(Box::new(UncertainAgentWindow {
+                session_name: session_name.to_owned(),
+                window_id: Some(window_id),
+            })),
+        },
+    }
+}
+
+pub(super) fn window_launch_diagnostic(
+    runtime: &mut (impl ProjectLifecycleRuntime + ?Sized),
+    target: &TmuxTarget,
+    message: String,
+) -> (String, Option<String>) {
+    match runtime.capture_restart_window(target) {
+        Ok(Some(output)) if !output.trim().is_empty() => {
+            (format!("{message}: {}", output.trim()), Some(output))
+        }
+        Ok(output) => (message, output),
+        Err(capture) => (
+            format!(
+                "{message}; capture of {} failed: {capture}",
+                target.window_id
+            ),
+            None,
+        ),
+    }
+}
+
+pub(super) fn verify_started_window(
+    runtime: &mut (impl ProjectLifecycleRuntime + ?Sized),
+    target: &TmuxTarget,
+    session_id: &str,
+) -> Result<(), String> {
+    for observation in 0..2 {
+        if observation > 0 {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        let verification = runtime.list_windows(&target.session_name)
+            .map_err(|error| format!(
+                "Agent launch could not verify window {} for session {session_id}: {error}",
+                target.window_id,
+            ))
+            .and_then(|windows| match windows.iter().find(|window| window.id == target.window_id) {
+                Some(window) if window.pane_dead == Some(false) => Ok(()),
+                Some(window) => Err(format!(
+                    "Agent launch failed: tmux window {} for session {session_id} {} during launch",
+                    target.window_id,
+                    if window.pane_dead == Some(true) { "exited" } else { "has no reported pane liveness" },
+                )),
+                None => Err(format!(
+                    "Agent launch failed: tmux window {} for session {session_id} disappeared during launch",
+                    target.window_id,
+                )),
+            });
+        if let Err(error) = verification {
+            return Err(window_launch_diagnostic(runtime, target, error).0);
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedPullRequestWorktree {
@@ -101,15 +368,11 @@ pub trait ProjectLifecycleRuntime {
         cwd: &str,
         command: &str,
         args: &[String],
-    ) -> Result<TmuxTarget, String> {
-        let target = self.create_window(session_name, name, cwd, command, args, true)?;
+        detached: bool,
+    ) -> Result<TmuxTarget, AgentSessionLaunchError> {
+        let target = self.create_window(session_name, name, cwd, command, args, detached)?;
         if let Err(error) = self.set_window_option(&target.window_id, "remain-on-exit", "on") {
-            return Err(match self.kill_window(&target.window_id) {
-                Ok(()) => error,
-                Err(cleanup) => {
-                    format!("{error}; cleanup of {} failed: {cleanup}", target.window_id)
-                }
-            });
+            return Err(cleanup_launched_window(self, &target, error));
         }
         Ok(target)
     }
@@ -245,8 +508,51 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
         cwd: &str,
         command: &str,
         args: &[String],
-    ) -> Result<TmuxTarget, String> {
-        TmuxRuntimeManager::new().create_restart_window(session_name, name, cwd, command, args)
+        detached: bool,
+    ) -> Result<TmuxTarget, AgentSessionLaunchError> {
+        let argv =
+            crate::tmux::restart_window_argv(session_name, name, cwd, command, args, detached);
+        let bytes = crate::tmux::packed_argv_bytes(&argv);
+        let context = format!(
+            "tmux failed to create window \"{name}\" in session {session_name} ({bytes}-byte command)"
+        );
+        let mut command = tmux_command_from_env();
+        command.env_remove("TMUX").env_remove("TMUX_PANE");
+        command.args(argv).current_dir(cwd);
+        let output = command
+            .output()
+            .map_err(|error| AgentSessionLaunchError::from(format!("{context}: {error}")))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if output.status.success() {
+            return match parse_retained_tmux_target(session_name, &stdout) {
+                Ok(target) => Ok(target),
+                Err(parse) => Err(recover_malformed_retained_creation(
+                    self,
+                    session_name,
+                    &stdout,
+                    format!("{context}; {parse}"),
+                )),
+            };
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let cause = if stderr.trim().is_empty() {
+            format!("tmux exited with {}", output.status)
+        } else {
+            stderr.trim().to_owned()
+        };
+        let message = format!(
+            "{context}: {}",
+            crate::debug_logging::sanitize_log_string(&cause)
+        );
+        match parse_retained_tmux_target(session_name, &stdout) {
+            Ok(target) => Err(cleanup_launched_window(self, &target, message)),
+            Err(parse) => Err(recover_malformed_retained_creation(
+                self,
+                session_name,
+                &stdout,
+                format!("{message}; could not recover created target: {parse}"),
+            )),
+        }
     }
     fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String> {
         TmuxRuntimeManager::new().repair_legacy_project_session_names(project_root, None);
@@ -355,7 +661,12 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
     }
 
     fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
-        TmuxRuntimeManager::new().list_windows(session_name)
+        let raw = run_tmux_argv_output(
+            list_windows_argv(session_name),
+            format!("tmux list-windows failed for session {session_name}"),
+            None,
+        )?;
+        parse_verified_window_inventory(&raw, session_name)
     }
 
     fn legacy_window_matches_agent_owner(
@@ -634,6 +945,7 @@ fn run_tmux_argv_output(
     cwd: Option<&str>,
 ) -> Result<String, String> {
     let mut command = tmux_command_from_env();
+    command.env_remove("TMUX").env_remove("TMUX_PANE");
     command.args(argv);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
@@ -670,6 +982,7 @@ async fn run_tmux_argv_output_async(
     cwd: Option<&str>,
 ) -> Result<String, String> {
     let mut command = tmux_command_from_env();
+    command.env_remove("TMUX").env_remove("TMUX_PANE");
     command.args(argv);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
