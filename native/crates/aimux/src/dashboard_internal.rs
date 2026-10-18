@@ -2553,7 +2553,8 @@ fn render_dashboard_snapshot(
         let selected_tool = controller
             .tool_picker
             .as_ref()
-            .and_then(|picker| picker.selected_tool());
+            .and_then(|picker| picker.selected_tool())
+            .or(launch_options.restart_tool.as_ref());
         return dashboard_overlay_frame(
             &frame,
             render_launch_options_overlay(

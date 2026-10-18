@@ -7,6 +7,7 @@ import type {
   AgentLane,
   AgentRole,
   AgentRoleState,
+  AgentRestartLaunchOptions,
   PreviewCaptureMarker,
   ProjectOperationFailure,
 } from "../../src/project-api-contract";
@@ -73,6 +74,7 @@ export interface DesktopSession {
   createdAt?: string;
   restoreState?: "ready" | "blocked";
   restoreBlockedReason?: string;
+  restartLaunchOptions?: AgentRestartLaunchOptions;
   role?: AgentRole;
   lane?: AgentLane;
   roleState?: AgentRoleState;

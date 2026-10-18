@@ -1418,6 +1418,14 @@ export interface ResurrectAgentResponse extends ProjectLifecycleTransitionRespon
   status: "offline";
 }
 
+export interface AgentRestartLaunchOptions {
+  key: string;
+  command: string;
+  args: string[];
+  defaultArgs: string[];
+  defaultEnv: Record<string, string>;
+}
+
 export interface AgentListItem {
   id: string;
   tool?: string;
@@ -1434,6 +1442,7 @@ export interface AgentListItem {
   projectControl?: boolean;
   status?: string;
   restoreState?: string;
+  restartLaunchOptions?: AgentRestartLaunchOptions;
   restoreBlockedReason?: string;
   worktreePath?: string;
   label?: string;

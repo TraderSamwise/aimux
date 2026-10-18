@@ -2985,6 +2985,7 @@ fn render_help_content() -> Vec<String> {
         format!("  {}", style("Actions", Tone::Strong)),
         "    [n] agent  [v] service  [f] fork  [S] switch tool".into(),
         "    [a] hide/show offline agents  [x] stop/kill".into(),
+        "    [A] restart offline agent with edited args (saved)".into(),
         "    [O] overseer menu  [O then p] pause/resume loop alerts".into(),
     ]
 }

@@ -7418,3 +7418,80 @@ fn restart_args_rejected_length_preserves_fresh_recovery_for_retry() {
     }
     cleanup(project);
 }
+
+#[test]
+fn restart_options_match_agent_list_desktop_and_tui_restore_request() {
+    use aimux::dashboard_controller::{
+        DashboardController, DashboardControllerEffect, DashboardKey,
+    };
+    let (project, state_dir, context) = restart_args_fixture("restart-surfaces", "offline");
+    update_runtime_topology(runtime_topology_path(&state_dir), |mut topology| {
+        topology["sessions"][0]["args"] = json!([
+            "--base",
+            "--resume",
+            "stale-backend",
+            "--model",
+            "old model",
+            ""
+        ]);
+        topology
+    })
+    .unwrap();
+    let agents = route_project_service_request(&context, "GET", routes::agents::LIST, None);
+    let desktop = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
+    assert_eq!(agents.status, 200, "{}", agents.body);
+    assert_eq!(desktop.status, 200, "{}", desktop.body);
+    let options = &agents.body["agents"][0]["restartLaunchOptions"];
+    assert_eq!(
+        options,
+        &json!({
+            "key": "mock", "command": "/bin/mock", "args": ["--base"],
+            "defaultArgs": ["--model", "old model", ""], "defaultEnv": {}
+        })
+    );
+    let desktop_agent = desktop.body["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "mock-offline")
+        .unwrap();
+    assert_eq!(&desktop_agent["restartLaunchOptions"], options);
+    let snapshot: DesktopStateSnapshot = serde_json::from_value(desktop.body).unwrap();
+    let mut controller = DashboardController::new(&snapshot);
+    assert!(
+        controller
+            .navigation
+            .select_session(&snapshot, "mock-offline")
+    );
+    controller.handle_key(&snapshot, DashboardKey::Printable('A'));
+    assert_eq!(
+        controller.launch_options.as_ref().unwrap().args.text,
+        "--model 'old model' ''"
+    );
+    controller.handle_key(&snapshot, DashboardKey::Ctrl('u'));
+    controller.handle_key(
+        &snapshot,
+        DashboardKey::Paste("--model 'new model' --config 'a=b'".into()),
+    );
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("restart request")
+    };
+    let mut runtime = FakeLifecycleRuntime::default();
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        request.method,
+        request.path,
+        Some(&request.body),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert!(runtime.created[0].args.join(" ").contains("new model"));
+    assert_eq!(
+        session(&read_topology(&state_dir), "mock-offline")["args"],
+        json!(["--base", "--model", "new model", "--config", "a=b"])
+    );
+    cleanup(project);
+}
