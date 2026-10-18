@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::atomic_write::write_json_atomic;
@@ -125,8 +126,32 @@ pub fn inject_claude_hook_args(
     project_state_dir: impl AsRef<Path>,
     session_id: &str,
     backend_session_id: Option<&str>,
+    cwd: &Path,
+    config_dir: Option<&Path>,
 ) -> Result<Vec<String>, String> {
-    let settings_path = write_claude_hook_settings_file(project_state_dir, session_id)?;
+    let aimux_binary = std::env::current_exe()
+        .map_err(|error| format!("cannot resolve aimux statusline executable: {error}"))?;
+    let source = ClaudeSettingsSource {
+        version: 1,
+        args,
+        cwd: cwd.to_path_buf(),
+        config_dir: config_dir.map(Path::to_path_buf),
+        project_state_dir: project_state_dir.as_ref().to_path_buf(),
+        session_id: session_id.to_owned(),
+        aimux_binary,
+    };
+    let source_path = project_state_dir
+        .as_ref()
+        .join("claude-settings")
+        .join(format!("{session_id}.source.json"));
+    let (args, settings, _) = composed_settings_from_source(&source, &source_path)?;
+    write_json_atomic(&source_path, &source).map_err(|error| {
+        format!(
+            "write Claude settings source {}: {error}",
+            source_path.display()
+        )
+    })?;
+    let settings_path = write_claude_hook_settings_file(project_state_dir, session_id, &settings)?;
     let mut injected = vec!["--settings".to_owned(), path_string(&settings_path)];
     injected.extend(args.clone());
     if backend_session_id.is_none() || should_skip_claude_session_id_injection(&args) {
@@ -138,6 +163,71 @@ pub fn inject_claude_hook_args(
     ];
     with_session.extend(injected);
     Ok(with_session)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeSettingsSource {
+    version: u8,
+    args: Vec<String>,
+    cwd: std::path::PathBuf,
+    config_dir: Option<std::path::PathBuf>,
+    project_state_dir: std::path::PathBuf,
+    session_id: String,
+    aimux_binary: std::path::PathBuf,
+}
+
+fn composed_settings_from_source(
+    source: &ClaudeSettingsSource,
+    source_path: &Path,
+) -> Result<(Vec<String>, Value, Option<String>), String> {
+    if source.version != 1 {
+        return Err(format!(
+            "unsupported Claude settings source version {}",
+            source.version
+        ));
+    }
+    let (args, mut settings) = extract_claude_settings(source.args.clone(), &source.cwd)?;
+    let statusline =
+        effective_claude_statusline(&args, &source.cwd, &settings, source.config_dir.as_deref())?;
+    let forwarded = statusline
+        .get("command")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut hooks = build_claude_hook_settings(&source.project_state_dir, &source.session_id);
+    merge_settings(&mut settings, &json!({"hooks":hooks["hooks"].take()}));
+    let mut statusline = compose_claude_statusline(
+        statusline,
+        &source.aimux_binary,
+        &source.project_state_dir.join("metadata-api.txt"),
+        &source.session_id,
+    )?;
+    let command = statusline["command"].as_str().expect("composed command");
+    statusline["command"] = Value::String(format!(
+        "{command} --settings-source {}",
+        shell_quote(&path_string(source_path))
+    ));
+    settings["statusLine"] = statusline;
+    Ok((args, settings, forwarded))
+}
+
+pub fn refresh_claude_hook_settings(source_path: &Path) -> Result<Option<String>, String> {
+    let value = read_claude_settings(source_path, false)?;
+    let source: ClaudeSettingsSource = serde_json::from_value(value).map_err(|error| {
+        format!(
+            "invalid Claude settings source {}: {error}",
+            source_path.display()
+        )
+    })?;
+    let (_, settings, forwarded) = composed_settings_from_source(&source, source_path)?;
+    let path = source
+        .project_state_dir
+        .join("claude-settings")
+        .join(format!("{}.json", source.session_id));
+    if read_claude_settings(&path, false)? != settings {
+        write_claude_hook_settings_file(&source.project_state_dir, &source.session_id, &settings)?;
+    }
+    Ok(forwarded)
 }
 
 pub fn should_skip_claude_session_id_injection(args: &[String]) -> bool {
@@ -154,15 +244,363 @@ pub fn should_skip_claude_session_id_injection(args: &[String]) -> bool {
 fn write_claude_hook_settings_file(
     project_state_dir: impl AsRef<Path>,
     session_id: &str,
+    settings: &Value,
 ) -> Result<std::path::PathBuf, String> {
     let settings_dir = project_state_dir.as_ref().join("claude-settings");
     let settings_path = settings_dir.join(format!("{session_id}.json"));
-    write_json_atomic(
-        &settings_path,
-        &build_claude_hook_settings(project_state_dir, session_id),
-    )
-    .map_err(|error| error.to_string())?;
+    write_json_atomic(&settings_path, settings).map_err(|error| error.to_string())?;
     Ok(settings_path)
+}
+
+fn read_claude_settings(path: &Path, optional: bool) -> Result<Value, String> {
+    match std::fs::metadata(path) {
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(format!(
+                "Claude settings {} must be a regular file",
+                path.display()
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if optional && error.kind() == std::io::ErrorKind::NotFound => {
+            return match std::fs::symlink_metadata(path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
+                _ => Err(format!(
+                    "failed to read Claude settings {}: {error}",
+                    path.display()
+                )),
+            };
+        }
+        Err(error) => {
+            return Err(format!(
+                "failed to read Claude settings {}: {error}",
+                path.display()
+            ));
+        }
+    }
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if optional && error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(json!({}));
+        }
+        Err(error) => {
+            return Err(format!(
+                "failed to read Claude settings {}: {error}",
+                path.display()
+            ));
+        }
+    };
+    if !file
+        .metadata()
+        .map_err(|error| format!("cannot inspect Claude settings {}: {error}", path.display()))?
+        .is_file()
+    {
+        return Err(format!(
+            "Claude settings {} must be a regular file",
+            path.display()
+        ));
+    }
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    file.take(2 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("failed to read Claude settings {}: {error}", path.display()))?;
+    if bytes.len() > 2 * 1024 * 1024 {
+        return Err(format!("Claude settings {} exceed 2 MiB", path.display()));
+    }
+    parse_claude_settings(&bytes, &path.display().to_string())
+}
+
+fn parse_claude_settings(bytes: &[u8], source: &str) -> Result<Value, String> {
+    let value: Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("invalid Claude settings {source}: {error}"))?;
+    if !value.is_object() {
+        return Err(format!("Claude settings {source} must be a JSON object"));
+    }
+    Ok(value)
+}
+
+fn merge_settings(target: &mut Value, incoming: &Value) {
+    match (target, incoming) {
+        (Value::Object(target), Value::Object(incoming)) => {
+            for (key, value) in incoming {
+                match target.get_mut(key) {
+                    Some(previous) => merge_settings(previous, value),
+                    None => {
+                        target.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        (Value::Array(target), Value::Array(incoming)) => {
+            for value in incoming {
+                if !target.contains(value) {
+                    target.push(value.clone());
+                }
+            }
+        }
+        (target, incoming) => *target = incoming.clone(),
+    }
+}
+
+fn extract_claude_settings(args: Vec<String>, cwd: &Path) -> Result<(Vec<String>, Value), String> {
+    let mut remaining = Vec::new();
+    let mut settings = json!({});
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            remaining.push(arg);
+            remaining.extend(args);
+            break;
+        }
+        let source = if arg == "--settings" {
+            Some(args.next().ok_or("Claude --settings requires a value")?)
+        } else {
+            arg.strip_prefix("--settings=").map(str::to_owned)
+        };
+        match source {
+            Some(source) => {
+                let value = if source.trim_start().starts_with('{') {
+                    parse_claude_settings(source.as_bytes(), "--settings JSON")?
+                } else {
+                    read_claude_settings(&cwd.join(source), false)?
+                };
+                merge_settings(&mut settings, &value);
+            }
+            None => remaining.push(arg),
+        }
+    }
+    Ok((remaining, settings))
+}
+
+fn effective_claude_statusline(
+    args: &[String],
+    cwd: &Path,
+    explicit: &Value,
+    config_dir: Option<&Path>,
+) -> Result<Value, String> {
+    let mut sources = vec!["user", "project", "local"];
+    for (index, arg) in args.iter().enumerate() {
+        if arg == "--" {
+            break;
+        }
+        let value = if arg == "--setting-sources" {
+            Some(
+                args.get(index + 1)
+                    .ok_or("Claude --setting-sources requires a value")?
+                    .as_str(),
+            )
+        } else {
+            arg.strip_prefix("--setting-sources=")
+        };
+        if let Some(value) = value {
+            sources = value.split(',').collect();
+        }
+    }
+    let config_dir = config_dir
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".claude")))
+        .map(|path| cwd.join(path));
+    let mut effective = json!({});
+    if sources.contains(&"user") {
+        let config_dir = config_dir
+            .ok_or("cannot locate Claude user settings: HOME and CLAUDE_CONFIG_DIR are unset")?;
+        merge_settings(
+            &mut effective,
+            &read_claude_settings(&config_dir.join("settings.json"), true)?,
+        );
+    }
+    if sources.contains(&"project") {
+        merge_settings(
+            &mut effective,
+            &read_claude_settings(&cwd.join(".claude/settings.json"), true)?,
+        );
+    }
+    if sources.contains(&"local") {
+        merge_settings(
+            &mut effective,
+            &read_claude_settings(&cwd.join(".claude/settings.local.json"), true)?,
+        );
+        if let Some(root) = claude_local_settings_root(cwd)?
+            && root != cwd
+        {
+            merge_settings(
+                &mut effective,
+                &read_claude_settings(&root.join(".claude/settings.local.json"), true)?,
+            );
+        }
+    }
+    merge_settings(&mut effective, explicit);
+    Ok(effective.get("statusLine").cloned().unwrap_or(Value::Null))
+}
+
+fn claude_local_settings_root(cwd: &Path) -> Result<Option<std::path::PathBuf>, String> {
+    if cfg!(windows) {
+        return Ok(None);
+    }
+    for ancestor in cwd.ancestors() {
+        let marker = ancestor.join(".git");
+        match std::fs::symlink_metadata(&marker) {
+            Ok(metadata) => {
+                if !claude_local_root_allowed(
+                    ancestor,
+                    std::env::var_os("HOME").as_deref().map(Path::new),
+                    cfg!(windows),
+                    current_user_id(),
+                )? {
+                    return Ok(None);
+                }
+                if metadata.is_dir() {
+                    return Ok(Some(ancestor.to_path_buf()));
+                }
+                let text = std::fs::read_to_string(&marker).map_err(|error| {
+                    format!(
+                        "cannot read Claude settings git root {}: {error}",
+                        marker.display()
+                    )
+                })?;
+                let git_dir = text
+                    .trim()
+                    .strip_prefix("gitdir: ")
+                    .ok_or_else(|| format!("invalid git root marker {}", marker.display()))?;
+                let git_dir = ancestor.join(git_dir);
+                return match std::fs::read_to_string(git_dir.join("commondir")) {
+                    Ok(common) => {
+                        let common = std::fs::canonicalize(git_dir.join(common.trim())).map_err(
+                            |error| {
+                                format!(
+                                    "cannot resolve Claude settings common git directory: {error}"
+                                )
+                            },
+                        )?;
+                        let root = common
+                            .parent()
+                            .ok_or("Claude common git directory has no parent")?;
+                        Ok(claude_local_root_allowed(
+                            root,
+                            std::env::var_os("HOME").as_deref().map(Path::new),
+                            cfg!(windows),
+                            current_user_id(),
+                        )?
+                        .then(|| root.to_path_buf()))
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        Ok(Some(ancestor.to_path_buf()))
+                    }
+                    Err(error) => Err(format!(
+                        "cannot read Claude settings common git directory: {error}"
+                    )),
+                };
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "cannot inspect Claude settings git root {}: {error}",
+                    marker.display()
+                ));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn current_user_id() -> u32 {
+    #[cfg(unix)]
+    {
+        unsafe { libc::geteuid() }
+    }
+    #[cfg(not(unix))]
+    {
+        0
+    }
+}
+
+fn claude_local_root_allowed(
+    root: &Path,
+    home: Option<&Path>,
+    windows: bool,
+    owner: u32,
+) -> Result<bool, String> {
+    if windows {
+        return Ok(false);
+    }
+    let canonical_root = std::fs::canonicalize(root).map_err(|error| {
+        format!(
+            "resolve Claude local settings root {}: {error}",
+            root.display()
+        )
+    })?;
+    if let Some(home) = home {
+        match std::fs::canonicalize(home) {
+            Ok(home) if home == canonical_root => return Ok(false),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "resolve Claude settings home {}: {error}",
+                    home.display()
+                ));
+            }
+        }
+    }
+    for path in [root.to_path_buf(), root.join(".git"), root.join(".claude")] {
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "inspect Claude settings ownership {}: {error}",
+                    path.display()
+                ));
+            }
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.uid() != owner {
+                return Ok(false);
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = (metadata, owner);
+    }
+    Ok(true)
+}
+
+fn compose_claude_statusline(
+    mut statusline: Value,
+    aimux_binary: &Path,
+    endpoint: &Path,
+    session: &str,
+) -> Result<Value, String> {
+    let forwarded = if statusline.is_null() {
+        None
+    } else {
+        if statusline.get("type").and_then(Value::as_str) != Some("command") {
+            return Err("Claude statusLine must have type command".to_owned());
+        }
+        Some(
+            statusline
+                .get("command")
+                .and_then(Value::as_str)
+                .ok_or("Claude statusLine command must be a string")?
+                .to_owned(),
+        )
+    };
+    let mut command = format!(
+        "{} claude-usage-statusline --endpoint-file {} --session-id {}",
+        shell_quote(&path_string(aimux_binary)),
+        shell_quote(&path_string(endpoint)),
+        shell_quote(session)
+    );
+    if let Some(forwarded) = forwarded {
+        command.push_str(&format!(" --forward-command {}", shell_quote(&forwarded)));
+    }
+    if statusline.is_null() {
+        statusline = json!({ "type": "command" });
+    }
+    statusline["command"] = Value::String(command);
+    Ok(statusline)
 }
 
 pub fn is_claude_fork_style_launch(args: &[String]) -> bool {
@@ -447,6 +885,8 @@ mod tests {
             &state_dir,
             "claude-1",
             Some("backend-1"),
+            &state_dir,
+            None,
         )
         .unwrap();
 
@@ -461,6 +901,273 @@ mod tests {
                 .contains("/hooks/claude?action=permission-request")
         );
         let _ = std::fs::remove_dir_all(state_dir);
+    }
+
+    #[test]
+    fn claude_statusline_composes_local_and_explicit_settings_preserving_hooks() {
+        let state_dir = temp_state_dir("claude-compose");
+        std::fs::create_dir_all(state_dir.join(".claude")).unwrap();
+        std::fs::write(
+            state_dir.join(".claude/settings.json"),
+            r#"{"statusLine":{"type":"command","command":"project", "padding":3}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            state_dir.join(".claude/settings.local.json"),
+            r#"{"statusLine":{"command":"local"}}"#,
+        )
+        .unwrap();
+        let (args, explicit) = extract_claude_settings(vec![
+            "--setting-sources=project,local".to_owned(),
+            "--settings".to_owned(),
+            r#"{"statusLine":{"command":"printf '%s' \"hello\""},"model":"example","hooks":{"Stop":[{"hooks":[{"type":"command","command":"user-hook"}]}]}}"#.to_owned(),
+        ], &state_dir).unwrap();
+        let effective = effective_claude_statusline(&args, &state_dir, &explicit, None).unwrap();
+        assert_eq!(effective["command"], "printf '%s' \"hello\"");
+        assert_eq!(effective["padding"], 3);
+        let injected = inject_claude_hook_args(
+            vec![
+                "--setting-sources=project,local".to_owned(),
+                "--settings".to_owned(),
+                explicit.to_string(),
+            ],
+            &state_dir,
+            "claude-compose",
+            None,
+            &state_dir,
+            None,
+        )
+        .unwrap();
+        assert_eq!(injected.len(), 3);
+        let settings = read_claude_settings(Path::new(&injected[1]), false).unwrap();
+        assert_eq!(settings["model"], "example");
+        assert_eq!(settings["statusLine"]["padding"], 3);
+        let command = settings["statusLine"]["command"].as_str().unwrap();
+        assert!(command.contains("claude-usage-statusline"));
+        assert!(command.contains("--forward-command"));
+        assert!(!command.contains("--forward-command local"));
+        assert_eq!(
+            settings["hooks"]["Stop"][0]["hooks"][0]["command"],
+            "user-hook"
+        );
+        assert_eq!(settings["hooks"]["Stop"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            std::fs::read_to_string(state_dir.join(".claude/settings.local.json")).unwrap(),
+            r#"{"statusLine":{"command":"local"}}"#
+        );
+        let _ = std::fs::remove_dir_all(state_dir);
+    }
+
+    #[test]
+    fn claude_settings_errors_are_not_absence_and_disabled_sources_are_not_read() {
+        let state_dir = temp_state_dir("claude-errors");
+        std::fs::create_dir_all(state_dir.join(".claude")).unwrap();
+        let args = vec!["--setting-sources=project".to_owned()];
+        assert!(
+            effective_claude_statusline(&args, &state_dir, &json!({}), None)
+                .unwrap()
+                .is_null()
+        );
+        std::fs::write(state_dir.join(".claude/settings.json"), "invalid").unwrap();
+        assert!(
+            effective_claude_statusline(&args, &state_dir, &json!({}), None)
+                .unwrap_err()
+                .contains("invalid Claude settings")
+        );
+        assert!(
+            effective_claude_statusline(
+                &["--setting-sources=".to_owned()],
+                &state_dir,
+                &json!({}),
+                None
+            )
+            .unwrap()
+            .is_null()
+        );
+        assert!(
+            extract_claude_settings(vec!["--settings=missing.json".to_owned()], &state_dir)
+                .unwrap_err()
+                .contains("failed to read")
+        );
+        let _ = std::fs::remove_dir_all(state_dir);
+    }
+
+    #[test]
+    fn claude_worktree_local_statusline_uses_main_checkout_local_settings() {
+        let root = temp_state_dir("claude-worktree");
+        let worktree = root.join("linked");
+        let git_dir = root.join(".git/worktrees/linked");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        std::fs::create_dir_all(worktree.join(".claude")).unwrap();
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}", git_dir.display()),
+        )
+        .unwrap();
+        std::fs::write(git_dir.join("commondir"), "../..").unwrap();
+        std::fs::write(
+            root.join(".claude/settings.local.json"),
+            r#"{"statusLine":{"type":"command","command":"main-local"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            worktree.join(".claude/settings.local.json"),
+            r#"{"statusLine":{"type":"command","command":"legacy-local"}}"#,
+        )
+        .unwrap();
+        let effective = effective_claude_statusline(
+            &["--setting-sources=local".to_owned()],
+            &worktree,
+            &json!({}),
+            None,
+        )
+        .unwrap();
+        assert_eq!(effective["command"], "main-local");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn claude_config_directory_override_is_used_before_process_configuration() {
+        let root = temp_state_dir("claude-config-override");
+        let config = root.join("custom-config");
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::write(
+            config.join("settings.json"),
+            r#"{"statusLine":{"type":"command","command":"custom-config"}}"#,
+        )
+        .unwrap();
+        let injected = inject_claude_hook_args(
+            vec!["--setting-sources=user".to_owned()],
+            &root,
+            "claude-config",
+            None,
+            &root,
+            Some(Path::new("custom-config")),
+        )
+        .unwrap();
+        let settings = read_claude_settings(Path::new(&injected[1]), false).unwrap();
+        assert!(
+            settings["statusLine"]["command"]
+                .as_str()
+                .unwrap()
+                .contains("custom-config")
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_dangling_settings_symlink_is_an_error_and_missing_file_is_absent() {
+        let root = temp_state_dir("claude-dangling-settings");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        assert_eq!(read_claude_settings(&path, true).unwrap(), json!({}));
+        std::os::unix::fs::symlink(root.join("missing-target"), &path).unwrap();
+        assert!(
+            read_claude_settings(&path, true)
+                .unwrap_err()
+                .contains("failed to read Claude settings")
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn claude_statusline_refresh_rereads_user_commands_and_explicit_settings_files() {
+        let root = temp_state_dir("claude-live-settings");
+        let project = root.join("project");
+        let config = root.join("config");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&config).unwrap();
+        let explicit = root.join("explicit.json");
+        std::fs::write(&explicit, r#"{"model":"first"}"#).unwrap();
+        let user = config.join("settings.json");
+        std::fs::write(
+            &user,
+            r#"{"statusLine":{"type":"command","command":"printf first"}}"#,
+        )
+        .unwrap();
+        let injected = inject_claude_hook_args(
+            vec!["--settings".into(), path_string(&explicit)],
+            &root,
+            "live",
+            None,
+            &project,
+            Some(&config),
+        )
+        .unwrap();
+        let source = root.join("claude-settings/live.source.json");
+        assert_eq!(
+            refresh_claude_hook_settings(&source).unwrap().as_deref(),
+            Some("printf first")
+        );
+        std::fs::write(
+            &explicit,
+            r#"{"model":"second","permissions":{"allow":["Read"]}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &user,
+            r#"{"statusLine":{"type":"command","command":"printf second"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            refresh_claude_hook_settings(&source).unwrap().as_deref(),
+            Some("printf second")
+        );
+        let generated = read_claude_settings(Path::new(&injected[1]), false).unwrap();
+        assert_eq!(generated["model"], "second");
+        assert_eq!(generated["permissions"]["allow"], json!(["Read"]));
+        assert!(
+            generated["hooks"]["Stop"]
+                .as_array()
+                .is_some_and(|hooks| !hooks.is_empty())
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let inode = std::fs::metadata(&injected[1]).unwrap().ino();
+            refresh_claude_hook_settings(&source).unwrap();
+            assert_eq!(
+                std::fs::metadata(&injected[1]).unwrap().ino(),
+                inode,
+                "unchanged callbacks must not rewrite settings"
+            );
+        }
+        std::fs::write(&user, r#"{"statusLine":null}"#).unwrap();
+        assert_eq!(refresh_claude_hook_settings(&source).unwrap(), None);
+        let generated = read_claude_settings(Path::new(&injected[1]), false).unwrap();
+        assert!(
+            !generated["statusLine"]["command"]
+                .as_str()
+                .unwrap()
+                .contains("--forward-command")
+        );
+        std::fs::write(&explicit, "invalid").unwrap();
+        assert!(
+            refresh_claude_hook_settings(&source)
+                .unwrap_err()
+                .contains("invalid Claude settings")
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_local_root_checks_home_ownership_and_windows_in_both_directions() {
+        let root = temp_state_dir("claude-root-policy");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        let owner = current_user_id();
+        assert!(claude_local_root_allowed(&root, None, false, owner).unwrap());
+        assert!(!claude_local_root_allowed(&root, Some(&root), false, owner).unwrap());
+        assert!(!claude_local_root_allowed(&root, None, true, owner).unwrap());
+        assert!(!claude_local_root_allowed(&root, None, false, owner.wrapping_add(1)).unwrap());
+        assert!(
+            claude_local_root_allowed(&root, Some(&root.join("absent-home")), false, owner)
+                .unwrap()
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn temp_state_dir(label: &str) -> std::path::PathBuf {

@@ -226,6 +226,27 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
             content.push(format!("  {}", agent_row(input, session, selected, digit)));
         }
     }
+    if let Some(usage) = input.snapshot.extra.get("usage") {
+        let rows = usage
+            .get("displayLines")
+            .and_then(Value::as_array)
+            .and_then(|lines| lines.iter().map(Value::as_str).collect::<Option<Vec<_>>>());
+        let rows = match rows {
+            Some(rows) => rows
+                .into_iter()
+                .flat_map(|line| wrap_text(line, card_width.saturating_sub(4)))
+                .collect(),
+            None => vec!["Usage response invalid: displayLines must contain text".into()],
+        };
+        content.extend(card(&CardSpec {
+            tone: Tone::Muted,
+            title: "USAGE",
+            summary: None,
+            rows: &rows,
+            width: card_width,
+        }));
+        content.push(String::new());
+    }
     let mut footer_lines = Vec::new();
     if let Some(chrome) = loop_alert_chrome(input.snapshot) {
         footer_lines.push(truncate_ansi(&chrome, input.cols.saturating_sub(2)));

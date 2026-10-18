@@ -301,6 +301,7 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.logs_tail_text,
     crate::core_command_contract::CORE_API_ROUTES.dashboard_reload_text,
     crate::core_command_contract::CORE_API_ROUTES.metadata_text,
+    crate::core_command_contract::CORE_API_ROUTES.usage_text,
     crate::core_command_contract::CORE_API_ROUTES.loop_add_text,
     crate::core_command_contract::CORE_API_ROUTES.loop_block_text,
     crate::core_command_contract::CORE_API_ROUTES.loop_done_text,

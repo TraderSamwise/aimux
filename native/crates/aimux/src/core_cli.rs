@@ -17,7 +17,8 @@ use crate::core_cli_routing::{
     parse_core_project_stop_args, parse_core_projects_remove_args, parse_core_repair_args,
     parse_core_restart_args, parse_core_scribe_clear_args, parse_core_scribe_start_args,
     parse_core_service_create_args, parse_core_service_status_args, parse_core_task_args_result,
-    parse_core_team_args, parse_core_thread_args_result, parse_core_worktree_args,
+    parse_core_team_args, parse_core_thread_args_result, parse_core_usage_args_result,
+    parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use crate::native_cli_dispatch::{
@@ -142,6 +143,7 @@ pub enum CoreCliOperation {
     GraveyardResurrect,
     GraveyardCleanup,
     Metadata,
+    Usage,
     Repair,
     RepairExchange,
     DoctorDisk,
@@ -2467,6 +2469,35 @@ where
                     CoreCliFallback::None,
                 )
             }
+        }
+        ("usage", _) => {
+            let parsed = parse_core_usage_args_result(&args).map_err(|error| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: format!("error: {error}"),
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            let mut path = format!(
+                "{}?project={}",
+                CORE_API_ROUTES.usage_text,
+                encode_query_component(&project_root)
+            );
+            if parsed.json {
+                path.push_str("&json=1");
+            }
+            if parsed.refresh {
+                path.push_str("&refresh=1");
+            }
+            (
+                CoreCliOperation::Usage,
+                CoreCliAction::TextRoute { path, body: None },
+                CoreCliFallback::None,
+            )
         }
         ("metadata", _) => {
             let parsed = parse_core_metadata_args(&args).expect("eligible metadata must parse");

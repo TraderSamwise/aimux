@@ -1090,6 +1090,7 @@ pub(super) fn resume_agent_session(
         backend_session_id: backend_session_id.as_deref().filter(|_| use_backend_resume),
         tool_config,
         project_root: &project_root,
+        cwd: Path::new(&launch_cwd),
         launch_env,
     }) {
         Ok(wrapped) => wrapped,
@@ -1245,6 +1246,7 @@ async fn resume_agent_session_async(
         backend_session_id: backend_session_id.as_deref().filter(|_| use_backend_resume),
         tool_config,
         project_root: &project_root,
+        cwd: Path::new(&launch_cwd),
         launch_env,
     }) {
         Ok(wrapped) => wrapped,
