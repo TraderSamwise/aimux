@@ -334,11 +334,12 @@ fn dashboard_tool_entry(key: &str, tool: &Value) -> Option<DashboardToolEntry> {
     })
 }
 
-fn default_launch_override(tool: &DashboardToolEntry) -> Option<Value> {
+pub(crate) fn default_launch_override(tool: &DashboardToolEntry) -> Option<Value> {
     if tool.default_args.is_empty() && tool.default_env.is_empty() {
         return None;
     }
     let mut body = Map::new();
+    body.insert("command".into(), Value::String(tool.command.clone()));
     body.insert(
         "args".into(),
         Value::Array(

@@ -64,6 +64,7 @@ fn create_selected_maps_default_launch_override() {
             "tool": "codex",
             "role": "control",
             "launchOverride": {
+                "command": "codex",
                 "args": ["--base", "--extra"],
                 "env": { "CODEX_MODE": "fast" }
             },
@@ -139,12 +140,22 @@ fn digit_selects_and_creates_tool() {
 }
 
 #[test]
-fn fork_mode_maps_selected_tool_to_fork_request() {
-    let tools = enabled_dashboard_tools(&merge_config_layers(None, None));
+fn fork_mode_maps_selected_tool_defaults_consistently_to_fork_request() {
+    let tools = enabled_dashboard_tools(&merge_config_layers(
+        None,
+        Some(&json!({
+            "tools": { "codex": {
+                "command": "/custom/bin/codex",
+                "args": ["--base"],
+                "defaultArgs": ["--model", "target-model"],
+                "defaultEnv": { "CODEX_MODE": "fast" }
+            } }
+        })),
+    ));
     let mut picker = DashboardToolPickerState::with_mode(
         tools,
         DashboardToolPickerMode::Fork {
-            source_session_id: "codex-source".into(),
+            source_session_id: "claude-source".into(),
         },
     );
     picker.index = 1;
@@ -159,11 +170,28 @@ fn fork_mode_maps_selected_tool_to_fork_request() {
     assert_eq!(
         request.body,
         json!({
-            "sourceSessionId": "codex-source",
+            "sourceSessionId": "claude-source",
             "tool": "codex",
             "worktreePath": "/repo/wt",
-            "open": false
+            "open": false,
+            "launchOverride": {
+                "command": "/custom/bin/codex",
+                "args": ["--base", "--model", "target-model"],
+                "env": { "CODEX_MODE": "fast" }
+            }
         })
+    );
+    assert_eq!(
+        picker.select_digit('2', Some("/repo/wt")),
+        DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request.clone()))
+    );
+    let tool = picker.selected_tool().unwrap();
+    let launch_override = aimux::dashboard_launch_options::DashboardLaunchOptionsState::new(tool)
+        .launch_override(tool)
+        .unwrap();
+    assert_eq!(
+        picker.create_selected_with_override(Some("/repo/wt"), launch_override),
+        DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request))
     );
 }
 
