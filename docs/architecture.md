@@ -35,6 +35,8 @@ The project service owns:
 - shared project reads and writes
 - cross-tool [usage monitoring](usage-monitoring.md), persisted token baselines,
   provider quota observations, and shared display lines
+- [multiline prompt delivery](multiline-prompt-delivery.md), shared body normalization,
+  paste framing, and submit ordering across clients
 - agent lifecycle actions such as spawn, stop, kill, fork, and resurrect
 - worktree and graveyard operations
 - notifications, threads, tasks, handoffs, reviews, and Coordination records

@@ -29,3 +29,19 @@ PR #467 supplied concrete sync/async production delivery seams, staging privacy 
 `one_submit_after_the_whole_multiline_body_lands` uses an owned private tmux server and controlled raw-terminal composers. Independently expected received bytes, premature turn counts, complete-body timestamps, final submit count and paste boundaries are checked through both real input routes and sync/async executors. Known receivers with LF-as-submit keybindings and default LF-as-data bindings are distinct peer protocols; explicit framing must protect both. Unknown mode-off receivers must receive no bytes; mode-on receivers accept the complete body. Mislabelled shell commands and missing/null launch commands cannot borrow a Claude label's capability; genuine Claude/Codex command aliases remain supported.
 
 These tests prove transport behavior and the stated receiver protocols. They do not launch provider agents, spend provider tokens, install a local release or claim that the user's installed runtime has changed. Active-frame and newer-owner cleanup also have focused unit coverage; the real stale-close scenario covers an already-cleared token. Full suites belong to CI.
+
+## Mutation evidence
+
+Each fault below was applied alone, the named test executed and failed, and the original file bytes were restored before the same test passed. The guard-bypass collector initially expected a different assertion string; the actual failure was the stronger route observation that refusal had already sent input. Its restored run passed.
+
+| Deliberate fault | Named gate | Observed failure |
+| --- | --- | --- |
+| Collapse LF into spaces | `a_long_multiline_prompt_crosses_in_one_delivery` | Whole delivered body differs from the expected list |
+| Split the body into two delivery calls | `a_long_multiline_prompt_crosses_in_one_delivery` | Body delivery count exceeds one |
+| Send known multiline input without paste framing | `one_submit_after_the_whole_multiline_body_lands` | Embedded LF submits prefixes before the complete body |
+| Remove bare-CR to LF normalization | `one_submit_after_the_whole_multiline_body_lands` | Embedded CR submits prefixes before the complete body |
+| Bypass the atomic advertised-mode predicate | `one_submit_after_the_whole_multiline_body_lands` | Unsupported receiver gets input and submits prefixes |
+| Treat refusal acknowledgement as success | `guarded_paste_checks_mode_and_requires_an_exact_success_acknowledgement` | Refusal is accepted as a successful paste |
+| Make frame cleanup unconditional | `one_submit_after_the_whole_multiline_body_lands` | Stale cleanup changes the receiver's input byte count |
+
+The final baseline passed 330 scoped Rust integration tests, 47 focused unit tests, 47 app API tests, app typecheck and lint, and the root `verify` lane. The private-tmux integration gate covers 104 receiver and race cases; the existing concrete delivery seam covers 30 production executor scenarios. Mutation restorations rerun the relevant named gate rather than substituting a source check.
