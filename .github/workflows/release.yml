@@ -73,6 +73,16 @@ jobs:
 
       - run: yarn --cwd app install --frozen-lockfile
 
+      - name: Prepare static Linux toolchain
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          target="$(rustc -vV | sed -n 's/^host: \(.*\)-gnu$/\1-musl/p')"
+          test -n "$target"
+          rustup target add "$target"
+
       - name: Build release asset
         run: yarn release:asset
         env:

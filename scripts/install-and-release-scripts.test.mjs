@@ -430,6 +430,25 @@ esac
 function releaseScriptEnv(root, extra = {}) {
   const bin = join(root, "bin");
   mkdirSync(bin, { recursive: true });
+  const elf = Buffer.alloc(132);
+  elf.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  elf.writeUInt16LE(2, 16);
+  elf.writeUInt16LE(62, 18);
+  elf.writeUInt32LE(1, 20);
+  elf.writeBigUInt64LE(0x400078n, 24);
+  elf.writeBigUInt64LE(64n, 32);
+  elf.writeUInt16LE(64, 52);
+  elf.writeUInt16LE(56, 54);
+  elf.writeUInt16LE(1, 56);
+  elf.writeUInt32LE(1, 64);
+  elf.writeUInt32LE(5, 68);
+  elf.writeBigUInt64LE(0x400000n, 80);
+  elf.writeBigUInt64LE(BigInt(elf.length), 96);
+  elf.writeBigUInt64LE(BigInt(elf.length), 104);
+  elf.writeBigUInt64LE(4096n, 112);
+  elf.set([0xb8, 60, 0, 0, 0, 0x31, 0xff, 0x0f, 0x05], 120);
+  writeFileSync(join(root, "static-elf"), elf);
+  writeExecutable(join(bin, "musl-gcc"), "#!/bin/sh\nexit 0\n");
   const realTar = runOk("bash", ["-lc", "command -v tar"]).stdout.trim();
   const realCommands = {
     awk: runOk("bash", ["-lc", "command -v awk"]).stdout.trim(),
@@ -469,8 +488,8 @@ exec ${realTar} "$@"
     join(bin, "uname"),
     `#!/bin/sh
 case "$1" in
-  -s) printf 'Linux\\n' ;;
-  -m) printf 'x86_64\\n' ;;
+  -s) printf '%s\\n' "\${AIMUX_FAKE_HOST_PLATFORM:-Linux}" ;;
+  -m) printf '%s\\n' "\${AIMUX_FAKE_HOST_ARCH:-x86_64}" ;;
   *) printf 'Linux\\n' ;;
 esac
 `,
@@ -509,14 +528,22 @@ if [ "$1" = "tree" ]; then
   printf '%s\\n' 'aimux v0.0.0 (/fixture)'
   exit 0
 fi
-mkdir -p "$CARGO_TARGET_DIR/release"
 printf '%s\\n' "$*" > "${root}/cargo-args.txt"
-{
-  printf '#!/usr/bin/env sh\\n'
-  printf 'AIMUX_EMBEDDED_BUILD_STAMP=%s\\n' "$AIMUX_RELEASE_BUILD_STAMP"
-  printf 'exit 0\\n'
-} > "$CARGO_TARGET_DIR/release/aimux"
-chmod +x "$CARGO_TARGET_DIR/release/aimux"
+output_dir="$CARGO_TARGET_DIR"
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = --target ]; then output_dir="$output_dir/$arg"; fi
+  previous="$arg"
+done
+mkdir -p "$output_dir/release"
+if [ "\${AIMUX_FAKE_HOST_PLATFORM:-Linux}" = Darwin ]; then
+  printf '#!/bin/sh\\nexit 0\\n' > "$output_dir/release/aimux"
+else
+  cp '${root}/static-elf' "$output_dir/release/aimux"
+fi
+printf '\\nAIMUX_EMBEDDED_BUILD_STAMP=%s\\n' "$AIMUX_RELEASE_BUILD_STAMP" >> "$output_dir/release/aimux"
+chmod +x "$output_dir/release/aimux"
+printf '{"reason":"compiler-artifact","target":{"name":"aimux","kind":["bin"]},"executable":"%s"}\\n' "$output_dir/release/aimux"
 `,
   );
   writeExecutable(
@@ -726,7 +753,11 @@ describe("build-release-from-source.sh", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-source-release-script-"));
     try {
       const result = run("bash", [join(repoRoot, "scripts/build-local-release-from-source.sh")], {
-        env: releaseScriptEnv(root, { AIMUX_RELEASE_VERSION: "source-test" }),
+        env: releaseScriptEnv(root, {
+          AIMUX_RELEASE_VERSION: "source-test",
+          AIMUX_FAKE_HOST_PLATFORM: process.platform === "darwin" ? "Darwin" : "Linux",
+          AIMUX_FAKE_HOST_ARCH: process.platform === "darwin" ? "arm64" : "x86_64",
+        }),
       });
 
       expect(result.status, result.stderr).toBe(0);
@@ -735,10 +766,10 @@ describe("build-release-from-source.sh", () => {
       expect(result.stdout).toContain("aimux local build boundary check passed");
       expect(result.stdout).toContain("Install smoke passed for local variant");
       expect(result.stdout).toContain("Aimux source release build verified");
-      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz"))).toBe(true);
-      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz.sha256"))).toBe(true);
-      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz.provenance.json"))).toBe(true);
-      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz.sbom.spdx.json"))).toBe(true);
+      const asset = process.platform === "darwin" ? "aimux-local-darwin-arm64" : "aimux-local-linux-x64";
+      for (const suffix of [".tar.gz", ".tar.gz.sha256", ".tar.gz.provenance.json", ".tar.gz.sbom.spdx.json"]) {
+        expect(existsSync(join(root, "release", `${asset}${suffix}`))).toBe(true);
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

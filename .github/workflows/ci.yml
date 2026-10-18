@@ -24,6 +24,51 @@ env:
   CARGO_TARGET_DIR: /tmp/aimux-cargo-target-ci
 
 jobs:
+  linux-packaging:
+    name: Static Linux packages (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare static Linux toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup toolchain install --profile minimal
+          target="$(rustc -vV | sed -n 's/^host: \(.*\)-gnu$/\1-musl/p')"
+          test -n "$target"
+          rustup target add "$target"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+          key: linux-packaging-${{ matrix.arch }}
+      - name: Build and inspect full and local static packages
+        env:
+          AIMUX_PACKAGE_PROFILE: minimal
+          AIMUX_RELEASE_DIR: ${{ runner.temp }}/linux-packages
+        run: |
+          set -euo pipefail
+          python3 scripts/release-asset-matrix.py > "$RUNNER_TEMP/release-matrix.tsv"
+          checked=0
+          while IFS=$'\t' read -r platform arch variant asset; do
+            [ "$platform" = linux ] || continue
+            [ "$arch" = '${{ matrix.arch }}' ] || continue
+            AIMUX_BUILD_VARIANT="$variant" bash scripts/build-release-asset.sh
+            python3 scripts/check-linux-package.py "$AIMUX_RELEASE_DIR/${asset}.tar.gz" "$arch" --run
+            bash scripts/check-local-build-boundary.sh --variant "$variant" \
+              --archive "$AIMUX_RELEASE_DIR/${asset}.tar.gz" --platform-arch "$platform-$arch"
+            checked=$((checked + 1))
+          done < "$RUNNER_TEMP/release-matrix.tsv"
+          test "$checked" -gt 0
+
   js-tests:
     name: JavaScript tests (root/relay)
     runs-on: ubuntu-latest

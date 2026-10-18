@@ -30,7 +30,7 @@ need() {
 
 append_standard_path_dirs
 
-for command in dirname awk grep uname mktemp date cat shasum find sort cargo mkdir cp tar gzip bash chmod rm node python3; do
+for command in dirname awk grep uname mktemp date cat shasum find sort cargo mkdir cp tar gzip bash chmod rm node python3 tr; do
   need "$command"
 done
 
@@ -77,7 +77,6 @@ export AIMUX_PACKAGE_PROFILE="$PACKAGE_PROFILE"
 export AIMUX_BUILD_PROFILE="$LEGACY_BUILD_PROFILE"
 export AIMUX_BUILD_VARIANT="$BUILD_VARIANT"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
-CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-"$ROOT_DIR/native/target"}"
 if [ "$PACKAGE_PROFILE" = "full" ]; then
   need node
 fi
@@ -179,12 +178,47 @@ release_build_stamp() {
 BUILD_STAMP="$(release_build_stamp)"
 export AIMUX_RELEASE_BUILD_STAMP="$BUILD_STAMP"
 
-if [ "$BUILD_VARIANT" = "local" ]; then
-  cargo build --manifest-path native/Cargo.toml -p aimux --release --no-default-features
-else
-  cargo build --manifest-path native/Cargo.toml -p aimux --release
+CARGO_ARGS=(build --manifest-path native/Cargo.toml -p aimux --release --message-format=json-render-diagnostics)
+if [ "$PLATFORM" = linux ]; then
+  case "$ARCH" in
+    x64) RUST_TARGET=x86_64-unknown-linux-musl ;;
+    arm64) RUST_TARGET=aarch64-unknown-linux-musl ;;
+  esac
+  need musl-gcc
+  MUSL_CC="$(command -v musl-gcc)"
+  TARGET_ENV="$(printf '%s' "$RUST_TARGET" | tr '[:lower:]-' '[:upper:]_')"
+  CC_ENV="$(printf '%s' "$RUST_TARGET" | tr '-' '_')"
+  export "CARGO_TARGET_${TARGET_ENV}_LINKER=$MUSL_CC"
+  export "CC_${CC_ENV}=$MUSL_CC"
+  CARGO_ARGS+=(--target "$RUST_TARGET")
 fi
-NATIVE_BUILD_ARTIFACT="$CARGO_TARGET_ROOT/release/aimux"
+if [ "$BUILD_VARIANT" = "local" ]; then
+  CARGO_ARGS+=(--no-default-features)
+fi
+cargo "${CARGO_ARGS[@]}" > "$TMP_DIR/cargo-build.jsonl"
+NATIVE_BUILD_ARTIFACT="$(python3 - "$TMP_DIR/cargo-build.jsonl" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+try:
+    artifacts = set()
+    for line in Path(sys.argv[1]).read_text().splitlines():
+        message = json.loads(line)
+        target = message.get("target", {})
+        if (message.get("reason") == "compiler-artifact" and target.get("name") == "aimux"
+                and "bin" in target.get("kind", []) and message.get("executable")):
+            artifacts.add(message["executable"])
+    if len(artifacts) != 1:
+        raise ValueError(f"expected one aimux executable from Cargo, received {sorted(artifacts)}")
+    print(artifacts.pop())
+except (OSError, ValueError) as error:
+    sys.exit(f"Could not identify release build output: {error}")
+PY
+)"
+if [ "$PLATFORM" = linux ]; then
+  python3 scripts/verify-linux-binary.py "$NATIVE_BUILD_ARTIFACT" "$ARCH"
+fi
 
 PKG_DIR="$TMP_DIR/aimux"
 mkdir -p "$PKG_DIR"
@@ -222,7 +256,7 @@ find "$PKG_DIR" -name '*.map' -type f -delete
 
 mkdir -p "$OUT_DIR"
 rm -f "$OUT_DIR/$ASSET" "$OUT_DIR/$ASSET.sha256"
-tar -czf "$OUT_DIR/$ASSET" -C "$TMP_DIR" aimux
+COPYFILE_DISABLE=1 tar -czf "$OUT_DIR/$ASSET" -C "$TMP_DIR" aimux
 bash "$ROOT_DIR/scripts/verify-release-asset.sh" "$OUT_DIR/$ASSET" "$PLATFORM-$ARCH"
 (
   cd "$OUT_DIR"
