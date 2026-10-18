@@ -1,9 +1,32 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import path from "path";
 
 export default defineConfig({
   test: {
-    include: ["**/*.test.{ts,tsx}"],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit",
+          environment: "node",
+          include: ["**/*.test.{ts,tsx}"],
+          exclude: [...configDefaults.exclude, "**/*.component.test.tsx"],
+        },
+      },
+      {
+        extends: true,
+        resolve: {
+          alias: [{ find: /^react-native$/, replacement: "react-native-web" }],
+          dedupe: ["react", "react-dom"],
+        },
+        test: {
+          name: "components",
+          environment: "jsdom",
+          include: ["**/*.component.test.tsx"],
+          setupFiles: ["./test/setup-components.ts"],
+        },
+      },
+    ],
     coverage: {
       reporter: ["text", "html", "json-summary"],
       reportsDirectory: "coverage",
