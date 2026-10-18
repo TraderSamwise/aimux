@@ -8,12 +8,15 @@ import type { LivePaneInputDelivery, LivePaneInputResponse } from "../../src/pro
  * the same red error line as `failed` told the user their send had not worked
  * when it had, which is the wrapper lying about a child outcome.
  */
-export type LivePaneInputDeliveryOutcome = "delivered" | "pending" | "failed";
+export type LivePaneInputDeliveryOutcome = "delivered" | "unverified" | "pending" | "failed";
 
 export function livePaneInputDeliveryOutcome(
   delivery: LivePaneInputDelivery | undefined,
 ): LivePaneInputDeliveryOutcome {
-  if (!delivery || delivery.state === "delivered") return "delivered";
+  if (!delivery) return "delivered";
+  if (delivery.state === "delivered") {
+    return delivery.verified === false ? "unverified" : "delivered";
+  }
   return delivery.state === "held" ? "pending" : "failed";
 }
 
@@ -21,7 +24,16 @@ export function formatLivePaneInputDeliveryNotice(
   delivery: LivePaneInputDelivery | undefined,
 ): string | null {
   if (!delivery) return null;
-  if (delivery.state === "delivered") return null;
+  if (delivery.state === "delivered") {
+    if (delivery.verified !== false && !delivery.receiptError) return null;
+    return (
+      delivery.notice ||
+      delivery.displayLabel ||
+      delivery.receiptError ||
+      "Input delivery notice missing from service response."
+    );
+  }
+  if (delivery.notice) return delivery.notice;
   const detail =
     delivery.error ||
     formatLivePaneInputDeliveryReason(delivery.reason) ||
@@ -71,6 +83,7 @@ function formatLivePaneInputDeliveryReason(reason: string | undefined): string |
 export type SendDeliveryState =
   | { kind: "none" }
   | { kind: "held"; notice: string; holdMs: number | null }
+  | { kind: "warning"; notice: string }
   | { kind: "error"; text: string };
 
 /**
@@ -96,6 +109,7 @@ export function sendDeliveryStateAfterResponse(
 ): SendDeliveryState {
   const notice = formatLivePaneInputDeliveryNotice(response.delivery);
   if (!notice) return { kind: "none" };
+  if (response.delivery?.state === "delivered") return { kind: "warning", notice };
   if (livePaneInputDeliveryOutcome(response.delivery) !== "pending") {
     return { kind: "error", text: notice };
   }

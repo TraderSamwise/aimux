@@ -591,6 +591,7 @@ fn statusline_sessions(sessions: Vec<Value>, kind: &str) -> Vec<Value> {
                 // chip collapses to id order.
                 "createdAt",
                 "semantic",
+                "inputDelivery",
                 "team",
                 "overseer",
                 "scribe",
@@ -1281,6 +1282,29 @@ fn resolve_focused_control_session<'a>(
         })
 }
 
+fn session_chip_label(
+    session: &Value,
+    identity: String,
+    hint: Option<String>,
+    badge: Option<String>,
+) -> String {
+    if let Some(label) =
+        super::input_delivery_receipt::delivery_display_label(session.get("inputDelivery"))
+        && hint.as_deref() == Some(label)
+    {
+        let identity_budget = 28usize.saturating_sub(label.chars().count() + 1);
+        return format!("{} {label}", trim_text(&identity, identity_budget));
+    }
+    trim_text(
+        &[Some(identity), hint, badge]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" "),
+        28,
+    )
+}
+
 fn render_session_chip(session: &Value, is_current: bool) -> String {
     let identity = trim_text(&compact_session_title(session), 18);
     let hint = render_session_compact_hint(session);
@@ -1292,14 +1316,7 @@ fn render_session_chip(session: &Value, is_current: bool) -> String {
     } else {
         render_semantic_badge(session.get("semantic"))
     };
-    let label = trim_text(
-        &[Some(identity), hint, badge]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" "),
-        28,
-    );
+    let label = session_chip_label(session, identity, hint, badge);
     if is_current {
         tmux_invert(&format!(" {label} "), "yellow")
     } else {
@@ -1318,14 +1335,7 @@ fn render_teammate_chip(session: &Value, is_current: bool) -> String {
     } else {
         render_semantic_badge(session.get("semantic"))
     };
-    let label = trim_text(
-        &[Some(identity), hint, badge]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" "),
-        28,
-    );
+    let label = session_chip_label(session, identity, hint, badge);
     if is_current {
         tmux_invert(&format!(" {label} "), "cyan")
     } else {

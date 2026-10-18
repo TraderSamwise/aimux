@@ -857,6 +857,11 @@ pub fn build_agent_list(
             let metadata = metadata_sessions.get(id);
             let task = active_task_for(tasks, id);
             let mut agent = Map::new();
+            if let Some(delivery) =
+                super::input_delivery_receipt::projected_input_delivery(session, metadata)
+            {
+                agent.insert("inputDelivery".into(), delivery);
+            }
             insert_string(&mut agent, "id", id);
             insert_optional(
                 &mut agent,

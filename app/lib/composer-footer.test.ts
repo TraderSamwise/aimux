@@ -25,6 +25,27 @@ describe("what the composer footer says", () => {
     expect(composerFooterState(QUIET)).toEqual({ kind: "empty" });
   });
 
+  it("keeps an accepted warning distinct from a hold or failure in every output mode", () => {
+    for (const mode of ["chat", "terminal", "split"] as const) {
+      expect(
+        composerFooterState({
+          ...QUIET,
+          mode,
+          warningNotice: "server notice",
+          awaitingEcho: true,
+          activityLabel: "Ready",
+        }),
+      ).toEqual({ kind: "warning", text: "server notice" });
+    }
+    expect(composerFooterState({ ...QUIET, warningNotice: "warning", error: "failed" })).toEqual({
+      kind: "error",
+      text: "failed",
+    });
+    expect(composerFooterState({ ...QUIET, warningNotice: "warning", heldNotice: "held" })).toEqual(
+      { kind: "held", text: "held" },
+    );
+  });
+
   // The bug: terminal mode does not mount the transcript pane, so the one
   // thing that confirmed a send -- the message appearing in it -- was not on
   // screen, and a send that worked looked like one that did nothing.
