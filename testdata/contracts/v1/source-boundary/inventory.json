@@ -308,9 +308,11 @@
         "api": "childProcessImportInventory",
         "allowed": [
           "scripts/audit-fixture-enforcement.mjs",
+          "scripts/audit-runtime-package.mjs",
           "scripts/captest.mjs",
           "scripts/check-remote-structural-boundary.mjs",
           "scripts/hosted-check.mjs",
+          "scripts/verify-npm-package.mjs",
           "src/context/compactor.ts",
           "src/core-project-actor.ts",
           "src/daemon-supervisor.ts",
@@ -332,7 +334,7 @@
         ]
       },
       "output": [],
-      "inputSha256": "51807cb9a727bf3fdd3802982f1efb300e3c2dd8a56ae02258987767123c7ce4"
+      "inputSha256": "3345ca70f0790896996a5a9706c16a99c48f97187d22a040ab12a86436a05975"
     },
     {
       "id": "one-shot-node-inventory-006",

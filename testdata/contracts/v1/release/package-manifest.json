@@ -2,7 +2,7 @@
   "version": 1,
   "source": "src/package-manifest.test.ts",
   "generatedBy": "scripts/capture-package-manifest-contract.mjs",
-  "description": "Package manifest runtime file allowlist and retired Node payload exclusions captured by evaluating the TypeScript package-manifest contract against package.json.",
+  "description": "Package manifest runtime file allowlist and retired Node payload exclusions captured by evaluating the TypeScript package-manifest contract against package.json. Linux natives are intentionally included alongside the retained Darwin runtime.",
   "cases": [
     {
       "id": "release-package-manifest-001",
@@ -20,9 +20,14 @@
           "scripts/cargo-sweep-stale-targets.sh",
           "scripts/install-cargo-sweep-schedule.sh",
           "scripts/tmux-open-hyperlink.sh",
-              "native/darwin-arm64"
+          "native/darwin-arm64",
+          "native/linux-x64",
+          "native/linux-arm64"
         ],
-        "forbiddenFiles": ["dist", "scripts/installed-aimux-shim.sh"]
+        "forbiddenFiles": [
+          "dist",
+          "scripts/installed-aimux-shim.sh"
+        ]
       },
       "output": {
         "files": [
@@ -33,26 +38,66 @@
           "scripts/cargo-sweep-stale-targets.sh",
           "scripts/install-cargo-sweep-schedule.sh",
           "scripts/tmux-open-hyperlink.sh",
-              "native/darwin-arm64",
+          "native/darwin-arm64",
+          "native/linux-x64",
+          "native/linux-arm64",
           "LICENSE",
           "README.md"
         ],
         "required": [
-          { "entry": "bin", "present": true },
-          { "entry": "dist-ui", "present": true },
-          { "entry": "docs", "present": true },
-          { "entry": "scripts/tmux-control.sh", "present": true },
-          { "entry": "scripts/cargo-sweep-stale-targets.sh", "present": true },
-          { "entry": "scripts/install-cargo-sweep-schedule.sh", "present": true },
-          { "entry": "scripts/tmux-open-hyperlink.sh", "present": true },
-          { "entry": "native/darwin-arm64", "present": true }
+          {
+            "entry": "bin",
+            "present": true
+          },
+          {
+            "entry": "dist-ui",
+            "present": true
+          },
+          {
+            "entry": "docs",
+            "present": true
+          },
+          {
+            "entry": "scripts/tmux-control.sh",
+            "present": true
+          },
+          {
+            "entry": "scripts/cargo-sweep-stale-targets.sh",
+            "present": true
+          },
+          {
+            "entry": "scripts/install-cargo-sweep-schedule.sh",
+            "present": true
+          },
+          {
+            "entry": "scripts/tmux-open-hyperlink.sh",
+            "present": true
+          },
+          {
+            "entry": "native/darwin-arm64",
+            "present": true
+          },
+          {
+            "entry": "native/linux-x64",
+            "present": true
+          },
+          {
+            "entry": "native/linux-arm64",
+            "present": true
+          }
         ],
         "forbidden": [
-          { "entry": "dist", "present": false },
-          { "entry": "scripts/installed-aimux-shim.sh", "present": false }
+          {
+            "entry": "dist",
+            "present": false
+          },
+          {
+            "entry": "scripts/installed-aimux-shim.sh",
+            "present": false
+          }
         ]
       },
-      "inputSha256": "27f88ee12fdea6e5bfcfe76d0611bdf7053af65ceb490614cc990398fdf516ae"
+      "inputSha256": "27fff944e1b6d9b79ada42804685d942d32b41b93e2a02f9345650993630e5df"
     }
   ]
 }
