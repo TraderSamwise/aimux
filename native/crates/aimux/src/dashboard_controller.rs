@@ -695,7 +695,23 @@ impl DashboardController {
         match key {
             DashboardKey::Quit => DashboardControllerEffect::Quit,
             DashboardKey::NewAgent => {
-                DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create)
+                match snapshot
+                    .extra
+                    .get("agentCreation")
+                    .cloned()
+                    .ok_or_else(|| {
+                        "Project service did not provide agent creation defaults".to_owned()
+                    })
+                    .and_then(crate::dashboard_create::DashboardAgentCreationPolicy::parse)
+                {
+                    Ok(policy) => DashboardControllerEffect::OpenAgentToolPicker(
+                        DashboardToolPickerMode::Create(policy),
+                    ),
+                    Err(error) => {
+                        self.footer_alert = Some(DashboardFailureAlert::local(error));
+                        DashboardControllerEffect::Render
+                    }
+                }
             }
             DashboardKey::ForkAgent => self.open_fork_tool_picker(snapshot),
             DashboardKey::SwitchTool => self.open_switch_tool_picker(snapshot),
@@ -1602,6 +1618,10 @@ impl DashboardController {
                 if digit.is_ascii_digit() =>
             {
                 tool_picker.select_digit(digit, worktree_path)
+            }
+            DashboardKey::Tab if matches!(tool_picker.mode, DashboardToolPickerMode::Create(_)) => {
+                tool_picker.create_in_worktree = !tool_picker.create_in_worktree;
+                DashboardToolPickerEffect::Render
             }
             DashboardKey::Enter => tool_picker.create_selected(worktree_path),
             DashboardKey::Stop

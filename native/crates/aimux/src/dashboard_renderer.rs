@@ -808,6 +808,7 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
 
 fn has_worktrees(input: &DashboardRenderInput<'_>) -> bool {
     !input.snapshot.worktree_groups.is_empty()
+        || input.snapshot.extra.contains_key("supervisorLane")
 }
 
 fn render_supervisor_group(
@@ -834,7 +835,7 @@ fn render_supervisor_group(
         .iter()
         .map(|entry| (entry.id, entry.digit))
         .collect::<BTreeMap<_, _>>();
-    let rows = group
+    let mut rows = group
         .sessions
         .iter()
         .map(|session| {
@@ -847,6 +848,12 @@ fn render_supervisor_group(
             )
         })
         .collect::<Vec<_>>();
+    if rows.is_empty() {
+        rows.push(style(
+            "No control agents. Press [n] to create one.",
+            Tone::Muted,
+        ));
+    }
     let summary = match group.sessions.len() {
         1 => "1 project-control session".to_owned(),
         count => format!("{count} project-control sessions"),

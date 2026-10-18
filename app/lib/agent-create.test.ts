@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { WorktreeBucket } from "@/lib/desktop-state";
 import {
   AGENT_TOOL_CHOICES,
+  agentCreationRole,
+  agentCreationPolicyIsAvailable,
   AGENT_CREATION_REFRESH_VIEWS,
   WORKTREE_CREATION_REFRESH_VIEWS,
   canSubmitCreation,
@@ -187,5 +189,36 @@ describe("when the create button does something", () => {
     expect(canSubmitCreation({ ...base, kind: "worktree", name: "feat/x", busy: true })).toBe(
       false,
     );
+  });
+});
+
+describe("service agent creation policy", () => {
+  const policy = {
+    defaultTarget: "supervisor" as const,
+    defaultRole: "control",
+    worktreeRole: "coder",
+  };
+
+  it("uses the service target by default and honors an explicit worktree choice", () => {
+    expect(agentCreationRole(policy)).toBe("control");
+    expect(agentCreationRole(policy, "worktree")).toBe("coder");
+    expect(agentCreationRole({ ...policy, defaultTarget: "worktree" })).toBe("coder");
+    expect(agentCreationRole({ ...policy, defaultRole: "planner" })).toBe("planner");
+  });
+
+  it("blocks missing or incomplete policy without guessing a target", () => {
+    expect(agentCreationPolicyIsAvailable(policy)).toBe(true);
+    for (const invalid of [
+      undefined,
+      null,
+      { defaultRole: "control", worktreeRole: "coder" },
+      { ...policy, defaultTarget: "unknown" },
+      { ...policy, defaultRole: "" },
+    ]) {
+      expect(agentCreationPolicyIsAvailable(invalid as never)).toBe(false);
+      expect(() => agentCreationRole(invalid as never)).toThrow(
+        "Agent creation policy is unavailable",
+      );
+    }
   });
 });
