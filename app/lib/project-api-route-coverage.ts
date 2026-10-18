@@ -16,6 +16,8 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/hooks/codex": "internal-runtime",
   "/state": "client-api",
   "/desktop-state": "client-api",
+  "/usage": "client-api",
+  "/usage/claude/statusline": "internal-runtime",
   "/coordination-worklist": "client-api",
   "/project-observability": "client-api",
   "/topology": "client-api",

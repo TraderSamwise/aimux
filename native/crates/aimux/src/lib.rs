@@ -178,3 +178,5 @@ mod jobs_export_tests {
         );
     }
 }
+
+pub mod claude_usage_statusline;

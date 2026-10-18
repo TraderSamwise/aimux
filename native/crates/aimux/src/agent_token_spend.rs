@@ -30,6 +30,7 @@
 //! therefore never be reached. Persisting them would fix it and is not done
 //! here; the limit is written down rather than discovered.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::debug_logging::{LogLevel, log_at};
@@ -85,6 +86,15 @@ pub struct ClaudeSpendChunk {
 /// unique count exactly -- so carrying one id forward is enough, and that is
 /// what makes an incremental reader possible at all.
 pub fn claude_spend_chunk(text: &str, carried_id: Option<&str>) -> ClaudeSpendChunk {
+    parse_claude_spend_chunk(text, carried_id, false)
+        .expect("permissive Claude token parsing cannot fail")
+}
+
+fn parse_claude_spend_chunk(
+    text: &str,
+    carried_id: Option<&str>,
+    strict: bool,
+) -> Result<ClaudeSpendChunk, String> {
     let mut chunk = ClaudeSpendChunk {
         last_id: carried_id.map(str::to_owned),
         ..Default::default()
@@ -96,8 +106,14 @@ pub fn claude_spend_chunk(text: &str, carried_id: Option<&str>) -> ClaudeSpendCh
             break;
         }
         chunk.consumed += line.len() as u64;
-        let Ok(entry) = serde_json::from_str::<Value>(line.trim_end()) else {
-            continue;
+        let entry = match serde_json::from_str::<Value>(line.trim_end()) {
+            Ok(entry) => entry,
+            Err(error)
+                if strict && (line.contains("\"usage\"") || line.contains("\"message\"")) =>
+            {
+                return Err(format!("parse Claude token usage record: {error}"));
+            }
+            Err(_) => continue,
         };
         let Some(message) = entry.get("message") else {
             continue;
@@ -105,6 +121,21 @@ pub fn claude_spend_chunk(text: &str, carried_id: Option<&str>) -> ClaudeSpendCh
         let Some(usage) = message.get("usage") else {
             continue;
         };
+        if strict {
+            if usage.is_null() {
+                continue;
+            }
+            validate_token_counters(
+                usage,
+                "Claude usage",
+                &[
+                    "input_tokens",
+                    "cache_creation_input_tokens",
+                    "cache_read_input_tokens",
+                    "output_tokens",
+                ],
+            )?;
+        }
         let id = message.get("id").and_then(Value::as_str);
         if id.is_some() && id.map(str::to_owned) == chunk.last_id {
             continue;
@@ -114,7 +145,77 @@ pub fn claude_spend_chunk(text: &str, carried_id: Option<&str>) -> ClaudeSpendCh
             chunk.last_id = Some(id.to_owned());
         }
     }
-    chunk
+    Ok(chunk)
+}
+
+fn validate_token_counters(usage: &Value, source: &str, fields: &[&str]) -> Result<(), String> {
+    let usage = usage
+        .as_object()
+        .ok_or_else(|| format!("{source} must be an object"))?;
+    for field in fields {
+        if let Some(value) = usage.get(*field)
+            && value.as_u64().is_none()
+        {
+            return Err(format!("{source}.{field} must be a nonnegative integer"));
+        }
+    }
+    if !fields.iter().any(|field| usage.contains_key(*field)) {
+        return Err(format!("{source} reports no token counters"));
+    }
+    Ok(())
+}
+
+fn strict_codex_cumulative_billed(
+    text: &str,
+    leading_fragment: bool,
+) -> Result<Option<u64>, String> {
+    let text = text.rfind('\n').map(|index| &text[..=index]).unwrap_or("");
+    let text = if leading_fragment {
+        text.split_once('\n')
+            .map(|(_, remaining)| remaining)
+            .unwrap_or("")
+    } else {
+        text
+    };
+    for line in text.lines().rev() {
+        let entry: Value = match serde_json::from_str(line) {
+            Ok(entry) => entry,
+            Err(error) if line.contains("token_count") || line.contains("total_token_usage") => {
+                return Err(format!("parse Codex token usage record: {error}"));
+            }
+            Err(_) => continue,
+        };
+        let Some(payload) = entry.get("payload") else {
+            continue;
+        };
+        if payload.get("type").and_then(Value::as_str) != Some("token_count") {
+            continue;
+        }
+        let Some(info) = payload.get("info").filter(|value| !value.is_null()) else {
+            continue;
+        };
+        let info = info
+            .as_object()
+            .ok_or("Codex token_count.info must be an object or null")?;
+        let Some(usage) = info
+            .get("total_token_usage")
+            .filter(|value| !value.is_null())
+        else {
+            continue;
+        };
+        validate_token_counters(
+            usage,
+            "Codex total_token_usage",
+            &[
+                "input_tokens",
+                "cached_input_tokens",
+                "cache_write_input_tokens",
+                "output_tokens",
+            ],
+        )?;
+        return Ok(Some(codex_billed(usage)));
+    }
+    Ok(None)
 }
 
 /// Codex's running cumulative, read from the newest `token_count` it wrote.
@@ -186,10 +287,10 @@ pub fn offset_still_valid(offset: u64, len: u64) -> bool {
 
 /// What a session's spend is measured against, carried between ticks.
 ///
-/// Held in the task rather than persisted: it is derived per tick, and the
-/// loop watcher state hard-errors on an unknown version, so adding a field
-/// there would be a migration for something that can be recomputed.
-#[derive(Debug, Clone, Default)]
+/// The loop watcher keeps these in memory. Other collectors can persist the
+/// same read position without changing the token currency or goal state.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct SpendBaseline {
     /// Bytes already counted, for the runtime that has no running total.
     pub offset: u64,
@@ -276,9 +377,17 @@ pub fn advance_cumulative_baseline(
         };
         return SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN);
     }
-    let spend = cumulative_spend_since(baseline.cumulative_at_baseline, current);
+    let went_backwards = current
+        .zip(baseline.cumulative_at_baseline)
+        .is_some_and(|(current, original)| current < original.saturating_add(baseline.billed));
+    let spend = if went_backwards {
+        SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN)
+    } else {
+        cumulative_spend_since(baseline.cumulative_at_baseline, current)
+    };
     if matches!(spend, SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN)) {
         baseline.cumulative_at_baseline = current;
+        baseline.billed = 0;
     }
     if let SpendSinceBaseline::Measured(billed) = spend {
         baseline.billed = billed;
@@ -301,6 +410,7 @@ pub struct AppendedChunk {
     /// Bytes actually taken. Compared against the cap rather than `text.len()`,
     /// which lossy decoding can change.
     pub read: u64,
+    pub starts_mid_record: bool,
 }
 
 pub fn read_appended(path: &Path, offset: u64) -> Result<AppendedChunk, String> {
@@ -311,6 +421,7 @@ pub fn read_appended(path: &Path, offset: u64) -> Result<AppendedChunk, String> 
         text: String::new(),
         len,
         read: 0,
+        starts_mid_record: false,
     };
     if !offset_still_valid(offset, len) {
         return Ok(empty(len));
@@ -320,6 +431,16 @@ pub fn read_appended(path: &Path, offset: u64) -> Result<AppendedChunk, String> 
         return Ok(empty(len));
     }
     let mut file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
+    let starts_mid_record = if offset > 0 {
+        file.seek(SeekFrom::Start(offset - 1))
+            .map_err(|error| format!("seek {}: {error}", path.display()))?;
+        let mut previous = [0u8];
+        file.read_exact(&mut previous)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        previous[0] != b'\n'
+    } else {
+        false
+    };
     file.seek(SeekFrom::Start(offset))
         .map_err(|error| format!("seek {}: {error}", path.display()))?;
     let mut bytes = vec![0; take as usize];
@@ -331,6 +452,7 @@ pub fn read_appended(path: &Path, offset: u64) -> Result<AppendedChunk, String> 
         text: String::from_utf8_lossy(&bytes).into_owned(),
         len,
         read: take,
+        starts_mid_record,
     })
 }
 
@@ -352,44 +474,72 @@ pub fn spend_for_session(
     transcript: Option<&Path>,
     baseline: &mut SpendBaseline,
 ) -> SpendSinceBaseline {
-    if !runtime_reports_usage(tool) {
-        return SpendSinceBaseline::Unmeasured(NO_USAGE_FOR_RUNTIME);
+    match try_spend_for_session(tool, transcript, baseline) {
+        Ok(spend) => spend,
+        Err(reason) => unreadable(
+            transcript.expect("a read failure names a transcript"),
+            &reason,
+        ),
     }
-    let Some(transcript) = transcript.filter(|path| path.is_file()) else {
-        return SpendSinceBaseline::Unmeasured(NO_TRANSCRIPT_YET);
+}
+
+/// Read the shared token currency while preserving collection failures.
+pub fn try_spend_for_session(
+    tool: &str,
+    transcript: Option<&Path>,
+    baseline: &mut SpendBaseline,
+) -> Result<SpendSinceBaseline, String> {
+    if !runtime_reports_usage(tool) {
+        return Ok(SpendSinceBaseline::Unmeasured(NO_USAGE_FOR_RUNTIME));
+    }
+    let Some(transcript) = transcript else {
+        return Ok(SpendSinceBaseline::Unmeasured(NO_TRANSCRIPT_YET));
     };
+    let stat = match metadata(transcript) {
+        Ok(stat) => stat,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SpendSinceBaseline::Unmeasured(NO_TRANSCRIPT_YET));
+        }
+        Err(error) => return Err(format!("stat {}: {error}", transcript.display())),
+    };
+    if !stat.is_file() {
+        return Err(format!(
+            "read {}: transcript is not a regular file",
+            transcript.display()
+        ));
+    }
     let name = transcript.to_string_lossy().into_owned();
     if tool.trim() == "codex" {
-        let tail = match read_tail_lossy(transcript, CODEX_TAIL_BYTES) {
-            Ok(tail) => tail,
-            Err(reason) => return unreadable(transcript, &reason),
-        };
-        return advance_cumulative_baseline(baseline, &name, codex_cumulative_billed(&tail));
+        let (tail, leading_fragment) = read_tail_window_lossy(transcript, CODEX_TAIL_BYTES)?;
+        let current = strict_codex_cumulative_billed(&tail, leading_fragment)
+            .map_err(|error| format!("read {}: {error}", transcript.display()))?;
+        return Ok(advance_cumulative_baseline(baseline, &name, current));
     }
     if baseline.transcript.as_deref() != Some(name.as_str()) {
         // Measured from HERE, so first sight reads nothing at all. The old
         // code called `read_appended` at offset 0 and then discarded the
         // chunk, which parsed up to 4MB of a 418MB file on the tick thread
         // while the module header claimed a cold start never parses history.
-        let len = match metadata(transcript) {
-            Ok(stat) => stat.len(),
-            Err(error) => return unreadable(transcript, &error.to_string()),
-        };
         *baseline = SpendBaseline {
-            offset: len,
+            offset: stat.len(),
             transcript: Some(name),
             episode: baseline.episode.clone(),
             ..SpendBaseline::default()
         };
-        return SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN);
+        return Ok(SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN));
     }
-    let appended = match read_appended(transcript, baseline.offset) {
-        Ok(read) => read,
-        // A read that failed is not a session that spent nothing, and it is
-        // not one that was never written either.
-        Err(reason) => return unreadable(transcript, &reason),
+    let appended = read_appended(transcript, baseline.offset)?;
+    let (complete, discarded) = if appended.starts_mid_record {
+        match appended.text.find('\n') {
+            Some(index) => (&appended.text[index + 1..], index as u64 + 1),
+            None => ("", 0),
+        }
+    } else {
+        (appended.text.as_str(), 0)
     };
-    let mut chunk = claude_spend_chunk(&appended.text, baseline.last_id.as_deref());
+    let mut chunk = parse_claude_spend_chunk(complete, baseline.last_id.as_deref(), true)
+        .map_err(|error| format!("read {}: {error}", transcript.display()))?;
+    chunk.consumed += discarded;
     if chunk_spans_an_oversized_record(chunk.consumed, appended.read) {
         // Stepped over, not re-read: the tokens in that one record are lost,
         // which is a smaller lie than a budget that never moves again. The
@@ -411,9 +561,9 @@ pub fn spend_for_session(
         // restarted. Reporting `Measured(0)` for that told a goal at 480,000
         // of a 500,000 budget that it had spent nothing, and called it a
         // measurement.
-        return SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN);
+        return Ok(SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN));
     }
-    SpendSinceBaseline::Measured(baseline.billed)
+    Ok(SpendSinceBaseline::Measured(baseline.billed))
 }
 
 /// One tick's tail for the runtime that keeps a running total.
@@ -432,22 +582,47 @@ pub const CODEX_TAIL_BYTES: u64 = MAX_CHUNK_BYTES;
 /// nothing read as "no transcript written yet". A spend reader cannot be
 /// stopped by one mangled character, which is why the claude path has always
 /// been lossy here.
-fn read_tail_lossy(path: &Path, max_bytes: u64) -> Result<String, String> {
-    let len = metadata(path)
-        .map_err(|error| format!("stat {}: {error}", path.display()))?
+pub fn read_tail_lossy(path: &Path, max_bytes: u64) -> Result<String, String> {
+    read_tail_window_lossy(path, max_bytes).map(|(text, _)| text)
+}
+
+pub fn read_tail_window_lossy(path: &Path, max_bytes: u64) -> Result<(String, bool), String> {
+    let stat = metadata(path).map_err(|error| format!("stat {}: {error}", path.display()))?;
+    if !stat.is_file() {
+        return Err(format!(
+            "read {}: transcript is not a regular file",
+            path.display()
+        ));
+    }
+    let mut file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
+    let len = file
+        .metadata()
+        .map_err(|error| format!("stat open {}: {error}", path.display()))?
         .len();
     let start = len.saturating_sub(max_bytes);
     let take = len - start;
     if take == 0 {
-        return Ok(String::new());
+        return Ok((String::new(), false));
     }
-    let mut file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
+    let leading_fragment = if start > 0 {
+        file.seek(SeekFrom::Start(start - 1))
+            .map_err(|error| format!("seek {}: {error}", path.display()))?;
+        let mut previous = [0u8];
+        file.read_exact(&mut previous)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        previous[0] != b'\n'
+    } else {
+        false
+    };
     file.seek(SeekFrom::Start(start))
         .map_err(|error| format!("seek {}: {error}", path.display()))?;
     let mut bytes = vec![0; take as usize];
     file.read_exact(&mut bytes)
         .map_err(|error| format!("read {}: {error}", path.display()))?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    Ok((
+        String::from_utf8_lossy(&bytes).into_owned(),
+        leading_fragment,
+    ))
 }
 
 /// A read that failed, said out loud rather than passed off as absence.

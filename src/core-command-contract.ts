@@ -49,6 +49,7 @@ export const CORE_API_ROUTES = {
   notificationSendText: "/core/notifications/send-text",
   outlineListText: "/core/outline/list-text",
   outlineUpdateText: "/core/outline/update-text",
+  usageText: "/core/usage-text",
   overseerClearText: "/core/overseer/clear-text",
   overseerStartText: "/core/overseer/start-text",
   scribeClearText: "/core/scribe/clear-text",

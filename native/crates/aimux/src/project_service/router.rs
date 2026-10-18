@@ -56,6 +56,7 @@ use super::switchable_agents::route_switchable_agent_request;
 use super::team::route_team_request;
 use super::topology::route_topology_request;
 use super::usage::route_usage_request;
+use super::usage_monitor::{UsageMonitorCache, route_usage_monitor_request};
 use super::visual_clients::ProjectHotSnapshotCoordinator;
 use super::work_outline::route_work_outline_request;
 use super::worktrees::route_worktree_read_request;
@@ -81,6 +82,7 @@ pub struct ProjectServiceRequestContext {
     pub plugin_statuses: Vec<NativePluginStatus>,
     pub scheduler: ProjectSchedulerHandle,
     pub agent_input_delivery_queue: AgentInputDeliveryQueue,
+    pub usage_monitor: UsageMonitorCache,
 }
 
 impl ProjectServiceRequestContext {
@@ -105,6 +107,7 @@ impl ProjectServiceRequestContext {
             plugin_statuses: Vec::new(),
             scheduler: ProjectSchedulerHandle::default(),
             agent_input_delivery_queue: AgentInputDeliveryQueue::default(),
+            usage_monitor: UsageMonitorCache::default(),
         }
     }
 
@@ -132,6 +135,7 @@ impl ProjectServiceRequestContext {
             plugin_statuses: Vec::new(),
             scheduler: ProjectSchedulerHandle::default(),
             agent_input_delivery_queue: AgentInputDeliveryQueue::default(),
+            usage_monitor: UsageMonitorCache::default(),
         }
     }
 
@@ -381,6 +385,8 @@ pub fn route_project_service_request(
     } else if let Some(response) = route_work_outline_request(context, method, path, body) {
         response
     } else if let Some(response) = route_notification_context_request(context, method, path, body) {
+        response
+    } else if let Some(response) = route_usage_monitor_request(context, method, path, body) {
         response
     } else if let Some(response) = route_usage_request(context, method, path, body) {
         response

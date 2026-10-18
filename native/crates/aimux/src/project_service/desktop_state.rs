@@ -265,6 +265,11 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
         object.insert("operationFailures".into(), Value::Array(operation_failures));
+        object.insert(
+            "usage".into(),
+            serde_json::to_value(context.usage_monitor.read()?)
+                .map_err(|error| format!("serialize usage snapshot: {error}"))?,
+        );
         attach_control_plane_warnings(object);
         object.insert(
             "loopAlertState".into(),
@@ -331,6 +336,11 @@ pub async fn desktop_state_for_context_async(
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
         object.insert("operationFailures".into(), Value::Array(operation_failures));
+        object.insert(
+            "usage".into(),
+            serde_json::to_value(context.usage_monitor.read()?)
+                .map_err(|error| format!("serialize usage snapshot: {error}"))?,
+        );
         attach_control_plane_warnings(object);
         object.insert(
             "loopAlertState".into(),

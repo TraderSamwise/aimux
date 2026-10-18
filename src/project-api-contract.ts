@@ -8,6 +8,8 @@ export const PROJECT_API_ROUTES = {
   diagnosticsLifecycle: "/diagnostics/lifecycle",
   state: "/state",
   desktopState: "/desktop-state",
+  usage: "/usage",
+  usageClaudeStatusline: "/usage/claude/statusline",
   coordinationWorklist: "/coordination-worklist",
   projectObservability: "/project-observability",
   topology: "/topology",
@@ -333,6 +335,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
   ) {
     return [...PROJECT_API_VIEW_INVALIDATIONS.runtime];
   }
+  if (pathname === PROJECT_API_ROUTES.usageClaudeStatusline) return null;
   if (normalizedMethod !== "POST" && normalizedMethod !== "PUT") return null;
   if (normalizedMethod === "PUT" && pathname.startsWith(`${PROJECT_API_ROUTES.plans}/`)) {
     return [...PROJECT_API_VIEW_INVALIDATIONS.plans];
@@ -1906,3 +1909,55 @@ export interface GraveyardCleanupResponse extends ProjectApiOk {
 export function isBinaryProjectRoute(subPath: string): boolean {
   return /^\/attachments\/[^/]+\/content$/.test(subPath);
 }
+
+export type UsageState = "known" | "absent" | "error";
+export interface UsageWindow {
+  id: string;
+  label: string;
+  state: UsageState;
+  usedPercent: number | null;
+  usedUsd: number | null;
+  limitUsd: number | null;
+  period: string | null;
+  windowMinutes: number | null;
+  resetsAt: number | null;
+  reason: string | null;
+  source: string;
+}
+export interface UsageQuotaObservation {
+  state: UsageState;
+  source: string;
+  observedAt: number;
+  windows: UsageWindow[];
+  reason: string | null;
+}
+export interface UsageSourceSummary {
+  sessionId: string | null;
+  observation: UsageQuotaObservation;
+}
+export interface UsageTokenSummary {
+  state: UsageState;
+  billedTokens: number | null;
+  since: number;
+  measuredSessions: number;
+  unmeasuredSessions: number;
+  errorSessions: number;
+  reason: string | null;
+}
+export interface UsageToolSummary {
+  tool: string;
+  label: string;
+  tokenSpend: UsageTokenSummary;
+  quotaSources: UsageSourceSummary[];
+  displayLines: string[];
+}
+export interface UsageSnapshot {
+  state: UsageState;
+  observedAt: number;
+  startedAt: number;
+  collectionIntervalMs: number;
+  tools: UsageToolSummary[];
+  displayLines: string[];
+  reason: string | null;
+}
+export interface UsageMonitorResponse extends ProjectApiOk, UsageSnapshot {}

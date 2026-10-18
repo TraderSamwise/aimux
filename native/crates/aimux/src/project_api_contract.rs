@@ -5,6 +5,8 @@ pub mod routes {
     pub const DIAGNOSTICS_LIFECYCLE: &str = "/diagnostics/lifecycle";
     pub const STATE: &str = "/state";
     pub const DESKTOP_STATE: &str = "/desktop-state";
+    pub const USAGE: &str = "/usage";
+    pub const USAGE_CLAUDE_STATUSLINE: &str = "/usage/claude/statusline";
     pub const COORDINATION_WORKLIST: &str = "/coordination-worklist";
     pub const PROJECT_OBSERVABILITY: &str = "/project-observability";
     pub const TOPOLOGY: &str = "/topology";
@@ -300,6 +302,9 @@ pub fn project_api_views_for_mutation_route(
     {
         return Some(invalidations::RUNTIME.to_vec());
     }
+    if pathname == USAGE_CLAUDE_STATUSLINE {
+        return None;
+    }
     if normalized_method != "POST" && normalized_method != "PUT" {
         return None;
     }
@@ -409,6 +414,8 @@ pub fn collect_project_api_routes() -> Vec<&'static str> {
         DIAGNOSTICS_LIFECYCLE,
         STATE,
         DESKTOP_STATE,
+        USAGE,
+        USAGE_CLAUDE_STATUSLINE,
         COORDINATION_WORKLIST,
         PROJECT_OBSERVABILITY,
         TOPOLOGY,

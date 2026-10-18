@@ -21,6 +21,7 @@ import {
   QUEUED_LIFECYCLE_MAX_TIMEOUT_MS,
   queuedLifecycleTimeoutMs,
   type GlobalExposeItemsResponse,
+  type UsageMonitorResponse,
   type TeamConfigResponse,
   type ActiveWindowRequest,
   type AgentListResponse,
@@ -1710,6 +1711,15 @@ export async function putPlan(
 }
 
 // ── Desktop state (project → worktree → agents | services hierarchy) ────
+
+export async function getUsageMonitor(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts & { refresh?: boolean },
+): Promise<UsageMonitorResponse> {
+  const { refresh, ...apiOpts } = opts ?? {};
+  const path = refresh ? `${PROJECT_API_ROUTES.usage}?refresh=1` : PROJECT_API_ROUTES.usage;
+  return callProjectJson<UsageMonitorResponse>(endpoint, "GET", path, apiOpts);
+}
 
 export async function getDesktopState(
   endpoint: ServiceEndpoint,

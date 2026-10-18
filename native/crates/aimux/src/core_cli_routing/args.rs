@@ -521,6 +521,14 @@ pub struct CoreMetadataArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CoreUsageArgs {
+    pub project: Option<String>,
+    pub json: bool,
+    pub refresh: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CoreRepairArgs {
     pub subcommand: String,
     #[serde(skip_serializing_if = "Option::is_none")]
