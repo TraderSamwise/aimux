@@ -710,6 +710,32 @@ impl TmuxRuntimeManager {
         detached: bool,
     ) -> Result<TmuxTarget, String> {
         let argv = new_window_argv(session_name, name, cwd, command, args, detached);
+        self.create_window_from_argv(session_name, name, cwd, argv)
+    }
+
+    pub fn create_restart_window(
+        &mut self,
+        session_name: &str,
+        name: &str,
+        cwd: &str,
+        command: &str,
+        args: &[String],
+    ) -> Result<TmuxTarget, String> {
+        self.create_window_from_argv(
+            session_name,
+            name,
+            cwd,
+            restart_window_argv(session_name, name, cwd, command, args),
+        )
+    }
+
+    fn create_window_from_argv(
+        &mut self,
+        session_name: &str,
+        name: &str,
+        cwd: &str,
+        argv: Vec<String>,
+    ) -> Result<TmuxTarget, String> {
         let argv_bytes = packed_argv_bytes(&argv);
         let raw = self
             .exec_owned(
@@ -719,9 +745,10 @@ impl TmuxRuntimeManager {
                     ..TmuxExecOptions::default()
                 }),
             )
-            .map_err(|_| {
+            .map_err(|error| {
+                let error = crate::debug_logging::sanitize_log_string(&error);
                 format!(
-                    "tmux failed to create window \"{name}\" in session {session_name} ({argv_bytes}-byte command)"
+                    "tmux failed to create window \"{name}\" in session {session_name} ({argv_bytes}-byte command): {error}"
                 )
             })?;
         parse_window_target(session_name, &raw)
@@ -2895,6 +2922,25 @@ pub fn new_window_argv(
         command.to_owned(),
     ]);
     argv.extend(args.iter().cloned());
+    argv
+}
+
+pub fn restart_window_argv(
+    session_name: &str,
+    name: &str,
+    cwd: &str,
+    command: &str,
+    args: &[String],
+) -> Vec<String> {
+    let mut argv = new_window_argv(session_name, name, cwd, command, args, true);
+    argv.extend([
+        ";".into(),
+        "set-window-option".into(),
+        "-t".into(),
+        format!("{session_name}:{{end}}"),
+        "remain-on-exit".into(),
+        "on".into(),
+    ]);
     argv
 }
 

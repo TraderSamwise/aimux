@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 
-use crate::config::default_config;
+use crate::config::load_config_for_known_project_root;
 use crate::daemon_state::try_load_metadata_state;
 use crate::project_service::agents::topology_desktop_verified_session_list_for_context;
 use crate::project_service::desktop_state::{
@@ -63,7 +63,7 @@ pub(super) fn route_offline_agents(
         .as_ref()
         .and_then(|path| item_worktree_group_key(&json!({"worktreePath": path})));
     let root_key = item_worktree_group_key(&json!({"worktreePath": context.project_root()}));
-    let config = default_config();
+    let config = load_config_for_known_project_root(context.project_root());
     let Some(tools) = config.get("tools").and_then(Value::as_object) else {
         return json_error(500, "Default tool configuration is missing");
     };

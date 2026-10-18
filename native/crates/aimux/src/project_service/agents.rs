@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use crate::config::default_config;
+use crate::config::load_config_for_known_project_root;
 use crate::daemon_state::load_metadata_state;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::project_api_contract::routes;
@@ -302,7 +302,7 @@ pub fn route_agent_read_request(
         Ok(registry) => registry,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
     };
-    let tools = default_config()
+    let tools = load_config_for_known_project_root(context.project_root())
         .get("tools")
         .and_then(Value::as_object)
         .cloned()
@@ -365,7 +365,7 @@ pub async fn route_agent_read_request_async(
         Ok(registry) => registry,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
     };
-    let tools = default_config()
+    let tools = load_config_for_known_project_root(context.project_root())
         .get("tools")
         .and_then(Value::as_object)
         .cloned()
@@ -644,6 +644,17 @@ pub fn topology_desktop_session_list_with_live_window_projection(
                         set_value(&mut session, &key, value);
                     }
                 }
+                let tool_key = string_field(&session, "toolConfigKey")
+                    .or_else(|| string_field(&session, "tool"))
+                    .or_else(|| string_field(&session, "command"));
+                if string_field(&session, "restoreState") != Some("blocked")
+                    && let Some(key) = tool_key
+                    && let Some(config) = tools.get(key)
+                {
+                    let options =
+                        super::lifecycle::agent_restart_launch_options(&session, key, config);
+                    set_value(&mut session, "restartLaunchOptions", options);
+                }
             }
             session
         })
@@ -786,6 +797,7 @@ pub fn build_agent_list(
                 "status",
                 "restoreState",
                 "restoreBlockedReason",
+                "restartLaunchOptions",
                 "worktreePath",
                 "label",
                 // A kill in flight is the answer, not the turn it interrupted.

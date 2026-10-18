@@ -94,6 +94,25 @@ pub trait ProjectLifecycleRuntime {
         detached: bool,
     ) -> Result<TmuxTarget, String>;
     fn set_window_metadata(&mut self, window_id: &str, metadata: &Value) -> Result<(), String>;
+    fn create_restart_window(
+        &mut self,
+        session_name: &str,
+        name: &str,
+        cwd: &str,
+        command: &str,
+        args: &[String],
+    ) -> Result<TmuxTarget, String> {
+        let target = self.create_window(session_name, name, cwd, command, args, true)?;
+        if let Err(error) = self.set_window_option(&target.window_id, "remain-on-exit", "on") {
+            return Err(match self.kill_window(&target.window_id) {
+                Ok(()) => error,
+                Err(cleanup) => {
+                    format!("{error}; cleanup of {} failed: {cleanup}", target.window_id)
+                }
+            });
+        }
+        Ok(target)
+    }
     fn set_window_option(&mut self, window_id: &str, key: &str, value: &str) -> Result<(), String>;
     fn clear_history(&mut self, window_id: &str) -> Result<(), String>;
     fn has_window(&mut self, target: &TmuxTarget) -> bool;
@@ -105,9 +124,27 @@ pub trait ProjectLifecycleRuntime {
         let _ = session_name;
         Err("tmux runtime does not support verified window listing".into())
     }
+    fn legacy_window_matches_agent_owner(
+        &mut self,
+        window_id: &str,
+        tmux_sessions: &BTreeSet<String>,
+        expected_session_id: &str,
+        expected_project_root: &Path,
+    ) -> Result<bool, String> {
+        let _ = (
+            window_id,
+            tmux_sessions,
+            expected_session_id,
+            expected_project_root,
+        );
+        Err("tmux runtime does not support verified legacy window ownership".into())
+    }
     fn capture_window(&mut self, target: &TmuxTarget) -> Option<String> {
         let _ = target;
         None
+    }
+    fn capture_restart_window(&mut self, target: &TmuxTarget) -> Result<Option<String>, String> {
+        Ok(self.capture_window(target))
     }
     fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String> {
         codex_backend_session_ids_for_cwd(cwd, &BackendSessionDiscoveryOptions::default())
@@ -190,6 +227,27 @@ pub(crate) trait AsyncProjectLifecycleRuntime {
 pub struct SystemProjectLifecycleRuntime;
 
 impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
+    fn capture_restart_window(&mut self, target: &TmuxTarget) -> Result<Option<String>, String> {
+        TmuxRuntimeManager::new()
+            .capture_target(
+                target,
+                CapturePaneOptions {
+                    start_line: Some(-40),
+                    ..CapturePaneOptions::default()
+                },
+            )
+            .map(Some)
+    }
+    fn create_restart_window(
+        &mut self,
+        session_name: &str,
+        name: &str,
+        cwd: &str,
+        command: &str,
+        args: &[String],
+    ) -> Result<TmuxTarget, String> {
+        TmuxRuntimeManager::new().create_restart_window(session_name, name, cwd, command, args)
+    }
     fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String> {
         TmuxRuntimeManager::new().repair_legacy_project_session_names(project_root, None);
         Ok(())
@@ -298,6 +356,28 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
 
     fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
         TmuxRuntimeManager::new().list_windows(session_name)
+    }
+
+    fn legacy_window_matches_agent_owner(
+        &mut self,
+        window_id: &str,
+        tmux_sessions: &BTreeSet<String>,
+        expected_session_id: &str,
+        expected_project_root: &Path,
+    ) -> Result<bool, String> {
+        legacy_window_matches_agent_owner_with_query(
+            window_id,
+            tmux_sessions,
+            expected_session_id,
+            expected_project_root,
+            |argv| {
+                run_tmux_argv_output(
+                    argv.iter().map(|arg| (*arg).to_owned()).collect(),
+                    format!("tmux ownership query failed: {}", argv.join(" ")),
+                    None,
+                )
+            },
+        )
     }
 
     fn capture_window(&mut self, target: &TmuxTarget) -> Option<String> {
@@ -493,6 +573,59 @@ fn parse_tmux_target(session_name: &str, output: &str) -> Result<TmuxTarget, Str
 
 fn run_tmux_argv(argv: Vec<String>, fallback_error: String) -> Result<(), String> {
     run_tmux_argv_output(argv, fallback_error, None).map(|_| ())
+}
+
+fn legacy_window_matches_agent_owner_with_query(
+    window_id: &str,
+    tmux_sessions: &BTreeSet<String>,
+    expected_session_id: &str,
+    expected_project_root: &Path,
+    mut query: impl FnMut(&[&str]) -> Result<String, String>,
+) -> Result<bool, String> {
+    if tmux_sessions.is_empty() {
+        return Err(format!("no verified tmux sessions for window {window_id}"));
+    }
+    let raw = query(&["show-window-options", "-qv", "-t", window_id, "@aimux-meta"])
+        .map_err(|error| format!("read @aimux-meta for window {window_id}: {error}"))?;
+    if raw.trim().is_empty() {
+        return Err(format!(
+            "window {window_id} has no @aimux-meta ownership metadata"
+        ));
+    }
+    let metadata: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("parse @aimux-meta for window {window_id}: {error}"))?;
+    let session_id = metadata
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| format!("window {window_id} @aimux-meta has no sessionId"))?;
+    let mut matching_project = false;
+    for tmux_session in tmux_sessions {
+        let root = query(&[
+            "show-options",
+            "-qv",
+            "-t",
+            tmux_session,
+            "@aimux-project-root",
+        ])
+        .map_err(|error| {
+            format!("read @aimux-project-root for tmux session {tmux_session}: {error}")
+        })?;
+        let root = root.trim();
+        if root.is_empty() {
+            return Err(format!(
+                "tmux session {tmux_session} has no @aimux-project-root ownership metadata"
+            ));
+        }
+        if !Path::new(root).is_absolute() {
+            return Err(format!(
+                "tmux session {tmux_session} has invalid @aimux-project-root: {root}"
+            ));
+        }
+        matching_project |= Path::new(root) == expected_project_root;
+    }
+    Ok(session_id == expected_session_id && matching_project)
 }
 
 fn run_tmux_argv_output(
@@ -1450,6 +1583,92 @@ fn git_command(cwd: &str) -> AsyncCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_window_ownership_compares_agent_and_project_identity() {
+        for (session_id, project_root, expected) in [
+            ("codex-original", "/repo", true),
+            ("codex-original", "/foreign", false),
+            ("codex-other", "/repo", false),
+        ] {
+            let sessions = BTreeSet::from(["arbitrary-session-name".to_owned()]);
+            let result = legacy_window_matches_agent_owner_with_query(
+                "@1",
+                &sessions,
+                "codex-original",
+                Path::new("/repo"),
+                |argv| match argv {
+                    ["show-window-options", "-qv", "-t", "@1", "@aimux-meta"] => {
+                        Ok(serde_json::json!({ "sessionId": session_id }).to_string())
+                    }
+                    [
+                        "show-options",
+                        "-qv",
+                        "-t",
+                        "arbitrary-session-name",
+                        "@aimux-project-root",
+                    ] => Ok(project_root.to_owned()),
+                    _ => panic!("unexpected query: {argv:?}"),
+                },
+            )
+            .expect("verified owner");
+            assert_eq!(result, expected, "{session_id} in {project_root}");
+        }
+    }
+
+    #[test]
+    fn legacy_window_ownership_errors_and_missing_metadata_are_not_foreign() {
+        for (metadata, root, failed_query, expected_error) in [
+            ("", "/repo", None, "has no @aimux-meta"),
+            ("{", "/repo", None, "parse @aimux-meta"),
+            ("{}", "/repo", None, "has no sessionId"),
+            (
+                r#"{"sessionId":"codex-original"}"#,
+                "",
+                None,
+                "has no @aimux-project-root",
+            ),
+            (
+                r#"{"sessionId":"codex-original"}"#,
+                "relative",
+                None,
+                "invalid @aimux-project-root",
+            ),
+            (
+                "",
+                "/repo",
+                Some("show-window-options"),
+                "metadata query failed",
+            ),
+            (
+                r#"{"sessionId":"codex-original"}"#,
+                "/repo",
+                Some("show-options"),
+                "metadata query failed",
+            ),
+        ] {
+            let sessions = BTreeSet::from(["arbitrary".to_owned()]);
+            let error = legacy_window_matches_agent_owner_with_query(
+                "@1",
+                &sessions,
+                "codex-original",
+                Path::new("/repo"),
+                |argv| {
+                    if failed_query == Some(argv[0]) {
+                        return Err("metadata query failed".to_owned());
+                    }
+                    Ok(if argv[0] == "show-window-options" {
+                        metadata
+                    } else {
+                        root
+                    }
+                    .to_owned())
+                },
+            )
+            .expect_err("ownership is unavailable");
+            assert!(error.contains(expected_error), "{error}");
+        }
+    }
 
     /// The route a user actually hits, end to end, on both twins.
     ///

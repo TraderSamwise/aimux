@@ -2321,6 +2321,7 @@ fn help_screen_names_global_loop_alert_pause_shortcut_path() {
 
     assert!(plain.contains("[0 then 1-9] open supervisor session"));
     assert!(plain.contains("[1-9 then 1-9] open worktree entry"));
+    assert!(plain.contains("[A] edit offline restart args"));
     assert!(plain.contains("[O] overseer menu"));
     assert!(plain.contains("[O then p] pause/resume loop alerts"));
     assert!(plain.contains("[K] graveyard offline in worktree"));
@@ -2491,7 +2492,12 @@ fn footer_contract_preserves_the_rendered_hint_order_and_preview_override() {
     scribe.scribe = Some(true);
     scribe.status = SessionStatus::Idle;
     snapshot.sessions.push(scribe);
+    snapshot.sessions[0].status = SessionStatus::Offline;
+    snapshot.sessions[0]
+        .extra
+        .insert("restartLaunchOptions".into(), json!({}));
     let mut input = clearable_failure_render_input(&snapshot);
+    input.selected_session_id = Some(&snapshot.sessions[0].id);
     input.cols = 2000;
     let contract = render_dashboard_footer_hints_contract(&input, "scribe");
     assert!(
@@ -2499,6 +2505,12 @@ fn footer_contract_preserves_the_rendered_hint_order_and_preview_override() {
             .as_array()
             .unwrap()
             .contains(&json!(["V", "preview output"]))
+    );
+    assert!(
+        contract
+            .as_array()
+            .unwrap()
+            .contains(&json!(["A", "restart args"]))
     );
     input.preview_source = "scribe";
     let frame = strip_ansi(&render_dashboard_frame(&input).frame);

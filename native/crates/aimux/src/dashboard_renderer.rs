@@ -403,6 +403,16 @@ fn build_dashboard_footer_hints(
     let selected_session = selected_session(input);
     let selected_service = selected_service(input);
     let enter_verb = footer::dashboard_enter_verb(selected_session, selected_service);
+    let restart_hint = selected_session
+        .is_some_and(|session| {
+            session.status == SessionStatus::Offline
+                && session.extra.contains_key("restartLaunchOptions")
+        })
+        .then_some(FooterHint {
+            key: "A",
+            label: "restart args",
+            tone: None,
+        });
     let kill_verb = if selected_service.is_some() {
         Some("stop")
     } else if selected_session.is_some_and(|session| session.status == SessionStatus::Offline) {
@@ -550,6 +560,7 @@ fn build_dashboard_footer_hints(
                 tone: None,
             },
         ];
+        hints.extend(restart_hint);
         hints.extend(visibility);
         hints.extend(talk);
         hints.extend(scribe_controls);
@@ -737,6 +748,7 @@ fn build_dashboard_footer_hints(
                 tone: None,
             },
         ];
+        hints.extend(restart_hint);
         hints.extend(visibility);
         hints.extend(talk);
         hints.extend(scribe_controls);
@@ -3019,7 +3031,7 @@ fn render_help_content() -> Vec<String> {
         String::new(),
         format!("  {}", style("Actions", Tone::Strong)),
         "    [n] agent  [v] service  [f] fork  [S] switch tool".into(),
-        "    [a] hide/show offline agents  [x] stop/kill".into(),
+        "    [a] hide/show offline agents  [A] edit offline restart args  [x] stop/kill".into(),
         "    [K] graveyard offline in worktree  [Ctrl-K] whole project (confirm)".into(),
         "    [O] overseer menu  [O then p] pause/resume loop alerts".into(),
     ]

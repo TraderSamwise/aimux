@@ -36,6 +36,23 @@ use agent_launch_helpers::*;
 use agent_launch_routes::*;
 use agent_management::*;
 use agent_session_launch::*;
+
+pub(crate) fn agent_restart_launch_options(
+    session: &Value,
+    tool_key: &str,
+    tool_config: &Value,
+) -> Value {
+    let (_, saved_args) =
+        compose_tool_launch(tool_config, &[], &string_array_field(session.get("args")));
+    serde_json::json!({
+        "key": tool_key,
+        "command": trimmed_string(session.get("command")).unwrap_or_else(|| tool_key.to_owned()),
+        "args": [],
+        "defaultArgs": saved_args,
+        "defaultEnv": {},
+    })
+}
+
 pub use default_scribe::ensure_default_scribe_agent;
 pub(crate) use default_scribe::is_scribe_session;
 pub(crate) use ids::now_iso;

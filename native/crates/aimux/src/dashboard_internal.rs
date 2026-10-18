@@ -51,8 +51,8 @@ use crate::dashboard_service_input::{
     render_worktree_list_overlay, render_worktree_remove_confirm_overlay,
 };
 use crate::dashboard_terminal::{
-    DashboardTerminalGuard, consume_terminal_resize, ensure_dashboard_stdin_nonblocking,
-    read_dashboard_keys, terminal_size, wait_for_dashboard_input,
+    DashboardKeyReader, DashboardTerminalGuard, consume_terminal_resize,
+    ensure_dashboard_stdin_nonblocking, terminal_size, wait_for_dashboard_input,
 };
 use crate::dashboard_tool_picker::{enabled_dashboard_tools, render_tool_picker_overlay};
 use crate::dashboard_tui_visibility::{
@@ -506,6 +506,7 @@ pub fn run_native_dashboard_with_seams(
         None => dashboard_output(options.once),
     };
     let mut stdin = io::stdin();
+    let mut key_reader = DashboardKeyReader::default();
     // Not entered for a driven loop: there is no terminal to put into raw mode,
     // and the guard is not harmless on the way past. `enable_nonblocking_stdin`
     // has no `is_terminal` check, so it sets `O_NONBLOCK` on the real fd 0
@@ -554,7 +555,9 @@ pub fn run_native_dashboard_with_seams(
             Some(keys) => keys(),
             None => {
                 ensure_dashboard_stdin_nonblocking().context("keep dashboard stdin nonblocking")?;
-                read_dashboard_keys(&mut stdin).context("read dashboard key")?
+                key_reader
+                    .read_keys(&mut stdin)
+                    .context("read dashboard key")?
             }
         };
         if !read_keys.is_empty() {
@@ -2561,7 +2564,8 @@ fn render_dashboard_snapshot(
         let selected_tool = controller
             .tool_picker
             .as_ref()
-            .and_then(|picker| picker.selected_tool());
+            .and_then(|picker| picker.selected_tool())
+            .or(launch_options.restart_tool.as_ref());
         return dashboard_overlay_frame(
             &frame,
             render_launch_options_overlay(
@@ -6144,6 +6148,105 @@ mod bulk_graveyard_tests {
     use crate::project_api_contract::routes;
     use crate::tui_render::text::strip_ansi;
     use serde_json::json;
+
+    #[test]
+    fn bulk_graveyard_wide_unicode_errors_remain_visible_in_terminal_cells_when_scrolled() {
+        let snapshot = serde_json::from_str::<crate::dashboard_model::DesktopStateGoldenFixture>(
+            include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json"),
+        )
+        .unwrap()
+        .runtime_light;
+        let mut controller = DashboardController::new(&snapshot);
+        controller.agent_restore_prompt_dismissed = true;
+        controller.bulk_graveyard_report_width = 68;
+        controller.receive_bulk_graveyard_report(format!(
+            "{}WIDE_REASON{} {}LAST_REASON",
+            "界".repeat(42),
+            "界".repeat(14),
+            "界 ".repeat(300)
+        ));
+        let options = NativeDashboardOptions {
+            project_root: PathBuf::from("/repo"),
+            desktop_state_file: None,
+            cols: 80,
+            rows: 16,
+            once: true,
+        };
+        let mut seen = String::new();
+        for _ in 0..40 {
+            let frame = render_dashboard_snapshot(
+                &options,
+                &mut controller,
+                &snapshot,
+                &mut DashboardPendingActions::new(),
+                DashboardSnapshotRenderContext {
+                    viewport: DashboardViewport { cols: 80, rows: 16 },
+                    endpoint: None,
+                    hidden_offline_agent_count: 0,
+                    scroll_offset: 0,
+                    runtime_guard: None,
+                    refresh_error: None,
+                    stream_error: None,
+                    pending_now_ms: 0,
+                },
+            )
+            .frame;
+            let mut terminal = vt100::Parser::new(16, 80, 0);
+            terminal.process(frame.as_bytes());
+            seen.push_str(&terminal.screen().contents());
+            seen.push('\n');
+            controller.handle_key(&snapshot, DashboardKey::Down);
+        }
+        assert!(
+            seen.contains(&"界".repeat(34)),
+            "a 68-cell CJK prefix must remain on one visible terminal row"
+        );
+        assert!(
+            seen.contains("WIDE_REASON"),
+            "wide text hid the first reason"
+        );
+        assert!(
+            seen.contains("LAST_REASON"),
+            "scrolling lost the final reason"
+        );
+    }
+
+    #[test]
+    fn bulk_graveyard_cell_overlay_aligns_unicode_header_and_body_borders() {
+        use crate::tui_render::box_render::render_overlay_box_cells;
+        use crate::tui_render::{OverlayBoxSpec, OverlayVariant};
+
+        let title = format!("{}TITLE_END", "界".repeat(16));
+        let body = vec![format!("{}BODY_END", "界".repeat(20))];
+        let frame = render_overlay_box_cells(&OverlayBoxSpec {
+            title: &title,
+            body: &body,
+            cols: 80,
+            rows: 16,
+            variant: OverlayVariant::Red,
+            icon: None,
+        });
+        let mut terminal = vt100::Parser::new(16, 80, 0);
+        terminal.process(frame.as_bytes());
+        let screen = terminal.screen();
+        let (top, left) = (0..16)
+            .flat_map(|row| (0..80).map(move |col| (row, col)))
+            .find(|&(row, col)| screen.cell(row, col).unwrap().contents() == "╭")
+            .expect("top-left border is painted");
+        let right = (left + 1..80)
+            .find(|&col| screen.cell(top, col).unwrap().contents() == "╮")
+            .expect("top-right border is painted");
+        let bottom = (top + 1..16)
+            .find(|&row| screen.cell(row, left).unwrap().contents() == "╰")
+            .expect("bottom-left border is painted");
+        for row in [top + 1, bottom - 1] {
+            assert_eq!(screen.cell(row, left).unwrap().contents(), "│");
+            assert_eq!(screen.cell(row, right).unwrap().contents(), "│");
+        }
+        let visible = screen.contents();
+        assert!(visible.contains("TITLE_END"));
+        assert!(visible.contains("BODY_END"));
+    }
 
     #[test]
     fn bulk_graveyard_partial_outcome_opens_scrollable_report_with_every_error() {

@@ -4468,6 +4468,196 @@ fn bulk_graveyard_waits_for_existing_picker_before_showing_confirmation_or_repor
     assert!(controller.bulk_graveyard_report.is_some());
 }
 
+fn restart_options_dashboard() -> (DesktopStateSnapshot, DashboardController, String) {
+    let mut snapshot = snapshot_without_restore_offer();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+    let Some(DashboardEntryRef::Session(selected)) =
+        controller.navigation.selected_entry(&snapshot)
+    else {
+        panic!("selected agent")
+    };
+    let id = selected.id.clone();
+    let session = snapshot
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == id)
+        .unwrap();
+    session.status = SessionStatus::Offline;
+    session.pending = false;
+    session.pending_action = None;
+    session.restore_state = Some("ready".into());
+    session.restore_blocked_reason = None;
+    session.extra.insert(
+        "restartLaunchOptions".into(),
+        json!({
+            "key": "custom-codex", "command": "/bin/codex", "args": [],
+            "defaultArgs": ["--configured", "--model", "old model", ""], "defaultEnv": {}
+        }),
+    );
+    sync_restart_dashboard_session(&mut snapshot, &id);
+    (snapshot, controller, id)
+}
+
+fn sync_restart_dashboard_session(snapshot: &mut DesktopStateSnapshot, id: &str) {
+    let session = snapshot
+        .sessions
+        .iter()
+        .find(|session| session.id == id)
+        .unwrap()
+        .clone();
+    for group in &mut snapshot.worktree_groups {
+        for item in &mut group.sessions {
+            if item.id == id {
+                *item = session.clone();
+            }
+        }
+    }
+}
+
+#[test]
+fn restart_options_prefill_cancel_and_submit_keep_bound_session_identity() {
+    let (mut snapshot, mut controller, id) = restart_options_dashboard();
+    controller.handle_key(&snapshot, DashboardKey::Printable('A'));
+    assert!(
+        controller
+            .launch_options
+            .as_ref()
+            .unwrap()
+            .args
+            .text
+            .contains("'old model'")
+    );
+    controller.handle_key(&snapshot, DashboardKey::Ctrl('u'));
+    controller.handle_key(&snapshot, DashboardKey::Paste("--model 'new model'".into()));
+    controller.handle_key(&snapshot, DashboardKey::Back);
+    controller.handle_key(&snapshot, DashboardKey::Printable('A'));
+    assert!(
+        controller
+            .launch_options
+            .as_ref()
+            .unwrap()
+            .args
+            .text
+            .contains("'old model'")
+    );
+    controller.handle_key(&snapshot, DashboardKey::Ctrl('u'));
+    controller.handle_key(&snapshot, DashboardKey::Paste("--model 'new model'".into()));
+    snapshot
+        .sessions
+        .iter_mut()
+        .find(|s| s.id == id)
+        .unwrap()
+        .extra
+        .get_mut("restartLaunchOptions")
+        .unwrap()["args"] = json!(["--new-configured"]);
+    controller.navigation.item_index = 0;
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("restart request")
+    };
+    assert_eq!(request.path, routes::agents::RESUME);
+    assert_eq!(
+        request.body,
+        json!({ "sessionId": id, "restartArgs": ["--model", "new model"] })
+    );
+    assert!(controller.launch_options.is_none());
+    assert!(controller.tool_picker.is_none());
+}
+
+#[test]
+fn restart_options_refuse_live_pending_blocked_and_unavailable_sessions() {
+    for state in ["running", "pending", "blocked", "missing-options"] {
+        let (mut snapshot, mut controller, id) = restart_options_dashboard();
+        let session = snapshot.sessions.iter_mut().find(|s| s.id == id).unwrap();
+        match state {
+            "running" => session.status = SessionStatus::Running,
+            "pending" => {
+                session.pending = true;
+                session.pending_action = Some("resuming".into());
+            }
+            "blocked" => {
+                session.restore_state = Some("blocked".into());
+                session.restore_blocked_reason = Some("no history".into());
+            }
+            _ => {
+                session.extra.remove("restartLaunchOptions");
+            }
+        }
+        sync_restart_dashboard_session(&mut snapshot, &id);
+        assert_eq!(
+            controller.handle_key(&snapshot, DashboardKey::Printable('A')),
+            DashboardControllerEffect::Render
+        );
+        assert!(controller.launch_options.is_none(), "{state}");
+        assert!(controller.footer_alert.is_some(), "{state}");
+    }
+}
+
+#[test]
+fn restart_options_revalidate_bound_agent_after_refresh_before_submit() {
+    for state in ["running", "pending", "blocked", "removed", "changed-tool"] {
+        let (mut snapshot, mut controller, id) = restart_options_dashboard();
+        controller.handle_key(&snapshot, DashboardKey::Printable('A'));
+        let session = snapshot.sessions.iter_mut().find(|s| s.id == id).unwrap();
+        match state {
+            "running" => session.status = SessionStatus::Running,
+            "pending" => session.pending = true,
+            "blocked" => session.restore_state = Some("blocked".into()),
+            "changed-tool" => {
+                session.extra.get_mut("restartLaunchOptions").unwrap()["key"] =
+                    json!("another-tool")
+            }
+            _ => snapshot.sessions.retain(|s| s.id != id),
+        }
+        assert_eq!(
+            controller.handle_key(&snapshot, DashboardKey::Enter),
+            DashboardControllerEffect::Render
+        );
+        assert!(
+            controller.launch_options.as_ref().unwrap().error.is_some(),
+            "{state}"
+        );
+    }
+}
+
+#[test]
+fn restart_options_keep_parse_errors_open_and_accept_explicit_empty_args() {
+    let (snapshot, mut controller, id) = restart_options_dashboard();
+    controller.handle_key(&snapshot, DashboardKey::Printable('A'));
+    controller.handle_key(&snapshot, DashboardKey::Ctrl('u'));
+    controller.handle_key(&snapshot, DashboardKey::Printable('\''));
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.launch_options.as_ref().unwrap().error.is_some());
+    controller.handle_key(&snapshot, DashboardKey::Ctrl('u'));
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("restart request")
+    };
+    assert_eq!(request.body, json!({ "sessionId": id, "restartArgs": [] }));
+}
+
+#[test]
+fn restart_options_accept_shift_a_terminal_encodings_and_preserve_lowercase_a() {
+    for bytes in [b"A".as_slice(), b"\x1b[65;2u", b"\x1b[97;2u"] {
+        let (snapshot, mut controller, _) = restart_options_dashboard();
+        controller.handle_key(&snapshot, parse_dashboard_key(bytes));
+        assert!(controller.launch_options.is_some(), "{bytes:?}");
+    }
+    let (snapshot, mut controller, _) = restart_options_dashboard();
+    let original = controller.hide_offline_agents;
+    controller.handle_key(&snapshot, parse_dashboard_key(b"a"));
+    assert_ne!(controller.hide_offline_agents, original);
+    assert!(controller.launch_options.is_none());
+}
+
 fn creation_policy() -> aimux::dashboard_create::DashboardAgentCreationPolicy {
     serde_json::from_value(
         json!({ "defaultTarget": "supervisor", "defaultRole": "control", "worktreeRole": "coder" }),
