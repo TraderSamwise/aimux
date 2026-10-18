@@ -199,13 +199,10 @@ fn route_threads_status(project_state_dir: &Path, body: &Value) -> ProjectServic
             if let Some(owner) = owner {
                 object_insert_mut(&mut thread, "owner", Value::String(owner));
             }
-            if let Some(waiting_on) = waiting_on {
-                object_insert_mut(&mut thread, "waitingOn", json!(waiting_on));
-            } else if matches!(
-                thread.get("status").and_then(Value::as_str),
-                Some("done" | "abandoned")
-            ) {
+            if super::runtime_exchange::thread_is_terminal(&thread) {
                 object_insert_mut(&mut thread, "waitingOn", Value::Array(Vec::new()));
+            } else if let Some(waiting_on) = waiting_on {
+                object_insert_mut(&mut thread, "waitingOn", json!(waiting_on));
             }
             thread
         })

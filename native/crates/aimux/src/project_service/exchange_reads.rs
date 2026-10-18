@@ -6,7 +6,9 @@ use crate::project_api_contract::routes;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::parse_bounded_limit;
 use super::router::ProjectServiceRequestContext;
-use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
+use super::runtime_exchange::{
+    runtime_exchange_path, thread_is_terminal, try_read_runtime_exchange,
+};
 
 const DEFAULT_PROJECT_LIST_LIMIT: i64 = 200;
 const MAX_PROJECT_LIST_LIMIT: i64 = 500;
@@ -70,6 +72,7 @@ pub fn list_thread_summaries(
             let mut summary = Map::new();
             let thread_id = string_field(&thread, "id").unwrap_or("");
             summary.insert("thread".into(), thread.clone());
+            summary.insert("terminal".into(), Value::Bool(thread_is_terminal(&thread)));
             if let Some(message) = latest_message(exchange, thread_id) {
                 summary.insert("latestMessage".into(), message.clone());
             }

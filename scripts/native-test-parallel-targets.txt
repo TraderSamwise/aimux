@@ -97,6 +97,7 @@ launcher_env
 lifecycle_queue_routes_across_surfaces
 logs
 loop_watcher_guards
+loop_watcher_worklist_outcomes
 mobile_push_bridge
 operation_failure_surfaces
 overseer_overlay

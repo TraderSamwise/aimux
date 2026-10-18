@@ -8,7 +8,9 @@ use super::desktop_state::desktop_state_for_context;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{query_params, trimmed_query};
 use super::router::ProjectServiceRequestContext;
-use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
+use super::runtime_exchange::{
+    runtime_exchange_path, thread_is_terminal, try_read_runtime_exchange,
+};
 
 const NOTIFICATION_TAG: &str = "notification";
 const NEEDS_INPUT_KIND: &str = "needs_input";
@@ -218,10 +220,12 @@ pub fn build_coordination_worklist(
 
     for entry in threads {
         let thread = entry.get("thread").unwrap_or(&Value::Null);
-        let waiting_on_you = string_array(thread, "waitingOn")
-            .iter()
-            .any(|participant| participant == current_participant);
-        let pending = integer_field(entry, "pendingDeliveries") > 0;
+        let terminal = thread_is_terminal(thread);
+        let waiting_on_you = !terminal
+            && string_array(thread, "waitingOn")
+                .iter()
+                .any(|participant| participant == current_participant);
+        let pending = !terminal && integer_field(entry, "pendingDeliveries") > 0;
         let actionable = waiting_on_you || pending;
         let bucket = if actionable { "awake" } else { "handled" };
         let secondary = if waiting_on_you {
@@ -357,9 +361,11 @@ pub fn build_coordination_thread_entries(
                     .iter()
                     .find(|task| string_field(task, "id") == Some(task_id))
             });
-            let waiting_on_me = string_array(thread, "waitingOn")
-                .iter()
-                .any(|participant| participant == current_participant);
+            let terminal = thread_is_terminal(thread);
+            let waiting_on_me = !terminal
+                && string_array(thread, "waitingOn")
+                    .iter()
+                    .any(|participant| participant == current_participant);
             let unread = string_array(thread, "unreadBy")
                 .iter()
                 .any(|participant| participant == current_participant);
@@ -375,7 +381,9 @@ pub fn build_coordination_thread_entries(
                 + pending_deliveries as i64 * 4
                 + i64::from(unread) * 3
                 + i64::from(task_assigned) * 2;
-            let state_label = if blocked {
+            let state_label = if terminal {
+                string_field(thread, "status").unwrap_or("").to_owned()
+            } else if blocked {
                 "blocked".to_owned()
             } else if waiting_on_me {
                 "on me".to_owned()
@@ -413,6 +421,7 @@ pub fn build_coordination_thread_entries(
                 });
             let mut entry = Map::new();
             entry.insert("thread".into(), thread.clone());
+            entry.insert("terminal".into(), Value::Bool(terminal));
             if let Some(latest_message) = latest_message {
                 entry.insert("latestMessage".into(), latest_message);
             }
@@ -494,7 +503,9 @@ pub fn filter_workflow_entries(
             .iter()
             .filter(|entry| {
                 entry.get("thread").is_some_and(|thread| {
-                    string_array(thread, "waitingOn").contains(&current_participant.to_owned())
+                    !thread_is_terminal(thread)
+                        && string_array(thread, "waitingOn")
+                            .contains(&current_participant.to_owned())
                 })
             })
             .cloned()
@@ -524,6 +535,9 @@ pub fn filter_workflow_entries(
 
 pub fn describe_workflow_next_action(entry: &Value, current_participant: &str) -> String {
     let thread = entry.get("thread").unwrap_or(&Value::Null);
+    if thread_is_terminal(thread) {
+        return "open thread".into();
+    }
     let waits_on_me = string_array(thread, "waitingOn")
         .iter()
         .any(|participant| participant == current_participant);
@@ -915,10 +929,6 @@ fn pending_recipients(message: &Value) -> Vec<String> {
         .into_iter()
         .filter(|recipient| !delivered.iter().any(|delivered| delivered == recipient))
         .collect()
-}
-
-fn thread_is_terminal(thread: &Value) -> bool {
-    matches!(string_field(thread, "status"), Some("done" | "abandoned"))
 }
 
 fn notification_bucket(item: &Value) -> &'static str {

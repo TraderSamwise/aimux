@@ -167,7 +167,7 @@ fn loop_alert_pause_requires_active_loop_and_persists_under_watcher_state() {
 }
 
 #[test]
-fn loop_alert_pause_for_non_looping_agent_fails_loud_instead_of_creating_stale_pause() {
+fn loop_alert_pause_for_unknown_agent_fails_loud_instead_of_creating_stale_pause() {
     let project = temp_project("loop-alert-pause-missing-loop");
     let state_dir = project.join("state");
     save_metadata_state(
@@ -191,7 +191,7 @@ fn loop_alert_pause_for_non_looping_agent_fails_loud_instead_of_creating_stale_p
         pause.body["error"]
             .as_str()
             .unwrap()
-            .contains("session is not in a loop")
+            .contains("no live session in runtime topology")
     );
     cleanup(project);
 }

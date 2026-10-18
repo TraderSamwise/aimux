@@ -2841,70 +2841,99 @@ fn agent_input_idle_codex_placeholder_is_genuine_unattended_no_data_path() {
 
 #[test]
 fn agent_input_auto_unpauses_loop_alerts_before_accepting_real_work() {
-    let project = temp_project("input-auto-unpauses-loop-alert");
-    let state_dir = project.join("state");
-    write_state(&state_dir);
-    update_session_metadata(&state_dir, "codex-1", |current| {
-        let mut current = current.as_object().cloned().unwrap_or_default();
-        current.insert(
-            "loop".into(),
-            json!({
-                "active": true,
-                "since": "2026-09-09T00:00:00.000Z",
-                "goal": "ship",
-                "source": "human"
-            }),
-        );
-        Value::Object(current)
-    })
-    .expect("add loop metadata");
-    let metadata = load_metadata_state(&state_dir);
-    let pause_key = loop_pause_key_from_loop_metadata(&metadata.sessions["codex-1"]["loop"])
-        .expect("active loop pause key");
-    let mut watcher = LoopWatcher::new();
-    watcher.pause_loop_alerts(
-        "codex-1",
-        pause_key,
-        1_788_000_000_000,
-        LoopAlertPauseProvenance::default(),
-    );
-    let state_path = loop_watcher_state_path(&state_dir);
-    save_loop_watcher_state(&state_path, &watcher).expect("save paused watcher state");
+    for managed_loop in [true, false] {
+        let project = temp_project(if managed_loop {
+            "input-auto-unpauses-loop-alert"
+        } else {
+            "input-auto-unparks-alert"
+        });
+        let state_dir = project.join("state");
+        write_state(&state_dir);
+        let state_path = loop_watcher_state_path(&state_dir);
+        if managed_loop {
+            update_session_metadata(&state_dir, "codex-1", |current| {
+                let mut current = current.as_object().cloned().unwrap_or_default();
+                current.insert(
+                    "loop".into(),
+                    json!({
+                        "active": true,
+                        "since": "2026-09-09T00:00:00.000Z",
+                        "goal": "ship",
+                        "source": "human"
+                    }),
+                );
+                Value::Object(current)
+            })
+            .expect("add loop metadata");
+            let metadata = load_metadata_state(&state_dir);
+            let pause_key =
+                loop_pause_key_from_loop_metadata(&metadata.sessions["codex-1"]["loop"])
+                    .expect("active loop pause key");
+            let mut watcher = LoopWatcher::new();
+            watcher.pause_loop_alerts(
+                "codex-1",
+                pause_key,
+                1_788_000_000_000,
+                LoopAlertPauseProvenance::default(),
+            );
+            save_loop_watcher_state(&state_path, &watcher).expect("save paused watcher state");
+        } else {
+            let session =
+                aimux::runtime_topology::list_topology_session_states(&topology_fixture(), None)
+                    .into_iter()
+                    .find(|session| session["id"] == "codex-1")
+                    .unwrap();
+            let key = aimux::loop_watcher::parked_session_key(&session).unwrap();
+            aimux::loop_watcher::set_parked_session_alerts(
+                &state_dir,
+                "codex-1",
+                Some(json!({
+                    "sessionKey": key, "workKey": "[]", "pausedAtMs": 1_788_000_000_000_i64
+                })),
+            )
+            .unwrap();
+        }
 
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
-    let mut runtime = FakeActivityRuntime {
-        inner: FakeCaptureRuntime {
-            output: "Ready\n› \n\n  gpt-5.5 medium · ~/workspace/project".into(),
+        let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+        let mut runtime = FakeActivityRuntime {
+            inner: FakeCaptureRuntime {
+                output: "Ready\n› \n\n  gpt-5.5 medium · ~/workspace/project".into(),
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
-    };
+        };
 
-    let response = route_agent_output_request_with_runtime(
-        &context,
-        "POST",
-        routes::agents::INPUT,
-        Some(&json!({ "sessionId": "codex-1", "text": "new work" })),
-        &mut runtime,
-    )
-    .unwrap();
+        let response = route_agent_output_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::INPUT,
+            Some(&json!({ "sessionId": "codex-1", "text": "new work" })),
+            &mut runtime,
+        )
+        .unwrap();
 
-    assert_eq!(response.status, 200);
-    assert_eq!(
-        runtime.inner.actions,
-        vec![
-            FakeRuntimeAction::Text("@1".into(), "new work".into()),
-            FakeRuntimeAction::CarriageReturn("@1".into()),
-        ]
-    );
-    let watcher = load_loop_watcher_state(&state_path).expect("load watcher state");
-    assert!(
-        watcher.paused_loop_alert("codex-1").is_none(),
-        "ordinary input is real work and must auto-unpause loop alerts"
-    );
-    cleanup(project);
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            runtime.inner.actions,
+            vec![
+                FakeRuntimeAction::Text("@1".into(), "new work".into()),
+                FakeRuntimeAction::CarriageReturn("@1".into()),
+            ]
+        );
+        let watcher = load_loop_watcher_state(&state_path).expect("load watcher state");
+        assert!(
+            watcher.paused_loop_alert("codex-1").is_none(),
+            "ordinary input is real work and must auto-unpause loop alerts"
+        );
+        assert!(
+            load_metadata_state(&state_dir).sessions["codex-1"]
+                .get("loopAlertsParked")
+                .is_none(),
+            "ordinary input must clear a parked-session pause before accepting new work"
+        );
+        cleanup(project);
+    }
 }
-
 #[test]
 fn queued_visible_draft_releases_after_user_typing_quiet_window() {
     let project = temp_project("visible-draft-quiet-window");

@@ -37,7 +37,9 @@ use super::preview_snapshots::{
     capture_preview_snapshot_with_tap_async, capture_preview_snapshot_with_tap_result,
 };
 use super::router::ProjectServiceRequestContext;
-use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
+use super::runtime_exchange::{
+    runtime_exchange_path, thread_is_terminal, try_read_runtime_exchange,
+};
 use super::session_semantics::{
     SessionSemanticsInput, active_task_session_ids, derive_session_semantics,
     normalized_session_status,
@@ -1843,7 +1845,12 @@ fn summarize_thread_stats(exchange: &Value) -> BTreeMap<String, ThreadStats> {
             continue;
         }
         let thread_id = string_field(thread, "id").unwrap_or("");
-        let pending_by_participant = pending_deliveries_by_participant(exchange, thread_id);
+        let terminal = thread_is_terminal(thread);
+        let pending_by_participant = if terminal {
+            BTreeMap::new()
+        } else {
+            pending_deliveries_by_participant(exchange, thread_id)
+        };
         for participant in string_array_field(thread, "participants") {
             let current = stats.entry(participant.clone()).or_default();
             if string_array_field(thread, "unreadBy")
@@ -1852,10 +1859,12 @@ fn summarize_thread_stats(exchange: &Value) -> BTreeMap<String, ThreadStats> {
             {
                 current.unread += 1;
             }
-            let waits_on_participant = string_array_field(thread, "waitingOn")
-                .iter()
-                .any(|value| value == &participant);
-            let owned_by_participant = string_field(thread, "owner") == Some(participant.as_str());
+            let waits_on_participant = !terminal
+                && string_array_field(thread, "waitingOn")
+                    .iter()
+                    .any(|value| value == &participant);
+            let owned_by_participant =
+                !terminal && string_field(thread, "owner") == Some(participant.as_str());
             if waits_on_participant || owned_by_participant {
                 current.waiting += 1;
             }
@@ -1902,9 +1911,10 @@ fn summarize_workflow_stats(exchange: &Value) -> BTreeMap<String, WorkflowStats>
 
     let mut stats: BTreeMap<String, WorkflowStats> = BTreeMap::new();
     for thread in array_field(exchange, "threads") {
-        if string_array_field(thread, "tags")
-            .iter()
-            .any(|tag| tag == NOTIFICATION_TAG)
+        if thread_is_terminal(thread)
+            || string_array_field(thread, "tags")
+                .iter()
+                .any(|tag| tag == NOTIFICATION_TAG)
         {
             continue;
         }

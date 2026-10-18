@@ -36,6 +36,7 @@ function notification(id: string): NotificationRecord {
 
 function thread(id: string): ThreadSummaryResponse {
   return {
+    terminal: false,
     thread: {
       id,
       kind: "conversation",

@@ -111,6 +111,7 @@ function tasks(overrides: Partial<ProjectTasksValue> = {}): ProjectTasksValue {
 
 function thread(id: string): ThreadSummaryResponse {
   return {
+    terminal: false,
     thread: {
       id,
       kind: "conversation",

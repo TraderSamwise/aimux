@@ -44,6 +44,8 @@ project_service_agents_liveness	tmux liveness failure/success projection boundar
 project_service_controls	project-control route mutations over runtime state
 project_service_coordination_mutations	coordination mutation state with temp stores
 project_service_coordination_worklist	coordination worklist state with temp stores
+project_service_loop_parking	parking routes with process-global isolated runtime environment
+project_service_worklist_alerts	worklist CLI routes with process-global isolated runtime environment
 project_service_desktop_state	desktop-state projection with runtime/tmux-shaped liveness
 project_service_event_streams	SSE/event-stream timing
 project_service_gui_contract	GUI route contract covers live service/runtime state

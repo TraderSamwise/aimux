@@ -365,6 +365,7 @@ impl LoopWatcher {
     ) -> Vec<LoopSend> {
         let mut sends = Vec::new();
         self.gc_stale_pauses(input);
+        self.refresh_buffered_work(input);
         let loop_exit_summary = self.plan_loop_exit_summary(overseer_id.as_deref(), input, now_ms);
         // The fleet scan still excludes the overseer, because it also answers
         // "who is spare capacity" -- an idle overseer under a goal would read
@@ -857,6 +858,153 @@ impl LoopWatcher {
             .collect()
     }
 
+    pub fn buffered_sends_for_input(&self, input: &Value, limit: usize) -> Vec<LoopSend> {
+        self.buffered_sends_for_input_with_pauses(input, limit, &self.paused_loop_alerts)
+    }
+
+    fn buffered_sends_for_input_with_pauses(
+        &self,
+        input: &Value,
+        limit: usize,
+        pauses: &BTreeMap<String, LoopAlertPause>,
+    ) -> Vec<LoopSend> {
+        self.buffered_sends
+            .values()
+            .filter_map(buffered_send_to_loop_send)
+            .filter_map(|send| self.current_buffered_work_send(&send, input, pauses))
+            .chain(self.recipient_watchers.values().flat_map(|watcher| {
+                watcher.buffered_sends_for_input_with_pauses(input, limit, pauses)
+            }))
+            .take(limit)
+            .collect()
+    }
+
+    fn refresh_buffered_work(&mut self, input: &Value) {
+        let updates = self
+            .buffered_sends
+            .iter()
+            .filter_map(|(key, buffered)| {
+                let send = buffered_send_to_loop_send(buffered)?;
+                Some((
+                    key.clone(),
+                    self.current_buffered_work_send(&send, input, &self.paused_loop_alerts),
+                ))
+            })
+            .collect::<Vec<_>>();
+        for (key, send) in updates {
+            if let Some(send) = send {
+                if let Some(buffered) = self.buffered_sends.get_mut(&key) {
+                    buffered.text = send.text;
+                }
+            } else if let Some(buffered) = self.buffered_sends.remove(&key) {
+                self.pending_loop_exits.remove(&buffered.signature);
+            }
+        }
+    }
+
+    fn current_buffered_work_send(
+        &self,
+        send: &LoopSend,
+        input: &Value,
+        pauses: &BTreeMap<String, LoopAlertPause>,
+    ) -> Option<LoopSend> {
+        let overseer = Some(send.session_id.as_str());
+        let mut candidates = find_loop_candidates_with_overseer(input, overseer);
+        if matches!(
+            send.kind,
+            LoopSendKind::DirectNudge | LoopSendKind::PausedSummary
+        ) {
+            candidates.extend(find_loop_candidates_only(input, &send.session_id));
+        }
+        let paused = extract_paused_candidates_with_pauses(&mut candidates, pauses);
+        let text = match send.kind {
+            LoopSendKind::OverseerBriefing | LoopSendKind::DirectNudge => {
+                let buffered = self.buffered_sends.get(&buffered_send_key(send))?;
+                candidates.retain(|candidate| {
+                    dwell_key(candidate).is_some_and(|key| {
+                        buffered
+                            .candidate_keys
+                            .iter()
+                            .any(|stored| stored.to_dwell_key() == key)
+                    })
+                });
+                if candidates.is_empty() {
+                    return None;
+                }
+                if send.kind == LoopSendKind::OverseerBriefing {
+                    build_overseer_briefing(
+                        &candidates,
+                        config_string(input, "overseerBriefingTemplate"),
+                    )
+                } else {
+                    let candidate = candidates
+                        .iter()
+                        .find(|candidate| str_field(candidate, "id") == send.session_id)?;
+                    if candidate_token_goal_reached(candidate) {
+                        build_token_goal_met_notice(candidate)
+                    } else {
+                        build_canned_nudge(candidate)
+                    }
+                }
+            }
+            LoopSendKind::Reconciliation => match find_visible_unowned_work(input) {
+                Err(error) => {
+                    if send.signature != format!("work-inventory-unavailable:{error}") {
+                        return None;
+                    }
+                    build_inventory_unavailable_briefing(&error)
+                }
+                Ok(work) => {
+                    let available = find_idle_loop_capacity(input, overseer, &paused);
+                    if work.is_empty()
+                        || available.is_empty()
+                        || send.signature != reconciliation_signature(&work, &available)
+                    {
+                        return None;
+                    }
+                    build_reconciliation_briefing(&work, &available)
+                }
+            },
+            LoopSendKind::IdleFleet => {
+                let work = match find_idle_fleet_waiting_work(input, overseer) {
+                    Ok(work) => work,
+                    // The fresh reconciliation reports the error; old work must not flush.
+                    Err(_) => return None,
+                };
+                let available = find_idle_fleet_capacity(input, overseer);
+                if work.is_empty()
+                    || available.is_empty()
+                    || !fleet_is_fully_idle(input, overseer)
+                    || !find_idle_loop_capacity(input, overseer, &paused).is_empty()
+                {
+                    return None;
+                }
+                build_idle_fleet_briefing(&work, &available)
+            }
+            LoopSendKind::LoopExit => {
+                let keys = self.pending_loop_exits.get(&send.signature)?;
+                let candidates = find_loop_exit_candidates_with_overseer(input, overseer)
+                    .into_iter()
+                    .filter(|candidate| keys.contains(&loop_exit_candidate_signature(candidate)))
+                    .collect::<Vec<_>>();
+                if candidates.is_empty() {
+                    return None;
+                }
+                build_loop_exit_briefing(&candidates)
+            }
+            LoopSendKind::PausedSummary => {
+                if paused.is_empty() {
+                    return None;
+                }
+                build_paused_summary(&paused)
+            }
+        };
+        Some(LoopSend {
+            text,
+            ..send.clone()
+        })
+    }
+
     pub fn remove_buffered_send(&mut self, send: &LoopSend) {
         if self.owns_buffered_send(send) {
             self.buffered_sends.remove(&buffered_send_key(send));
@@ -980,25 +1128,7 @@ impl LoopWatcher {
     }
 
     fn extract_paused_candidates(&self, candidates: &mut Vec<Value>) -> Vec<Value> {
-        let mut paused = Vec::new();
-        candidates.retain(|candidate| {
-            let id = str_field(candidate, "id");
-            let is_paused = loop_pause_key(candidate)
-                .as_deref()
-                .and_then(|key| {
-                    self.paused_loop_alerts
-                        .get(id)
-                        .map(|pause| pause.loop_key == key)
-                })
-                .unwrap_or(false);
-            if is_paused {
-                paused.push(candidate.clone());
-                false
-            } else {
-                true
-            }
-        });
-        paused
+        extract_paused_candidates_with_pauses(candidates, &self.paused_loop_alerts)
     }
 
     fn gc_stale_pauses(&mut self, input: &Value) {
@@ -1058,8 +1188,11 @@ impl LoopWatcher {
     ) -> Option<LoopSend> {
         let overseer_id = overseer_id.filter(|id| session_can_receive_loop_send(input, id))?;
         let available = find_idle_loop_capacity(input, Some(overseer_id), paused_candidates);
-        let work = find_visible_unowned_work(input);
-        if available.is_empty() || work.is_empty() {
+        let (work, unavailable) = match find_visible_unowned_work(input) {
+            Ok(work) => (work, None),
+            Err(error) => (Vec::new(), Some(error)),
+        };
+        if unavailable.is_none() && (available.is_empty() || work.is_empty()) {
             self.last_reconciliation_signature = None;
             self.last_reconciliation_attempted_signature = None;
             self.last_reconciliation_reported_signature = None;
@@ -1074,7 +1207,10 @@ impl LoopWatcher {
             return None;
         }
 
-        let signature = reconciliation_signature(&work, &available);
+        let signature = match &unavailable {
+            Some(error) => format!("work-inventory-unavailable:{error}"),
+            None => reconciliation_signature(&work, &available),
+        };
         if self.last_reconciliation_signature.as_deref() == Some(signature.as_str()) {
             self.unchanged_reconciliation_ticks =
                 self.unchanged_reconciliation_ticks.saturating_add(1);
@@ -1098,7 +1234,10 @@ impl LoopWatcher {
 
         Some(LoopSend {
             session_id: overseer_id.to_owned(),
-            text: build_reconciliation_briefing(&work, &available),
+            text: match unavailable {
+                Some(error) => build_inventory_unavailable_briefing(&error),
+                None => build_reconciliation_briefing(&work, &available),
+            },
             signature,
             kind: LoopSendKind::Reconciliation,
         })
@@ -1154,7 +1293,13 @@ impl LoopWatcher {
             self.clear_idle_fleet_state();
             return None;
         }
-        let work = find_idle_fleet_waiting_work(input, Some(overseer_id));
+        let work = match find_idle_fleet_waiting_work(input, Some(overseer_id)) {
+            Ok(work) => work,
+            Err(_) => {
+                self.clear_idle_fleet_state();
+                return None;
+            }
+        };
         let idle_capacity = find_idle_fleet_capacity(input, Some(overseer_id));
         if work.is_empty() || idle_capacity.is_empty() {
             self.clear_idle_fleet_state();
@@ -1269,14 +1414,176 @@ pub fn loop_alert_state_summary(project_state_dir: impl AsRef<Path>, now_ms: i64
 pub fn clear_loop_alert_pause_for_work(
     project_state_dir: impl AsRef<Path>,
     session_id: &str,
-) -> Result<Option<LoopAlertPause>, String> {
+) -> Result<bool, String> {
+    let project_state_dir = project_state_dir.as_ref();
+    let unparked = set_parked_session_alerts(project_state_dir, session_id, None)?;
     let state_path = loop_watcher_state_path(project_state_dir);
     let mut watcher = load_loop_watcher_state(&state_path)?;
     let cleared = watcher.unpause_loop_alerts(session_id);
     if cleared.is_some() {
         save_loop_watcher_state(&state_path, &watcher)?;
     }
-    Ok(cleared)
+    Ok(unparked || cleared.is_some())
+}
+
+pub fn set_parked_session_alerts(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    pause: Option<Value>,
+) -> Result<bool, String> {
+    update_parked_session_alerts(project_state_dir.as_ref(), session_id, pause, None)
+}
+
+fn update_parked_session_alerts(
+    project_state_dir: &Path,
+    session_id: &str,
+    pause: Option<Value>,
+    expected: Option<&Value>,
+) -> Result<bool, String> {
+    use crate::daemon_state::{MetadataState, metadata_state_path, save_metadata_state};
+    let path = metadata_state_path(project_state_dir);
+    let lock = crate::state_update_lock::acquire_state_update_lock(&path)?;
+    let mut state: MetadataState = match fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text)
+            .map_err(|error| format!("parse metadata state {}: {error}", path.display()))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => MetadataState::empty(),
+        Err(error) => return Err(format!("read metadata state {}: {error}", path.display())),
+    };
+    if pause.is_none() && !state.sessions.contains_key(session_id) {
+        return Ok(false);
+    }
+    let session = state
+        .sessions
+        .entry(session_id.to_owned())
+        .or_insert(json!({}));
+    let session = session.as_object_mut().ok_or_else(|| {
+        format!("metadata for {session_id} must be an object to update parked alerts")
+    })?;
+    if expected.is_some_and(|expected| session.get("loopAlertsParked") != Some(expected)) {
+        return Ok(false);
+    }
+    let changed = match pause {
+        Some(pause) => session.insert("loopAlertsParked".into(), pause.clone()) != Some(pause),
+        None => session.remove("loopAlertsParked").is_some(),
+    };
+    if changed {
+        lock.ensure_owned_for_commit()?;
+        save_metadata_state(project_state_dir, &state).map_err(|error| error.to_string())?;
+    }
+    Ok(changed)
+}
+
+pub fn refresh_parked_session_alerts(
+    input: &mut Value,
+    project_state_dir: &Path,
+) -> Result<(), String> {
+    let parked = input
+        .pointer("/metadata/sessions")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|sessions| sessions.iter())
+        .filter_map(|(id, metadata)| {
+            metadata
+                .get("loopAlertsParked")
+                .map(|pause| (id.clone(), pause.clone()))
+        })
+        .collect::<Vec<_>>();
+    for (id, pause) in parked {
+        let session = array_field(input, "sessions")
+            .iter()
+            .find(|session| str_field(session, "id") == id);
+        let stale = session.is_some_and(|session| {
+            matches!(metadata_activity(input, &id), Some("busy" | "running"))
+                || !parked_session_matches(input, session, &pause)
+        });
+        if stale {
+            update_parked_session_alerts(project_state_dir, &id, None, Some(&pause))?;
+            if let Some(metadata) = input
+                .pointer_mut("/metadata/sessions")
+                .and_then(|sessions| sessions.get_mut(&id))
+                .and_then(Value::as_object_mut)
+            {
+                metadata.remove("loopAlertsParked");
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn parked_session_key(session: &Value) -> Option<String> {
+    Some(
+        json!([
+            optional_str(session, "id")?,
+            optional_str(session, "createdAt")?,
+            session.pointer("/tmuxTarget/sessionName")?,
+            session.pointer("/tmuxTarget/windowId")?
+        ])
+        .to_string(),
+    )
+}
+
+pub fn parked_session_work_key(exchange: &Value, session_id: &str) -> String {
+    let mut work = Vec::new();
+    for task in array_field(exchange, "tasks") {
+        if optional_str(task, "assignedTo") == Some(session_id)
+            && matches!(
+                str_field(task, "status"),
+                "pending" | "assigned" | "in_progress" | "blocked"
+            )
+        {
+            work.push(json!([
+                "task",
+                task.get("id"),
+                task.get("status"),
+                task.get("description")
+            ]));
+        }
+    }
+    for thread in array_field(exchange, "threads") {
+        if !crate::project_service::runtime_exchange::thread_is_terminal(thread)
+            && crate::project_service::runtime_exchange::thread_responsible_participants(thread)
+                .contains(&session_id)
+        {
+            work.push(json!([
+                "thread",
+                thread.get("id"),
+                thread.get("status"),
+                thread.get("waitingOn")
+            ]));
+        }
+    }
+    work.sort_by_key(Value::to_string);
+    Value::Array(work).to_string()
+}
+
+fn session_is_parked(input: &Value, session: &Value) -> bool {
+    let id = str_field(session, "id");
+    let metadata = input
+        .pointer("/metadata/sessions")
+        .and_then(|sessions| sessions.get(id));
+    let Some(parked) = metadata.and_then(|meta| meta.get("loopAlertsParked")) else {
+        return false;
+    };
+    matches!(metadata_activity(input, id), Some("idle" | "done"))
+        && parked_session_matches(input, session, parked)
+}
+
+fn parked_session_matches(input: &Value, session: &Value, parked: &Value) -> bool {
+    let id = str_field(session, "id");
+    let Some(session_key) = parked_session_key(session) else {
+        return false;
+    };
+    input
+        .pointer("/metadata/sessions")
+        .and_then(|sessions| sessions.get(id))
+        .and_then(|meta| meta.pointer("/loop/active"))
+        != Some(&Value::Bool(true))
+        && optional_str(parked, "sessionKey") == Some(session_key.as_str())
+        && optional_str(parked, "workKey")
+            == Some(
+                parked_session_work_key(input.get("runtimeExchange").unwrap_or(&Value::Null), id)
+                    .as_str(),
+            )
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1781,6 +2088,7 @@ pub fn find_loop_exit_candidates_with_overseer(
             if overseer_id == Some(id)
                 || overseer_ids.iter().any(|overseer| overseer == id)
                 || !is_known_loop_exit_session_status(session)
+                || session_is_parked(input, session)
             {
                 return None;
             }
@@ -1852,6 +2160,27 @@ fn loop_candidate_condition(
         }
         Some(_) => None,
     }
+}
+
+fn extract_paused_candidates_with_pauses(
+    candidates: &mut Vec<Value>,
+    pauses: &BTreeMap<String, LoopAlertPause>,
+) -> Vec<Value> {
+    let mut paused = Vec::new();
+    candidates.retain(|candidate| {
+        let id = str_field(candidate, "id");
+        let is_paused = loop_pause_key(candidate)
+            .as_deref()
+            .and_then(|key| pauses.get(id).map(|pause| pause.loop_key == key))
+            .unwrap_or(false);
+        if is_paused {
+            paused.push(candidate.clone());
+            false
+        } else {
+            true
+        }
+    });
+    paused
 }
 
 fn active_loop_pause_keys(input: &Value) -> BTreeMap<String, String> {
@@ -1962,6 +2291,12 @@ fn build_paused_summary(candidates: &[Value]) -> String {
     )]);
     lines.extend(candidates.iter().map(describe_candidate));
     lines.join("\n")
+}
+
+fn build_inventory_unavailable_briefing(error: &str) -> String {
+    format!(
+        "[aimux loop check] Work inventory unavailable: {error}\nCould not determine whether work is waiting. Repair the inventory before assigning or closing work."
+    )
 }
 
 fn build_reconciliation_briefing(work: &[Value], available: &[Value]) -> String {
@@ -2084,6 +2419,7 @@ fn find_idle_loop_capacity(
 fn find_idle_fleet_capacity(input: &Value, overseer_id: Option<&str>) -> Vec<Value> {
     fleet_worker_sessions(input, overseer_id)
         .into_iter()
+        .filter(|session| !session_is_parked(input, session))
         .filter_map(|session| {
             let id = str_field(session, "id");
             let activity = metadata_activity(input, id)?;
@@ -2126,7 +2462,7 @@ fn fleet_worker_sessions<'a>(input: &'a Value, overseer_id: Option<&str>) -> Vec
         .collect()
 }
 
-fn find_visible_unowned_work(input: &Value) -> Vec<Value> {
+fn find_visible_unowned_work(input: &Value) -> Result<Vec<Value>, String> {
     let live_sessions = array_field(input, "sessions")
         .iter()
         .filter_map(|session| optional_str(session, "id").map(str::to_owned))
@@ -2138,8 +2474,8 @@ fn find_visible_unowned_work(input: &Value) -> Vec<Value> {
             work.push(item);
         }
     }
-    for item in coordination_worklist_needs_you(input) {
-        if let Some(item) = unowned_worklist_item(&item, &live_sessions) {
+    for item in coordination_worklist_needs_you(input)? {
+        if let Some(item) = unowned_worklist_item(&item, &live_sessions)? {
             work.push(item);
         }
     }
@@ -2149,11 +2485,14 @@ fn find_visible_unowned_work(input: &Value) -> Vec<Value> {
             .then_with(|| str_field(left, "id").cmp(str_field(right, "id")))
     });
     work.dedup_by(|left, right| str_field(left, "dedupeKey") == str_field(right, "dedupeKey"));
-    work
+    Ok(work)
 }
 
-fn find_idle_fleet_waiting_work(input: &Value, overseer_id: Option<&str>) -> Vec<Value> {
-    let mut work = find_visible_unowned_work(input);
+fn find_idle_fleet_waiting_work(
+    input: &Value,
+    overseer_id: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    let mut work = find_visible_unowned_work(input)?;
     let idle_workers = find_idle_fleet_capacity(input, overseer_id)
         .into_iter()
         .filter_map(|worker| optional_str(&worker, "id").map(str::to_owned))
@@ -2164,42 +2503,34 @@ fn find_idle_fleet_waiting_work(input: &Value, overseer_id: Option<&str>) -> Vec
             work.push(item);
         }
     }
+    for thread in array_field(exchange, "threads") {
+        if let Some(item) = idle_owned_thread_item(thread, &idle_workers) {
+            work.push(item);
+        }
+    }
     work.sort_by(|left, right| {
         str_field(left, "sortKey")
             .cmp(str_field(right, "sortKey"))
             .then_with(|| str_field(left, "id").cmp(str_field(right, "id")))
     });
     work.dedup_by(|left, right| str_field(left, "dedupeKey") == str_field(right, "dedupeKey"));
-    work
+    Ok(work)
 }
 
-fn coordination_worklist_needs_you(input: &Value) -> Vec<Value> {
+fn coordination_worklist_needs_you(input: &Value) -> Result<Vec<Value>, String> {
     let Some(worklist) = input.get("coordinationWorklist") else {
-        return vec![coordination_worklist_contract_break(
-            "coordinationWorklist missing from loop watcher input",
-        )];
+        return Err("coordinationWorklist missing from loop watcher input".into());
     };
+    if let Some(error) = optional_str(worklist, "error") {
+        return Err(error.to_owned());
+    }
     if let Some(needs_you) = worklist.get("needsYou").and_then(Value::as_array) {
-        return needs_you.clone();
+        return Ok(needs_you.clone());
     }
     match worklist.as_array() {
-        Some(items) => items.clone(),
-        None => {
-            let reason = optional_str(worklist, "error")
-                .unwrap_or("coordinationWorklist object missing needsYou");
-            vec![coordination_worklist_contract_break(reason)]
-        }
+        Some(items) => Ok(items.clone()),
+        None => Err("coordinationWorklist object missing needsYou".into()),
     }
-}
-
-fn coordination_worklist_contract_break(reason: &str) -> Value {
-    json!({
-        "key": "coordination-worklist-contract",
-        "kind": "worklist-contract",
-        "bucket": "error",
-        "title": reason,
-        "actionable": true
-    })
 }
 
 fn unowned_task_item(task: &Value, live_sessions: &BTreeSet<String>) -> Option<Value> {
@@ -2247,30 +2578,55 @@ fn idle_owned_task_item(task: &Value, idle_workers: &BTreeSet<String>) -> Option
     }))
 }
 
-fn unowned_worklist_item(item: &Value, live_sessions: &BTreeSet<String>) -> Option<Value> {
+fn idle_owned_thread_item(thread: &Value, idle_workers: &BTreeSet<String>) -> Option<Value> {
+    if crate::project_service::runtime_exchange::thread_is_terminal(thread) {
+        return None;
+    }
+    let owner = crate::project_service::runtime_exchange::thread_responsible_participants(thread)
+        .into_iter()
+        .find(|owner| idle_workers.contains(*owner))?;
+    let id = optional_str(thread, "id")?;
+    Some(json!({
+        "id": id, "kind": "thread", "dedupeKey": format!("thread:{id}"),
+        "sortKey": format!("thread:{id}"), "status": str_field(thread, "status"),
+        "ownerState": "assigned-owner-idle", "assignedTo": owner,
+        "title": optional_str(thread, "title").unwrap_or("thread")
+    }))
+}
+
+fn unowned_worklist_item(
+    item: &Value,
+    live_sessions: &BTreeSet<String>,
+) -> Result<Option<Value>, String> {
     if !item
         .get("actionable")
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
-        return None;
+        return Ok(None);
     }
     if optional_str(item, "sessionId").is_some() {
-        return None;
+        return Ok(None);
     }
-    // Only a notification row carries `sessionId`; a thread row never does, so
-    // reading absence as unowned reported every assigned task thread as
-    // unowned work. A thread states its owner on the thread itself.
+    // A thread's next actor is on the thread, not notification-only sessionId.
     let owner = worklist_thread_owner(item);
     let owner_state = match owner {
         None => "unassigned-worklist",
         Some(owner) if !live_sessions.contains(owner) => "worklist-owner-unreachable",
-        Some(_) => return None,
+        Some(_) => return Ok(None),
     };
-    let key = optional_str(item, "key")?;
+    let key = optional_str(item, "key").ok_or("worklist row missing key")?;
     let kind = optional_str(item, "kind").unwrap_or("worklist");
-    Some(json!({
-        "id": key,
+    let id = if kind == "thread" {
+        item.pointer("/thread/thread/id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .ok_or("worklist thread missing thread.id")?
+    } else {
+        key
+    };
+    Ok(Some(json!({
+        "id": id,
         "kind": kind,
         "dedupeKey": format!("worklist:{key}"),
         "sortKey": format!("worklist:{key}"),
@@ -2278,21 +2634,16 @@ fn unowned_worklist_item(item: &Value, live_sessions: &BTreeSet<String>) -> Opti
         "ownerState": owner_state,
         "assignedTo": owner,
         "title": optional_str(item, "title").unwrap_or("worklist item")
-    }))
+    })))
 }
 
-/// Who a worklist row's thread belongs to: its stated owner, else whoever it is
-/// waiting on. Both are set by `task assign` when it opens the task thread.
+/// Waiting recipients hold the next action; an owner is responsible only when
+/// nobody else is awaited, including after a task is handed back for review.
 fn worklist_thread_owner(item: &Value) -> Option<&str> {
     let thread = item.get("thread")?.get("thread")?;
-    optional_str(thread, "owner").or_else(|| {
-        thread
-            .get("waitingOn")
-            .and_then(Value::as_array)
-            .and_then(|waiting| waiting.first())
-            .and_then(Value::as_str)
-            .filter(|owner| !owner.trim().is_empty())
-    })
+    crate::project_service::runtime_exchange::thread_responsible_participants(thread)
+        .into_iter()
+        .find(|owner| !owner.trim().is_empty())
 }
 
 fn reconciliation_signature(work: &[Value], available: &[Value]) -> String {

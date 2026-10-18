@@ -19,7 +19,8 @@ use crate::daemon_state::{MetadataState, metadata_state_path};
 use crate::debug_logging::{LogLevel, log_at};
 use crate::loop_watcher::{
     LoopDeliveryOutcome, LoopScanIndeterminate, LoopSend, LoopSendKind, LoopWatcher,
-    load_loop_watcher_state, loop_watcher_state_path, save_loop_watcher_state,
+    load_loop_watcher_state, loop_watcher_state_path, refresh_parked_session_alerts,
+    save_loop_watcher_state,
 };
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
@@ -239,6 +240,7 @@ impl PeriodicTask for LoopWatcherTask {
                 coordination_worklist,
             );
             let indeterminate = apply_live_activity_overrides_for_scan(context, &mut input).await?;
+            refresh_parked_session_alerts(&mut input, &project_state_dir)?;
             self.apply_token_spend(&mut input);
 
             let planned_at = now_ms();
@@ -360,7 +362,7 @@ pub fn loop_delivery_queue(
         .max(FAILED_BUFFER_RETRY_FLOOR_MS);
     let mut recipients = BTreeMap::<String, VecDeque<LoopSend>>::new();
     for send in watcher
-        .buffered_sends_to_deliver(usize::MAX)
+        .buffered_sends_for_input(input, usize::MAX)
         .into_iter()
         .chain(sends)
     {
@@ -380,10 +382,10 @@ pub fn loop_delivery_queue(
             continue;
         }
         let queue = recipients.entry(send.session_id.clone()).or_default();
-        if !queue
-            .iter()
-            .any(|queued| queued.kind == send.kind && queued.signature == send.signature)
-        {
+        if !queue.iter().any(|queued| {
+            queued.kind == send.kind
+                && (queued.signature == send.signature || queued.text == send.text)
+        }) {
             queue.push_back(send);
         }
     }
@@ -523,7 +525,7 @@ async fn live_activity_override(
     Ok(Some(Value::Object(live)))
 }
 
-fn stopped_metadata_session_ids(input: &Value) -> Vec<String> {
+pub fn stopped_metadata_session_ids(input: &Value) -> Vec<String> {
     array_field(input, "sessions")
         .iter()
         .filter_map(|session| {
@@ -535,7 +537,12 @@ fn stopped_metadata_session_ids(input: &Value) -> Vec<String> {
             {
                 return None;
             }
-            if !metadata_loop_active(input, id) {
+            let parked = input
+                .pointer("/metadata/sessions")
+                .and_then(|sessions| sessions.get(id))
+                .and_then(|metadata| metadata.get("loopAlertsParked"))
+                .is_some();
+            if !metadata_loop_active(input, id) && !parked {
                 return None;
             }
             if matches!(metadata_activity(input, id), Some("idle" | "done")) {

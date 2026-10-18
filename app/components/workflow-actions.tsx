@@ -203,9 +203,6 @@ export function ThreadWorkflowActions({
   const [busyAction, setBusyAction] = useState<"seen" | "reply" | "close" | "reopen" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const threadId = thread.thread.id;
-  const status = String(thread.thread.status ?? "").toLowerCase();
-  const isClosed =
-    status === "done" || status === "canceled" || status === "cancelled" || status === "abandoned";
   const canAct = Boolean(endpoint) && !busyAction;
   const body = draft.trim();
 
@@ -248,7 +245,7 @@ export function ThreadWorkflowActions({
             )
           }
         />
-        {isClosed ? (
+        {thread.terminal ? (
           <WorkflowButton
             icon={RotateCcw}
             label={busyAction === "reopen" ? "Reopening" : "Reopen"}

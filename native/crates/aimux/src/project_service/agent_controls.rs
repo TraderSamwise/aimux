@@ -12,8 +12,9 @@ use crate::daemon_state::{
     MetadataState, load_metadata_state, metadata_state_path, mutate_metadata_state,
 };
 use crate::loop_watcher::{
-    LoopAlertPauseProvenance, load_loop_watcher_state, loop_pause_key_from_loop_metadata,
-    loop_watcher_state_path, save_loop_watcher_state,
+    LoopAlertPauseProvenance, clear_loop_alert_pause_for_work, load_loop_watcher_state,
+    loop_pause_key_from_loop_metadata, loop_watcher_state_path, parked_session_key,
+    parked_session_work_key, save_loop_watcher_state, set_parked_session_alerts,
 };
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
@@ -70,13 +71,28 @@ fn route_loop_alert_state(
     let now_ms = super::scheduler::scheduler_now_ms();
     let state_path = loop_watcher_state_path(context.project_state_dir());
     match load_loop_watcher_state(&state_path) {
-        Ok(watcher) => ProjectServiceDispatchResponse::json(
-            200,
-            json!({
-                "ok": true,
-                "loopAlertState": watcher.loop_alert_state(now_ms),
-            }),
-        ),
+        Ok(watcher) => {
+            let metadata = match load_metadata_state_if_written(&context.project_state_dir()) {
+                Ok(metadata) => metadata,
+                Err(error) => return metadata_unavailable_error(error),
+            };
+            let mut state = watcher.loop_alert_state(now_ms);
+            state["parkedSessions"] = Value::Array(
+                metadata
+                    .sessions
+                    .iter()
+                    .filter_map(|(id, session)| {
+                        session
+                            .get("loopAlertsParked")
+                            .map(|pause| json!({ "sessionId": id, "pause": pause }))
+                    })
+                    .collect(),
+            );
+            ProjectServiceDispatchResponse::json(
+                200,
+                json!({ "ok": true, "loopAlertState": state }),
+            )
+        }
         Err(error) => json_error(500, error),
     }
 }
@@ -95,81 +111,172 @@ fn route_loop_alerts(
     let Some(paused) = body.get("paused").and_then(Value::as_bool) else {
         return json_error(400, "paused (boolean) is required");
     };
+    if !paused {
+        return match clear_loop_alert_pause_for_work(context.project_state_dir(), &session_id) {
+            Ok(cleared) => ProjectServiceDispatchResponse::json(
+                200,
+                json!({ "ok": true, "sessionId": session_id, "paused": false, "cleared": cleared }),
+            ),
+            Err(error) => json_error(500, error),
+        };
+    }
     let state_path = loop_watcher_state_path(context.project_state_dir());
     let mut watcher = match load_loop_watcher_state(&state_path) {
         Ok(watcher) => watcher,
         Err(error) => return json_error(500, error),
     };
 
-    if paused {
-        let metadata = match load_metadata_state_strict(&context.project_state_dir()) {
-            Ok(metadata) => metadata,
-            Err(error) => return metadata_unavailable_error(error),
-        };
-        let Some(loop_meta) = metadata
-            .sessions
-            .get(&session_id)
-            .and_then(|session| session.get("loop"))
-        else {
-            return json_error(
-                409,
-                format!("cannot pause loop alerts for {session_id}: session is not in a loop"),
-            );
-        };
-        // Pausing silences the same reminders a close would, and this route
-        // used to ask nobody whose goal it was.
-        if let Some(refusal) = refuse_goal_close(Some(loop_meta), body, "pause") {
-            return refusal;
-        }
-        let Some(loop_key) = loop_pause_key_from_loop_metadata(loop_meta) else {
-            // Two different refusals wore one sentence. A pause is pinned to
-            // the loop's `since`, so a loop that is active but has no `since`
-            // cannot be paused -- and saying "not active" about an active loop
-            // sends the reader looking in the wrong place.
-            let active = loop_meta
-                .get("active")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false);
-            let reason = if active {
-                "loop has no start time to pin the pause to"
-            } else {
-                "loop is not active"
-            };
-            return json_error(
-                409,
-                format!("cannot pause loop alerts for {session_id}: {reason}"),
-            );
-        };
-        let pause = watcher.pause_loop_alerts(
-            &session_id,
-            loop_key,
-            super::scheduler::scheduler_now_ms(),
-            LoopAlertPauseProvenance {
-                paused_by: body_trimmed_string(body, "updatedBy"),
-                paused_by_session_id: body_trimmed_string(body, "updatedBySessionId"),
-                paused_by_role: body_trimmed_string(body, "updatedByRole"),
-                reason: body_trimmed_string(body, "reason"),
-            },
-        );
-        if let Err(error) = save_loop_watcher_state(&state_path, &watcher) {
-            return json_error(500, error);
-        }
-        return ProjectServiceDispatchResponse::json(
-            200,
-            json!({ "ok": true, "sessionId": session_id, "paused": true, "pause": pause }),
-        );
+    let metadata = match load_metadata_state_strict(&context.project_state_dir()) {
+        Ok(metadata) => metadata,
+        Err(error) => return metadata_unavailable_error(error),
+    };
+    let loop_meta = metadata
+        .sessions
+        .get(&session_id)
+        .and_then(|session| session.get("loop"));
+    let Some(loop_meta) = loop_meta
+        .filter(|loop_meta| loop_meta.get("active").and_then(Value::as_bool) == Some(true))
+    else {
+        return route_park_idle_session(context, &metadata, &session_id, body);
+    };
+    // Pausing silences the same reminders a close would, and this route
+    // used to ask nobody whose goal it was.
+    if let Some(refusal) = refuse_goal_close(Some(loop_meta), body, "pause") {
+        return refusal;
     }
-
-    let cleared = watcher.unpause_loop_alerts(&session_id);
-    if cleared.is_some()
-        && let Err(error) = save_loop_watcher_state(&state_path, &watcher)
-    {
+    let Some(loop_key) = loop_pause_key_from_loop_metadata(loop_meta) else {
+        return json_error(
+            409,
+            format!(
+                "cannot pause loop alerts for {session_id}: loop has no start time to pin the pause to"
+            ),
+        );
+    };
+    let pause = watcher.pause_loop_alerts(
+        &session_id,
+        loop_key,
+        super::scheduler::scheduler_now_ms(),
+        LoopAlertPauseProvenance {
+            paused_by: body_trimmed_string(body, "updatedBy"),
+            paused_by_session_id: body_trimmed_string(body, "updatedBySessionId"),
+            paused_by_role: body_trimmed_string(body, "updatedByRole"),
+            reason: body_trimmed_string(body, "reason"),
+        },
+    );
+    if let Err(error) = save_loop_watcher_state(&state_path, &watcher) {
         return json_error(500, error);
     }
     ProjectServiceDispatchResponse::json(
         200,
-        json!({ "ok": true, "sessionId": session_id, "paused": false, "cleared": cleared.is_some() }),
+        json!({ "ok": true, "sessionId": session_id, "paused": true, "pause": pause }),
     )
+}
+
+fn route_park_idle_session(
+    context: &ProjectServiceRequestContext,
+    metadata: &MetadataState,
+    session_id: &str,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    use super::agents::{
+        session_is_backed_by_live_window, try_live_window_ids_for_session_projection,
+    };
+    use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
+    use crate::runtime_topology::{list_topology_session_states, read_runtime_topology};
+
+    let state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, format!("runtime topology unavailable: {error}")),
+    };
+    let Some(session) =
+        list_topology_session_states(&topology, Some(&["starting", "running", "idle"]))
+            .into_iter()
+            .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
+    else {
+        return json_error(
+            409,
+            format!("cannot park alerts for {session_id}: no live session in runtime topology"),
+        );
+    };
+    let live_windows = match context.live_window_ids_status() {
+        Some(Ok(windows)) => windows.clone(),
+        Some(Err(error)) => {
+            return json_error(500, format!("live window inventory unavailable: {error}"));
+        }
+        None => match try_live_window_ids_for_session_projection("loop alert parking") {
+            Ok(windows) => windows,
+            Err(error) => {
+                return json_error(500, format!("live window inventory unavailable: {error}"));
+            }
+        },
+    };
+    if !session_is_backed_by_live_window(&session, &live_windows) {
+        return json_error(
+            409,
+            format!(
+                "cannot park alerts for {session_id}: no live window in its recorded tmux session"
+            ),
+        );
+    }
+    let activity = metadata
+        .sessions
+        .get(session_id)
+        .and_then(|session| session.get("derived"))
+        .and_then(|derived| derived.get("activity"))
+        .and_then(Value::as_str);
+    if !matches!(activity, Some("idle" | "done")) {
+        return json_error(
+            409,
+            format!(
+                "cannot park alerts for {session_id}: activity must be idle or done (observed {})",
+                activity.unwrap_or("unknown")
+            ),
+        );
+    }
+    let Some(session_key) = parked_session_key(&session) else {
+        return json_error(
+            409,
+            format!("cannot park alerts for {session_id}: runtime session identity is incomplete"),
+        );
+    };
+    let exchange = match try_read_runtime_exchange(runtime_exchange_path(&state_dir)) {
+        Ok(exchange) => exchange,
+        Err(error) => return json_error(500, format!("runtime exchange unavailable: {error}")),
+    };
+    let work_key = parked_session_work_key(&exchange, session_id);
+    if work_key != "[]" {
+        return json_error(
+            409,
+            format!(
+                "cannot park alerts for {session_id}: active owned work must be finished or reassigned first"
+            ),
+        );
+    }
+    let mut pause = json!({
+        "sessionKey": session_key,
+        "workKey": work_key,
+        "pausedAtMs": super::scheduler::scheduler_now_ms(),
+    });
+    for (request_field, stored_field) in [
+        ("updatedBy", "pausedBy"),
+        ("updatedBySessionId", "pausedBySessionId"),
+        ("updatedByRole", "pausedByRole"),
+        ("reason", "reason"),
+    ] {
+        if let Some(value) = body_trimmed_string(body, request_field) {
+            pause[stored_field] = Value::String(value);
+        }
+    }
+    match set_parked_session_alerts(&state_dir, session_id, Some(pause.clone())) {
+        Ok(_) => ProjectServiceDispatchResponse::json(
+            200,
+            json!({
+                "ok": true, "sessionId": session_id, "paused": true, "parked": true, "pause": pause,
+            }),
+        ),
+        Err(error) => json_error(500, error),
+    }
 }
 
 fn route_global_loop_alerts(
@@ -1180,10 +1287,15 @@ pub(crate) fn load_metadata_state_if_written(
     project_state_dir: &Path,
 ) -> Result<MetadataState, String> {
     let path = metadata_state_path(project_state_dir);
-    if !path.exists() {
-        return Ok(MetadataState::empty());
-    }
-    load_metadata_state_strict(project_state_dir)
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(MetadataState::empty());
+        }
+        Err(error) => return Err(format!("read metadata state {}: {error}", path.display())),
+    };
+    serde_json::from_str(&text)
+        .map_err(|error| format!("parse metadata state {}: {error}", path.display()))
 }
 
 fn lifecycle_watch_error_response(error: LifecycleMutationError) -> ProjectServiceDispatchResponse {
