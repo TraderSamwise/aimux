@@ -101,7 +101,7 @@ pub(super) fn set_session_control_flags(
     session_id: &str,
     overseer: bool,
     scribe: bool,
-) {
+) -> Result<(), String> {
     let role = if overseer {
         Some("overseer")
     } else if scribe {
@@ -109,36 +109,33 @@ pub(super) fn set_session_control_flags(
     } else {
         None
     };
-    set_session_control_role(project_state_dir, session_id, role);
+    set_session_control_role(project_state_dir, session_id, role)
 }
 
 pub(super) fn set_session_control_role(
     project_state_dir: &Path,
     session_id: &str,
     role: Option<&str>,
-) {
+) -> Result<(), String> {
     let Some(role) = role.map(str::trim).filter(|role| !role.is_empty()) else {
-        return;
+        return Ok(());
     };
     if role == "coder" {
-        return;
+        return Ok(());
     }
     let overseer = role == "overseer";
     let scribe = role == "scribe";
     let now = now_iso();
-    let _ = mutate_metadata_state(project_state_dir, |state| {
+    mutate_metadata_state(project_state_dir, |state| {
         for (id, session) in &mut state.sessions {
             if id == session_id {
                 continue;
             }
             if let Value::Object(map) = session {
-                if overseer && map.remove("overseer").is_some() {
-                    map.insert("updatedAt".into(), Value::String(now.clone()));
-                }
                 if scribe && map.remove("scribe").is_some() {
                     map.insert("updatedAt".into(), Value::String(now.clone()));
                 }
-                if (overseer || scribe) && session_has_supervisor_role(map, role) {
+                if scribe && session_has_supervisor_role(map, role) {
                     clear_supervisor_role(map, role);
                     map.insert("updatedAt".into(), Value::String(now.clone()));
                 }
@@ -173,7 +170,7 @@ pub(super) fn set_session_control_role(
             .sessions
             .insert(session_id.to_owned(), Value::Object(current));
         true
-    });
+    })
 }
 
 fn session_has_supervisor_role(map: &serde_json::Map<String, Value>, role: &str) -> bool {

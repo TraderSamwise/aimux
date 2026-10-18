@@ -1,8 +1,9 @@
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::path::Path;
 
 use crate::config::load_config_for_project;
-use crate::daemon_state::load_metadata_state;
+use crate::daemon_state::try_load_metadata_state;
+use crate::debug_logging::{LogLevel, log_always_at};
 use crate::desktop_notifier::{
     DesktopNotificationPayload, external_notifications_disabled, send_desktop_notification_and_wait,
 };
@@ -13,7 +14,9 @@ use crate::notification_delivery_guard::external_notification_refusal_reason_for
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
-use crate::team_contract::{is_overseer_session, is_project_control_session, is_scribe_session};
+use crate::team_contract::{
+    is_project_control_session, is_scribe_session, session_with_stored_control_flags,
+};
 
 use super::notification_context::should_suppress_notification;
 
@@ -148,7 +151,19 @@ fn should_deliver_for_session_role(
     event: &Value,
     notifications: &Value,
 ) -> bool {
-    match notification_target_role(project_state_dir, event) {
+    let role = match notification_target_role(project_state_dir, event) {
+        Ok(role) => role,
+        Err(error) => {
+            log_always_at(
+                LogLevel::Warn,
+                "notification role could not be resolved",
+                "notifications",
+                Some(json!({ "error": error, "sessionId": event.get("sessionId") })),
+            );
+            return false;
+        }
+    };
+    match role {
         NotificationTargetRole::Scribe if is_stuck_kind(string_field(event, "kind")) => {
             role_delivery_field(notifications, "scribeStuck", true)
         }
@@ -170,28 +185,34 @@ enum NotificationTargetRole {
     Scribe,
 }
 
-fn notification_target_role(project_state_dir: &Path, event: &Value) -> NotificationTargetRole {
+fn notification_target_role(
+    project_state_dir: &Path,
+    event: &Value,
+) -> Result<NotificationTargetRole, String> {
     let Some(session_id) = non_empty(string_field(event, "sessionId")) else {
-        return NotificationTargetRole::Ordinary;
+        return Ok(NotificationTargetRole::Ordinary);
     };
-    let metadata = load_metadata_state(project_state_dir);
-    if let Some(session) = metadata.sessions.get(session_id) {
-        return notification_target_role_for_session(session);
-    }
-    if let Ok(topology) = read_runtime_topology(runtime_topology_path(project_state_dir))
-        && let Some(session) = list_topology_session_states(&topology, None)
-            .into_iter()
-            .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
-    {
-        return notification_target_role_for_session(&session);
-    }
-    NotificationTargetRole::Ordinary
+    let metadata = try_load_metadata_state(project_state_dir)?;
+    let topology_path = runtime_topology_path(project_state_dir);
+    let topology = read_runtime_topology(&topology_path).map_err(|error| {
+        format!(
+            "read notification role topology {}: {error}",
+            topology_path.display()
+        )
+    })?;
+    let topology_session = list_topology_session_states(&topology, None)
+        .into_iter()
+        .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id));
+    let stored = metadata.sessions.get(session_id);
+    let session = topology_session.as_ref().or(stored).unwrap_or(&Value::Null);
+    let classified = session_with_stored_control_flags(session, stored);
+    Ok(notification_target_role_for_session(&classified))
 }
 
 fn notification_target_role_for_session(session: &Value) -> NotificationTargetRole {
     if is_scribe_session(Some(session)) {
         NotificationTargetRole::Scribe
-    } else if is_overseer_session(Some(session)) || is_project_control_session(Some(session)) {
+    } else if is_project_control_session(Some(session)) {
         NotificationTargetRole::Overseer
     } else {
         NotificationTargetRole::Ordinary

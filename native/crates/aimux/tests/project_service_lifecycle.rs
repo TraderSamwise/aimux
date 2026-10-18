@@ -1408,7 +1408,7 @@ fn agent_spawn_keeps_existing_control_agents_in_supervisor_lane() {
 }
 
 #[test]
-fn agent_spawn_keeps_overseer_and_scribe_roles_singleton() {
+fn agent_spawn_keeps_overseers_additive_and_scribe_singleton() {
     for role in ["overseer", "scribe"] {
         let project = temp_project(&format!("agent-spawn-singleton-{role}"));
         write_project_tool_config(&project);
@@ -1428,11 +1428,14 @@ fn agent_spawn_keeps_overseer_and_scribe_roles_singleton() {
         }
         assert_eq!(runtime.created.len(), 2, "{role}");
         let metadata = load_metadata_state(&state_dir);
-        assert_eq!(
-            metadata.sessions["first"]["projectControl"], false,
-            "{role}"
-        );
-        assert!(metadata.sessions["first"].get(role).is_none(), "{role}");
+        if role == "overseer" {
+            assert_eq!(metadata.sessions["first"]["projectControl"], true);
+            assert_eq!(metadata.sessions["first"]["overseer"], true);
+            assert_eq!(metadata.sessions["first"]["role"], "overseer");
+        } else {
+            assert_eq!(metadata.sessions["first"]["projectControl"], false);
+            assert!(metadata.sessions["first"].get(role).is_none());
+        }
         assert_eq!(
             metadata.sessions["second"]["projectControl"], true,
             "{role}"

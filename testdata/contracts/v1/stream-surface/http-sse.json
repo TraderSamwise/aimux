@@ -286,7 +286,16 @@
             "buildStamp": "<build-stamp>"
           },
           "pendingInteractions": [],
+          "overseerSessionIds": [],
           "sessions": [],
+          "supervisorLane": {
+            "sessions": []
+          },
+          "agentCreation": {
+            "defaultTarget": "supervisor",
+            "defaultRole": "control",
+            "worktreeRole": "coder"
+          },
           "teammates": [],
           "services": [],
           "worktrees": [

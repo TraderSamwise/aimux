@@ -180,10 +180,10 @@ fn find_existing_live_scribe(project_state_dir: &Path) -> Result<Option<(String,
                 .unwrap_or("unknown")
                 .to_owned();
             Some((id, status))
-        })
-        .inspect(|(session_id, _)| {
-            set_session_control_flags(project_state_dir, session_id, false, true);
         });
+    if let Some((session_id, _)) = &existing {
+        set_session_control_flags(project_state_dir, session_id, false, true)?;
+    }
     Ok(existing)
 }
 

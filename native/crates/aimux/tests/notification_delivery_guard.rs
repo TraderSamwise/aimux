@@ -11,6 +11,7 @@ use aimux::notification_delivery_guard::{
     fixture_notification_refusal_reason_for_event, fixture_notification_refusal_reason_for_payload,
     watched_by_overseer_notification_refusal_reason_for_state,
 };
+use aimux::project_service::agents::overseer_session_ids_for_state;
 use aimux::tmux::LiveWindowIndex;
 use serde_json::json;
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, remove_file};
@@ -131,6 +132,167 @@ fn watched_agent_with_verified_live_overseer_refuses_external_notification() {
             Ok(&live_window_ids),
         ),
         Some(WATCHED_BY_OVERSEER_NOTIFICATION_REFUSAL_REASON)
+    );
+}
+
+#[test]
+fn watched_worker_is_suppressed_by_second_or_third_live_overseer() {
+    let (metadata, sessions) = multiple_overseer_state();
+    let event = json!({ "kind": "needs_input", "sessionId": "worker-1" });
+    for live_id in ["@overseer-2", "@overseer-3"] {
+        let windows = live_window_ids(&[live_id]);
+        assert_eq!(
+            watched_by_overseer_notification_refusal_reason_for_state(
+                &event,
+                &json!({}),
+                &metadata,
+                &sessions,
+                Ok(&windows),
+            ),
+            Some(WATCHED_BY_OVERSEER_NOTIFICATION_REFUSAL_REASON),
+            "{live_id} must suppress the worker even though overseer-1 is offline"
+        );
+    }
+}
+
+#[test]
+fn overseer_set_merges_topology_and_metadata_identity_and_honors_demotion() {
+    let sessions = vec![
+        json!({ "id": "topology-only", "projectControl": true, "role": "overseer" }),
+        json!({ "id": "loop-only", "overseer": true }),
+        json!({ "id": "demoted", "overseer": true, "projectControl": true }),
+        json!({ "id": "worker", "label": "overseer" }),
+    ];
+    let metadata = json!({ "sessions": {
+        "metadata-only": { "id": "misleading-nested-id", "overseer": true },
+        "loop-only": { "loop": { "active": true } },
+        "demoted": { "projectControl": false },
+    }});
+    assert_eq!(
+        overseer_session_ids_for_state(&sessions, &metadata),
+        ["loop-only", "metadata-only", "topology-only"]
+    );
+    assert_eq!(
+        overseer_session_ids_for_state(&[], &metadata),
+        ["metadata-only"]
+    );
+    assert_eq!(
+        overseer_session_ids_for_state(&sessions, &serde_json::Value::Null),
+        ["demoted", "loop-only", "topology-only"]
+    );
+}
+
+#[test]
+fn topology_overseers_with_loop_only_metadata_watch_workers_and_keep_their_own_pages() {
+    let (mut metadata, mut sessions) = multiple_overseer_state();
+    for session in sessions.iter_mut().skip(1) {
+        session["projectControl"] = json!(true);
+        session["role"] = json!("overseer");
+        let id = session["id"].as_str().expect("overseer identity");
+        metadata["sessions"][id]
+            .as_object_mut()
+            .expect("session metadata")
+            .remove("overseer");
+    }
+    let windows = live_window_ids(&["@overseer-2", "@overseer-3"]);
+    for id in ["worker-1", "overseer-1", "overseer-2", "overseer-3"] {
+        assert_eq!(
+            watched_by_overseer_notification_refusal_reason_for_state(
+                &json!({ "kind": "needs_input", "sessionId": id }),
+                &json!({}),
+                &metadata,
+                &sessions,
+                Ok(&windows),
+            ),
+            (id == "worker-1").then_some(WATCHED_BY_OVERSEER_NOTIFICATION_REFUSAL_REASON),
+            "{id}"
+        );
+    }
+    for id in ["overseer-2", "overseer-3"] {
+        metadata["sessions"][id]["projectControl"] = json!(false);
+    }
+    assert_eq!(
+        watched_by_overseer_notification_refusal_reason_for_state(
+            &json!({ "kind": "needs_input", "sessionId": "worker-1" }),
+            &json!({}),
+            &metadata,
+            &sessions,
+            Ok(&windows),
+        ),
+        None
+    );
+}
+
+#[test]
+fn every_overseer_keeps_its_own_goal_notifications_with_other_live_overseers() {
+    let (metadata, sessions) = multiple_overseer_state();
+    let windows = live_window_ids(&["@overseer-2", "@overseer-3"]);
+    for session_id in ["overseer-1", "overseer-2", "overseer-3"] {
+        let event = json!({
+            "kind": "needs_input",
+            "sessionId": session_id,
+            "notificationId": format!("{session_id}-needs-input"),
+        });
+        assert_eq!(
+            watched_by_overseer_notification_refusal_reason_for_state(
+                &event,
+                &json!({}),
+                &metadata,
+                &sessions,
+                Ok(&windows),
+            ),
+            None,
+            "{session_id} must not be silenced by another overseer"
+        );
+    }
+}
+
+#[test]
+fn watched_worker_keeps_paging_without_any_verified_live_overseer() {
+    let (metadata, mut sessions) = multiple_overseer_state();
+    let event = json!({ "kind": "needs_input", "sessionId": "worker-1" });
+    for windows in [
+        live_window_ids(&[]),
+        live_window_ids(&["@other"]),
+        LiveWindowIndex::from_pairs([
+            ("@overseer-2", "foreign-project"),
+            ("@overseer-3", "foreign-project"),
+        ]),
+    ] {
+        assert_eq!(
+            watched_by_overseer_notification_refusal_reason_for_state(
+                &event,
+                &json!({}),
+                &metadata,
+                &sessions,
+                Ok(&windows),
+            ),
+            None
+        );
+    }
+    assert_eq!(
+        watched_by_overseer_notification_refusal_reason_for_state(
+            &event,
+            &json!({}),
+            &metadata,
+            &sessions,
+            Err("tmux inventory failed"),
+        ),
+        None
+    );
+    let windows = live_window_ids(&["@overseer-2", "@overseer-3"]);
+    for session in &mut sessions {
+        session["status"] = json!("offline");
+    }
+    assert_eq!(
+        watched_by_overseer_notification_refusal_reason_for_state(
+            &event,
+            &json!({}),
+            &metadata,
+            &sessions,
+            Ok(&windows),
+        ),
+        None
     );
 }
 
@@ -288,6 +450,29 @@ fn watched_metadata(agent_override: bool) -> serde_json::Value {
             }
         }
     })
+}
+
+fn multiple_overseer_state() -> (serde_json::Value, Vec<serde_json::Value>) {
+    let mut metadata = watched_metadata(false);
+    let goal = metadata["sessions"]["worker-1"]["loop"].clone();
+    let mut sessions = vec![json!({ "id": "worker-1", "status": "idle" })];
+    for (id, status) in [
+        ("overseer-1", "offline"),
+        ("overseer-2", "idle"),
+        ("overseer-3", "running"),
+    ] {
+        metadata["sessions"][id] = json!({ "overseer": true, "loop": goal });
+        sessions.push(json!({
+            "id": id,
+            "status": status,
+            "tmuxTarget": {
+                "sessionName": "aimux-repo",
+                "windowId": format!("@{id}"),
+                "windowIndex": sessions.len(),
+            },
+        }));
+    }
+    (metadata, sessions)
 }
 
 fn watched_sessions(
