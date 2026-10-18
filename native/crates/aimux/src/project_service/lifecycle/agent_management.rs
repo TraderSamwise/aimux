@@ -255,15 +255,17 @@ pub(super) fn route_agent_kill_checked(
         return json_error(404, format!("Unknown session \"{session_id}\""));
     };
     if let Some(confirmed_topology) = confirmed_topology {
-        if string_field(&session, "status") != "offline" {
+        let expected = graveyard_candidate_identity(confirmed_topology, &session_id);
+        let found = graveyard_candidate_identity(&topology, &session_id);
+        if !expected.is_object() || expected != found {
             return json_error(
                 409,
-                format!("Session \"{session_id}\" is no longer offline"),
+                format!(
+                    "Session {session_id} changed while checking offline state: expected {expected}, found {found}"
+                ),
             );
         }
         let node_id = string_field(&session, "nodeId");
-        // A preceding graveyard removes all offline bindings during topology cleanup.
-        // Keep the batch's evidence so later candidates still get verified.
         if let Some(binding) = array_field(confirmed_topology, "bindings")
             .into_iter()
             .find(|binding| string_field(binding, "nodeId") == node_id)
@@ -274,8 +276,8 @@ pub(super) fn route_agent_kill_checked(
             ) else {
                 return json_error(409, "Cannot verify incomplete tmux binding");
             };
-            match runtime.list_windows(&tmux_session) {
-                Ok(windows) if windows.iter().any(|window| window.id == window_id) => {
+            match runtime.live_windows() {
+                Ok(windows) if windows.window_is_in_session(&window_id, &tmux_session) => {
                     return json_error(
                         409,
                         format!("Session {session_id} still has live window {window_id}"),
@@ -288,12 +290,18 @@ pub(super) fn route_agent_kill_checked(
             }
         }
     }
-    let previous_status = if LIVE_STATUSES.contains(&string_field(&session, "status").as_str()) {
+    let previous_status = if confirmed_topology.is_none()
+        && LIVE_STATUSES.contains(&string_field(&session, "status").as_str())
+    {
         "running"
     } else {
         "offline"
     };
-    let window_id = live_window_id_for_session(&topology, &session);
+    let window_id = if confirmed_topology.is_some() {
+        None
+    } else {
+        live_window_id_for_session(&topology, &session)
+    };
     if let Some(window_id) = &window_id
         && let Err(error) = runtime.kill_window(window_id)
     {
@@ -305,14 +313,15 @@ pub(super) fn route_agent_kill_checked(
     }
     let mut offline_guard_error = None;
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
-        if confirmed_topology.is_some()
-            && find_by_id(&topology, "sessions", &session_id)
-                .is_none_or(|current| string_field(&current, "status") != "offline")
-        {
-            offline_guard_error = Some(format!(
-                "Session {session_id} changed while checking offline state"
-            ));
-            return topology;
+        if let Some(confirmed_topology) = confirmed_topology {
+            let expected = graveyard_candidate_identity(confirmed_topology, &session_id);
+            let found = graveyard_candidate_identity(&topology, &session_id);
+            if !expected.is_object() || expected != found {
+                offline_guard_error = Some(format!(
+                    "Session {session_id} changed while checking offline state: expected {expected}, found {found}"
+                ));
+                return topology;
+            }
         }
         let now = now_iso();
         let retained_bindings = confirmed_topology.map(|_| {
@@ -357,6 +366,17 @@ pub(super) fn route_agent_kill_checked(
         "agent",
         Some(&session_id),
     )
+}
+
+fn graveyard_candidate_identity(topology: &Value, session_id: &str) -> Value {
+    let Some(session) = find_by_id(topology, "sessions", session_id) else {
+        return Value::Null;
+    };
+    let node_id = string_field(&session, "nodeId");
+    let binding = array_field(topology, "bindings").into_iter()
+        .find(|binding| string_field(binding, "nodeId") == node_id)
+        .map(|binding| json!({"session": binding.get("tmuxSession"), "window": binding.get("tmuxWindowId")}));
+    json!({"status": session.get("status"), "nodeId": node_id, "binding": binding})
 }
 
 pub(super) async fn route_agent_kill_async(

@@ -749,10 +749,8 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
                         ));
                         stage = 6;
                     }
-                    // Until a confirmation frame actually appears, each Enter
-                    // belongs to an independent read before the preview is
-                    // visible. Removing the painted-readiness gate consumes
-                    // one of these in the same pass that drains the response.
+                    // Independent Enter reads before paint must not confirm
+                    // a preview that arrived during this loop iteration.
                     vec![DashboardKey::Enter]
                 }
                 _ => Vec::new(),

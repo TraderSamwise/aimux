@@ -2,16 +2,16 @@ use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 
+use crate::config::default_config;
 use crate::daemon_state::try_load_metadata_state;
+use crate::project_service::agents::topology_desktop_verified_session_list_for_context;
 use crate::project_service::desktop_state::{
     apply_stored_display_control_metadata, item_worktree_group_key,
 };
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::project_service::session_visibility::session_is_in_supervisor_plane;
-use crate::runtime_topology::{
-    list_topology_session_states, read_runtime_topology, runtime_topology_path,
-};
+use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
 use super::agent_management::route_agent_kill_checked;
 use super::json_helpers::{string_field, trimmed_string};
@@ -63,8 +63,22 @@ pub(super) fn route_offline_agents(
         .as_ref()
         .and_then(|path| item_worktree_group_key(&json!({"worktreePath": path})));
     let root_key = item_worktree_group_key(&json!({"worktreePath": context.project_root()}));
-    let eligible_ids = list_topology_session_states(&topology, Some(&["offline"]))
+    let config = default_config();
+    let Some(tools) = config.get("tools").and_then(Value::as_object) else {
+        return json_error(500, "Default tool configuration is missing");
+    };
+    let sessions = match topology_desktop_verified_session_list_for_context(
+        context,
+        &topology,
+        &metadata.sessions,
+        tools,
+    ) {
+        Ok(sessions) => sessions,
+        Err(error) => return json_error(503, format!("Cannot determine offline agents: {error}")),
+    };
+    let eligible_ids = sessions
         .into_iter()
+        .filter(|session| string_field(session, "status") == "offline")
         .map(|session| {
             let id = string_field(&session, "id");
             let mut item = session
