@@ -51,7 +51,7 @@ fn build_dashboard_footer_hints<'a>(
     } else {
         None
     };
-    let system = [
+    let mut system = vec![
         FooterHint {
             key: "?",
             label: "help",
@@ -63,6 +63,16 @@ fn build_dashboard_footer_hints<'a>(
             danger: false,
         },
     ];
+    if input.snapshot.extra.contains_key("usage") {
+        system.insert(
+            0,
+            FooterHint {
+                key: "U",
+                label: "usage",
+                danger: false,
+            },
+        );
+    }
     let scribe_preview_label = if preview_source == "scribe" {
         "preview output"
     } else {

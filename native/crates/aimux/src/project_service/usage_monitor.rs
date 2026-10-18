@@ -321,18 +321,45 @@ fn store_claude_quota(
         .and_then(Value::as_object)
         .and_then(|sessions| sessions.get(session_id))
         .ok_or_else(|| (404, format!("unknown metadata session {session_id}")))?;
-    let config = read_config(context).map_err(|reason| (500, reason))?;
     let topology = read_runtime_topology(runtime_topology_path(context.project_state_dir()))
         .map_err(|reason| (500, reason))?;
-    let topology_session = topology
+    let topology_session_for = |id: &str| {
+        topology
+            .get("sessions")
+            .and_then(Value::as_array)
+            .and_then(|sessions| {
+                sessions
+                    .iter()
+                    .find(|session| session.get("id").and_then(Value::as_str) == Some(id))
+            })
+            .unwrap_or(&Value::Null)
+    };
+    let source_backend = session_backend_identity(Some(session), topology_session_for(session_id));
+    let resolved_session_id = super::session_identity::resolve_live_duplicate_session_id(
+        context,
+        session_id,
+        source_backend,
+    );
+    let replacement = metadata
         .get("sessions")
-        .and_then(Value::as_array)
-        .and_then(|sessions| {
-            sessions
-                .iter()
-                .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
-        })
-        .unwrap_or(&Value::Null);
+        .and_then(Value::as_object)
+        .and_then(|sessions| sessions.get(&resolved_session_id));
+    let replacement_backend =
+        session_backend_identity(replacement, topology_session_for(&resolved_session_id));
+    // The general hook resolver also uses logical-role replacement heuristics.
+    // Quota snapshots may move only between proven aliases of one backend.
+    let session_id = if source_backend.is_some() && source_backend == replacement_backend {
+        resolved_session_id.as_str()
+    } else {
+        session_id
+    };
+    let session = metadata
+        .get("sessions")
+        .and_then(Value::as_object)
+        .and_then(|sessions| sessions.get(session_id))
+        .ok_or_else(|| (404, format!("unknown metadata session {session_id}")))?;
+    let config = read_config(context).map_err(|reason| (500, reason))?;
+    let topology_session = topology_session_for(session_id);
     let tool_key = session_tool(session)
         .or_else(|| session_tool(topology_session))
         .unwrap_or("unknown");
@@ -470,11 +497,7 @@ fn collect_usage_inner(
             .and_then(|context| context.get("transcriptPath"))
             .and_then(Value::as_str)
             .map(Path::new);
-        let backend_session_id = meta
-            .and_then(|meta| meta.get("backendSessionId"))
-            .or_else(|| session.get("backendSessionId"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        let backend_session_id = session_backend_identity(meta, &session).map(str::to_owned);
         let canonical_transcript = transcript.map(canonical_transcript_identity).transpose()?;
         let source_identity = backend_session_id
             .as_deref()
@@ -743,6 +766,23 @@ fn summarize_tokens(records: &[&SessionSpend], tool: &str, since: i64) -> UsageT
     }
 }
 
+fn session_backend_identity<'a>(
+    metadata: Option<&'a Value>,
+    session: &'a Value,
+) -> Option<&'a str> {
+    metadata
+        .and_then(|metadata| metadata.get("backendSessionId").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|backend| !backend.is_empty())
+        .or_else(|| {
+            session
+                .get("backendSessionId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|backend| !backend.is_empty())
+        })
+}
+
 fn session_tool(session: &Value) -> Option<&str> {
     session
         .get("toolConfigKey")
@@ -992,12 +1032,20 @@ fn try_read_codex_quotas(
         if !seen_buckets.insert(bucket_id.to_owned()) {
             continue;
         }
-        let observed_at = entry
-            .get("timestamp")
+        let timestamp = entry.get("timestamp");
+        let observed_at = timestamp
             .and_then(Value::as_str)
             .and_then(super::usage::parse_recency_timestamp)
             .and_then(|ms| i64::try_from(ms / 1000).ok());
         let observation = match observed_at {
+            None if timestamp.is_some() => UsageQuotaObservation::error(
+                CODEX_RATE_LIMIT_SOURCE,
+                now,
+                format!(
+                    "Codex quota source {} bucket {bucket_id}: invalid observation timestamp",
+                    transcript.display()
+                ),
+            ),
             None => UsageQuotaObservation::absent(
                 CODEX_RATE_LIMIT_SOURCE,
                 now,

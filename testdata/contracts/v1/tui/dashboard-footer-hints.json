@@ -6,7 +6,7 @@
   "sources": ["src/tui/screens/dashboard-renderers.test.ts", "src/tui/screens/dashboard-renderers.ts"],
   "subject": "buildDashboardFooterHints",
   "description": "Dashboard footer hint ordering and labels captured from TypeScript.",
-  "caseCount": 6,
+  "caseCount": 7,
   "cases": [
     {
       "id": "dashboard-footer-hints-001",
@@ -2419,7 +2419,6 @@
       },
       "output": [
         ["↑↓/jk", "worktrees"],
-        ["0", "supervisor"],
         ["1-9", "worktrees"],
         ["Enter/→/l", "step in"],
         ["Tab", "details"],
@@ -2437,6 +2436,69 @@
         ["q", "quit"]
       ],
       "inputSha256": "1df91cc987bf1e223adc375f2a5a1f2a54aced4bb5d60682e06f0f228c26fcdd"
+    },
+    {
+      "id": "dashboard-footer-hints-007",
+      "name": "cached usage offers the dedicated usage screen",
+      "source": "src/tui/screens/dashboard-renderers.ts",
+      "api": "buildDashboardFooterHints",
+      "input": {
+        "snapshot": {
+          "usage": {"state": "absent","observedAt": 1000,"startedAt": 1000,"collectionIntervalMs": 300000,"tools": [],"displayLines": ["Usage: unknown: no observations"],"reason": null},
+          "agentRestoreOffer": null,
+          "sessions": [],
+          "teammates": [],
+          "services": [],
+          "worktrees": [
+            {
+              "name": "Main Checkout",
+              "path": "<REPO>",
+              "branch": "master",
+              "isBare": false,
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            },
+            {
+              "name": "feature-a",
+              "path": "<WORKTREE>",
+              "branch": "feature-a",
+              "isBare": false,
+              "createdAt": "2026-01-01T00:00:05.000Z"
+            }
+          ],
+          "worktreeGroups": [],
+          "operationFailures": [],
+          "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+          "mainCheckoutPath": "<REPO>"
+        },
+        "state": {
+          "selectedSessionId": null,
+          "selectedServiceId": null,
+          "navLevel": "sessions",
+          "hideOfflineAgents": false,
+          "previewSource": "output"
+        }
+      },
+      "output": [
+        ["Tab", "details"],
+        ["u", "attention"],
+        ["n", "agent"],
+        ["v", "service"],
+        ["f", "fork"],
+        ["D", "cache cleanup"],
+        ["a", "hide offline"],
+        ["s", "msg"],
+        ["H", "handoff"],
+        ["T", "task"],
+        ["o", "thread"],
+        ["O", "overseer menu"],
+        ["P", "scribe"],
+        ["R", "reply"],
+        ["O p", "loop alerts"],
+        ["U", "usage"],
+        ["?", "help"],
+        ["q", "quit"]
+      ],
+      "inputSha256": "38d3acc1ff32253a28306c2703393203df9a8e9c05a65382524fee19f479ab6b"
     }
   ]
 }

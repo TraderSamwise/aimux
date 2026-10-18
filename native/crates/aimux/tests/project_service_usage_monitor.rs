@@ -637,6 +637,193 @@ fn stale_and_live_aliases_share_one_physical_runtime_baseline() {
 }
 
 #[test]
+fn stale_claude_statusline_id_follows_the_live_backend_but_not_another_session() {
+    for (old_topology_backend, replacement_backend, omit_replacement_backend) in [
+        (Some("old-backend"), Some("old-backend"), false),
+        (Some("old-backend"), Some("different-backend"), false),
+        (None, Some("old-backend"), false),
+        (None, Some("different-backend"), false),
+        (None, None, false),
+        (None, None, true),
+        (None, Some(""), false),
+    ] {
+        let shared_backend = replacement_backend == Some("old-backend");
+        let fixture = Fixture::new(&[("old", "claude"), ("new", "claude")]);
+        let mut topology = aimux::runtime_topology::read_runtime_topology(runtime_topology_path(
+            fixture.context.project_state_dir(),
+        ))
+        .unwrap();
+        topology["sessions"][0]["status"] = json!("offline");
+        topology["sessions"][0]["backendSessionId"] = json!(old_topology_backend);
+        topology["sessions"][1]["backendSessionId"] = json!(replacement_backend);
+        topology["sessions"][1]["updatedAt"] = json!("2026-10-18T00:01:00.000Z");
+        if omit_replacement_backend {
+            topology["sessions"][1]
+                .as_object_mut()
+                .unwrap()
+                .remove("backendSessionId");
+        }
+        write_runtime_topology(
+            runtime_topology_path(fixture.context.project_state_dir()),
+            &topology,
+        )
+        .unwrap();
+        let metadata_path = metadata_state_path(fixture.context.project_state_dir());
+        let mut metadata: Value =
+            serde_json::from_str(&fs::read_to_string(&metadata_path).unwrap()).unwrap();
+        metadata["sessions"]["old"]["backendSessionId"] = json!("old-backend");
+        metadata["sessions"]["new"]["backendSessionId"] = json!(replacement_backend);
+        if omit_replacement_backend {
+            metadata["sessions"]["new"]
+                .as_object_mut()
+                .unwrap()
+                .remove("backendSessionId");
+        }
+        if shared_backend {
+            metadata["sessions"]["new"]["context"]["transcriptPath"] =
+                json!(fixture.transcript("old"));
+        }
+        write_json_atomic(&metadata_path, &metadata).unwrap();
+
+        assert_eq!(
+            fixture
+                .post(
+                    "old",
+                    json!({"five_hour":{"used_percentage":45,"resets_at":4102444800_i64}}),
+                )
+                .status,
+            200
+        );
+        fixture.collect(1000);
+        let body = fixture.get();
+        let claude = body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["tool"] == "claude")
+            .unwrap();
+        let sources = claude["quotaSources"].as_array().unwrap();
+        let live = sources
+            .iter()
+            .find(|source| source["sessionId"] == "new")
+            .unwrap();
+        if shared_backend {
+            assert_eq!(sources.len(), 1);
+            assert_eq!(live["observation"]["windows"][0]["usedPercent"], 45.0);
+            assert_eq!(live["observation"]["state"], "known");
+        } else {
+            assert_eq!(sources.len(), 2);
+            assert_eq!(live["observation"]["state"], "absent");
+            assert!(live["observation"]["windows"][0]["usedPercent"].is_null());
+            let old = sources
+                .iter()
+                .find(|source| source["sessionId"] == "old")
+                .unwrap();
+            assert_eq!(old["observation"]["windows"][0]["usedPercent"], 45.0);
+        }
+    }
+}
+
+#[test]
+fn codex_missing_timestamp_is_unknown_and_malformed_timestamp_is_an_error_on_the_route() {
+    for timestamp in [
+        None,
+        Some(json!("broken")),
+        Some(json!(false)),
+        Some(Value::Null),
+    ] {
+        let fixture = Fixture::new(&[("cx", "codex")]);
+        let mut record = codex_record(
+            1,
+            json!({"primary":{"used_percent":0,"window_minutes":300,"resets_at":4102444800_i64}}),
+        );
+        match &timestamp {
+            Some(timestamp) => record["timestamp"] = timestamp.clone(),
+            None => {
+                record.as_object_mut().unwrap().remove("timestamp");
+            }
+        }
+        append(&fixture.transcript("cx"), record);
+        fixture.collect(1000);
+        let body = fixture.get();
+        let codex = body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["tool"] == "codex")
+            .unwrap();
+        let observation = &codex["quotaSources"][0]["observation"];
+        if timestamp.is_some() {
+            assert_eq!(body["state"], "error");
+            assert_eq!(observation["state"], "error");
+            assert_eq!(observation["windows"][0]["state"], "error");
+            assert!(
+                observation["reason"]
+                    .as_str()
+                    .unwrap()
+                    .contains("invalid observation timestamp")
+            );
+        } else {
+            assert_eq!(body["state"], "absent");
+            assert_eq!(observation["state"], "absent");
+            assert_eq!(observation["windows"][0]["state"], "absent");
+        }
+        assert!(observation["windows"][0]["usedPercent"].is_null());
+    }
+}
+
+#[test]
+fn null_metadata_backend_keeps_the_topology_identity_and_one_spend_baseline() {
+    let fixture = Fixture::new(&[("cx", "codex")]);
+    let mut topology = aimux::runtime_topology::read_runtime_topology(runtime_topology_path(
+        fixture.context.project_state_dir(),
+    ))
+    .unwrap();
+    topology["sessions"][0]["backendSessionId"] = json!("backend-cx");
+    write_runtime_topology(
+        runtime_topology_path(fixture.context.project_state_dir()),
+        &topology,
+    )
+    .unwrap();
+    append(&fixture.transcript("cx"), codex_record(1, Value::Null));
+    fixture.collect(100);
+    append(&fixture.transcript("cx"), codex_record(2, Value::Null));
+    assert_eq!(tokens(&fixture.collect(200), "codex"), Some(150));
+
+    let metadata_path = metadata_state_path(fixture.context.project_state_dir());
+    let mut metadata: Value =
+        serde_json::from_str(&fs::read_to_string(&metadata_path).unwrap()).unwrap();
+    metadata["sessions"]["cx"]["backendSessionId"] = Value::Null;
+    write_json_atomic(&metadata_path, &metadata).unwrap();
+    append(&fixture.transcript("cx"), codex_record(3, Value::Null));
+    assert_eq!(tokens(&fixture.collect(300), "codex"), Some(300));
+    append(&fixture.transcript("cx"), codex_record(4, Value::Null));
+    assert_eq!(tokens(&fixture.collect(400), "codex"), Some(450));
+
+    metadata["sessions"]["cx"]["backendSessionId"] = json!("backend-cx");
+    write_json_atomic(&metadata_path, &metadata).unwrap();
+    append(&fixture.transcript("cx"), codex_record(5, Value::Null));
+    fixture.collect(500);
+    let body = fixture.get();
+    let codex = body["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["tool"] == "codex")
+        .unwrap();
+    assert_eq!(codex["tokenSpend"]["billedTokens"], 600);
+    assert_eq!(codex["tokenSpend"]["measuredSessions"], 1);
+    let state: Value = serde_json::from_str(
+        &fs::read_to_string(usage_monitor_state_path(
+            fixture.context.project_state_dir(),
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(state["sessions"].as_object().unwrap().len(), 1);
+}
+
+#[test]
 fn configured_aliases_use_actual_runtime_and_spoofed_claude_key_is_rejected() {
     let fixture = Fixture::new(&[
         ("cc", "claude-fast"),

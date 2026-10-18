@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -187,14 +187,12 @@ pub fn run_statusline_with_source(
     settings_source: Option<&Path>,
 ) -> Result<i32, String> {
     let mut input = Vec::new();
-    std::io::stdin()
-        .lock()
+    let stdin = std::io::stdin();
+    let mut stdin = stdin.lock();
+    (&mut stdin)
         .take(MAX_STATUSLINE_BYTES + 1)
         .read_to_end(&mut input)
         .map_err(|error| format!("cannot read Claude statusline stdin: {error}"))?;
-    if input.len() as u64 > MAX_STATUSLINE_BYTES {
-        return Err("Claude statusline stdin exceeds 1 MiB".to_owned());
-    }
     let mut forwarded = forward_command.map(str::to_owned);
     let source_error = if let Some(source) = settings_source {
         match crate::tool_hooks::refresh_claude_hook_settings(source) {
@@ -207,6 +205,14 @@ pub fn run_statusline_with_source(
     } else {
         None
     };
+    // Only collection is bounded. Keep the complete original stream outside memory
+    // when a user command needs it, including bytes beyond the collection limit.
+    let forwarded_input = if forwarded.is_some() {
+        Some(spool_statusline_input(&input, &mut stdin)?)
+    } else {
+        None
+    };
+    drop(stdin);
     let mut collection = collect_statusline(endpoint_file, session_id, &input);
     if let Some(reason) = source_error {
         let reason = match report_statusline_error(endpoint_file, session_id, &reason) {
@@ -224,7 +230,10 @@ pub fn run_statusline_with_source(
         eprintln!("aimux Claude usage collection: {error}");
     }
     if let Some(command) = forwarded {
-        return forward_statusline(&command, &input);
+        return forward_statusline(
+            &command,
+            forwarded_input.ok_or("original Claude statusline input unavailable")?,
+        );
     }
     if let Err(error) = collection {
         println!("aimux usage error: {error}");
@@ -232,36 +241,99 @@ pub fn run_statusline_with_source(
     Ok(0)
 }
 
-fn forward_statusline(command: &str, input: &[u8]) -> Result<i32, String> {
-    let mut child = Command::new("/bin/sh")
-        .args(["-c", command])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|error| format!("cannot start original Claude statusline: {error}"))?;
-    let write_result = child
-        .stdin
-        .take()
-        .ok_or("original Claude statusline stdin unavailable")?
-        .write_all(input);
-    let status = child
-        .wait()
-        .map_err(|error| format!("cannot wait for original Claude statusline: {error}"))?;
-    if let Err(error) = write_result
-        && error.kind() != std::io::ErrorKind::BrokenPipe
-    {
-        return Err(format!(
-            "cannot forward original Claude statusline stdin: {error}"
-        ));
-    }
+fn spool_statusline_input(
+    prefix: &[u8],
+    remaining: &mut impl Read,
+) -> Result<std::fs::File, String> {
+    use std::fs::OpenOptions;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("cannot name original Claude statusline stdin file: {error}"))?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "aimux-claude-statusline-{}-{timestamp}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::process::ExitStatusExt;
-        Ok(status
-            .code()
-            .unwrap_or_else(|| 128 + status.signal().unwrap_or(1)))
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&path)
+        .map_err(|error| format!("cannot create original Claude statusline stdin file: {error}"))?;
+    // Remove the name before putting any potentially private statusline data in it.
+    // The open descriptor owns its lifetime, including when the callback is killed.
+    std::fs::remove_file(&path)
+        .map_err(|error| format!("cannot unlink original Claude statusline stdin file: {error}"))?;
+    file.write_all(prefix)
+        .map_err(|error| format!("cannot spool original Claude statusline stdin: {error}"))?;
+    std::io::copy(remaining, &mut file)
+        .map_err(|error| format!("cannot spool original Claude statusline stdin: {error}"))?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|error| format!("cannot rewind original Claude statusline stdin: {error}"))?;
+    Ok(file)
+}
+
+fn forward_statusline(command: &str, input: std::fs::File) -> Result<i32, String> {
+    let mut command_process = Command::new("/bin/sh");
+    command_process
+        .args(["-c", command])
+        .stdin(Stdio::from(input))
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Replace the callback so cancellation and signal status reach the same
+        // process Claude started, without leaving a forwarding child behind.
+        Err(format!(
+            "cannot start original Claude statusline: {}",
+            command_process.exec()
+        ))
     }
     #[cfg(not(unix))]
-    Ok(status.code().unwrap_or(1))
+    {
+        let status = command_process
+            .status()
+            .map_err(|error| format!("cannot run original Claude statusline: {error}"))?;
+        Ok(status.code().unwrap_or(1))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    #[test]
+    fn forwarded_stdin_is_private_unlinked_and_complete_and_read_failures_propagate() {
+        let mut remaining = &b"remaining\0unicode: \xe6\xb8\xac"[..];
+        let mut file = spool_statusline_input(b"prefix", &mut remaining).unwrap();
+        let metadata = file.metadata().unwrap();
+        assert_eq!(metadata.nlink(), 0);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"prefixremaining\0unicode: \xe6\xb8\xac");
+
+        struct FailedRead;
+        impl Read for FailedRead {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("original stdin read failed"))
+            }
+        }
+        assert!(
+            spool_statusline_input(b"prefix", &mut FailedRead)
+                .unwrap_err()
+                .contains("original stdin read failed")
+        );
+    }
 }

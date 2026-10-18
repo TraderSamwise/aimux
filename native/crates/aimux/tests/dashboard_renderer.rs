@@ -2321,6 +2321,7 @@ fn help_screen_names_global_loop_alert_pause_shortcut_path() {
 
     assert!(plain.contains("[0 then 1-9] open supervisor session"));
     assert!(plain.contains("[1-9 then 1-9] open worktree entry"));
+    assert!(plain.contains("[U] usage"));
     assert!(plain.contains("[A] edit offline restart args"));
     assert!(plain.contains("[O] overseer menu"));
     assert!(plain.contains("[O then p] pause/resume loop alerts"));

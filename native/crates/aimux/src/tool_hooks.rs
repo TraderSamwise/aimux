@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::atomic_write::write_json_atomic;
+use crate::atomic_write::atomic_write;
 use crate::shell_hooks::shell_quote;
 
 pub fn codex_launch_hook_args() -> Vec<String> {
@@ -145,7 +145,7 @@ pub fn inject_claude_hook_args(
         .join("claude-settings")
         .join(format!("{session_id}.source.json"));
     let (args, settings, _) = composed_settings_from_source(&source, &source_path)?;
-    write_json_atomic(&source_path, &source).map_err(|error| {
+    write_generated_claude_json(&source_path, &source).map_err(|error| {
         format!(
             "write Claude settings source {}: {error}",
             source_path.display()
@@ -212,7 +212,8 @@ fn composed_settings_from_source(
 }
 
 pub fn refresh_claude_hook_settings(source_path: &Path) -> Result<Option<String>, String> {
-    let value = read_claude_settings(source_path, false)?;
+    let value =
+        read_claude_settings_with_limit(source_path, false, MAX_GENERATED_CLAUDE_SETTINGS_BYTES)?;
     let source: ClaudeSettingsSource = serde_json::from_value(value).map_err(|error| {
         format!(
             "invalid Claude settings source {}: {error}",
@@ -224,7 +225,9 @@ pub fn refresh_claude_hook_settings(source_path: &Path) -> Result<Option<String>
         .project_state_dir
         .join("claude-settings")
         .join(format!("{}.json", source.session_id));
-    if read_claude_settings(&path, false)? != settings {
+    if read_claude_settings_with_limit(&path, false, MAX_GENERATED_CLAUDE_SETTINGS_BYTES)?
+        != settings
+    {
         write_claude_hook_settings_file(&source.project_state_dir, &source.session_id, &settings)?;
     }
     Ok(forwarded)
@@ -248,11 +251,39 @@ fn write_claude_hook_settings_file(
 ) -> Result<std::path::PathBuf, String> {
     let settings_dir = project_state_dir.as_ref().join("claude-settings");
     let settings_path = settings_dir.join(format!("{session_id}.json"));
-    write_json_atomic(&settings_path, settings).map_err(|error| error.to_string())?;
+    write_generated_claude_json(&settings_path, settings)?;
     Ok(settings_path)
 }
 
+const MAX_CLAUDE_SETTINGS_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_GENERATED_CLAUDE_SETTINGS_BYTES: u64 = 16 * 1024 * 1024;
+
+fn write_generated_claude_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    let data = serde_json::to_vec(value).map_err(|error| {
+        format!(
+            "cannot serialize Claude settings {}: {error}",
+            path.display()
+        )
+    })?;
+    if data.len() as u64 > MAX_GENERATED_CLAUDE_SETTINGS_BYTES {
+        return Err(format!(
+            "generated Claude settings {} exceed 16 MiB",
+            path.display()
+        ));
+    }
+    atomic_write(path, data)
+        .map_err(|error| format!("cannot write Claude settings {}: {error}", path.display()))
+}
+
 fn read_claude_settings(path: &Path, optional: bool) -> Result<Value, String> {
+    read_claude_settings_with_limit(path, optional, MAX_CLAUDE_SETTINGS_BYTES)
+}
+
+fn read_claude_settings_with_limit(
+    path: &Path,
+    optional: bool,
+    limit: u64,
+) -> Result<Value, String> {
     match std::fs::metadata(path) {
         Ok(metadata) if !metadata.is_file() => {
             return Err(format!(
@@ -301,11 +332,15 @@ fn read_claude_settings(path: &Path, optional: bool) -> Result<Value, String> {
     }
     use std::io::Read;
     let mut bytes = Vec::new();
-    file.take(2 * 1024 * 1024 + 1)
+    file.take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| format!("failed to read Claude settings {}: {error}", path.display()))?;
-    if bytes.len() > 2 * 1024 * 1024 {
-        return Err(format!("Claude settings {} exceed 2 MiB", path.display()));
+    if bytes.len() as u64 > limit {
+        return Err(format!(
+            "Claude settings {} exceed {} MiB",
+            path.display(),
+            limit / (1024 * 1024)
+        ));
     }
     parse_claude_settings(&bytes, &path.display().to_string())
 }
@@ -450,7 +485,19 @@ fn claude_local_settings_root(cwd: &Path) -> Result<Option<std::path::PathBuf>, 
                 )? {
                     return Ok(None);
                 }
-                if metadata.is_dir() {
+                // Git permits .git to be a symlink to a directory. Keep the
+                // ownership policy above, but classify the resolved marker.
+                let resolved = if metadata.file_type().is_symlink() {
+                    std::fs::metadata(&marker).map_err(|error| {
+                        format!(
+                            "cannot resolve Claude settings git root {}: {error}",
+                            marker.display()
+                        )
+                    })?
+                } else {
+                    metadata
+                };
+                if resolved.is_dir() {
                     return Ok(Some(ancestor.to_path_buf()));
                 }
                 let text = std::fs::read_to_string(&marker).map_err(|error| {
@@ -1166,6 +1213,108 @@ mod tests {
         assert!(
             claude_local_root_allowed(&root, Some(&root.join("absent-home")), false, owner)
                 .unwrap()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_launch_accepts_git_directory_symlinks_and_rejects_dangling_markers() {
+        let root = temp_state_dir("claude-git-symlink");
+        let project = root.join("project");
+        let git_dir = root.join("git-data");
+        std::fs::create_dir_all(project.join(".claude")).unwrap();
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::os::unix::fs::symlink(&git_dir, project.join(".git")).unwrap();
+        std::fs::write(
+            project.join(".claude/settings.local.json"),
+            r#"{"statusLine":{"type":"command","command":"printf linked"}}"#,
+        )
+        .unwrap();
+        let args = vec!["--setting-sources=local".into()];
+        let injected =
+            inject_claude_hook_args(args.clone(), &root, "linked", None, &project, None).unwrap();
+        let settings = read_claude_settings(Path::new(&injected[1]), false).unwrap();
+        assert!(
+            settings["statusLine"]["command"]
+                .as_str()
+                .unwrap()
+                .contains("printf linked")
+        );
+        assert_eq!(
+            refresh_claude_hook_settings(&root.join("claude-settings/linked.source.json"))
+                .unwrap()
+                .as_deref(),
+            Some("printf linked")
+        );
+        std::fs::remove_dir(&git_dir).unwrap();
+        assert!(
+            inject_claude_hook_args(args, &root, "dangling", None, &project, None)
+                .unwrap_err()
+                .contains("cannot resolve Claude settings git root")
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn large_accepted_explicit_settings_remain_readable_after_generation_and_refresh() {
+        let root = temp_state_dir("claude-large-settings");
+        std::fs::create_dir_all(&root).unwrap();
+        let explicit = root.join("explicit.json");
+        let settings = json!({"permissions":{"allow":(0..100_000).map(|index| format!("Read(x{index})")).collect::<Vec<_>>()}, "statusLine":{"type":"command","command":"printf current"}});
+        assert!(serde_json::to_vec(&settings).unwrap().len() < MAX_CLAUDE_SETTINGS_BYTES as usize);
+        assert!(
+            serde_json::to_vec_pretty(&settings).unwrap().len()
+                > MAX_CLAUDE_SETTINGS_BYTES as usize
+        );
+        std::fs::write(&explicit, settings.to_string()).unwrap();
+        let injected = inject_claude_hook_args(
+            vec![
+                "--setting-sources=".into(),
+                "--settings".into(),
+                path_string(&explicit),
+            ],
+            &root,
+            "large",
+            None,
+            &root,
+            None,
+        )
+        .unwrap();
+        let source = root.join("claude-settings/large.source.json");
+        for _ in 0..2 {
+            assert_eq!(
+                refresh_claude_hook_settings(&source).unwrap().as_deref(),
+                Some("printf current")
+            );
+        }
+        let generated = read_claude_settings_with_limit(
+            Path::new(&injected[1]),
+            false,
+            MAX_GENERATED_CLAUDE_SETTINGS_BYTES,
+        )
+        .unwrap();
+        assert_eq!(generated["permissions"], settings["permissions"]);
+        std::fs::write(
+            &explicit,
+            vec![b' '; MAX_CLAUDE_SETTINGS_BYTES as usize + 1],
+        )
+        .unwrap();
+        assert!(
+            refresh_claude_hook_settings(&source)
+                .unwrap_err()
+                .contains("exceed 2 MiB")
+        );
+        let oversized = json!({"value":"x".repeat(MAX_GENERATED_CLAUDE_SETTINGS_BYTES as usize)});
+        let destination = root.join("too-large.json");
+        assert!(
+            write_generated_claude_json(&destination, &oversized)
+                .unwrap_err()
+                .contains("exceed 16 MiB")
+        );
+        assert!(
+            !destination.exists(),
+            "reject unusable generated settings before publishing them"
         );
         let _ = std::fs::remove_dir_all(root);
     }

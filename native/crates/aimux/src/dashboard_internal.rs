@@ -2831,9 +2831,10 @@ fn render_dashboard_subscreen_snapshot(
         pending_actions.reconcile_graveyard_resource(resource, pending_now_ms);
         pending_actions.apply_to_graveyard_resource(resource);
     }
-    controller.set_subscreen_actions(dashboard_screen_actions(
+    controller.set_subscreen_actions(dashboard_screen_actions_with_width(
         controller.screen,
         resource.as_ref(),
+        viewport.cols,
     ));
     // The stream error reaches here too. A subscreen that silently stopped
     // receiving events looked exactly like a subscreen with nothing happening.
@@ -2884,6 +2885,22 @@ fn render_dashboard_subscreen_snapshot(
     frame
 }
 
+#[doc(hidden)]
+pub fn dashboard_screen_actions_with_width(
+    screen: DashboardScreen,
+    resource: Option<&serde_json::Value>,
+    cols: usize,
+) -> Vec<DashboardSubscreenAction> {
+    if screen == DashboardScreen::Usage {
+        vec![
+            DashboardSubscreenAction::None;
+            crate::dashboard_renderer::usage_screen_rows(resource, cols).len()
+        ]
+    } else {
+        dashboard_screen_actions(screen, resource)
+    }
+}
+
 fn dashboard_screen_actions(
     screen: DashboardScreen,
     resource: Option<&serde_json::Value>,
@@ -2892,7 +2909,9 @@ fn dashboard_screen_actions(
         return Vec::new();
     };
     let rows = match screen {
-        DashboardScreen::Dashboard | DashboardScreen::Help => return Vec::new(),
+        DashboardScreen::Dashboard | DashboardScreen::Help | DashboardScreen::Usage => {
+            return Vec::new();
+        }
         DashboardScreen::Coordination => json_array(resource, &["worklist"]),
         DashboardScreen::Project => json_array(resource, &["project", "story"]),
         DashboardScreen::Library => json_array(resource, &["entries"]),
@@ -2947,9 +2966,10 @@ fn dashboard_screen_action(
                 .unwrap_or(DashboardSubscreenAction::None),
             _ => DashboardSubscreenAction::None,
         },
-        DashboardScreen::Project | DashboardScreen::Dashboard | DashboardScreen::Help => {
-            DashboardSubscreenAction::None
-        }
+        DashboardScreen::Project
+        | DashboardScreen::Dashboard
+        | DashboardScreen::Help
+        | DashboardScreen::Usage => DashboardSubscreenAction::None,
     }
 }
 
@@ -2979,7 +2999,8 @@ fn first_json_string(value: &serde_json::Value, path: &[&str]) -> Option<String>
         .map(str::to_owned)
 }
 
-fn dashboard_screen_resource_path(screen: DashboardScreen) -> Option<&'static str> {
+#[doc(hidden)]
+pub fn dashboard_screen_resource_path(screen: DashboardScreen) -> Option<&'static str> {
     match screen {
         DashboardScreen::Dashboard | DashboardScreen::Help => None,
         DashboardScreen::Coordination => {
@@ -2989,6 +3010,7 @@ fn dashboard_screen_resource_path(screen: DashboardScreen) -> Option<&'static st
             Some(crate::project_api_contract::routes::PROJECT_OBSERVABILITY)
         }
         DashboardScreen::Library => Some(crate::project_api_contract::routes::LIBRARY),
+        DashboardScreen::Usage => Some(crate::project_api_contract::routes::USAGE),
         DashboardScreen::Topology => Some(crate::project_api_contract::routes::TOPOLOGY),
         DashboardScreen::Graveyard => Some(crate::project_api_contract::routes::GRAVEYARD),
     }
@@ -5516,6 +5538,7 @@ mod tests {
             DashboardScreen::Coordination,
             DashboardScreen::Project,
             DashboardScreen::Library,
+            DashboardScreen::Usage,
             DashboardScreen::Help,
         ] {
             assert!(

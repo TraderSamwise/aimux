@@ -328,3 +328,120 @@ fn wrapper_preserves_original_stdin_stdout_stderr_and_exit_when_collection_fails
     assert!(stderr.contains("original-error"));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+fn isolated_callback(dir: &std::path::Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aimux"));
+    command
+        .env("AIMUX_HOME", dir.join("aimux-home"))
+        .env("TMPDIR", dir)
+        .args(["claude-usage-statusline", "--endpoint-file"])
+        .arg(dir.join("endpoint"))
+        .args(["--session-id", "claude-1"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
+}
+
+#[test]
+fn oversized_input_is_forwarded_in_full_and_commands_may_ignore_stdin() {
+    let dir = fixture("oversized-forward");
+    let input = json!({"text":"測試🙂".repeat(150_000)})
+        .to_string()
+        .into_bytes();
+    assert!(input.len() > 1024 * 1024);
+    for (command, expected_output, expected_code) in [
+        (
+            "cat; printf original-error >&2; exit 7",
+            input.as_slice(),
+            7,
+        ),
+        ("printf ignored; exit 9", b"ignored".as_slice(), 9),
+    ] {
+        let mut child = isolated_callback(&dir)
+            .args(["--forward-command", command])
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&input).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(output.status.code(), Some(expected_code));
+        assert_eq!(output.stdout, expected_output);
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .contains("exceeds 1 MiB")
+        );
+        assert!(
+            !std::fs::read_dir(&dir).unwrap().any(|entry| entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("aimux-claude-statusline-")),
+            "forwarded stdin must have no remaining filesystem name"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn oversized_input_without_a_user_command_reports_shared_and_visible_error() {
+    let dir = fixture("oversized-no-forward");
+    let server = serve_once(&dir.join("endpoint"), 200, json!({"ok":true}));
+    let mut input = vec![b' '; 1024 * 1024 + 1];
+    input[..2].copy_from_slice(b"{}");
+    let mut child = isolated_callback(&dir).spawn().unwrap();
+    child.stdin.take().unwrap().write_all(&input).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("aimux usage error: Claude statusline stdin exceeds 1 MiB")
+    );
+    assert_eq!(
+        server.join().unwrap()["collectorError"],
+        "Claude statusline stdin exceeds 1 MiB"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn forwarded_shell_keeps_callback_identity_and_receives_cancellation_directly() {
+    use std::io::BufRead;
+    use std::os::unix::process::ExitStatusExt;
+
+    let dir = fixture("forwarded-process-identity");
+    let mut child = isolated_callback(&dir)
+        .args([
+            "--forward-command",
+            "printf '%s\n' \"$$\"; exec /bin/sleep 30",
+        ])
+        .spawn()
+        .unwrap();
+    let callback_pid = child.id();
+    child.stdin.take().unwrap().write_all(b"{}").unwrap();
+    let mut line = String::new();
+    std::io::BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let forwarded_pid = line.trim().parse::<u32>().unwrap();
+    // Clean up both identities even under the old implementation, so the
+    // regression assertion cannot leak the sleeper it is intended to detect.
+    assert_eq!(
+        unsafe { libc::kill(forwarded_pid as i32, libc::SIGTERM) },
+        0
+    );
+    if forwarded_pid != callback_pid {
+        unsafe {
+            libc::kill(callback_pid as i32, libc::SIGTERM);
+        }
+    }
+    let status = child.wait().unwrap();
+    assert_eq!(
+        forwarded_pid, callback_pid,
+        "forwarding must replace the callback rather than orphan a child on cancellation"
+    );
+    assert_eq!(status.signal(), Some(libc::SIGTERM));
+    let _ = std::fs::remove_dir_all(dir);
+}

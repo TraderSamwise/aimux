@@ -244,6 +244,11 @@
                 "hot": false
               },
               {
+                "name": "usage-monitor",
+                "intervalMs": "<interval-ms-or-null>",
+                "hot": false
+              },
+              {
                 "name": "window-reconciliation",
                 "intervalMs": "<interval-ms-or-null>",
                 "hot": false
@@ -287,6 +292,14 @@
           },
           "pendingInteractions": [],
           "sessions": [],
+          "supervisorLane": {
+            "sessions": []
+          },
+          "agentCreation": {
+            "defaultTarget": "supervisor",
+            "defaultRole": "control",
+            "worktreeRole": "coder"
+          },
           "teammates": [],
           "services": [],
           "worktrees": [
@@ -322,6 +335,197 @@
           "tasks": {
             "pending": 0,
             "assigned": 0
+          },
+          "usage": {
+            "state": "absent",
+            "observedAt": "<timestamp>",
+            "startedAt": "<timestamp>",
+            "collectionIntervalMs": 300000,
+            "tools": [
+              {
+                "tool": "aider",
+                "label": "aider",
+                "tokenSpend": {
+                  "state": "absent",
+                  "billedTokens": null,
+                  "since": "<timestamp>",
+                  "measuredSessions": 0,
+                  "unmeasuredSessions": 0,
+                  "errorSessions": 0,
+                  "reason": "no observed runtime sessions"
+                },
+                "quotaSources": [
+                  {
+                    "sessionId": null,
+                    "observation": {
+                      "state": "absent",
+                      "source": "runtime",
+                      "observedAt": "<timestamp>",
+                      "windows": [
+                        {
+                          "id": "five_hour",
+                          "label": "5h",
+                          "state": "absent",
+                          "usedPercent": null,
+                          "usedUsd": null,
+                          "limitUsd": null,
+                          "period": null,
+                          "windowMinutes": 300,
+                          "resetsAt": null,
+                          "reason": "no runtime quota observation available",
+                          "source": "runtime"
+                        },
+                        {
+                          "id": "weekly",
+                          "label": "Weekly",
+                          "state": "absent",
+                          "usedPercent": null,
+                          "usedUsd": null,
+                          "limitUsd": null,
+                          "period": null,
+                          "windowMinutes": 10080,
+                          "resetsAt": null,
+                          "reason": "no runtime quota observation available",
+                          "source": "runtime"
+                        }
+                      ],
+                      "reason": "no runtime quota observation available"
+                    }
+                  }
+                ],
+                "displayLines": [
+                  "aider: tokens unknown: no observed runtime sessions",
+                  "aider [no session]: 5h: unknown: no runtime quota observation available",
+                  "aider [no session]: Weekly: unknown: no runtime quota observation available"
+                ]
+              },
+              {
+                "tool": "claude",
+                "label": "claude",
+                "tokenSpend": {
+                  "state": "absent",
+                  "billedTokens": null,
+                  "since": "<timestamp>",
+                  "measuredSessions": 0,
+                  "unmeasuredSessions": 0,
+                  "errorSessions": 0,
+                  "reason": "no observed runtime sessions"
+                },
+                "quotaSources": [
+                  {
+                    "sessionId": null,
+                    "observation": {
+                      "state": "absent",
+                      "source": "runtime",
+                      "observedAt": "<timestamp>",
+                      "windows": [
+                        {
+                          "id": "five_hour",
+                          "label": "5h",
+                          "state": "absent",
+                          "usedPercent": null,
+                          "usedUsd": null,
+                          "limitUsd": null,
+                          "period": null,
+                          "windowMinutes": 300,
+                          "resetsAt": null,
+                          "reason": "no runtime quota observation available",
+                          "source": "runtime"
+                        },
+                        {
+                          "id": "weekly",
+                          "label": "Weekly",
+                          "state": "absent",
+                          "usedPercent": null,
+                          "usedUsd": null,
+                          "limitUsd": null,
+                          "period": null,
+                          "windowMinutes": 10080,
+                          "resetsAt": null,
+                          "reason": "no runtime quota observation available",
+                          "source": "runtime"
+                        }
+                      ],
+                      "reason": "no runtime quota observation available"
+                    }
+                  }
+                ],
+                "displayLines": [
+                  "claude: tokens unknown: no observed runtime sessions",
+                  "claude [no session]: 5h: unknown: no runtime quota observation available",
+                  "claude [no session]: Weekly: unknown: no runtime quota observation available"
+                ]
+              },
+              {
+                "tool": "codex",
+                "label": "codex",
+                "tokenSpend": {
+                  "state": "absent",
+                  "billedTokens": null,
+                  "since": "<timestamp>",
+                  "measuredSessions": 0,
+                  "unmeasuredSessions": 0,
+                  "errorSessions": 0,
+                  "reason": "no observed runtime sessions"
+                },
+                "quotaSources": [
+                  {
+                    "sessionId": null,
+                    "observation": {
+                      "state": "absent",
+                      "source": "runtime",
+                      "observedAt": "<timestamp>",
+                      "windows": [
+                        {
+                          "id": "five_hour",
+                          "label": "5h",
+                          "state": "absent",
+                          "usedPercent": null,
+                          "usedUsd": null,
+                          "limitUsd": null,
+                          "period": null,
+                          "windowMinutes": 300,
+                          "resetsAt": null,
+                          "reason": "no runtime quota observation available",
+                          "source": "runtime"
+                        },
+                        {
+                          "id": "weekly",
+                          "label": "Weekly",
+                          "state": "absent",
+                          "usedPercent": null,
+                          "usedUsd": null,
+                          "limitUsd": null,
+                          "period": null,
+                          "windowMinutes": 10080,
+                          "resetsAt": null,
+                          "reason": "no runtime quota observation available",
+                          "source": "runtime"
+                        }
+                      ],
+                      "reason": "no runtime quota observation available"
+                    }
+                  }
+                ],
+                "displayLines": [
+                  "codex: tokens unknown: no observed runtime sessions",
+                  "codex [no session]: 5h: unknown: no runtime quota observation available",
+                  "codex [no session]: Weekly: unknown: no runtime quota observation available"
+                ]
+              }
+            ],
+            "displayLines": [
+              "aider: tokens unknown: no observed runtime sessions",
+              "aider [no session]: 5h: unknown: no runtime quota observation available",
+              "aider [no session]: Weekly: unknown: no runtime quota observation available",
+              "claude: tokens unknown: no observed runtime sessions",
+              "claude [no session]: 5h: unknown: no runtime quota observation available",
+              "claude [no session]: Weekly: unknown: no runtime quota observation available",
+              "codex: tokens unknown: no observed runtime sessions",
+              "codex [no session]: 5h: unknown: no runtime quota observation available",
+              "codex [no session]: Weekly: unknown: no runtime quota observation available"
+            ],
+            "reason": "runtimes have not reported measured usage"
           },
           "loopAlertState": {
             "ok": true,
@@ -608,6 +812,11 @@
                 },
                 {
                   "name": "transcript-reconciler",
+                  "intervalMs": "<interval-ms-or-null>",
+                  "hot": false
+                },
+                {
+                  "name": "usage-monitor",
                   "intervalMs": "<interval-ms-or-null>",
                   "hot": false
                 },

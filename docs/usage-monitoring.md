@@ -13,10 +13,12 @@ aimux usage --refresh
 `--refresh` kicks the shared collector on the next scheduler tick and returns
 the current cached snapshot. Normal collection runs every five minutes, measured
 from completion. Read requests use the cache; collection never scans whole
-transcripts or spawns tools. The CLI,
-TUI dashboard and app render the service’s `displayLines` in the supplied order.
-JSON also includes collection timestamps, source session IDs, reset timestamps,
-reported window durations, and explicit `known`, `absent`, or `error` outcomes.
+transcripts or spawns tools. The CLI, TUI Usage screen and app render the
+service’s `displayLines` in the supplied order.
+In the TUI, press **Shift+U** to open Usage, use Up/Down to scroll, and press
+Escape to return. JSON also includes collection timestamps, source session IDs,
+reset timestamps, reported window durations, and explicit `known`, `absent`, or
+`error` outcomes.
 A successfully read error snapshot retains its error state and cause; transport
 and malformed response failures make the CLI exit nonzero.
 
@@ -25,13 +27,16 @@ and malformed response failures make the CLI exit nonzero.
 - Claude quotas come from its supported [statusline JSON input](https://code.claude.com/docs/en/statusline):
   `rate_limits.five_hour`, `seven_day`, and additional reported buckets. Aimux
   composes a callback with the effective existing statusline command at launch,
-  forwarding its original input, output and exit status. Each normal callback
+  forwarding its original input, output and exit status. On Unix the user shell
+  replaces the callback process; complete input uses a private, already-unlinked
+  stdin file, independently of the collection limit. Each normal callback
   rereads the effective user settings and refreshes copied explicit settings when
-  changed, so edits apply on the next callback without a polling watcher. Existing running Claude
-  sessions acquire this callback on their next launch or restart.
+  changed, so edits apply on the next callback without a polling watcher.
+  Existing running Claude sessions acquire this callback on their next launch
+  or restart.
 - Codex quotas come from the newest complete reported `token_count` observation
-  for each metered bucket in a bounded rollout tail. Windows are identified by their reported duration: `primary`
-  can be weekly. Additional windows remain separate. The upstream
+  for each metered bucket in a bounded rollout tail. Windows are identified by
+  their reported duration: `primary` can be weekly. Additional windows remain separate. The upstream
   [protocol schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs)
   describes these runtime observations.
 - Quota percentages describe the reporting session’s account snapshot. They are
@@ -56,14 +61,15 @@ during a rollover cannot be reconstructed and are not guessed.
 collection. The internal Claude callback posts sanitized quota fields to
 `POST /usage/claude/statusline`, which validates the known Claude session and
 stores observations through the project service. It requires no provider
-credentials and makes no provider network calls. File, parser and collection failures retain
-an explicit error with its source and cause. Genuine absence follows the unknown
+credentials and makes no provider network calls. File, parser and collection
+failures retain an explicit error with its source and cause. Genuine absence follows the unknown
 path. The existing `/usage/mark` navigation-recency endpoint is independent.
 
 ## Regression and mutation evidence
 
-The scoped checks compare the service route, daemon CLI text, rendered TUI card,
-and actual app component in `service_cli_tui_and_app_render_the_same_usage_outcomes`.
+The scoped checks compare the real desktop-state projection, service route,
+daemon CLI text, TUI Usage screen, and app dashboard through
+`service_cli_tui_and_app_render_the_same_usage_outcomes`.
 Provider fixtures also cover cold baselines, restart persistence, duplicate live
 and stale sessions, configured aliases, extra buckets, expired windows, raw spend,
 partial records and explicit collection failures.
@@ -80,3 +86,14 @@ because the combined missing-label fault masked its first lookup.
 | Per-tool JSON identities become an unlabelled `all` category | `service_route_labels_each_tool_and_keeps_their_usage_separate` |
 | Next periodic run is based on the previous due time | `a_task_that_overruns_its_interval_still_gets_a_full_gap_afterwards` |
 | Collection error publishes the default empty/unknown snapshot | `malformed_authority_sources_publish_errors_and_do_not_reset_baselines` |
+
+The review fixes also passed these fail/restore checks against the production
+paths, beyond the five requested semantic proofs:
+
+| Deliberate fault | Test that rejected it |
+| --- | --- |
+| Production task loop reuses ticks from before completion | `production_task_loop_overrun_receives_a_full_interval_after_finish` |
+| Remove usage from both real desktop-state projection paths | `service_cli_tui_and_app_render_the_same_usage_outcomes` |
+| Truncate a long unbroken error path in the TUI | `usage_screen_navigation_reaches_the_final_line_at_eighty_by_twenty_four` |
+| Redirect a stale quota without equal backend identities | `stale_claude_statusline_id_follows_the_live_backend_but_not_another_session` |
+| Remove UsageMonitor from the actual app dashboard | `renders every service line in order, retaining tool labels, unknowns, errors, and extra windows` |
