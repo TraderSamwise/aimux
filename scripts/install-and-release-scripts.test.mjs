@@ -709,6 +709,7 @@ describe("build-release-asset.sh", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("release runtime archive audit passed");
       expect(
         existsSync(join(root, "release", "aimux-linux-x64.tar.gz")),
         `stdout:\n${result.stdout}\nstderr:\n${result.stderr}\nrelease files:\n${existsSync(join(root, "release")) ? readdirSync(join(root, "release")).join("\n") : "(missing)"}`,
@@ -734,6 +735,7 @@ describe("build-release-asset.sh", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("release runtime archive audit passed");
       expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz"))).toBe(true);
       expect(readFileSync(join(root, "cargo-args.txt"), "utf8")).toContain("--no-default-features");
       const extractDir = join(root, "extract");

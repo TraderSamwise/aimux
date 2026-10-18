@@ -88,6 +88,7 @@ RUN apt-get update \
     curl \
     git \
     lsof \
+    musl-tools \
     openssh-client \
     pkg-config \
     procps \
@@ -127,7 +128,10 @@ ENV RUNNER_TEMP=/tmp/runner-temp
 ENV CARGO_INCREMENTAL=0
 ENV CARGO_TARGET_DIR=/tmp/aimux-cargo-target-linux-release-repro
 
-RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0 --component clippy --component rustfmt
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0 --component clippy --component rustfmt \
+  && target="$(rustc -vV | sed -n 's/^host: \(.*\)-gnu$/\1-musl/p')" \
+  && test -n "$target" \
+  && rustup target add "$target"
 
 WORKDIR /work
 DOCKERFILE

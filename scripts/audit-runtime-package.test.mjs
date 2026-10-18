@@ -1,10 +1,25 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { auditRuntimeManifest, discoverRuntimeScripts, verifyRuntimePackagePaths } from "./audit-runtime-package.mjs";
+import {
+  auditRuntimeManifest,
+  discoverRuntimeScripts,
+  verifyRuntimePackagePaths,
+  verifyReleaseArchive,
+} from "./audit-runtime-package.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const roots = [];
@@ -181,6 +196,21 @@ describe("runtime package resource discovery", () => {
     expect(auditRuntimeManifest(root)).toEqual([]);
   });
 
+  it.each(["node_modules", "target", "tests"])("discovers maintained scripts inside a %s directory", (directory) => {
+    const root = fixture();
+    packageFiles(root, ["bin", "scripts", ...RUNTIME_FILES]);
+    const script = `scripts/${directory}/runtime.sh`;
+    write(root, script, "#!/bin/sh\necho maintained\n");
+    expect(discoverRuntimeScripts(root)).toContain(script);
+  });
+
+  it("excludes dependency, build and test trees only when discovering production Rust callers", () => {
+    const root = fixture();
+    for (const directory of ["node_modules", "target", "tests"])
+      write(root, `native/${directory}/src/proof.rs`, 'fn proof() { run("unshipped.sh"); }');
+    expect(discoverRuntimeScripts(root)).toEqual(new Set(["scripts/runtime.sh"]));
+  });
+
   it("discovers current runtime scripts while excluding source-only proof fixtures", () => {
     const paths = discoverRuntimeScripts(ROOT);
     expect(paths.has("scripts/tmux-control.sh")).toBe(true);
@@ -297,5 +327,149 @@ describe("runtime package manifest and artifact gates", () => {
     const paths = ["bin/aimux", "package.json", "scripts/runtime.sh"];
     expect(verifyRuntimePackagePaths(root, paths)).toEqual(["runtime package is missing: dist-ui/index.html"]);
     expect(verifyRuntimePackagePaths(root, [...paths, "dist-ui/index.html"])).toEqual([]);
+  });
+});
+
+function releaseArchive(root, { profile = "minimal", omit = [], overrides = {}, modes = {}, extra = [] } = {}) {
+  const paths = ["bin/aimux", "package.json", "scripts/runtime.sh", ...extra];
+  const files = paths
+    .filter((path) => !omit.includes(path))
+    .map((path) => ({
+      name: `aimux/${path}`,
+      data: Buffer.from(overrides[path] ?? readFileSync(join(root, path))).toString("base64"),
+      mode: modes[path] ?? 0o755,
+    }));
+  if (!omit.includes("PACKAGE_PROFILE"))
+    files.push({ name: "aimux/PACKAGE_PROFILE", data: Buffer.from(`${profile}\n`).toString("base64"), mode: 0o644 });
+  const archive = join(root, "release.tar.gz");
+  const result = spawnSync(
+    "python3",
+    [
+      "-c",
+      `
+import base64, io, json, sys, tarfile
+with tarfile.open(sys.argv[1], 'w:gz') as archive:
+    for item in json.load(sys.stdin):
+        member = tarfile.TarInfo(item['name'])
+        member.mode = item['mode']
+        data = base64.b64decode(item['data'])
+        member.size = len(data)
+        archive.addfile(member, io.BytesIO(data))
+`,
+      archive,
+    ],
+    { input: JSON.stringify(files), encoding: "utf8" },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  return archive;
+}
+
+describe("standalone release runtime closure", () => {
+  it("rejects a future runtime helper omitted from the tar even when its manifest entry exists", () => {
+    const root = fixture();
+    const files = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).files;
+    packageFiles(root, [...files, "scripts/future.sh"]);
+    write(root, SOURCE, 'fn launch() { resolve_repo_script_path("scripts/future.sh"); }');
+    write(root, "scripts/future.sh", "#!/bin/sh\necho future\n");
+    expect(auditRuntimeManifest(root)).toEqual([]);
+    expect(() => verifyReleaseArchive(root, releaseArchive(root))).toThrow(
+      "release archive is missing regular runtime payload: scripts/future.sh",
+    );
+    expect(verifyReleaseArchive(root, releaseArchive(root, { extra: ["scripts/future.sh"] }))).toContain(
+      "scripts/future.sh",
+    );
+  });
+
+  it("checks a transitive helper from the same discovery closure", () => {
+    const root = fixture();
+    write(root, "scripts/runtime.sh", '#!/bin/sh\nsh "$script_dir/transitive.sh"\n');
+    write(root, "scripts/transitive.sh", "#!/bin/sh\necho dependency\n");
+    expect(() => verifyReleaseArchive(root, releaseArchive(root))).toThrow("scripts/transitive.sh");
+    expect(verifyReleaseArchive(root, releaseArchive(root, { extra: ["scripts/transitive.sh"] }))).toContain(
+      "scripts/transitive.sh",
+    );
+  });
+
+  it("rejects stale script bytes and lost executable permission", () => {
+    const root = fixture();
+    chmodSync(join(root, "scripts/runtime.sh"), 0o755);
+    expect(() =>
+      verifyReleaseArchive(root, releaseArchive(root, { overrides: { "scripts/runtime.sh": "stale" } })),
+    ).toThrow("release archive differs from runtime source: scripts/runtime.sh");
+    expect(() => verifyReleaseArchive(root, releaseArchive(root, { modes: { "scripts/runtime.sh": 0o644 } }))).toThrow(
+      "release archive lost executable permission: scripts/runtime.sh",
+    );
+    expect(verifyReleaseArchive(root, releaseArchive(root))).toContain("scripts/runtime.sh");
+  });
+
+  it("requires full UI contents and accepts a genuinely minimal package without UI", () => {
+    const root = fixture();
+    write(root, "dist-ui/index.html", '<script src="assets/app.js"></script>');
+    write(root, "dist-ui/assets/app.js", "console.log('runtime');\n");
+    write(root, "dist-ui/assets/app.js.map", "debug-only\n");
+    expect(verifyReleaseArchive(root, releaseArchive(root))).not.toContain("dist-ui/index.html");
+    expect(() => verifyReleaseArchive(root, releaseArchive(root, { profile: "full" }))).toThrow("dist-ui/index.html");
+    expect(() =>
+      verifyReleaseArchive(root, releaseArchive(root, { profile: "full", extra: ["dist-ui/index.html"] })),
+    ).toThrow("dist-ui/assets/app.js");
+    const complete = { profile: "full", extra: ["dist-ui/index.html", "dist-ui/assets/app.js"] };
+    expect(verifyReleaseArchive(root, releaseArchive(root, complete))).toContain("dist-ui/assets/app.js");
+    expect(() =>
+      verifyReleaseArchive(
+        root,
+        releaseArchive(root, { ...complete, overrides: { "dist-ui/assets/app.js": "stale" } }),
+      ),
+    ).toThrow("release archive differs from runtime source: dist-ui/assets/app.js");
+  });
+
+  it.each(["node_modules/@expo/font.ttf", "target/generated.bin", "tests/font.woff"])(
+    "checks emitted full UI resource inside %s and accepts its restoration",
+    (relative) => {
+      const root = fixture();
+      const resource = `dist-ui/assets/${relative}`;
+      write(root, "dist-ui/index.html", "<!doctype html>runtime\n");
+      write(root, resource, "emitted resource bytes\n");
+      const partial = { profile: "full", extra: ["dist-ui/index.html"] };
+      expect(() => verifyReleaseArchive(root, releaseArchive(root, partial))).toThrow(
+        `release archive is missing regular runtime payload: ${resource}`,
+      );
+      expect(
+        verifyReleaseArchive(root, releaseArchive(root, { ...partial, extra: [...partial.extra, resource] })),
+      ).toContain(resource);
+      expect(verifyReleaseArchive(root, releaseArchive(root))).not.toContain(resource);
+    },
+  );
+
+  it.each(["missing", "invalid"])("refuses %s package profile instead of skipping UI checks", (kind) => {
+    const root = fixture();
+    const options = kind === "missing" ? { omit: ["PACKAGE_PROFILE"] } : { profile: "local" };
+    expect(() => verifyReleaseArchive(root, releaseArchive(root, options))).toThrow(
+      "requires regular PACKAGE_PROFILE containing full or minimal",
+    );
+  });
+
+  it("rejects unsafe archive names and corrupted gzip trailers", () => {
+    const root = fixture();
+    expect(() =>
+      verifyReleaseArchive(root, releaseArchive(root, { extra: ["../unsafe"], overrides: { "../unsafe": "payload" } })),
+    ).toThrow("unsafe release archive path");
+    const archive = releaseArchive(root);
+    const bytes = readFileSync(archive);
+    writeFileSync(archive, bytes.subarray(0, bytes.length - 4));
+    expect(() => verifyReleaseArchive(root, archive)).toThrow("Compressed file ended");
+  });
+
+  it("reports archive read failures and exposes the builder's CLI entry point", () => {
+    const root = fixture();
+    expect(() => verifyReleaseArchive(root, join(root, "missing.tar.gz"))).toThrow("cannot inspect release archive");
+    const archive = releaseArchive(root);
+    copyFileSync(join(ROOT, "scripts/audit-runtime-package.mjs"), join(root, "scripts/audit-runtime-package.mjs"));
+    const result = spawnSync(
+      process.execPath,
+      [realpathSync(join(root, "scripts/audit-runtime-package.mjs")), "--release-archive", archive],
+      { encoding: "utf8" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("release runtime archive audit passed");
   });
 });

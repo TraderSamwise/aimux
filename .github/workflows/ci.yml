@@ -494,6 +494,15 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install --profile minimal
 
+      - name: Prepare static Linux release toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          target="$(rustc -vV | sed -n 's/^host: \(.*\)-gnu$/\1-musl/p')"
+          test -n "$target"
+          rustup target add "$target"
+
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:
@@ -538,6 +547,15 @@ jobs:
 
       - name: Install Rust toolchain
         run: rustup toolchain install --profile minimal
+
+      - name: Prepare static Linux release toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          target="$(rustc -vV | sed -n 's/^host: \(.*\)-gnu$/\1-musl/p')"
+          test -n "$target"
+          rustup target add "$target"
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,11 +10,11 @@ const SCRIPT = /\.(?:sh|py|mjs)$/;
 // The contract registry names source proof files rather than runtime commands.
 const PROOF_REGISTRY = "native/crates/aimux/src/contracts.rs";
 
-function filesBelow(root, relative) {
+function filesBelow(root, relative, excludedDirs = []) {
   return readdirSync(join(root, relative), { withFileTypes: true }).flatMap((entry) => {
     const path = posix.join(relative, entry.name);
     if (entry.isDirectory()) {
-      return ["target", "tests", "node_modules"].includes(entry.name) ? [] : filesBelow(root, path);
+      return excludedDirs.includes(entry.name) ? [] : filesBelow(root, path, excludedDirs);
     }
     return entry.isFile() ? [path] : [];
   });
@@ -215,7 +216,7 @@ function shellDependencies(path, source) {
 
 export function discoverRuntimeScripts(root) {
   const paths = maintainedScripts(root, manifest(root));
-  for (const path of filesBelow(root, "native").filter(
+  for (const path of filesBelow(root, "native", ["target", "tests", "node_modules"]).filter(
     (path) => path.endsWith(".rs") && path.split("/").includes("src"),
   )) {
     const tokens = productionTokens(rustTokens(readFileSync(join(root, path), "utf8")));
@@ -276,11 +277,100 @@ export function verifyRuntimePackagePaths(root, paths) {
     .map((path) => `runtime package is missing: ${path}`);
 }
 
+const RELEASE_ARCHIVE_INDEX = String.raw`
+import gzip, hashlib, json, posixpath, sys, tarfile
+from pathlib import PurePosixPath
+records = []
+seen = set()
+with gzip.open(sys.argv[1], 'rb') as compressed:
+    while compressed.read(1024 * 1024):
+        pass
+with tarfile.open(sys.argv[1], 'r:gz') as archive:
+    for member in archive:
+        path = PurePosixPath(member.name)
+        if path.is_absolute() or '..' in path.parts or not path.parts or path.parts[0] != 'aimux' or chr(92) in member.name:
+            sys.exit('unsafe release archive path: ' + member.name)
+        name = str(path.relative_to('aimux'))
+        if name in seen:
+            sys.exit('duplicate release archive member: ' + name)
+        seen.add(name)
+        if not 0 <= member.mode <= 0o7777 or member.size < 0:
+            sys.exit('invalid release archive mode or size: ' + name)
+        if member.isdir():
+            continue
+        record = {'path': name, 'mode': member.mode, 'regular': member.isfile()}
+        if member.issym():
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(str(path)), member.linkname))
+            if not member.linkname or member.linkname.startswith('/') or not target.startswith('aimux/'):
+                sys.exit('unsafe release archive symlink: ' + name)
+        elif not member.isfile():
+            sys.exit('unsupported release archive entry: ' + name)
+        if member.isfile():
+            digest = hashlib.sha256()
+            with archive.extractfile(member) as source:
+                if name == 'PACKAGE_PROFILE':
+                    if member.size > 64:
+                        sys.exit('invalid release PACKAGE_PROFILE size')
+                    record['profile'] = source.read().decode('ascii').strip()
+                else:
+                    while chunk := source.read(1024 * 1024):
+                        digest.update(chunk)
+            record['sha256'] = digest.hexdigest()
+        records.append(record)
+print(json.dumps(records))
+`;
+
+export function verifyReleaseArchive(root, archive) {
+  let records;
+  try {
+    records = JSON.parse(
+      execFileSync("python3", ["-c", RELEASE_ARCHIVE_INDEX, resolve(archive)], {
+        encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
+  } catch (error) {
+    throw new Error(`cannot inspect release archive ${archive}: ${error.stderr?.toString().trim() || error.message}`);
+  }
+  const index = new Map(records.map((record) => [record.path, record]));
+  const profile = index.get("PACKAGE_PROFILE");
+  if (!profile?.regular || !["full", "minimal"].includes(profile.profile))
+    throw new Error(`release archive ${archive} requires regular PACKAGE_PROFILE containing full or minimal`);
+  const required = new Set(["bin/aimux", "package.json", ...discoverRuntimeScripts(root)]);
+  if (profile.profile === "full") {
+    required.add("dist-ui/index.html");
+    for (const path of filesBelow(root, "dist-ui")) if (!path.endsWith(".map")) required.add(path);
+  }
+  const errors = [];
+  for (const path of required) {
+    const record = index.get(path);
+    if (!record?.regular) {
+      errors.push(`release archive is missing regular runtime payload: ${path}`);
+      continue;
+    }
+    const source = join(root, path);
+    const digest = createHash("sha256").update(readFileSync(source)).digest("hex");
+    if (record.sha256 !== digest) errors.push(`release archive differs from runtime source: ${path}`);
+    if (statSync(source).mode & 0o100 && !(record.mode & 0o100))
+      errors.push(`release archive lost executable permission: ${path}`);
+  }
+  if (errors.length) throw new Error(`${archive}: ${errors.join("\n")}`);
+  return records.map((record) => record.path);
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const errors = auditRuntimeManifest(ROOT);
-    if (errors.length) throw new Error(errors.join("\n"));
-    process.stdout.write("runtime package manifest audit passed\n");
+    if (process.argv.length === 4 && process.argv[2] === "--release-archive") {
+      verifyReleaseArchive(ROOT, process.argv[3]);
+      process.stdout.write("release runtime archive audit passed\n");
+    } else {
+      if (process.argv.length !== 2)
+        throw new Error("usage: audit-runtime-package.mjs [--release-archive PACKAGE.tar.gz]");
+      const errors = auditRuntimeManifest(ROOT);
+      if (errors.length) throw new Error(errors.join("\n"));
+      process.stdout.write("runtime package manifest audit passed\n");
+    }
   } catch (error) {
     process.stderr.write(`runtime package manifest audit failed: ${error.message}\n`);
     process.exitCode = 1;

@@ -258,6 +258,7 @@ mkdir -p "$OUT_DIR"
 rm -f "$OUT_DIR/$ASSET" "$OUT_DIR/$ASSET.sha256"
 COPYFILE_DISABLE=1 tar -czf "$OUT_DIR/$ASSET" -C "$TMP_DIR" aimux
 bash "$ROOT_DIR/scripts/verify-release-asset.sh" "$OUT_DIR/$ASSET" "$PLATFORM-$ARCH"
+node "$ROOT_DIR/scripts/audit-runtime-package.mjs" --release-archive "$OUT_DIR/$ASSET"
 (
   cd "$OUT_DIR"
   shasum -a 256 "$ASSET" > "$ASSET.sha256"
