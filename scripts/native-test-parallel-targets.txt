@@ -150,6 +150,7 @@ secure_permissions
 session_launch
 session_bootstrap
 fork_runtime
+fork_tool_surfaces
 state_update_lock
 subagent_activity_task
 supervisor_lane_surfaces
