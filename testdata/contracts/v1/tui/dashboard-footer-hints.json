@@ -5,7 +5,7 @@
   "source": "src/tui/screens/dashboard-renderers.test.ts",
   "sources": ["src/tui/screens/dashboard-renderers.test.ts", "src/tui/screens/dashboard-renderers.ts"],
   "subject": "buildDashboardFooterHints",
-  "description": "Dashboard footer hint ordering and labels captured from TypeScript.",
+  "description": "Dashboard footer hints originally captured from TypeScript; outputs now use the actual Rust renderer, including intentional bulk graveyard and remote branch actions. Case 006 supplies the server-owned supervisor lane explicitly.",
   "caseCount": 6,
   "cases": [
     {
@@ -521,8 +521,9 @@
         ["f", "fork"],
         ["D", "cache cleanup"],
         ["w", "worktree"],
+        ["B", "remote branch"],
         ["a", "hide offline"],
-        ["O p", "loop alerts"],
+        ["K/^K", "graveyard offline", "danger"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1055,7 +1056,7 @@
         ["M", "plane"],
         ["r", "name"],
         ["x", "stop", "danger"],
-        ["O p", "loop alerts"],
+        ["K/^K", "graveyard offline", "danger"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1585,7 +1586,7 @@
         ["R", "reply"],
         ["m", "migrate"],
         ["x", "stop", "danger"],
-        ["O p", "loop alerts"],
+        ["K/^K", "graveyard offline", "danger"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1837,6 +1838,7 @@
         ["S", "switch"],
         ["D", "cache cleanup"],
         ["w", "worktree"],
+        ["B", "remote branch"],
         ["a", "hide offline"],
         ["s", "msg"],
         ["H", "handoff"],
@@ -1845,10 +1847,10 @@
         ["O", "overseer menu"],
         ["P", "scribe"],
         ["R", "reply"],
-        ["M", "plane"],
         ["x", "kill", "danger"],
+        ["M", "plane"],
         ["r", "name"],
-        ["O p", "loop alerts"],
+        ["K/^K", "graveyard offline", "danger"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1909,7 +1911,6 @@
         ["O", "overseer menu"],
         ["P", "scribe"],
         ["R", "reply"],
-        ["O p", "loop alerts"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -2406,6 +2407,7 @@
             }
           ],
           "operationFailures": [],
+          "supervisorLane": { "sessions": [] },
           "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
           "mainCheckoutPath": "<REPO>"
         },
@@ -2431,12 +2433,13 @@
         ["f", "fork"],
         ["D", "cache cleanup"],
         ["w", "worktree"],
+        ["B", "remote branch"],
         ["a", "hide offline"],
-        ["O p", "loop alerts"],
+        ["K/^K", "graveyard offline", "danger"],
         ["?", "help"],
         ["q", "quit"]
       ],
-      "inputSha256": "1df91cc987bf1e223adc375f2a5a1f2a54aced4bb5d60682e06f0f228c26fcdd"
+      "inputSha256": "9e789a0fa436f75b06b04d199f3543912cdbec6ae035ac56da9ada38f7a4b8c1"
     }
   ]
 }

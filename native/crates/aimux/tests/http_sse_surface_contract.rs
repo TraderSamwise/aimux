@@ -145,6 +145,13 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
     }
     let project_root = isolation.root().join("repo");
     fs::create_dir_all(&project_root).expect("create project root");
+    let config_dir = project_root.join(".aimux");
+    fs::create_dir_all(&config_dir).expect("create isolated project config directory");
+    fs::write(
+        config_dir.join("config.json"),
+        br#"{"scribe":{"defaultAgent":null}}"#,
+    )
+    .expect("disable default scribe for empty-runtime HTTP fixture");
     let git_init = Command::new("git")
         .arg("init")
         .arg("--initial-branch=main")

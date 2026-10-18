@@ -247,7 +247,7 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
         ));
     }
     footer_lines.extend(render_footer_hints(
-        &build_dashboard_footer_hints(input),
+        &build_dashboard_footer_hints(input, input.preview_source),
         input.cols.saturating_sub(2),
     ));
     let focus_line = find_focus_line(&content);
@@ -396,7 +396,10 @@ fn dashboard_alert_line(alert: &DashboardFooterAlert<'_>) -> String {
     line
 }
 
-fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterHint<'static>> {
+fn build_dashboard_footer_hints(
+    input: &DashboardRenderInput<'_>,
+    preview_source: &str,
+) -> Vec<FooterHint<'static>> {
     let selected_session = selected_session(input);
     let selected_service = selected_service(input);
     let enter_verb = footer::dashboard_enter_verb(selected_session, selected_service);
@@ -417,7 +420,7 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
     if has_live_scribe(input) {
         scribe_controls.push(FooterHint {
             key: "V",
-            label: if input.preview_source == "scribe" {
+            label: if preview_source == "scribe" {
                 "preview output"
             } else {
                 "preview scribe"
@@ -2985,7 +2988,18 @@ pub fn render_dashboard_footer_hints_contract(
     input: &DashboardRenderInput<'_>,
     preview_source: &str,
 ) -> serde_json::Value {
-    footer::dashboard_footer_hint_values_for_contract(input, preview_source)
+    Value::Array(
+        build_dashboard_footer_hints(input, preview_source)
+            .into_iter()
+            .map(|hint| {
+                if matches!(hint.tone, Some(KeyTone::Danger)) {
+                    json!([hint.key, hint.label, "danger"])
+                } else {
+                    json!([hint.key, hint.label])
+                }
+            })
+            .collect(),
+    )
 }
 
 fn render_help_content() -> Vec<String> {
@@ -3001,8 +3015,7 @@ fn render_help_content() -> Vec<String> {
         "    [c] coordination".into(),
         "    [p] project".into(),
         "    [L] library".into(),
-        "    [t] topology".into(),
-        "    [g] graveyard".into(),
+        "    [t] topology  [g] graveyard".into(),
         String::new(),
         format!("  {}", style("Actions", Tone::Strong)),
         "    [n] agent  [v] service  [f] fork  [S] switch tool".into(),
