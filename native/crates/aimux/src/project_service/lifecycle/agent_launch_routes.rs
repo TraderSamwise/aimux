@@ -964,6 +964,17 @@ pub(super) fn route_agent_fork(
                     )),
                 );
             }
+            if let Some(uncertain) = error.uncertain_creation.as_ref() {
+                let message = error.to_string();
+                artifacts.commit();
+                return json_error(
+                    500,
+                    crate::debug_logging::sanitize_log_string(&format!(
+                        "{message}; window ownership remains uncertain in tmux session {}; retained fork context for recovery",
+                        uncertain.session_name
+                    )),
+                );
+            }
             return fork_failure(
                 context,
                 &mut artifacts,

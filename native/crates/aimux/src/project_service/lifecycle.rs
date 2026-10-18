@@ -71,7 +71,7 @@ pub(crate) use runtime_adapter::AsyncProjectLifecycleRuntime;
 pub(crate) use runtime_adapter::remote_worktree_name_from_source;
 pub use runtime_adapter::{
     AgentSessionLaunchError, PreparedPullRequestWorktree, PreparedRemoteSourceWorktree,
-    ProjectLifecycleRuntime, SystemProjectLifecycleRuntime,
+    ProjectLifecycleRuntime, SystemProjectLifecycleRuntime, UncertainAgentWindow,
 };
 use services::*;
 use session_state::*;

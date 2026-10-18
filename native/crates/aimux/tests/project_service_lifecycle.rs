@@ -3,9 +3,9 @@ use aimux::dashboard_model::DesktopStateSnapshot;
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::project_api_contract::routes;
 use aimux::project_service::lifecycle::{
-    PreparedPullRequestWorktree, PreparedRemoteSourceWorktree, ProjectLifecycleRuntime,
-    SystemProjectLifecycleRuntime, ensure_default_scribe_agent,
-    route_lifecycle_request_with_runtime,
+    AgentSessionLaunchError, PreparedPullRequestWorktree, PreparedRemoteSourceWorktree,
+    ProjectLifecycleRuntime, SystemProjectLifecycleRuntime, UncertainAgentWindow,
+    ensure_default_scribe_agent, route_lifecycle_request_with_runtime,
 };
 use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
 use aimux::project_service::operation_failures::{
@@ -62,6 +62,7 @@ struct FakeLifecycleRuntime {
     create_worktree_from_branch_error: Option<String>,
     create_worktree_error: Option<String>,
     create_window_error: Option<String>,
+    retained_creation_error: Option<AgentSessionLaunchError>,
     metadata_error: Option<String>,
     restart_window_dead: bool,
     restart_fail_after_first_check: bool,
@@ -226,6 +227,23 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
             pane_dead: None,
         };
         self.existing_windows.push(target.window_id.clone());
+        Ok(target)
+    }
+
+    fn create_restart_window(
+        &mut self,
+        session_name: &str,
+        name: &str,
+        cwd: &str,
+        command: &str,
+        args: &[String],
+        detached: bool,
+    ) -> Result<TmuxTarget, AgentSessionLaunchError> {
+        if let Some(error) = self.retained_creation_error.take() {
+            return Err(error);
+        }
+        let target = self.create_window(session_name, name, cwd, command, args, detached)?;
+        self.set_window_option(&target.window_id, "remain-on-exit", "on")?;
         Ok(target)
     }
 
@@ -8289,4 +8307,51 @@ fn fork_class_handoff_write_failure_rolls_back_launched_target_and_tracking() {
     assert!(!project.join(".aimux/plans/new-class-fork.md").exists());
     assert!(!response.body["error"].as_str().unwrap().is_empty());
     cleanup(project);
+}
+
+#[test]
+fn fork_class_uncertain_creation_retains_context_and_reports_ownership() {
+    for window_id in [None, Some("@147")] {
+        let (project, state_dir, context) = fork_class_fixture("fork-class-uncertain-reply");
+        let original = read_topology(&state_dir);
+        let mut runtime = FakeLifecycleRuntime {
+            retained_creation_error: Some(AgentSessionLaunchError {
+                message: "invalid tmux creation reply; inventory transport failed".into(),
+                unreaped_target: None,
+                uncertain_creation: Some(Box::new(UncertainAgentWindow {
+                    session_name: "managed-project".into(),
+                    window_id: window_id.map(str::to_owned),
+                })),
+            }),
+            ..Default::default()
+        };
+        let response=route_lifecycle_request_with_runtime(&context,"POST",routes::agents::FORK,
+            Some(&json!({"sourceSessionId":"claude-source","targetSessionId":"new-class-fork","tool":"mock2"})),&mut runtime).unwrap();
+        assert_eq!(response.status, 500, "{}", response.body);
+        let error = response.body["error"].as_str().unwrap();
+        for expected in [
+            "invalid tmux creation reply",
+            "inventory transport failed",
+            "ownership remains uncertain",
+            "managed-project",
+            "retained",
+        ] {
+            assert!(error.contains(expected), "{error}");
+        }
+        assert!(
+            project
+                .join(".aimux/context/new-class-fork/summary.md")
+                .exists()
+        );
+        assert_eq!(read_topology(&state_dir), original);
+        assert!(
+            runtime.metadata.is_empty(),
+            "uncertain IDs must not adopt another window"
+        );
+        assert!(
+            runtime.options.is_empty(),
+            "uncertain IDs must not change another window policy"
+        );
+        cleanup(project);
+    }
 }

@@ -6,8 +6,8 @@ use crate::claude_background_sessions::{BackgroundSessionIds, parse_background_s
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::tmux::{
     CapturePaneOptions, TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo, clear_history_argv,
-    kill_window_argv, new_window_argv, rename_window_argv, set_window_option_argv,
-    tmux_command_from_env,
+    kill_window_argv, list_windows_argv, new_window_argv, rename_window_argv,
+    set_window_option_argv, tmux_command_from_env,
 };
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -16,10 +16,17 @@ use std::time::{Duration, Instant};
 
 const LIFECYCLE_SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UncertainAgentWindow {
+    pub session_name: String,
+    pub window_id: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct AgentSessionLaunchError {
     pub message: String,
     pub unreaped_target: Option<TmuxTarget>,
+    pub uncertain_creation: Option<Box<UncertainAgentWindow>>,
 }
 
 impl From<String> for AgentSessionLaunchError {
@@ -27,6 +34,7 @@ impl From<String> for AgentSessionLaunchError {
         Self {
             message,
             unreaped_target: None,
+            uncertain_creation: None,
         }
     }
 }
@@ -60,6 +68,164 @@ pub(super) fn cleanup_launched_window(
                 target.window_id
             ),
             unreaped_target: Some(target.clone()),
+            uncertain_creation: None,
+        },
+    }
+}
+
+fn valid_emitted_window_id(id: &str) -> bool {
+    id.strip_prefix('@').is_some_and(|digits| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    })
+}
+
+fn parse_retained_tmux_target(session_name: &str, stdout: &str) -> Result<TmuxTarget, String> {
+    let target = parse_tmux_target(session_name, stdout)?;
+    if stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count()
+        != 1
+        || !valid_emitted_window_id(&target.window_id)
+    {
+        return Err(format!(
+            "invalid tmux new-window output: expected one target record with an @digits window id; received {stdout:?}"
+        ));
+    }
+    Ok(target)
+}
+
+fn parse_verified_window_inventory(
+    raw: &str,
+    session_name: &str,
+) -> Result<Vec<TmuxWindowInfo>, String> {
+    let mut ids = BTreeSet::new();
+    raw.lines()
+        .enumerate()
+        .map(|(row, line)| {
+            let context = format!(
+                "invalid tmux window inventory for session {session_name} row {}",
+                row + 1
+            );
+            let fields = line.split('\t').collect::<Vec<_>>();
+            if fields.len() != 6 {
+                return Err(format!(
+                    "{context}: expected 6 columns, received {}",
+                    fields.len()
+                ));
+            }
+            let id = fields[0];
+            if !valid_emitted_window_id(id) {
+                return Err(format!("{context}: window id {id:?} must be @digits"));
+            }
+            if !ids.insert(id.to_owned()) {
+                return Err(format!("{context}: duplicate window id {id}"));
+            }
+            let index = fields[1].parse::<i64>().map_err(|error| {
+                format!("{context}: invalid window index {:?}: {error}", fields[1])
+            })?;
+            if index < 0 {
+                return Err(format!(
+                    "{context}: window index {index} must be nonnegative"
+                ));
+            }
+            let active = match fields[3] {
+                "0" => false,
+                "1" => true,
+                value => {
+                    return Err(format!(
+                        "{context}: window_active must be 0 or 1, received {value:?}"
+                    ));
+                }
+            };
+            let activity = if fields[4].is_empty() {
+                None
+            } else {
+                Some(fields[4].parse::<i64>().map_err(|error| {
+                    format!(
+                        "{context}: invalid window_activity {:?}: {error}",
+                        fields[4]
+                    )
+                })?)
+            };
+            let pane_dead = match fields[5] {
+                "0" => false,
+                "1" => true,
+                value => {
+                    return Err(format!(
+                        "{context}: pane_dead must be 0 or 1, received {value:?}"
+                    ));
+                }
+            };
+            Ok(TmuxWindowInfo {
+                id: id.to_owned(),
+                index,
+                name: fields[2].to_owned(),
+                active,
+                activity,
+                pane_dead: Some(pane_dead),
+            })
+        })
+        .collect()
+}
+
+fn recover_malformed_retained_creation(
+    runtime: &mut impl ProjectLifecycleRuntime,
+    session_name: &str,
+    stdout: &str,
+    message: String,
+) -> AgentSessionLaunchError {
+    let ids = stdout
+        .lines()
+        .filter_map(|line| line.split('\t').next())
+        .map(str::trim)
+        .filter(|id| valid_emitted_window_id(id))
+        .collect::<BTreeSet<_>>();
+    let window_id = if ids.len() == 1 {
+        ids.first().map(|id| (*id).to_owned())
+    } else {
+        None
+    };
+    let Some(window_id) = window_id else {
+        return AgentSessionLaunchError {
+            message: format!("{message}; created window identity is unavailable or ambiguous"),
+            unreaped_target: None,
+            uncertain_creation: Some(Box::new(UncertainAgentWindow {
+                session_name: session_name.to_owned(),
+                window_id: None,
+            })),
+        };
+    };
+    let cleanup = match runtime.kill_window(&window_id) {
+        Ok(()) => return message.into(),
+        Err(error) => error,
+    };
+    let message = format!("{message}; cleanup of {window_id} failed: {cleanup}");
+    match runtime.list_windows(session_name) {
+        Ok(windows) => match windows.into_iter().find(|window| window.id == window_id) {
+            Some(window) => AgentSessionLaunchError {
+                message,
+                unreaped_target: Some(TmuxTarget {
+                    session_name: session_name.to_owned(),
+                    window_id: window.id,
+                    window_index: window.index,
+                    window_name: window.name,
+                    pane_dead: window.pane_dead,
+                }),
+                uncertain_creation: None,
+            },
+            None => format!(
+                "{message}; verified window {window_id} is absent from session {session_name}"
+            )
+            .into(),
+        },
+        Err(inventory) => AgentSessionLaunchError {
+            message: format!("{message}; inventory of session {session_name} failed: {inventory}"),
+            unreaped_target: None,
+            uncertain_creation: Some(Box::new(UncertainAgentWindow {
+                session_name: session_name.to_owned(),
+                window_id: Some(window_id),
+            })),
         },
     }
 }
@@ -354,7 +520,15 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
             .map_err(|error| AgentSessionLaunchError::from(format!("{context}: {error}")))?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         if output.status.success() {
-            return parse_tmux_target(session_name, &stdout).map_err(Into::into);
+            return match parse_retained_tmux_target(session_name, &stdout) {
+                Ok(target) => Ok(target),
+                Err(parse) => Err(recover_malformed_retained_creation(
+                    self,
+                    session_name,
+                    &stdout,
+                    format!("{context}; {parse}"),
+                )),
+            };
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
         let cause = if stderr.trim().is_empty() {
@@ -366,14 +540,14 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
             "{context}: {}",
             crate::debug_logging::sanitize_log_string(&cause)
         );
-        match parse_tmux_target(session_name, &stdout) {
+        match parse_retained_tmux_target(session_name, &stdout) {
             Ok(target) => Err(cleanup_launched_window(self, &target, message)),
-            Err(_) if stdout.trim().is_empty() => Err(message.into()),
-            Err(parse) => Err(format!(
-                "{message}; could not recover created target: {parse}; stdout: {}",
-                stdout.trim()
-            )
-            .into()),
+            Err(parse) => Err(recover_malformed_retained_creation(
+                self,
+                session_name,
+                &stdout,
+                format!("{message}; could not recover created target: {parse}"),
+            )),
         }
     }
     fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String> {
@@ -479,7 +653,12 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
     }
 
     fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
-        TmuxRuntimeManager::new().list_windows(session_name)
+        let raw = run_tmux_argv_output(
+            list_windows_argv(session_name),
+            format!("tmux list-windows failed for session {session_name}"),
+            None,
+        )?;
+        parse_verified_window_inventory(&raw, session_name)
     }
 
     fn legacy_window_matches_agent_owner(
