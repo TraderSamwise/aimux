@@ -978,6 +978,77 @@ fn limit_last_error(error: &str) -> String {
 mod tests {
     use super::*;
 
+    struct OverrunningProductionTask {
+        starts: Arc<Mutex<Vec<tokio::time::Instant>>>,
+    }
+
+    impl PeriodicTask<()> for OverrunningProductionTask {
+        fn name(&self) -> &str {
+            "production-gap-proof"
+        }
+        fn interval_ms(&self) -> i64 {
+            1_000
+        }
+        fn run<'a>(&'a mut self, _: &'a ()) -> PeriodicTaskFuture<'a> {
+            Box::pin(async move {
+                self.starts
+                    .lock()
+                    .unwrap()
+                    .push(tokio::time::Instant::now());
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                Ok(())
+            })
+        }
+    }
+
+    async fn flush_production_task_loop() {
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn production_task_loop_overrun_receives_a_full_interval_after_finish() {
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        let task = tokio::spawn(run_periodic_task_loop(
+            Arc::new(()),
+            Box::new(OverrunningProductionTask {
+                starts: Arc::clone(&starts),
+            }),
+            SchedulerHandle::default(),
+            PeriodicSchedulerLogLabels::project_service(),
+        ));
+        flush_production_task_loop().await;
+        for _ in 0..4 {
+            tokio::time::advance(Duration::from_millis(250)).await;
+            flush_production_task_loop().await;
+        }
+        assert_eq!(starts.lock().unwrap().len(), 1);
+        tokio::time::advance(Duration::from_secs(5)).await;
+        flush_production_task_loop().await;
+        for _ in 0..3 {
+            tokio::time::advance(Duration::from_millis(250)).await;
+            flush_production_task_loop().await;
+            assert_eq!(
+                starts.lock().unwrap().len(),
+                1,
+                "production scheduler reused a pre-completion tick"
+            );
+        }
+        tokio::time::advance(Duration::from_millis(249)).await;
+        flush_production_task_loop().await;
+        assert_eq!(starts.lock().unwrap().len(), 1);
+        tokio::time::advance(Duration::from_millis(1)).await;
+        flush_production_task_loop().await;
+        {
+            let observations = starts.lock().unwrap();
+            assert_eq!(observations.len(), 2);
+            assert_eq!(observations[1] - observations[0], Duration::from_secs(6));
+        }
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
+
     /// One clean run per 250ms tick per task evicted every diagnostic from the
     /// log inside a minute. Clean runs now accumulate and report once a window.
     #[test]

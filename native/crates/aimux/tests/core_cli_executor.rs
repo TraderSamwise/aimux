@@ -520,7 +520,9 @@ fn args(values: &[&str]) -> Vec<String> {
 }
 
 fn fake_text_response(path: &str) -> String {
-    if path.starts_with("/core/host-agent-stream-text?") {
+    if path.starts_with("/core/usage-text?") {
+        "Claude: weekly unknown\nCodex: 5-hour 17%; 117 billed-equivalent tokens\n".into()
+    } else if path.starts_with("/core/host-agent-stream-text?") {
         "streamed output\n".into()
     } else if path.starts_with("/core/host-agent-read-text?") {
         "pane output\n".into()
@@ -1072,6 +1074,38 @@ fn logs_execute_without_daemon_requests() {
     assert_eq!(clear.stdout, ["Cleared /tmp/aimux.log"]);
     assert_eq!(runtime.clear_count.get(), 1);
     assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn usage_executes_shared_service_text_and_keeps_request_failures_nonzero() {
+    let mut runtime = FakeRuntime::default();
+    let result = run_core_cli_with(
+        &args(&["usage", "--project", "/other", "--refresh"]),
+        &mut runtime,
+    );
+    assert_eq!(result.code, 0, "{:?}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        ["Claude: weekly unknown\nCodex: 5-hour 17%; 117 billed-equivalent tokens"]
+    );
+    assert_eq!(
+        runtime.text_routes,
+        [(
+            "/core/usage-text?project=%2Fresolved%2F%2Fother&refresh=1".into(),
+            None
+        )]
+    );
+
+    runtime.text_route_error = Some("usage project service request: connection refused".into());
+    let result = run_core_cli_with(&args(&["usage"]), &mut runtime);
+    assert_ne!(result.code, 0);
+    assert!(result.stdout.is_empty());
+    assert!(
+        result
+            .stderr
+            .join("\n")
+            .contains("usage project service request: connection refused")
+    );
 }
 
 #[test]

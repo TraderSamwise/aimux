@@ -279,6 +279,7 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
     ));
 
     write_explicit_empty_topology(&project_state_dir);
+    wait_for_initial_usage_snapshot(endpoint.port);
     let project_desktop = json_exchange(
         endpoint.port,
         "GET",
@@ -1373,6 +1374,11 @@ fn normalize_json_keyed(value: Value, context: &NormalizeContext, key: Option<&s
     if key == Some("scheduler") {
         return normalize_scheduler_health(value);
     }
+    if key == Some("usage") {
+        // Only the UsageSnapshot subtree carries these numeric clock fields.
+        // Counters, quota values, display text and unrelated timestamps stay literal.
+        return normalize_usage_snapshot(value, None);
+    }
     if key == Some("recentScans") {
         return json!([]);
     }
@@ -1405,6 +1411,31 @@ fn normalize_json_keyed(value: Value, context: &NormalizeContext, key: Option<&s
             Value::Number(number)
         }
         other => other,
+    }
+}
+
+fn normalize_usage_snapshot(value: Value, key: Option<&str>) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, value)| {
+                    let value = normalize_usage_snapshot(value, Some(&key));
+                    (key, value)
+                })
+                .collect(),
+        ),
+        Value::Array(values) => Value::Array(
+            values
+                .into_iter()
+                .map(|value| normalize_usage_snapshot(value, key))
+                .collect(),
+        ),
+        Value::Number(_)
+            if matches!(key, Some("observedAt" | "startedAt" | "since" | "resetsAt")) =>
+        {
+            json!("<timestamp>")
+        }
+        value => value,
     }
 }
 
@@ -1490,6 +1521,62 @@ fn is_iso_timestamp(value: &str) -> bool {
         && value.get(7..8) == Some("-")
         && value.get(10..11) == Some("T")
         && value.ends_with('Z')
+}
+
+fn wait_for_initial_usage_snapshot(port: u16) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let exchange = try_json_exchange(
+            port,
+            "GET",
+            "/usage",
+            None,
+            Duration::from_secs(1),
+            "initial-usage-snapshot",
+            "project-service-http",
+        )
+        .unwrap_or_else(|reason| panic!("initial usage snapshot probe failed: {reason}"));
+        assert_eq!(
+            exchange.response.status_line, "HTTP/1.1 200 OK",
+            "initial usage snapshot HTTP failure: {}",
+            exchange.response.body_text
+        );
+        let body: Value =
+            serde_json::from_str(&exchange.response.body_text).unwrap_or_else(|error| {
+                panic!(
+                    "initial usage snapshot JSON failure: {error}; body: {}",
+                    exchange.response.body_text
+                )
+            });
+        assert_eq!(
+            body.get("ok").and_then(Value::as_bool),
+            Some(true),
+            "initial usage snapshot request failed: {body}"
+        );
+        let snapshot: aimux::project_service::usage_monitor::UsageSnapshot =
+            serde_json::from_value(body).unwrap_or_else(|error| {
+                panic!(
+                    "invalid initial UsageSnapshot: {error}; body: {}",
+                    exchange.response.body_text
+                )
+            });
+        assert_ne!(
+            snapshot.state,
+            aimux::project_service::usage_model::UsageState::Error,
+            "initial usage collection failed: {:?}",
+            snapshot.reason
+        );
+        if snapshot.observed_at > 0 {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "initial usage snapshot was not collected on port {port}: observedAt={}, reason={:?}",
+            snapshot.observed_at,
+            snapshot.reason
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn wait_for_daemon_health(port: u16) {

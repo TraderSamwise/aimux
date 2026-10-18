@@ -22,6 +22,62 @@ fn context(daemon_running: bool, has_credentials: bool) -> CoreCliContext {
     }
 }
 
+#[test]
+fn usage_command_reads_project_usage_and_refreshes_through_the_service() {
+    let default = classify_core_cli(&["usage"], &context(true, false)).expect("usage plan");
+    assert_eq!(default.operation, CoreCliOperation::Usage);
+    assert_eq!(
+        default.action,
+        CoreCliAction::TextRoute {
+            path: "/core/usage-text?project=%2Frepo".into(),
+            body: None,
+        }
+    );
+    let explicit = classify_core_cli(
+        &["usage", "--project", "/other repo", "--json", "--refresh"],
+        &context(true, false),
+    )
+    .expect("explicit usage plan");
+    assert_eq!(
+        explicit.action,
+        CoreCliAction::TextRoute {
+            path: "/core/usage-text?project=%2Fother%20repo&json=1&refresh=1".into(),
+            body: None,
+        }
+    );
+    assert_eq!(explicit.output_mode, CoreCliOutputMode::Json);
+    let inline = classify_core_cli(&["usage", "--project=/other"], &context(true, false))
+        .expect("inline project usage");
+    assert_eq!(
+        inline.action,
+        CoreCliAction::TextRoute {
+            path: "/core/usage-text?project=%2Fother".into(),
+            body: None,
+        }
+    );
+}
+
+#[test]
+fn usage_command_reports_invalid_arguments_without_falling_back_to_a_tool_launch() {
+    for (args, expected) in [
+        (vec!["usage", "--bogus"], "unknown usage option --bogus"),
+        (vec!["usage", "codex"], "unknown usage option codex"),
+        (vec!["usage", "--project"], "--project requires a value"),
+        (
+            vec!["usage", "--project", "--json"],
+            "--project requires a value",
+        ),
+        (vec!["usage", "--project="], "--project requires a value"),
+    ] {
+        assert!(aimux::native_cli_dispatch::is_known_aimux_command_word(
+            "usage"
+        ));
+        let error = classify_core_cli(&args, &context(true, false)).expect_err("invalid usage");
+        assert!(matches!(error, CoreCliPlanError::InvalidArguments { .. }));
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
 fn command_from(action: &CoreCliAction) -> (&str, Option<&Value>, bool, Option<u64>, bool) {
     let CoreCliAction::Command {
         request,

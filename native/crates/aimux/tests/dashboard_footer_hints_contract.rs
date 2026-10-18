@@ -12,7 +12,7 @@ fn dashboard_footer_hints_match_typescript_contract() {
     let contract: Value =
         serde_json::from_str(CONTRACT).expect("valid dashboard footer hints contract");
     let cases = contract["cases"].as_array().expect("footer hint cases");
-    assert_eq!(cases.len(), 6, "unexpected footer hint case count");
+    assert_eq!(cases.len(), 7, "unexpected footer hint case count");
 
     let mut failures = Vec::new();
     for case in cases {

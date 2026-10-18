@@ -213,6 +213,7 @@ pub(super) fn launch_agent_session(
         backend_session_id: backend_session_id.as_deref(),
         tool_config: &tool_config,
         project_root: &project_root,
+        cwd: Path::new(input.worktree_path.as_deref().unwrap_or(&project_root)),
         launch_env: input.launch_env.clone(),
     }) {
         Ok(wrapped) => wrapped,
@@ -609,6 +610,7 @@ pub(super) async fn launch_agent_session_async(
         backend_session_id: backend_session_id.as_deref(),
         tool_config: &tool_config,
         project_root: &project_root,
+        cwd: Path::new(input.worktree_path.as_deref().unwrap_or(&project_root)),
         launch_env: input.launch_env.clone(),
     }) {
         Ok(wrapped) => wrapped,
@@ -902,6 +904,7 @@ pub(super) struct AgentLaunchWrapInput<'a> {
     pub(super) backend_session_id: Option<&'a str>,
     pub(super) tool_config: &'a Value,
     pub(super) project_root: &'a str,
+    pub(super) cwd: &'a Path,
     pub(super) launch_env: Vec<(String, String)>,
 }
 
@@ -917,6 +920,7 @@ pub(super) fn wrap_agent_launch(
         backend_session_id,
         tool_config,
         project_root,
+        cwd,
         launch_env,
     } = input;
     let is_configured_tool_command =
@@ -955,6 +959,12 @@ pub(super) fn wrap_agent_launch(
             project_state_dir,
             session_id,
             backend_session_id,
+            cwd,
+            launch_env
+                .iter()
+                .rev()
+                .find(|(key, _)| key == "CLAUDE_CONFIG_DIR")
+                .map(|(_, value)| Path::new(value)),
         )?;
         return Ok(wrap_command_with_managed_launch_env_extra(
             command,
@@ -1045,6 +1055,93 @@ mod tests {
     }
 
     #[test]
+    fn claude_launch_preserves_worktree_and_effective_config_directory_statusline() {
+        let temp = TempDir::new("aimux-claude-launch-effective-statusline");
+        let project = temp.path().join("project");
+        let worktree = temp.path().join("worktree");
+        let config = worktree.join("custom-config");
+        let state = temp.path().join("state");
+        for directory in [
+            project.join(".claude"),
+            worktree.join(".claude"),
+            config.clone(),
+        ] {
+            fs::create_dir_all(directory).unwrap();
+        }
+        fs::write(
+            project.join(".claude/settings.json"),
+            r#"{"statusLine":{"type":"command","command":"wrong-project-root","padding":2}}"#,
+        )
+        .unwrap();
+        fs::write(
+            worktree.join(".claude/settings.json"),
+            r#"{"statusLine":{"command":"worktree-command"}}"#,
+        )
+        .unwrap();
+        fs::write(
+            config.join("settings.json"),
+            r#"{"statusLine":{"type":"command","command":"custom-user","padding":17}}"#,
+        )
+        .unwrap();
+        let project_root = project.to_string_lossy().into_owned();
+        let (command, args) = wrap_agent_launch(AgentLaunchWrapInput {
+            project_state_dir: &state,
+            session_id: "claude-effective-settings",
+            tool_key: "claude",
+            command: "claude",
+            launch_args: vec!["--setting-sources=user,project".to_owned()],
+            backend_session_id: None,
+            tool_config: &json!({ "command": "claude" }),
+            project_root: &project_root,
+            cwd: &worktree,
+            launch_env: vec![
+                ("CLAUDE_CONFIG_DIR".to_owned(), "wrong-config".to_owned()),
+                ("CLAUDE_CONFIG_DIR".to_owned(), "custom-config".to_owned()),
+            ],
+        })
+        .unwrap();
+        assert_eq!(command, "env");
+        assert!(
+            args.iter()
+                .any(|arg| arg == "CLAUDE_CONFIG_DIR=custom-config")
+        );
+        let settings_index = args.iter().position(|arg| arg == "--settings").unwrap();
+        let settings: Value =
+            serde_json::from_str(&fs::read_to_string(&args[settings_index + 1]).unwrap()).unwrap();
+        assert_eq!(settings["statusLine"]["padding"], 17);
+        let wrapped = settings["statusLine"]["command"].as_str().unwrap();
+        assert!(wrapped.contains("--forward-command 'worktree-command'"));
+        assert!(!wrapped.contains("wrong-project-root"));
+        assert!(!wrapped.contains("custom-user"));
+        assert!(wrapped.contains("claude-usage-statusline"));
+    }
+
+    #[test]
+    fn claude_launch_reports_broken_worktree_settings_instead_of_empty_statusline() {
+        let temp = TempDir::new("aimux-claude-launch-invalid-settings");
+        let worktree = temp.path().join("worktree");
+        let state = temp.path().join("state");
+        fs::create_dir_all(worktree.join(".claude")).unwrap();
+        fs::write(worktree.join(".claude/settings.json"), "invalid json").unwrap();
+        let error = wrap_agent_launch(AgentLaunchWrapInput {
+            project_state_dir: &state,
+            session_id: "claude-invalid-settings",
+            tool_key: "claude",
+            command: "claude",
+            launch_args: vec!["--setting-sources=project".to_owned()],
+            backend_session_id: None,
+            tool_config: &json!({ "command": "claude" }),
+            project_root: temp.path().to_str().unwrap(),
+            cwd: &worktree,
+            launch_env: Vec::new(),
+        })
+        .unwrap_err();
+        assert!(error.contains("invalid Claude settings"));
+        assert!(error.contains("worktree/.claude/settings.json"));
+        assert!(!state.join("claude-settings").exists());
+    }
+
+    #[test]
     fn wrapper_disabled_agent_launch_does_not_install_git_path_shim() {
         let temp = TempDir::new("aimux-agent-launch-no-git-guard");
         let project = temp.path().join("project");
@@ -1064,6 +1161,7 @@ mod tests {
                 "wrapperEnabled": false,
             }),
             project_root: &project_root,
+            cwd: &project,
             launch_env: Vec::new(),
         })
         .expect("wrap launch");

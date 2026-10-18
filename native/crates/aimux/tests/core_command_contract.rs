@@ -71,6 +71,7 @@ fn core_api_routes_match_the_typescript_contract() {
         ("logsPathText", "/core/logs/path-text"),
         ("logsTailText", "/core/logs/tail-text"),
         ("metadataText", "/core/metadata-text"),
+        ("usageText", "/core/usage-text"),
         ("logoutText", "/core/logout-text"),
         ("projectEnsureText", "/core/project-ensure-text"),
         ("projectKillText", "/core/project-kill-text"),

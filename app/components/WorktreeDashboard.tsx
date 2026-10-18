@@ -7,6 +7,7 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { AgentCreatePanel } from "@/components/agent-create-panel";
 import { AgentActions } from "@/components/agent-actions";
 import { OperationFailureCard } from "@/components/operation-failure-card";
+import { UsageMonitor } from "@/components/UsageMonitor";
 import { PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
@@ -54,6 +55,7 @@ import {
   desktopStateAgentCreationFamily,
   desktopStateOperationFailuresFamily,
   desktopStatePresentFamily,
+  desktopStateUsageFamily,
   worktreeGroupsFamily,
 } from "@/stores/desktopState";
 import { lastAgentByProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
@@ -988,6 +990,7 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
   // Subscribing to the whole desktop state re-rendered every row whenever any
   // field changed, including ones this view never shows.
   const desktopStatePresent = useAtomValue(desktopStatePresentFamily(stateProjectKey));
+  const usage = useAtomValue(desktopStateUsageFamily(stateProjectKey));
   const agentCreation = useAtomValue(desktopStateAgentCreationFamily(stateProjectKey));
   const operationFailures = useAtomValue(desktopStateOperationFailuresFamily(stateProjectKey));
   const desktopStateError = useAtomValue(desktopStateErrorFamily(stateProjectKey));
@@ -1134,6 +1137,7 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
   if (groups.length === 0) {
     return (
       <View className={statePad}>
+        <UsageMonitor usage={usage} />
         {operationFailureSummary ? (
           <OperationFailureCard
             summary={operationFailureSummary}
@@ -1149,6 +1153,7 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
 
   return (
     <View className={cn(padded && "px-4")}>
+      <UsageMonitor usage={usage} />
       {operationFailureSummary ? (
         <OperationFailureCard
           className="mb-4"

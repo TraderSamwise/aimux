@@ -27,6 +27,7 @@ import {
   getInteractionStreamRoute,
   getProjectDiagnostics,
   getProjectHealth,
+  getUsageMonitor,
   getShare,
   attachLivePane,
   getAgentOutput,
@@ -139,6 +140,20 @@ describe("api relay routing", () => {
       process.env.EXPO_PUBLIC_AIMUX_RELAY_URL = originalRelayUrl;
     }
     vi.restoreAllMocks();
+  });
+
+  it("reads usage snapshots unchanged and forwards refresh to the project service", async () => {
+    const snapshot = {
+      ok: true,
+      state: "error",
+      displayLines: ["Codex: error: open rollout: denied"],
+    };
+    const fetch = installFetchMock(snapshot);
+    expect(await getUsageMonitor(endpoint)).toEqual(snapshot);
+    expect(String(fetch.mock.calls[0]?.[0])).toContain("/usage");
+    expect(String(fetch.mock.calls[0]?.[0])).not.toContain("refresh=");
+    expect(await getUsageMonitor(endpoint, { refresh: true })).toEqual(snapshot);
+    expect(String(fetch.mock.calls[1]?.[0])).toContain("/usage?refresh=1");
   });
 
   it("uses direct project HTTP when no relay transport is connected", async () => {

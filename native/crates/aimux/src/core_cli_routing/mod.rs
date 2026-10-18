@@ -29,7 +29,10 @@ pub use lifecycle::{
     parse_core_lifecycle_status_args, parse_core_migration_args, parse_core_service_create_args,
     parse_core_service_status_args,
 };
-pub use local::{parse_core_logs_args, parse_core_metadata_args, parse_core_repair_args};
+pub use local::{
+    parse_core_logs_args, parse_core_metadata_args, parse_core_repair_args,
+    parse_core_usage_args_result,
+};
 pub use notifications::{
     parse_core_attachment_publish_args, parse_core_notification_args,
     parse_core_notification_test_args, parse_core_outline_args,
@@ -877,6 +880,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
                 | "services" | "installs" | "notifications",
             ),
         ) => parse_core_doctor_args(args).is_some(),
+        (Some("usage"), _) => !has_help(args),
         (Some("metadata"), _) => parse_core_metadata_args(args).is_some(),
         (Some("repair"), _) => parse_core_repair_args(args).is_some(),
         (Some("logs"), _) => parse_core_logs_args(args).is_some(),

@@ -28,7 +28,7 @@ macro_rules! define_string_contract {
 define_string_contract!(
     CoreApiRoutes,
     CORE_API_ROUTES,
-    117,
+    118,
     {
         commands => ("commands", "/core/commands"),
         daemon_ensure_text => ("daemonEnsureText", "/core/daemon-ensure-text"),
@@ -98,6 +98,7 @@ define_string_contract!(
         logs_path_text => ("logsPathText", "/core/logs/path-text"),
         logs_tail_text => ("logsTailText", "/core/logs/tail-text"),
         metadata_text => ("metadataText", "/core/metadata-text"),
+        usage_text => ("usageText", "/core/usage-text"),
         logout_text => ("logoutText", "/core/logout-text"),
         project_ensure_text => ("projectEnsureText", "/core/project-ensure-text"),
         project_kill_text => ("projectKillText", "/core/project-kill-text"),
