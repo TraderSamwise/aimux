@@ -18,7 +18,7 @@ describe("composer protocol", () => {
   it("sends on a hardware Enter and breaks the line on Shift+Enter", () => {
     expect(shouldSubmitComposerKey({ key: "Enter" }, true)).toBe(true);
     expect(shouldSubmitComposerKey({ key: "Enter", shiftKey: true }, true)).toBe(false);
-    expect(shouldSubmitComposerKey({ key: "Enter", ctrlKey: true }, true)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "Enter", ctrlKey: true }, true)).toBe(true);
     expect(shouldSubmitComposerKey({ key: "Enter", metaKey: true }, true)).toBe(false);
     expect(shouldSubmitComposerKey({ key: "Enter", altKey: true }, true)).toBe(false);
     expect(shouldSubmitComposerKey({ key: "a" }, true)).toBe(false);
@@ -36,11 +36,26 @@ describe("composer protocol", () => {
     expect(shouldSubmitComposerKey({ key: "Enter" }, true)).toBe(true);
   });
 
-  it("never sends on Enter without a hardware keyboard", () => {
-    // A soft keyboard's return key is the newline key, and the send control is
-    // the only send. Sending here swallowed the line break mid-sentence.
+  it("keeps plain Enter as a newline without a detected hardware keyboard", () => {
     expect(shouldSubmitComposerKey({ key: "Enter" }, false)).toBe(false);
     expect(shouldSubmitComposerKey({ key: "Enter", shiftKey: true }, false)).toBe(false);
+  });
+
+  it("sends Ctrl+Enter before hardware detection catches up", () => {
+    expect(shouldSubmitComposerKey({ key: "Enter", ctrlKey: true }, false)).toBe(true);
+    expect(
+      shouldSubmitComposerKey({ key: "Enter", code: "NumpadEnter", ctrlKey: true }, false),
+    ).toBe(true);
+    expect(shouldSubmitComposerKey({ key: "Enter", code: "", ctrlKey: true }, false)).toBe(false);
+    expect(shouldSubmitComposerKey({ key: "Enter", ctrlKey: true, shiftKey: true }, false)).toBe(
+      false,
+    );
+    expect(shouldSubmitComposerKey({ key: "Enter", ctrlKey: true, altKey: true }, false)).toBe(
+      false,
+    );
+    expect(shouldSubmitComposerKey({ key: "Enter", ctrlKey: true, metaKey: true }, false)).toBe(
+      false,
+    );
   });
 
   it("blocks sends without a target or while a send is in flight", () => {

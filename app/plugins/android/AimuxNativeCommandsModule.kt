@@ -125,17 +125,16 @@ class AimuxNativeCommandsModule(
         event.hasNoModifiers() &&
         isHardwareKeyboardEvent(event)
 
-    /// The mirror of Swift's `isSendReturnKey`. `hasNoModifiers()` is the same
-    /// predicate AOSP's `TextView.doKeyDown` uses to raise the editor action,
-    /// so Shift+Enter falls through as a newline here and there alike -- and
-    /// caps lock is outside `META_MODIFIER_MASK`, so it still sends.
+    /// Enter and Ctrl+Enter send; exact modifier matching leaves Shift+Enter
+    /// and Ctrl combined with Shift, Alt or Meta to the text view.
+    /// Lock states are outside META_MODIFIER_MASK, so caps lock still sends.
     fun isSendKeyEvent(event: KeyEvent): Boolean =
       event.action == KeyEvent.ACTION_DOWN &&
         // Android auto-repeats a held key as more ACTION_DOWNs; iOS fires once
         // on `.began`. Without this, holding Enter sends once per repeat.
         event.repeatCount == 0 &&
         isReturnKeyCode(event.keyCode) &&
-        event.hasNoModifiers() &&
+        (event.hasNoModifiers() || event.hasModifiers(KeyEvent.META_CTRL_ON)) &&
         isHardwareKeyboardEvent(event)
 
     private fun isReturnKeyCode(keyCode: Int): Boolean =
