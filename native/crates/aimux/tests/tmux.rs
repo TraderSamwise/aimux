@@ -300,7 +300,7 @@ fn a_prompt_paste_keeps_linefeeds_as_linefeeds() {
             "@3",
             "#{==:#{bracket_paste_flag},1}",
             "'paste-buffer' '-d' '-p' '-r' '-b' 'aimux-prompt-1' '-t' '@3'; display-message -p AIMUX_GUARDED_PASTE_OK",
-            "display-message -p AIMUX_GUARDED_PASTE_REFUSED"
+            "'if-shell' '-F' '-t' '@3' '#{==:#{bracket_paste_flag},0}' 'display-message -p AIMUX_GUARDED_PASTE_REFUSED' 'display-message -p AIMUX_GUARDED_PASTE_UNAVAILABLE'"
         ]
     );
     assert_eq!(
