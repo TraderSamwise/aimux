@@ -1,3 +1,4 @@
+use aimux::agent_prompt_delivery::PromptDeliveryVerification;
 use aimux::backlog_metrics::BacklogMetricStatus;
 use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
 use aimux::loop_watcher::{
@@ -74,6 +75,7 @@ enum FakeRuntimeAction {
 enum FakeSubmitOutcome {
     #[default]
     Landed,
+    Unverified,
     Dropped,
 }
 
@@ -156,10 +158,11 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
         window_id: &str,
         _draft: &str,
         _before: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<PromptDeliveryVerification, String> {
         self.send_carriage_return(window_id)?;
         match self.submit_outcome {
-            FakeSubmitOutcome::Landed => Ok(()),
+            FakeSubmitOutcome::Landed => Ok(PromptDeliveryVerification::Verified),
+            FakeSubmitOutcome::Unverified => Ok(PromptDeliveryVerification::Unverified),
             FakeSubmitOutcome::Dropped => {
                 self.actions
                     .push(FakeRuntimeAction::SubmitDropped(window_id.to_owned()));
@@ -223,7 +226,7 @@ impl AgentOutputCaptureRuntime for FakeActivityRuntime {
         window_id: &str,
         draft: &str,
         before: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<PromptDeliveryVerification, String> {
         self.inner.submit_prompt(window_id, draft, before)
     }
 
@@ -2361,7 +2364,8 @@ fn agent_input_delivers_immediately_when_active_client_already_quiet() {
     .unwrap();
 
     assert_eq!(response.status, 200);
-    assert!(response.body.get("delivery").is_none());
+    assert_eq!(response.body["delivery"]["state"], "delivered");
+    assert_eq!(response.body["delivery"]["verified"], true);
     assert_eq!(
         runtime.inner.actions,
         vec![
@@ -2517,7 +2521,8 @@ fn agent_input_delivers_stale_visible_draft_without_active_client() {
     .unwrap();
 
     assert_eq!(response.status, 200);
-    assert!(response.body.get("delivery").is_none());
+    assert_eq!(response.body["delivery"]["state"], "delivered");
+    assert_eq!(response.body["delivery"]["verified"], true);
     assert_eq!(
         runtime.inner.actions,
         vec![
@@ -2555,7 +2560,8 @@ fn agent_input_delivers_stale_multiline_draft_without_active_client() {
     .unwrap();
 
     assert_eq!(response.status, 200);
-    assert!(response.body.get("delivery").is_none());
+    assert_eq!(response.body["delivery"]["state"], "delivered");
+    assert_eq!(response.body["delivery"]["verified"], true);
     assert_eq!(
         runtime.inner.actions,
         vec![
@@ -2593,7 +2599,8 @@ fn agent_input_ignores_claude_queued_message_hint_as_composer_chrome() {
     .unwrap();
 
     assert_eq!(response.status, 200);
-    assert!(response.body.get("delivery").is_none());
+    assert_eq!(response.body["delivery"]["state"], "delivered");
+    assert_eq!(response.body["delivery"]["verified"], true);
     assert_eq!(
         runtime.inner.actions,
         vec![
@@ -2782,7 +2789,8 @@ fn agent_input_blank_prompt_is_genuine_unattended_no_data_path() {
     .unwrap();
 
     assert_eq!(response.status, 200);
-    assert!(response.body.get("delivery").is_none());
+    assert_eq!(response.body["delivery"]["state"], "delivered");
+    assert_eq!(response.body["delivery"]["verified"], true);
     assert_eq!(
         runtime.inner.actions,
         vec![
@@ -2818,7 +2826,8 @@ fn agent_input_idle_codex_placeholder_is_genuine_unattended_no_data_path() {
     .unwrap();
 
     assert_eq!(response.status, 200);
-    assert!(response.body.get("delivery").is_none());
+    assert_eq!(response.body["delivery"]["state"], "delivered");
+    assert_eq!(response.body["delivery"]["verified"], true);
     assert_eq!(
         runtime.inner.actions,
         vec![
@@ -3295,6 +3304,50 @@ fn queued_agent_input_delivers_when_readable_topology_proves_owned_window() {
 }
 
 #[test]
+fn unverified_queued_input_is_recorded_once_without_automatic_resend() {
+    let project = temp_project("queued-unverified-once");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    enqueue_agent_input_delivery(
+        &context,
+        "codex-1",
+        "@1",
+        "both large pasted blocks",
+        "active-client-recent-input",
+        now_ms,
+    )
+    .unwrap();
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            submit_outcome: FakeSubmitOutcome::Unverified,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, now_ms);
+    let actions = runtime.inner.actions.clone();
+    assert_eq!(actions.len(), 2, "one paste and one Enter");
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    let receipt = load_metadata_state(&state_dir).sessions["codex-1"]["inputDelivery"].clone();
+    assert_eq!(receipt["state"], "delivered");
+    assert_eq!(receipt["verified"], false);
+    assert!(
+        receipt["notice"]
+            .as_str()
+            .unwrap()
+            .contains("Ready does not confirm an answer")
+    );
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, now_ms + 1_000);
+    assert_eq!(
+        runtime.inner.actions, actions,
+        "uncertainty must not send Enter again"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn queued_agent_input_blocks_when_session_is_absent_from_topology() {
     let project = temp_project("queued-topology-absent-session");
     let state_dir = project.join("state");
@@ -3382,7 +3435,8 @@ fn agent_input_to_unattended_window_delivers_without_queue_delay() {
     .unwrap();
 
     assert_eq!(response.status, 200);
-    assert!(response.body.get("delivery").is_none());
+    assert_eq!(response.body["delivery"]["state"], "delivered");
+    assert_eq!(response.body["delivery"]["verified"], true);
     assert_eq!(
         runtime.inner.actions,
         vec![
@@ -3423,7 +3477,7 @@ fn agent_input_rejects_prompt_when_submit_carriage_return_does_not_land() {
     );
     assert_eq!(response.status, 500);
     assert_eq!(
-        response.body["error"],
+        response.body["delivery"]["error"],
         "agent input submit did not land: carriage return dropped"
     );
     assert_eq!(
@@ -3570,7 +3624,8 @@ fn agent_input_force_bypasses_visible_draft_hold() {
     .unwrap();
 
     assert_eq!(response.status, 200);
-    assert!(response.body.get("delivery").is_none());
+    assert_eq!(response.body["delivery"]["state"], "delivered");
+    assert_eq!(response.body["delivery"]["verified"], true);
     assert_eq!(
         runtime.inner.actions,
         vec![
@@ -3801,6 +3856,8 @@ fn live_pane_resize_interrupt_and_input_send_tmux_commands() {
     )
     .unwrap();
     assert_eq!(input.status, 200);
+    assert_eq!(input.body["delivery"]["state"], "delivered");
+    assert_eq!(input.body["delivery"]["verified"], true);
     assert_eq!(
         input.body,
         json!({
@@ -3815,7 +3872,8 @@ fn live_pane_resize_interrupt_and_input_send_tmux_commands() {
             },
             // Work dispatched to an agent no loop is watching finishes silently,
             // because the loop check is what raises the completion alert.
-            "loopWatch": { "known": true, "watched": false }
+            "loopWatch": { "known": true, "watched": false },
+            "delivery": input.body["delivery"],
         })
     );
     assert_eq!(

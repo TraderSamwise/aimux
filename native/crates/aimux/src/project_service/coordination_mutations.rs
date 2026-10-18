@@ -1,4 +1,5 @@
 use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1482,6 +1483,9 @@ fn deliver_thread_send_response(
     if !delivery.queued_to.is_empty() {
         object_insert_mut(&mut response.body, "queuedTo", json!(delivery.queued_to));
     }
+    if !delivery.receipts.is_empty() {
+        object_insert_mut(&mut response.body, "deliveries", json!(delivery.receipts));
+    }
     let thread_id = response
         .body
         .get("thread")
@@ -1515,7 +1519,7 @@ fn deliver_thread_send_response(
             &mut response.body,
             "error",
             Value::String(format!(
-                "message {message_id} in thread {thread_id} was recorded but not delivered: {failures}",
+                "message {message_id} in thread {thread_id} was recorded but delivery could not be confirmed: {failures}. Inspect the terminal before retrying.",
                 message_id = message_id.unwrap_or_else(|| "<unknown message>".into()),
                 thread_id = thread_id.unwrap_or_else(|| "<unknown thread>".into()),
                 failures = delivery.failures.join("; ")
@@ -1536,6 +1540,7 @@ struct DeliveryOutcome {
     delivered_to: Vec<String>,
     queued_to: Vec<String>,
     failures: Vec<String>,
+    receipts: BTreeMap<String, Value>,
 }
 
 fn thread_message_delivery_plan(
@@ -1625,18 +1630,37 @@ fn deliver_prompt_to_recipients(
             }
             continue;
         }
-        if let Err(error) = deliver_prompt_to_tmux_for_tool(
+        let attempt = match super::input_delivery_receipt::begin_input_delivery(
+            context,
+            recipient,
+            &target.window_id,
+        ) {
+            Ok(attempt) => attempt,
+            Err(error) => {
+                outcome.failures.push(format!(
+                    "{recipient}: input receipt failed before send: {error}"
+                ));
+                continue;
+            }
+        };
+        let result = deliver_prompt_to_tmux_for_tool(
             runtime,
             &target.window_id,
             &prompt,
             target.tool.as_deref(),
-        ) {
-            outcome.failures.push(format!(
-                "{recipient}: delivery to tmux window {} failed: {error}",
-                target.window_id
-            ));
+        );
+        let receipt = super::input_delivery_receipt::finish_input_delivery(
+            context,
+            &attempt,
+            result.as_ref().copied().map_err(String::as_str),
+        );
+        if result.is_err() {
+            let notice = receipt["notice"].as_str().expect("failed receipt notice");
+            outcome.failures.push(format!("{recipient}: {notice}"));
+            outcome.receipts.insert(recipient.clone(), receipt);
             continue;
         }
+        outcome.receipts.insert(recipient.clone(), receipt);
         outcome.delivered_to.push(recipient.clone());
     }
     outcome

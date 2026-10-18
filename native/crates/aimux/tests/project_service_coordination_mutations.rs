@@ -868,7 +868,7 @@ fn thread_send_fails_loudly_when_live_recipient_cannot_be_resolved() {
     assert_eq!(sent.body["ok"], false);
     assert_eq!(sent.body["deliveredTo"], json!([]));
     let error = sent.body["error"].as_str().unwrap();
-    assert!(error.contains("not delivered"));
+    assert!(error.contains("delivery could not be confirmed"));
     assert!(error.contains("codex-missing"));
     assert!(error.contains("no live tmux window"));
     assert!(error.contains("message"));

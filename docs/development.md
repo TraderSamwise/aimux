@@ -113,6 +113,33 @@ yarn vitest run <path/to/the.test.ts>
 yarn verify
 ```
 
+### App component tests
+
+The app has two Vitest projects. Pure tests stay in the `unit` project with a
+Node environment; `*.component.test.tsx` files use jsdom and React Testing
+Library in the `components` project. The existing CI app-test command runs
+both projects, so component tests are part of the app gate.
+
+```bash
+yarn --cwd app test:unit lib/composer-footer.test.ts
+yarn --cwd app test:components components/AgentChatScreen.component.test.tsx
+```
+
+The component project aliases exactly `react-native` to React Native Web.
+This tests mounted web component state, text, and events; it does not emulate
+native iOS/Android rendering or browser layout. Mock native bridges and external
+I/O at the test boundary, while keeping the component and the state/decision
+code under test real. Cleanup and React's asynchronous test environment are
+configured in `app/test/setup-components.ts`.
+
+`yarn verify` still runs app typechecking without launching either app test
+project. Run the scoped tests relevant to the change, then `yarn verify`.
+See [the render-environment evidence](investigations/947602-129-component-render-environment.md)
+for the measured costs and historical composer regression replay. The setup
+uses the documented [Vitest projects](https://vitest.dev/guide/projects) and
+[React Testing Library cleanup](https://testing-library.com/docs/react-testing-library/setup/)
+interfaces.
+
 Before asking someone to verify a runtime or CLI behavior change manually,
 install a local release asset so the running daemon and project services are
 using the code you changed.

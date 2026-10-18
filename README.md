@@ -71,6 +71,10 @@ curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/
 npm install -g aimux-cli
 ```
 
+The npm package includes native binaries for Linux x64, Linux ARM64, and
+Apple Silicon macOS. Linux binaries use static musl and do not require glibc.
+Install `tmux` separately before running Aimux.
+
 Homebrew or the standalone installer is preferred for normal local installs.
 
 ## Quick Start

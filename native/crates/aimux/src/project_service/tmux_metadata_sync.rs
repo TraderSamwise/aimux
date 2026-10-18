@@ -215,6 +215,11 @@ pub fn build_tmux_window_metadata(
     let attention = string_field(derived, "attention").map(str::to_owned);
     let user_label = window_user_label(project_state_dir, &session_id, status, derived);
     let mut out = Map::new();
+    if let Some(delivery) =
+        super::input_delivery_receipt::projected_input_delivery(session, stored_session)
+    {
+        out.insert("inputDelivery".into(), delivery);
+    }
     out.insert("kind".into(), Value::String("agent".into()));
     out.insert("sessionId".into(), Value::String(session_id.clone()));
     out.insert("command".into(), Value::String(command));

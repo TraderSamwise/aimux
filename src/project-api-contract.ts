@@ -576,6 +576,10 @@ export interface PreviewCaptureMarker {
 
 export interface LivePaneInputDelivery {
   state: "held" | "delivered" | "failed" | string;
+  verified?: boolean;
+  notice?: string;
+  displayLabel?: string;
+  receiptError?: string;
   id?: string;
   reason?: string;
   error?: string;

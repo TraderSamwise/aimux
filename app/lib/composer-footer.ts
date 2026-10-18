@@ -18,6 +18,7 @@ import type { AgentOutputViewMode } from "@/stores/settings";
 export type ComposerFooterState =
   | { kind: "error"; text: string }
   | { kind: "held"; text: string }
+  | { kind: "warning"; text: string }
   | { kind: "sending" }
   | { kind: "awaiting-echo"; text: string }
   | { kind: "activity"; label: string; shimmer: boolean }
@@ -51,6 +52,7 @@ export interface ComposerFooterStateInput {
   sending: boolean;
   /** An accepted send the project service queued rather than delivered. */
   heldNotice: string | null;
+  warningNotice?: string | null;
   /** A send was accepted and its echo has not come back yet. */
   awaitingEcho: boolean;
   activityLabel: string | null;
@@ -69,6 +71,7 @@ export function composerFooterState(input: ComposerFooterStateInput): ComposerFo
   // not a duplicate of the transcript row, it is the only thing that says the
   // input is queued behind text typed in the agent's own terminal.
   if (input.heldNotice) return { kind: "held", text: input.heldNotice };
+  if (input.warningNotice) return { kind: "warning", text: input.warningNotice };
   if (input.sending) return { kind: "sending" };
   // A send is confirmed by the message appearing in the transcript. Where
   // there is no transcript on screen -- terminal mode does not mount that

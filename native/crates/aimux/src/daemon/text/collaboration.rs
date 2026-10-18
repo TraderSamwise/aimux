@@ -337,7 +337,18 @@ pub fn thread_send_text_route(
             "Error: project service returned invalid thread send response: message.id is required",
         );
     }
-    let payload = json!({ "message": message });
+    let mut payload = json!({ "message": message });
+    for field in [
+        "deliveries",
+        "deliveredTo",
+        "queuedTo",
+        "deliveryErrors",
+        "error",
+    ] {
+        if let Some(value) = json.get(field) {
+            payload[field] = value.clone();
+        }
+    }
     text_or_json_lines(
         route_url,
         payload.clone(),
@@ -979,11 +990,16 @@ fn message_send_response(
             ),
         );
     }
-    let payload = json!({
+    let mut payload = json!({
         "thread": thread,
         "message": message,
         "deliveredTo": json.get("deliveredTo").cloned().unwrap_or(Value::Null),
     });
+    for field in ["deliveries", "queuedTo", "deliveryErrors", "error"] {
+        if let Some(value) = json.get(field) {
+            payload[field] = value.clone();
+        }
+    }
     let json_body = if action == "message send" {
         payload.clone()
     } else {

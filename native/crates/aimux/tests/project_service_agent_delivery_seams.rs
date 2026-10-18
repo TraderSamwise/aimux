@@ -2,7 +2,9 @@
 
 mod support;
 
-use aimux::daemon_state::{MetadataState, save_metadata_state};
+use aimux::daemon_state::{
+    MetadataState, metadata_state_path, save_metadata_state, try_load_metadata_state,
+};
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::{
     AgentOutputCaptureRuntime, BoundedAgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime,
@@ -37,6 +39,7 @@ struct Observation {
     loaded: Option<String>,
     file_existed_at_paste: Option<bool>,
     succeeded: bool,
+    delivery: Option<Value>,
 }
 
 struct ParentArtifacts(PathBuf);
@@ -115,6 +118,68 @@ fn production_delivery_executors_preserve_payload_and_failures() {
     }
 }
 
+#[test]
+fn production_submit_verification_distinguishes_three_outcomes_across_routes() {
+    if let Some(case) = std::env::var_os(CHILD_CASE) {
+        run_child(case.to_str().expect("selected composer case"));
+        return;
+    }
+    let root = ParentArtifacts(std::env::temp_dir().join(format!(
+        "aimux-submit-verification-parent-{}",
+        std::process::id()
+    )));
+    fs::create_dir(&root.0).expect("create submit artifact directory");
+    let mut observations = BTreeMap::new();
+    for outcome in [
+        "verified",
+        "head-loss",
+        "two-markers",
+        "unreadable",
+        "stuck",
+        "capture-fail",
+    ] {
+        for executor in ["system", "bounded", "async"] {
+            for route in ["agents", "pane"] {
+                let case = format!("composer:{executor}:{outcome}:{route}");
+                observations.insert(case.clone(), run_isolated_child(&root.0, &case));
+            }
+        }
+        let expected = &observations[&format!("composer:system:{outcome}:agents")];
+        for executor in ["system", "bounded", "async"] {
+            for route in ["agents", "pane"] {
+                assert_observations_match(
+                    expected,
+                    &observations[&format!("composer:{executor}:{outcome}:{route}")],
+                );
+            }
+        }
+    }
+    assert_eq!(observations.len(), 36, "all concrete submit cases execute");
+}
+
+#[test]
+fn production_routes_preserve_receipt_errors_before_and_after_irreversible_input() {
+    if let Some(case) = std::env::var_os(CHILD_CASE) {
+        run_child(case.to_str().expect("selected receipt case"));
+        return;
+    }
+    let root = ParentArtifacts(std::env::temp_dir().join(format!(
+        "aimux-receipt-errors-parent-{}",
+        std::process::id()
+    )));
+    fs::create_dir(&root.0).expect("receipt-error artifacts");
+    let mut completed = 0;
+    for executor in ["system", "async"] {
+        for route in ["agents", "pane"] {
+            for outcome in ["receipt-before", "receipt-after", "receipt-after-missing"] {
+                run_isolated_child(&root.0, &format!("receipt:{executor}:{outcome}:{route}"));
+                completed += 1;
+            }
+        }
+    }
+    assert_eq!(completed, 12);
+}
+
 fn assert_observations_match(left: &Observation, right: &Observation) {
     assert_eq!(left.steps, right.steps, "{} vs {}", left.case, right.case);
     assert_eq!(left.loaded, right.loaded, "{} vs {}", left.case, right.case);
@@ -125,6 +190,11 @@ fn assert_observations_match(left: &Observation, right: &Observation) {
     );
     assert_eq!(
         left.succeeded, right.succeeded,
+        "{} vs {}",
+        left.case, right.case
+    );
+    assert_eq!(
+        left.delivery, right.delivery,
         "{} vs {}",
         left.case, right.case
     );
@@ -175,7 +245,7 @@ fn run_isolated_child(root: &Path, case: &str) -> Observation {
     let observation: Observation = serde_json::from_str(&raw).expect("child observation JSON");
     assert_eq!(observation.case, case, "the selected scenario must execute");
     assert!(
-        !observation.steps.is_empty(),
+        !observation.steps.is_empty() || case.starts_with("receipt:"),
         "the production executor must run"
     );
     observation
@@ -198,6 +268,10 @@ fn run_child(case: &str) {
         std::env::set_var("AIMUX_DELIVERY_TEST_OUTCOME", outcome);
     }
     aimux::async_runtime::init_process_runtime().expect("child process runtime");
+    if kind == "receipt" {
+        run_receipt_failure_child(case, &isolation, &recorder, executor, outcome, parts[3]);
+        return;
+    }
     let cancelled = Arc::new(AtomicBool::new(outcome == "cancelled"));
     let deadline = if outcome == "expired" {
         Instant::now() - Duration::from_secs(1)
@@ -223,6 +297,11 @@ fn run_child(case: &str) {
         })
     });
     let project = isolation.root().join("project");
+    let mut delivery = None;
+    let success_expected = matches!(
+        outcome,
+        "ok" | "verified" | "head-loss" | "two-markers" | "unreadable"
+    );
     let (expected, result) = match kind {
         "direct" => {
             let prompt = numbered_prompt();
@@ -234,8 +313,13 @@ fn run_child(case: &str) {
             };
             (prompt, result)
         }
-        "route" => {
-            let (context, body, expected) = route_fixture(&project);
+        "route" | "composer" => {
+            let (tool, text) = if kind == "composer" {
+                ("codex", multipart_prompt())
+            } else {
+                ("shell", numbered_prompt())
+            };
+            let (context, body, expected) = route_fixture(&project, tool, text);
             let route = match parts[3] {
                 "agents" => routes::agents::INPUT,
                 "pane" => routes::live_pane::INPUT,
@@ -274,7 +358,57 @@ fn run_child(case: &str) {
                 _ => panic!("unknown route executor {executor}"),
             }
             .expect("production input route handled request");
-            let result = if outcome == "ok" {
+            let receipt = &response.body["delivery"];
+            if !success_expected {
+                assert_eq!(
+                    response.body["error"], receipt["notice"],
+                    "{case}: HTTP failure wrappers must retain inspect-before-retry advice"
+                );
+            }
+            assert_eq!(
+                receipt["verified"],
+                outcome == "verified",
+                "{case}: actual submission evidence"
+            );
+            assert_eq!(
+                receipt["state"],
+                if success_expected {
+                    "delivered"
+                } else {
+                    "failed"
+                }
+            );
+            if success_expected && outcome != "verified" {
+                assert!(
+                    receipt["notice"]
+                        .as_str()
+                        .expect("unverified submission is visible")
+                        .contains("Ready does not confirm an answer")
+                );
+            }
+            let metadata = try_load_metadata_state(context.project_state_dir())
+                .expect("receipt metadata readable");
+            assert_eq!(
+                metadata.sessions["shell-1"]["inputDelivery"], *receipt,
+                "{case}: callers and later lane reads share the receipt"
+            );
+            let notice = receipt.get("notice").and_then(Value::as_str).map(|notice| {
+                if !success_expected {
+                    let cause = receipt["error"].as_str().expect("original child cause");
+                    assert!(
+                        notice.contains(cause),
+                        "{case}: notice preserves child cause"
+                    );
+                    assert!(notice.contains("Inspect the terminal before retrying"));
+                    notice.replace(cause, "<original child cause>")
+                } else {
+                    notice.to_owned()
+                }
+            });
+            delivery = Some(
+                json!({"state":receipt["state"], "verified":receipt["verified"], "notice":notice, "displayLabel":receipt["displayLabel"]}),
+            );
+            let result = if success_expected {
                 assert_eq!(response.status, 200, "{}", response.body);
                 assert_eq!(response.body["accepted"], true);
                 Ok(())
@@ -294,7 +428,7 @@ fn run_child(case: &str) {
         cancellation.join().expect("cancellation seam completed");
     }
     let succeeded = result.is_ok();
-    if outcome == "ok" {
+    if success_expected {
         result.expect("production paste succeeded");
     } else {
         let error = result.expect_err("a failed concrete paste must never become success");
@@ -304,6 +438,8 @@ fn run_child(case: &str) {
             "expired" => "timed out",
             "cancelled" | "cancel-after-load" => "cancelled",
             "deadline-load" => "timed out",
+            "stuck" => "remained visible",
+            "capture-fail" => "injected capture-pane child failure",
             _ => panic!("unknown outcome {outcome}"),
         };
         assert!(
@@ -316,8 +452,16 @@ fn run_child(case: &str) {
         .lines()
         .map(str::to_owned)
         .collect::<Vec<_>>();
+    let delivery_steps = steps
+        .iter()
+        .filter(|step| step.as_str() != "capture-pane")
+        .cloned()
+        .collect::<Vec<_>>();
     let expected_steps: &[&str] = match outcome {
-        "ok" if kind == "route" => &["load-buffer", "if-shell", "send-keys"],
+        "verified" | "head-loss" | "two-markers" | "unreadable" | "stuck" | "capture-fail" => {
+            &["load-buffer", "set-option", "send-keys"]
+        }
+        "ok" if kind == "route" => &["load-buffer", "paste-buffer", "send-keys"],
         "ok" => &["load-buffer", "paste-buffer"],
         "load-fail" | "cancel-after-load" | "deadline-load" => &["load-buffer", "delete-buffer"],
         "paste-fail" => &["load-buffer", "paste-buffer", "delete-buffer"],
@@ -335,7 +479,7 @@ fn run_child(case: &str) {
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        steps, expected_steps,
+        delivery_steps, expected_steps,
         "{case}: no carriage return after failure"
     );
     assert!(
@@ -367,7 +511,16 @@ fn run_child(case: &str) {
                 .replace(project.to_str().expect("project UTF-8"), "<project>"),
         )
     };
-    let file_existed_at_paste = if matches!(outcome, "ok" | "paste-fail") {
+    let file_existed_at_paste = if matches!(
+        outcome,
+        "ok" | "paste-fail"
+            | "verified"
+            | "head-loss"
+            | "two-markers"
+            | "unreadable"
+            | "stuck"
+            | "capture-fail"
+    ) {
         let observation = fs::read_to_string(recorder.join("file-existed-at-paste"))
             .expect("concrete paste observed staging file lifetime");
         assert_eq!(
@@ -388,6 +541,7 @@ fn run_child(case: &str) {
         loaded,
         file_existed_at_paste,
         succeeded,
+        delivery,
     };
     fs::write(
         std::env::var_os(ARTIFACT).expect("parent artifact path"),
@@ -397,22 +551,178 @@ fn run_child(case: &str) {
     eprintln!("completed concrete delivery scenario {case}");
 }
 
+fn run_receipt_failure_child(
+    case: &str,
+    isolation: &TestIsolation,
+    recorder: &Path,
+    executor: &str,
+    outcome: &str,
+    route: &str,
+) {
+    let (context, body, expected) = route_fixture(
+        &isolation.root().join("project"),
+        "codex",
+        multipart_prompt(),
+    );
+    let path = metadata_state_path(context.project_state_dir());
+    if outcome == "receipt-before" {
+        fs::write(&path, "corrupt receipt metadata").expect("inject before-send parse error");
+    }
+    // SAFETY: One isolated selected test owns this process and recorder.
+    unsafe {
+        std::env::set_var("AIMUX_DELIVERY_TEST_METADATA_PATH", &path);
+    }
+    let endpoint = if route == "agents" {
+        routes::agents::INPUT
+    } else {
+        routes::live_pane::INPUT
+    };
+    let irreversible = AtomicBool::new(false);
+    let response = match executor {
+        "system" => route_agent_output_request(&context, "POST", endpoint, Some(&body)),
+        "async" => {
+            // aimux-async-seam: test - injects actual input route receipt storage failures.
+            aimux::async_runtime::block_on_named("test:receipt-storage-route", async {
+                route_agent_output_request_async(
+                    &context,
+                    "POST",
+                    endpoint,
+                    Some(&body),
+                    Some(&irreversible),
+                )
+                .await
+            })
+        }
+        _ => panic!("unknown receipt executor"),
+    }
+    .expect("actual input route");
+    let steps = match fs::read_to_string(recorder.join("steps")) {
+        Ok(steps) => steps.lines().map(str::to_owned).collect::<Vec<_>>(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => panic!("read command observations: {error}"),
+    };
+    let after_send = outcome != "receipt-before";
+    let loaded = if after_send {
+        assert_eq!(response.status, 200, "{}", response.body);
+        assert_eq!(response.body["accepted"], true);
+        assert_eq!(response.body["delivery"]["verified"], true);
+        assert_eq!(response.body["delivery"]["state"], "delivered");
+        let storage_cause = if outcome == "receipt-after-missing" {
+            "reserved input delivery receipt is missing"
+        } else {
+            "parse metadata state"
+        };
+        assert!(
+            response.body["delivery"]["receiptError"]
+                .as_str()
+                .unwrap()
+                .contains(storage_cause)
+        );
+        let notice = response.body["delivery"]["notice"].as_str().unwrap();
+        assert!(
+            notice.contains("could not be saved")
+                && notice.contains("Inspect the terminal before retrying")
+        );
+        assert_eq!(
+            steps
+                .iter()
+                .filter(|step| step.as_str() == "send-keys")
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs::read_to_string(recorder.join("loaded")).unwrap(),
+            expected
+        );
+        assert_eq!(
+            fs::read_to_string(recorder.join("file-existed-at-paste")).unwrap(),
+            "false"
+        );
+        assert!(!recorder.join("buffer-bytes").exists());
+        assert!(!recorder.join("open-frame").exists());
+        let staged = fs::read_to_string(recorder.join("staged-path")).unwrap();
+        assert!(
+            !Path::new(&staged).exists(),
+            "receipt path leaked staged body"
+        );
+        Some(expected)
+    } else {
+        assert_eq!(response.status, 500, "{}", response.body);
+        assert!(
+            response.body["error"]
+                .as_str()
+                .unwrap()
+                .contains("parse metadata state")
+        );
+        assert_ne!(response.body["accepted"], true);
+        assert!(
+            steps.is_empty(),
+            "receipt reservation must fail before paste or Enter"
+        );
+        None
+    };
+    if executor == "async" {
+        assert_eq!(irreversible.load(Ordering::SeqCst), after_send);
+    }
+    if outcome == "receipt-after-missing" {
+        assert!(
+            !path.exists(),
+            "completion cannot invent a missing reservation"
+        );
+    } else {
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "corrupt receipt metadata",
+            "failed reads must not replace corruption with absence"
+        );
+    }
+    let observation = Observation {
+        case: case.to_owned(),
+        steps,
+        loaded,
+        file_existed_at_paste: after_send.then_some(false),
+        succeeded: after_send,
+        delivery: response.body.get("delivery").cloned(),
+    };
+    fs::write(
+        std::env::var_os(ARTIFACT).expect("artifact path"),
+        serde_json::to_vec(&observation).unwrap(),
+    )
+    .expect("completed receipt scenario");
+}
+
 fn numbered_prompt() -> String {
     (1..=80).map(|index| format!(
         "{index}. Preserve this entire café λ message, including its literal newline and trailing item {index}."
     )).collect::<Vec<_>>().join("\n")
 }
 
-fn route_fixture(project: &Path) -> (ProjectServiceRequestContext, Value, String) {
+fn multipart_prompt() -> String {
+    let first = "Important original head instructions must survive completely. ";
+    let second = "Second pasted block includes an independent final instruction. ";
+    format!(
+        "{}{}{}{}",
+        first,
+        "a".repeat(4577 - first.len()),
+        second,
+        "z".repeat(3941 - second.len())
+    )
+}
+
+fn route_fixture(
+    project: &Path,
+    tool: &str,
+    text: String,
+) -> (ProjectServiceRequestContext, Value, String) {
     let state = project.join("state");
     fs::create_dir_all(&state).expect("route project state");
     let timestamp = "2026-10-18T00:00:00.000Z";
     let topology = coerce_runtime_topology(&json!({
         "version": 1, "generatedAt": timestamp,
         "rigs": [{"id":"rig", "name":"aimux-test", "projectRoot":project, "createdAt":timestamp, "updatedAt":timestamp}],
-        "nodes": [{"id":"node", "rigId":"rig", "logicalId":"shell-1", "toolConfigKey":"shell", "createdAt":timestamp}],
+        "nodes": [{"id":"node", "rigId":"rig", "logicalId":"shell-1", "toolConfigKey":tool, "createdAt":timestamp}],
         "bindings": [{"id":"binding", "nodeId":"node", "tmuxSession":"aimux-test", "tmuxWindowId":"@1", "tmuxWindowIndex":1, "updatedAt":timestamp}],
-        "sessions": [{"id":"shell-1", "nodeId":"node", "status":"running", "command":"shell", "createdAt":timestamp, "updatedAt":timestamp}]
+        "sessions": [{"id":"shell-1", "nodeId":"node", "status":"running", "command":tool, "createdAt":timestamp, "updatedAt":timestamp}]
     })).expect("valid live shell topology");
     fs::write(
         runtime_topology_path(&state),
@@ -442,7 +752,6 @@ fn route_fixture(project: &Path) -> (ProjectServiceRequestContext, Value, String
         attachment["contentPath"],
         content.to_str().expect("attachment path UTF-8")
     );
-    let text = numbered_prompt();
     let body = json!({
         "sessionId":"shell-1", "text":text, "force":true, "attachmentIds":["att_notes"],
         "sharedChatActor":{"role":"owner", "displayName":"Sam Reviewer"}
@@ -464,6 +773,13 @@ set -eu
 fail() { printf '%s\n' "recorder rejected command: $*" >&2; exit 97; }
 dir=${AIMUX_DELIVERY_TEST_DIR:?}
 outcome=${AIMUX_DELIVERY_TEST_OUTCOME:?}
+record_paste() {
+  staged=$(/bin/cat "$dir/staged-path")
+  if [ -e "$staged" ]; then printf '%s' true; else printf '%s' false; fi > "$dir/file-existed-at-paste"
+  [ -f "$dir/buffer-bytes" ] || fail "paste without loaded buffer"
+  if [ "$outcome" = paste-fail ]; then printf '%s\n' 'injected paste-buffer child failure' >&2; exit 74; fi
+  /bin/rm "$dir/buffer-bytes"
+}
 [ "$#" -ge 3 ] || fail "missing private socket"
 [ "$1" = -S ] && [ "$2" = "${AIMUX_TMUX_SOCKET_PATH:?}" ] || fail "foreign socket"
 [ "$2" = "${dir%/recorder}/tmux.sock" ] || fail "socket outside owned isolation"
@@ -487,20 +803,40 @@ load-buffer)
       ;;
   esac
   ;;
+set-option)
+  [ "$#" -eq 46 ] || fail "framed command count"
+  token=$6
+  case "$token" in aimux-prompt-*) ;; *) fail "foreign frame token" ;; esac
+  buffer=$(/bin/cat "$dir/buffer-name")
+  expected="set-option -p -t @1 @aimux-input-paste-frame $token ; send-keys -t @1 -H 1b 5b 32 30 30 7e ; paste-buffer -d -r -b $buffer -t @1 ; send-keys -t @1 -H 1b 5b 32 30 31 7e ; set-option -pu -t @1 @aimux-input-paste-frame ; display-message -p AIMUX_FRAMED_PASTE_OK"
+  [ "$*" = "$expected" ] || fail "framed group argv"
+  printf '%s' "$token" > "$dir/open-frame"
+  record_paste
+  /bin/rm "$dir/open-frame"
+  printf 'AIMUX_FRAMED_PASTE_OK\n'
+  ;;
 paste-buffer|if-shell)
   if [ "$1" = if-shell ]; then
+    case "$5" in
+      '#{==:#{@aimux-input-paste-frame},aimux-prompt-'*)
+        [ "$#" -eq 6 ] && [ "$2" = -F ] && [ "$3" = -t ] && [ "$4" = @1 ] || fail "frame cleanup argv"
+        [ "$6" = "'send-keys' '-t' '@1' '-H' '1b' '5b' '32' '30' '31' '7e'; 'set-option' '-pu' '-t' '@1' '@aimux-input-paste-frame'" ] || fail "frame cleanup command"
+        if [ -f "$dir/open-frame" ]; then
+          token=$(/bin/cat "$dir/open-frame")
+          if [ "$5" = "#{==:#{@aimux-input-paste-frame},$token}" ]; then /bin/rm "$dir/open-frame"; fi
+        fi
+        exit 0
+        ;;
+    esac
     [ "$#" -eq 7 ] && [ "$2" = -F ] && [ "$3" = -t ] && [ "$4" = @1 ] && [ "$5" = '#{==:#{bracket_paste_flag},1}' ] || fail "atomic paste guard argv"
-    case "$6" in *"'paste-buffer' '-d' '-p' '-r' '-b'"*"; display-message -p AIMUX_GUARDED_PASTE_OK") ;; *) fail "guarded paste command" ;; esac
-    [ "$7" = 'display-message -p AIMUX_GUARDED_PASTE_REFUSED' ] || fail "guard refusal marker"
+    buffer=$(/bin/cat "$dir/buffer-name")
+    [ "$6" = "'paste-buffer' '-d' '-p' '-r' '-b' '$buffer' '-t' '@1'; display-message -p AIMUX_GUARDED_PASTE_OK" ] || fail "guarded paste command"
+    [ "$7" = "'if-shell' '-F' '-t' '@1' '#{==:#{bracket_paste_flag},0}' 'display-message -p AIMUX_GUARDED_PASTE_REFUSED' 'display-message -p AIMUX_GUARDED_PASTE_UNAVAILABLE'" ] || fail "guard refusal or unavailable marker"
   else
   [ "$#" -eq 8 ] && [ "$2" = -d ] && [ "$3" = -p ] && [ "$4" = -r ] && [ "$5" = -b ] && [ "$7" = -t ] && [ "$8" = @1 ] || fail "paste argv"
   [ "$6" = "$(/bin/cat "$dir/buffer-name")" ] || fail "wrong paste buffer"
   fi
-  staged=$(/bin/cat "$dir/staged-path")
-  if [ -e "$staged" ]; then printf '%s' true; else printf '%s' false; fi > "$dir/file-existed-at-paste"
-  [ -f "$dir/buffer-bytes" ] || fail "paste without loaded buffer"
-  if [ "$outcome" = paste-fail ]; then printf '%s\n' 'injected paste-buffer child failure' >&2; exit 74; fi
-  /bin/rm "$dir/buffer-bytes"
+  record_paste
   if [ "$1" = if-shell ]; then printf 'AIMUX_GUARDED_PASTE_OK\n'; fi
   ;;
 delete-buffer)
@@ -511,6 +847,33 @@ delete-buffer)
   ;;
 send-keys)
   [ "$#" -eq 5 ] && [ "$2" = -t ] && [ "$3" = @1 ] && [ "$4" = -H ] && [ "$5" = 0d ] || fail "submit argv"
+  printf '%s' submitted > "$dir/submitted"
+  if [ "$outcome" = receipt-after ]; then printf '%s' 'corrupt receipt metadata' > "${AIMUX_DELIVERY_TEST_METADATA_PATH:?}"; fi
+  if [ "$outcome" = receipt-after-missing ]; then /bin/rm "${AIMUX_DELIVERY_TEST_METADATA_PATH:?}"; fi
+  ;;
+capture-pane)
+  [ "$#" -eq 7 ] && [ "$2" = -p ] && [ "$3" = -J ] && [ "$4" = -t ] && [ "$5" = @1 ] && [ "$6" = -S ] || fail "capture argv"
+  case "$7" in -60|-20) ;; *) fail "capture range" ;; esac
+  if [ ! -f "$dir/loaded" ]; then printf '> \n'; exit 0; fi
+  if [ -f "$dir/submitted" ]; then
+    case "$outcome" in
+      stuck) printf '> '; /bin/cat "$dir/loaded"; printf '\n' ;;
+      two-markers) printf '> [Pasted Content 4577 chars][Pasted Content 3941 chars]\n' ;;
+      unreadable) printf 'Custom opaque TUI\n' ;;
+      capture-fail) printf '%s\n' 'injected capture-pane child failure' >&2; exit 75 ;;
+      *) printf '> \n' ;;
+    esac
+  else
+    # This artificial complete-display peer is not a provider TUI.
+    # Only its rendered whitespace folds; loaded transport bytes remain literal.
+    case "$outcome" in
+      verified|receipt-after|receipt-after-missing) printf '> '; /usr/bin/tr '\n' ' ' < "$dir/loaded"; printf '\n' ;;
+      head-loss) printf '> '; /usr/bin/tail -c 200 "$dir/loaded"; printf '\n' ;;
+      two-markers) printf '> [Pasted Content 4577 chars][Pasted Content 3941 chars]\n' ;;
+      unreadable) printf 'Custom opaque TUI\n' ;;
+      *) printf '> '; /bin/cat "$dir/loaded"; printf '\n' ;;
+    esac
+  fi
   ;;
 *) fail "unexpected command $1" ;;
 esac

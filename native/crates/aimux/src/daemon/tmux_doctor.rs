@@ -1734,16 +1734,7 @@ fn resolve_statusline_executable() -> PathBuf {
 }
 
 fn resolve_tmux_control_script_path() -> PathBuf {
-    resolve_repo_script_path("scripts/tmux-control.sh")
-}
-
-fn resolve_repo_script_path(relative: &str) -> PathBuf {
-    let candidate = std::env::var_os("AIMUX_ROOT")
-        .filter(|root| !root.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
-        .join(relative);
-    fs::canonicalize(&candidate).unwrap_or(candidate)
+    crate::tmux::resolve_repo_script_path("scripts/tmux-control.sh")
 }
 
 fn native_tmux_control_command() -> String {

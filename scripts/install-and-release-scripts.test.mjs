@@ -430,6 +430,25 @@ esac
 function releaseScriptEnv(root, extra = {}) {
   const bin = join(root, "bin");
   mkdirSync(bin, { recursive: true });
+  const elf = Buffer.alloc(132);
+  elf.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  elf.writeUInt16LE(2, 16);
+  elf.writeUInt16LE(62, 18);
+  elf.writeUInt32LE(1, 20);
+  elf.writeBigUInt64LE(0x400078n, 24);
+  elf.writeBigUInt64LE(64n, 32);
+  elf.writeUInt16LE(64, 52);
+  elf.writeUInt16LE(56, 54);
+  elf.writeUInt16LE(1, 56);
+  elf.writeUInt32LE(1, 64);
+  elf.writeUInt32LE(5, 68);
+  elf.writeBigUInt64LE(0x400000n, 80);
+  elf.writeBigUInt64LE(BigInt(elf.length), 96);
+  elf.writeBigUInt64LE(BigInt(elf.length), 104);
+  elf.writeBigUInt64LE(4096n, 112);
+  elf.set([0xb8, 60, 0, 0, 0, 0x31, 0xff, 0x0f, 0x05], 120);
+  writeFileSync(join(root, "static-elf"), elf);
+  writeExecutable(join(bin, "musl-gcc"), "#!/bin/sh\nexit 0\n");
   const realTar = runOk("bash", ["-lc", "command -v tar"]).stdout.trim();
   const realCommands = {
     awk: runOk("bash", ["-lc", "command -v awk"]).stdout.trim(),
@@ -469,8 +488,8 @@ exec ${realTar} "$@"
     join(bin, "uname"),
     `#!/bin/sh
 case "$1" in
-  -s) printf 'Linux\\n' ;;
-  -m) printf 'x86_64\\n' ;;
+  -s) printf '%s\\n' "\${AIMUX_FAKE_HOST_PLATFORM:-Linux}" ;;
+  -m) printf '%s\\n' "\${AIMUX_FAKE_HOST_ARCH:-x86_64}" ;;
   *) printf 'Linux\\n' ;;
 esac
 `,
@@ -509,14 +528,22 @@ if [ "$1" = "tree" ]; then
   printf '%s\\n' 'aimux v0.0.0 (/fixture)'
   exit 0
 fi
-mkdir -p "$CARGO_TARGET_DIR/release"
 printf '%s\\n' "$*" > "${root}/cargo-args.txt"
-{
-  printf '#!/usr/bin/env sh\\n'
-  printf 'AIMUX_EMBEDDED_BUILD_STAMP=%s\\n' "$AIMUX_RELEASE_BUILD_STAMP"
-  printf 'exit 0\\n'
-} > "$CARGO_TARGET_DIR/release/aimux"
-chmod +x "$CARGO_TARGET_DIR/release/aimux"
+output_dir="$CARGO_TARGET_DIR"
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = --target ]; then output_dir="$output_dir/$arg"; fi
+  previous="$arg"
+done
+mkdir -p "$output_dir/release"
+if [ "\${AIMUX_FAKE_HOST_PLATFORM:-Linux}" = Darwin ]; then
+  printf '#!/bin/sh\\nexit 0\\n' > "$output_dir/release/aimux"
+else
+  cp '${root}/static-elf' "$output_dir/release/aimux"
+fi
+printf '\\nAIMUX_EMBEDDED_BUILD_STAMP=%s\\n' "$AIMUX_RELEASE_BUILD_STAMP" >> "$output_dir/release/aimux"
+chmod +x "$output_dir/release/aimux"
+printf '{"reason":"compiler-artifact","target":{"name":"aimux","kind":["bin"]},"executable":"%s"}\\n' "$output_dir/release/aimux"
 `,
   );
   writeExecutable(
@@ -682,6 +709,7 @@ describe("build-release-asset.sh", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("release runtime archive audit passed");
       expect(
         existsSync(join(root, "release", "aimux-linux-x64.tar.gz")),
         `stdout:\n${result.stdout}\nstderr:\n${result.stderr}\nrelease files:\n${existsSync(join(root, "release")) ? readdirSync(join(root, "release")).join("\n") : "(missing)"}`,
@@ -707,6 +735,7 @@ describe("build-release-asset.sh", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("release runtime archive audit passed");
       expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz"))).toBe(true);
       expect(readFileSync(join(root, "cargo-args.txt"), "utf8")).toContain("--no-default-features");
       const extractDir = join(root, "extract");
@@ -726,7 +755,11 @@ describe("build-release-from-source.sh", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-source-release-script-"));
     try {
       const result = run("bash", [join(repoRoot, "scripts/build-local-release-from-source.sh")], {
-        env: releaseScriptEnv(root, { AIMUX_RELEASE_VERSION: "source-test" }),
+        env: releaseScriptEnv(root, {
+          AIMUX_RELEASE_VERSION: "source-test",
+          AIMUX_FAKE_HOST_PLATFORM: process.platform === "darwin" ? "Darwin" : "Linux",
+          AIMUX_FAKE_HOST_ARCH: process.platform === "darwin" ? "arm64" : "x86_64",
+        }),
       });
 
       expect(result.status, result.stderr).toBe(0);
@@ -735,10 +768,10 @@ describe("build-release-from-source.sh", () => {
       expect(result.stdout).toContain("aimux local build boundary check passed");
       expect(result.stdout).toContain("Install smoke passed for local variant");
       expect(result.stdout).toContain("Aimux source release build verified");
-      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz"))).toBe(true);
-      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz.sha256"))).toBe(true);
-      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz.provenance.json"))).toBe(true);
-      expect(existsSync(join(root, "release", "aimux-local-linux-x64.tar.gz.sbom.spdx.json"))).toBe(true);
+      const asset = process.platform === "darwin" ? "aimux-local-darwin-arm64" : "aimux-local-linux-x64";
+      for (const suffix of [".tar.gz", ".tar.gz.sha256", ".tar.gz.provenance.json", ".tar.gz.sbom.spdx.json"]) {
+        expect(existsSync(join(root, "release", `${asset}${suffix}`))).toBe(true);
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -2548,11 +2581,7 @@ describe("release workflow", () => {
   it("repairs PATH before inline archive checks use tar gzip mode", () => {
     const workflow = readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8");
 
-    for (const step of [
-      "Verify release asset has no source maps",
-      "Verify Darwin notifier helper",
-      "Stage macOS native assets for npm package",
-    ]) {
+    for (const step of ["Verify release asset has no source maps", "Verify Darwin notifier helper"]) {
       const stepStart = workflow.indexOf(`- name: ${step}`);
       expect(stepStart, `${step} missing`).toBeGreaterThanOrEqual(0);
       const nextStep = workflow.indexOf("\n      - name:", stepStart + 1);
@@ -2663,20 +2692,20 @@ describe("release workflow", () => {
     expect(renderer).toContain('(bin/"aimux").write_env_script libexec/"bin/aimux", {}');
     expect(renderer).not.toContain("bin.install_symlink");
     const npmStage = workflow.slice(
-      workflow.indexOf("- name: Stage macOS native assets for npm package"),
-      workflow.indexOf("- name: Verify npm package has no source maps"),
+      workflow.indexOf("- name: Stage full native assets for npm package"),
+      workflow.indexOf("- name: Pack and verify npm runtime payload"),
     );
-    // npm ships the full darwin build only, and the arches come from the build
-    // matrix. This step interpolated `aimux-darwin-${arch}` over a hardcoded
-    // `arm64 x64`, so after Intel was dropped the download found nothing and
-    // v0.1.61's npm publish failed with every asset already published.
-    expect(npmStage).toContain('[ "$platform" = darwin ] || continue');
+    expect(npmStage).not.toContain('[ "$platform" = darwin ] || continue');
     expect(npmStage).toContain('[ "$variant" = full ] || continue');
-    expect(npmStage).toContain("done < <(python3 scripts/release-asset-matrix.py)");
+    expect(npmStage).toContain('python3 scripts/release-asset-matrix.py > "$TMP_DIR/matrix.tsv"');
+    expect(npmStage).toContain('done < "$TMP_DIR/matrix.tsv"');
+    expect(npmStage).toContain('python3 scripts/stage-npm-assets.py "$TMP_DIR"');
     expect(npmStage).not.toMatch(/for arch in /);
     expect(npmStage).not.toContain("aimux-local");
-    // A matrix that lists no darwin full asset must say so rather than publish
-    // an npm package with no macOS binary in it.
-    expect(npmStage).toContain("the build matrix lists no darwin full asset to stage for npm");
+    expect(npmStage).toContain("the build matrix lists no full asset to stage for npm");
+    expect(npmJob).toContain("scripts/run-yarn prepack");
+    expect(npmJob).toContain("npm pack --ignore-scripts --json");
+    expect(npmJob).toContain('node scripts/verify-npm-package.mjs "$PACKAGE"');
+    expect(npmJob).toContain('npm publish "$AIMUX_NPM_PACKAGE" --access public --provenance');
   });
 });

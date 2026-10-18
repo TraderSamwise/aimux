@@ -22,6 +22,7 @@ pub mod graveyard_cleanup;
 pub mod graveyard_contract;
 pub mod hooks;
 pub mod http;
+pub mod input_delivery_receipt;
 pub mod interactions;
 pub mod library;
 pub mod lifecycle;
