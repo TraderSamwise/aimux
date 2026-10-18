@@ -459,6 +459,12 @@ export interface ProjectApiOk {
 export type AgentSupervisorRole = string;
 export type AgentRole = "coder" | AgentSupervisorRole;
 
+export interface AgentCreationPolicy {
+  defaultTarget: "supervisor" | "worktree";
+  defaultRole: AgentRole;
+  worktreeRole: AgentRole;
+}
+
 export type AgentLane =
   | {
       kind: "worktree";

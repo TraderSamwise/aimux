@@ -1,21 +1,25 @@
 use aimux::dashboard_controller::DashboardKey;
-use aimux::dashboard_terminal::{DashboardKeyReader, read_dashboard_key, read_dashboard_keys};
+use aimux::dashboard_terminal::DashboardKeyReader;
 use std::io::{self, Read};
 
 #[test]
-fn read_dashboard_key_maps_bytes_from_reader() {
+fn incremental_reader_maps_bytes_from_reader() {
     let mut input = b"j".as_slice();
     assert_eq!(
-        read_dashboard_key(&mut input).expect("read key"),
-        Some(DashboardKey::Printable('j'))
+        DashboardKeyReader::default()
+            .read_keys(&mut input)
+            .expect("read keys"),
+        vec![DashboardKey::Printable('j')]
     );
 }
 
 #[test]
-fn read_dashboard_keys_preserves_pasted_printable_bytes() {
+fn incremental_reader_preserves_pasted_printable_bytes() {
     let mut input = b"yarn dev".as_slice();
     assert_eq!(
-        read_dashboard_keys(&mut input).expect("read keys"),
+        DashboardKeyReader::default()
+            .read_keys(&mut input)
+            .expect("read keys"),
         vec![
             DashboardKey::Printable('y'),
             DashboardKey::Printable('a'),
@@ -30,9 +34,14 @@ fn read_dashboard_keys_preserves_pasted_printable_bytes() {
 }
 
 #[test]
-fn read_dashboard_key_treats_would_block_as_no_key() {
+fn incremental_reader_treats_would_block_as_no_key() {
     let mut input = WouldBlockReader;
-    assert_eq!(read_dashboard_key(&mut input).expect("read key"), None);
+    assert!(
+        DashboardKeyReader::default()
+            .read_keys(&mut input)
+            .expect("read keys")
+            .is_empty()
+    );
 }
 
 struct WouldBlockReader;
@@ -107,10 +116,6 @@ fn incremental_reader_releases_standalone_escape_on_idle_input() {
     assert_eq!(
         reader.read_keys(&mut WouldBlockReader).unwrap(),
         vec![DashboardKey::Back]
-    );
-    assert_eq!(
-        read_dashboard_key(&mut b"\x1b".as_slice()).unwrap(),
-        Some(DashboardKey::Back)
     );
 }
 

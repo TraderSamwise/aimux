@@ -808,6 +808,7 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
 
 fn has_worktrees(input: &DashboardRenderInput<'_>) -> bool {
     !input.snapshot.worktree_groups.is_empty()
+        || input.snapshot.extra.contains_key("supervisorLane")
 }
 
 fn render_supervisor_group(
@@ -834,7 +835,7 @@ fn render_supervisor_group(
         .iter()
         .map(|entry| (entry.id, entry.digit))
         .collect::<BTreeMap<_, _>>();
-    let rows = group
+    let mut rows = group
         .sessions
         .iter()
         .map(|session| {
@@ -847,6 +848,12 @@ fn render_supervisor_group(
             )
         })
         .collect::<Vec<_>>();
+    if rows.is_empty() {
+        rows.push(style(
+            "No control agents. Press [n] to create one.",
+            Tone::Muted,
+        ));
+    }
     let summary = match group.sessions.len() {
         1 => "1 project-control session".to_owned(),
         count => format!("{count} project-control sessions"),
@@ -2984,8 +2991,7 @@ fn render_help_content() -> Vec<String> {
         String::new(),
         format!("  {}", style("Actions", Tone::Strong)),
         "    [n] agent  [v] service  [f] fork  [S] switch tool".into(),
-        "    [a] hide/show offline agents  [x] stop/kill".into(),
-        "    [A] restart offline agent with edited args (saved)".into(),
+        "    [a] hide/show offline agents  [A] edit offline restart args  [x] stop/kill".into(),
         "    [O] overseer menu  [O then p] pause/resume loop alerts".into(),
     ]
 }

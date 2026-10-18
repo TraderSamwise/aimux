@@ -1,6 +1,33 @@
 use crate::dashboard_actions::DashboardActionRequest;
 use crate::project_api_contract::routes;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardAgentCreationPolicy {
+    pub default_target: DashboardAgentCreationTarget,
+    pub default_role: String,
+    pub worktree_role: String,
+}
+
+impl DashboardAgentCreationPolicy {
+    pub fn parse(value: Value) -> Result<Self, String> {
+        let policy: Self = serde_json::from_value(value)
+            .map_err(|error| format!("Invalid agent creation defaults: {error}"))?;
+        if policy.default_role.is_empty() || policy.worktree_role.is_empty() {
+            return Err("Invalid agent creation defaults: roles must not be empty".into());
+        }
+        Ok(policy)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DashboardAgentCreationTarget {
+    Supervisor,
+    Worktree,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardCreateIntent {
@@ -10,6 +37,7 @@ pub enum DashboardCreateIntent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardAgentCreateIntent {
+    pub role: Option<String>,
     pub tool: Option<String>,
     pub session_id: Option<String>,
     pub worktree_path: Option<String>,
@@ -51,6 +79,7 @@ fn plan_agent_create(intent: &DashboardAgentCreateIntent) -> DashboardCreatePlan
     let mut body = Map::new();
     body.insert("tool".into(), Value::String(tool.into()));
     body.insert("open".into(), Value::Bool(false));
+    insert_string(&mut body, "role", intent.role.as_deref());
     insert_string(&mut body, "sessionId", intent.session_id.as_deref());
     insert_string(&mut body, "worktreePath", intent.worktree_path.as_deref());
     if let Some(launch_override) = intent.launch_override.as_ref() {

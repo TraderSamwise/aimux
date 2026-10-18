@@ -4,6 +4,7 @@ use aimux::dashboard_navigation::{
     DashboardNavigationState, dashboard_navigation_groups,
 };
 use aimux::dashboard_renderer::DashboardNavLevel;
+use serde_json::json;
 
 const GOLDEN: &str = include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
 
@@ -278,6 +279,10 @@ fn supervisor_group_does_not_change_resolved_worktree_session_membership() {
         worker_agent.clone(),
         overseer.clone(),
     ];
+    snapshot.extra.insert(
+        "supervisorLane".into(),
+        json!({"sessions": [overseer, scribe]}),
+    );
     snapshot.worktree_groups[0].sessions = vec![main_agent, overseer];
     snapshot.worktree_groups[1].sessions = vec![worker_agent, scribe];
 

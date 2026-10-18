@@ -95,19 +95,6 @@ pub fn run_terminal_host_contract_case(input: &Value) -> Value {
     })
 }
 
-pub fn read_dashboard_key(input: &mut impl Read) -> io::Result<Option<DashboardKey>> {
-    Ok(read_dashboard_keys(input)?.into_iter().next())
-}
-
-pub fn read_dashboard_keys(input: &mut impl Read) -> io::Result<Vec<DashboardKey>> {
-    let mut reader = DashboardKeyReader::default();
-    let mut keys = reader.read_keys(input)?;
-    if reader.pending == b"\x1b" {
-        keys.push(DashboardKey::Back);
-    }
-    Ok(keys)
-}
-
 #[derive(Default)]
 pub struct DashboardKeyReader {
     pending: Vec<u8>,
@@ -346,6 +333,9 @@ mod tests {
     fn raw_eagain_from_nonblocking_stdin_is_empty_input() {
         let mut input = NonblockingEmptyRead;
 
-        assert_eq!(read_dashboard_keys(&mut input).unwrap(), Vec::new());
+        assert_eq!(
+            DashboardKeyReader::default().read_keys(&mut input).unwrap(),
+            Vec::new()
+        );
     }
 }

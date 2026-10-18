@@ -1,3 +1,4 @@
+import type { AgentCreationPolicy, AgentRole } from "../../src/project-api-contract";
 import type { WorktreeBucket } from "@/lib/desktop-state";
 
 /**
@@ -176,4 +177,32 @@ export function canSubmitCreation(input: {
 }): boolean {
   if (!input.hasEndpoint || input.busy) return false;
   return input.kind === "agent" || worktreeNameIsCreatable(input.name);
+}
+
+export type AgentCreationTarget = AgentCreationPolicy["defaultTarget"];
+
+export function agentCreationPolicyIsAvailable(
+  policy: AgentCreationPolicy | null | undefined,
+): policy is AgentCreationPolicy {
+  return (
+    typeof policy?.defaultRole === "string" &&
+    policy.defaultRole.length > 0 &&
+    typeof policy.worktreeRole === "string" &&
+    policy.worktreeRole.length > 0 &&
+    (policy.defaultTarget === "supervisor" || policy.defaultTarget === "worktree")
+  );
+}
+
+export function agentCreationRole(
+  policy: AgentCreationPolicy | null | undefined,
+  target?: AgentCreationTarget,
+): AgentRole {
+  if (!agentCreationPolicyIsAvailable(policy)) {
+    throw new Error(
+      "Agent creation policy is unavailable from the project host. Refresh project state before launching an agent.",
+    );
+  }
+  return (target ?? policy.defaultTarget) === "supervisor"
+    ? policy.defaultRole
+    : policy.worktreeRole;
 }

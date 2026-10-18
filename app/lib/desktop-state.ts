@@ -4,6 +4,7 @@
 
 import type { AgentTranscriptMessage } from "@/lib/events";
 import type {
+  AgentCreationPolicy,
   AgentLane,
   AgentRole,
   AgentRoleState,
@@ -189,6 +190,7 @@ export interface DesktopWorktreeGroup {
 export interface DesktopState {
   ok: boolean;
   sessions: DesktopSession[];
+  agentCreation?: AgentCreationPolicy;
   supervisorLane?: {
     sessions: DesktopSession[];
     health?: "active" | "attention" | "idle" | "offline" | "unknown";
@@ -248,6 +250,7 @@ export function filterWorktreeBucketToActiveEntries(bucket: WorktreeBucket): Wor
   // `pendingAction` and `operationFailure` where this had only `pathMissing`,
   // so the two surfaces kept different worktrees on screen under one filter.
   const keepOperational = Boolean(
+    bucket.isSupervisorLane ||
     bucket.pending ||
     bucket.removing ||
     bucket.pathMissing ||
@@ -294,20 +297,9 @@ function bucketFromServerGroup(
   };
 }
 
-// Order is the project service's to decide, not a client's. This re-sorted the
-// supervisor lane by roleState.exposeOrder while the service ordered it by role
-// display order — a different field — so the two agreed only by luck. Render
-// the order the service sent.
-function supervisorLaneSessions(state: DesktopState): DesktopSession[] {
-  if (Array.isArray(state.supervisorLane?.sessions)) {
-    return state.supervisorLane.sessions;
-  }
-  return [];
-}
-
 function supervisorLaneBucket(state: DesktopState): WorktreeBucket | null {
-  const sessions = supervisorLaneSessions(state);
-  if (sessions.length === 0) return null;
+  if (!state.supervisorLane) return null;
+  const sessions = state.supervisorLane.sessions;
   return {
     key: SUPERVISOR_LANE_KEY,
     name: "Supervisor Lane",
