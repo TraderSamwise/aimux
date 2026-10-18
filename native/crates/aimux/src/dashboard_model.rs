@@ -339,6 +339,27 @@ pub fn agent_enter_status(
     }
 }
 
+pub fn dashboard_overseer_sessions(snapshot: &DesktopStateSnapshot) -> Vec<DashboardSession> {
+    dashboard_overseer_session_refs(snapshot)
+        .into_iter()
+        .cloned()
+        .collect()
+}
+
+pub fn dashboard_overseer_session_refs(snapshot: &DesktopStateSnapshot) -> Vec<&DashboardSession> {
+    let Some(ids) = snapshot
+        .extra
+        .get("overseerSessionIds")
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    ids.iter()
+        .filter_map(Value::as_str)
+        .filter_map(|id| snapshot.sessions.iter().find(|session| session.id == id))
+        .collect()
+}
+
 pub fn is_dashboard_overseer_session(session: &DashboardSession) -> bool {
     crate::team_contract::is_overseer_session(Some(&dashboard_session_classifier_probe(session)))
 }

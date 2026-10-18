@@ -10,7 +10,7 @@ use crate::dashboard_goal_overlay::{
 use crate::dashboard_launch_options::DashboardLaunchOptionsState;
 use crate::dashboard_model::{
     DashboardSession, DesktopStateSnapshot, SessionStatus, dashboard_has_clearable_failures,
-    is_dashboard_overseer_session, is_dashboard_scribe_session,
+    dashboard_overseer_session_refs, is_dashboard_scribe_session,
     is_dashboard_supervisor_plane_session,
 };
 use crate::dashboard_navigation::{
@@ -2015,6 +2015,12 @@ impl DashboardController {
                 DashboardControllerEffect::Render
             }
             DashboardKey::Enter => self.activate_or_create_overseer_from_overlay(snapshot),
+            DashboardKey::Printable('n') => {
+                self.overseer_overlay_open = false;
+                DashboardControllerEffect::OpenAgentToolPicker(
+                    DashboardToolPickerMode::CreateOverseer,
+                )
+            }
             DashboardKey::Printable('p') => self.toggle_global_loop_alert_pause(snapshot),
             DashboardKey::Printable('w') => self.open_overseer_watch_instructions(snapshot),
             DashboardKey::Printable('x') => self.stop_live_overseer_from_overlay(snapshot),
@@ -2052,26 +2058,16 @@ impl DashboardController {
         })
     }
 
-    /// Enter on the overseer menu starts the overseer this project has, and
-    /// makes one only when there is none to start.
-    ///
-    /// It looked for a LIVE overseer, so an offline one -- which is when you
-    /// reach for this menu -- was invisible and it went straight to the create
-    /// picker. For a resumable overseer the service reuses the old session's
-    /// identity, so that cost a spawn where a resume would do; for one whose
-    /// restore is blocked the reuse scan rejects the candidate
-    /// (`agent_launch_routes.rs`), so a genuinely second overseer appears and
-    /// the old one is demoted. That second case is the one Sam reported.
-    ///
-    /// Making a replacement is still the only way out of it, so a blocked
-    /// overseer falls through to the picker rather than dead-ending -- but it
-    /// says why first, because a silent duplicate is how the report started.
+    /// Enter uses the selected published overseer, or the first startable one.
     fn activate_or_create_overseer_from_overlay(
         &mut self,
         snapshot: &DesktopStateSnapshot,
     ) -> DashboardControllerEffect {
         self.overseer_overlay_open = false;
-        if let Some(overseer) = startable_overseer_session(snapshot) {
+        let target = self.overseer_overlay_target(snapshot);
+        if let Some(overseer) = target
+            .filter(|session| crate::dashboard_model::dashboard_restore_block(session).is_none())
+        {
             return match plan_dashboard_action(
                 Some(DashboardEntryRef::Session(overseer)),
                 DashboardActionKind::Enter,
@@ -2090,7 +2086,8 @@ impl DashboardController {
                 DashboardActionPlan::Ignored => DashboardControllerEffect::Render,
             };
         }
-        if let Some(blocked) = first_overseer_session(snapshot)
+        if let Some(blocked) = target
+            .or_else(|| first_overseer_session(snapshot))
             .and_then(crate::dashboard_model::dashboard_restore_block)
         {
             self.footer_alert = Some(replacement_alert(&blocked).into());
@@ -2102,7 +2099,10 @@ impl DashboardController {
         &mut self,
         snapshot: &DesktopStateSnapshot,
     ) -> DashboardControllerEffect {
-        let Some(overseer) = live_overseer_session(snapshot) else {
+        let Some(overseer) = self
+            .overseer_overlay_target(snapshot)
+            .filter(|session| is_live_session(session))
+        else {
             self.set_note("No running overseer".into());
             return DashboardControllerEffect::Render;
         };
@@ -2127,7 +2127,7 @@ impl DashboardController {
         &mut self,
         snapshot: &DesktopStateSnapshot,
     ) -> DashboardControllerEffect {
-        let Some(overseer) = first_overseer_session(snapshot) else {
+        let Some(overseer) = self.overseer_overlay_target(snapshot) else {
             self.set_note("No overseer configured".into());
             return DashboardControllerEffect::Render;
         };
@@ -2136,6 +2136,25 @@ impl DashboardController {
             path: routes::agents::OVERSEER,
             body: json!({ "sessionId": overseer.id, "active": false }),
         })
+    }
+
+    pub fn overseer_overlay_target<'a>(
+        &self,
+        snapshot: &'a DesktopStateSnapshot,
+    ) -> Option<&'a DashboardSession> {
+        self.selected_overseer_from_published_set(snapshot)
+            .or_else(|| startable_overseer_session(snapshot))
+            .or_else(|| first_overseer_session(snapshot))
+    }
+
+    fn selected_overseer_from_published_set<'a>(
+        &self,
+        snapshot: &'a DesktopStateSnapshot,
+    ) -> Option<&'a DashboardSession> {
+        let selected = self.selected_session_for_tool_action(snapshot)?;
+        dashboard_overseer_session_refs(snapshot)
+            .into_iter()
+            .find(|session| session.id == selected.id)
     }
 
     fn unwatch_selected_from_overseer_overlay(
@@ -3092,7 +3111,8 @@ impl DashboardController {
         DashboardControllerEffect::Request(DashboardActionRequest {
             method: "POST",
             path: routes::agents::OVERSEER,
-            body: json!({ "sessionId": selected.id, "active": !is_overseer_session(selected) }),
+            body: json!({ "sessionId": selected.id, "active": !dashboard_overseer_session_refs(snapshot)
+                .iter().any(|session| session.id == selected.id) }),
         })
     }
 
@@ -3738,33 +3758,11 @@ fn is_project_control_session(session: &DashboardSession) -> bool {
     is_dashboard_supervisor_plane_session(session)
 }
 
-fn live_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
-    snapshot
-        .sessions
-        .iter()
-        .find(|session| is_live_session(session) && is_overseer_session(session))
-}
-
 fn first_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
-    snapshot
-        .sessions
-        .iter()
-        .find(|session| is_overseer_session(session))
+    dashboard_overseer_session_refs(snapshot).into_iter().next()
 }
 
-/// The project-control session Enter should start, when more than one is
-/// flagged.
-///
-/// Array position is not liveness, and nothing enforces a single overseer or
-/// scribe, so picking the first would resume a stale record while a live one
-/// sat there. A running one wins; otherwise the most recently used, and the id
-/// only to keep the choice from depending on array order. Sessions that cannot
-/// be resumed are skipped, so the caller's fallthrough is reached rather than a
-/// refusal it has no answer for.
-///
-/// Deliberately NOT the service's reuse rule: that sorts on `updatedAt` and
-/// filters by tool and worktree, because it is choosing a session to relaunch
-/// into. This is choosing which existing one to bring up.
+/// Choose the scribe to enter, preferring a live, restorable session.
 fn startable_project_control_session(
     snapshot: &DesktopStateSnapshot,
     is_role: impl Fn(&DashboardSession) -> bool,
@@ -3795,15 +3793,19 @@ fn replacement_alert(blocked: &str) -> String {
 }
 
 fn startable_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
-    startable_project_control_session(snapshot, is_overseer_session)
+    let candidates = dashboard_overseer_session_refs(snapshot)
+        .into_iter()
+        .filter(|session| crate::dashboard_model::dashboard_restore_block(session).is_none())
+        .collect::<Vec<_>>();
+    candidates
+        .iter()
+        .copied()
+        .find(|session| is_live_session(session))
+        .or_else(|| candidates.into_iter().next())
 }
 
 fn startable_scribe_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
     startable_project_control_session(snapshot, is_scribe_session)
-}
-
-fn is_overseer_session(session: &DashboardSession) -> bool {
-    is_dashboard_overseer_session(session)
 }
 
 /// What the project service published, not a second opinion.

@@ -213,7 +213,7 @@ fn a_failed_delivery_attempt_survives_reload_without_becoming_a_new_edge() {
 }
 
 #[test]
-fn legacy_aggregate_state_migrates_to_per_agent_attempt_cadence() {
+fn aggregate_cooldowns_reset_for_recipient_state_with_a_fresh_dwell_window() {
     let state_dir = temp_state_dir("legacy-aggregate");
     let path = loop_watcher_state_path(&state_dir);
     fs::write(
@@ -252,7 +252,12 @@ fn legacy_aggregate_state_migrates_to_per_agent_attempt_cadence() {
     let mut ok = |_: &LoopSend| true;
     assert!(
         watcher.scan(&input, NOW + 1, &mut ok).is_empty(),
-        "legacy aggregate attempts must suppress the same per-agent stopped level after upgrade"
+        "new recipient state must establish its own stopped dwell window"
+    );
+    assert_eq!(
+        watcher.scan(&input, NOW + 30_001, &mut ok).len(),
+        1,
+        "the old aggregate cooldown cannot suppress a recipient after its new dwell window"
     );
 }
 
@@ -846,9 +851,18 @@ fn clearing_global_pause_exposes_buffered_alert_for_delivery() {
     let saved: Value =
         serde_json::from_str(&fs::read_to_string(&path).expect("read watcher state"))
             .expect("watcher state json");
-    assert_eq!(saved["stoppedSince"][0]["lastAttemptedMs"], json!(NOW + 1));
-    assert_eq!(saved["stoppedSince"][0]["lastReportedMs"], json!(NOW + 1));
-    assert_eq!(saved["bufferedSends"], json!({}));
+    assert_eq!(
+        saved["recipientWatchers"]["boss"]["stoppedSince"][0]["lastAttemptedMs"],
+        json!(NOW + 1)
+    );
+    assert_eq!(
+        saved["recipientWatchers"]["boss"]["stoppedSince"][0]["lastReportedMs"],
+        json!(NOW + 1)
+    );
+    assert_eq!(
+        saved["recipientWatchers"]["boss"]["bufferedSends"],
+        json!({})
+    );
 }
 
 #[test]
@@ -3111,4 +3125,931 @@ fn an_unmeasured_token_budget_says_so_instead_of_claiming_zero() {
         nudge.text
     );
     assert!(!nudge.text.contains("0 of 10000"), "{:?}", nudge.text);
+}
+
+fn multiple_overseer_input(config: Value) -> Value {
+    let (first, mut first_meta) = non_loop_session("control-a", "idle");
+    first_meta["overseer"] = json!(true);
+    let (second, mut second_meta) = non_loop_session("control-b", "idle");
+    second_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    input_with_config(
+        vec![first, second, worker],
+        json!({ "sessions": {
+            "control-a": first_meta, "control-b": second_meta, "worker": worker_meta
+        }}),
+        config,
+    )
+}
+
+fn send_to<'a>(sends: &'a [LoopSend], recipient: &str, kind: LoopSendKind) -> &'a LoopSend {
+    sends
+        .iter()
+        .find(|send| send.session_id == recipient && send.kind == kind)
+        .unwrap_or_else(|| panic!("missing {kind:?} for {recipient}: {sends:?}"))
+}
+
+#[test]
+fn every_live_overseer_receives_the_fleet_briefing() {
+    let input = multiple_overseer_input(json!({ "stoppedDwellMs": 0 }));
+    let sends = LoopWatcher::new().plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 2, "each overseer must receive the briefing");
+    for recipient in ["control-a", "control-b"] {
+        assert!(briefing_mentions(
+            send_to(&sends, recipient, LoopSendKind::OverseerBriefing),
+            "worker"
+        ));
+    }
+}
+
+#[test]
+fn an_offline_first_overseer_cannot_hide_a_live_later_overseer() {
+    let mut input = multiple_overseer_input(json!({ "stoppedDwellMs": 0 }));
+    input["sessions"][0]["status"] = json!("offline");
+    let sends = LoopWatcher::new().plan_sends(&input, NOW);
+    assert_eq!(
+        sends.len(),
+        1,
+        "offline overseers are data, never delivery targets"
+    );
+    assert_eq!(sends[0].session_id, "control-b");
+    assert_eq!(sends[0].kind, LoopSendKind::OverseerBriefing);
+    input["sessions"][1]["status"] = json!("offline");
+    assert!(
+        LoopWatcher::new().plan_sends(&input, NOW).is_empty(),
+        "no live overseer keeps the default observe-only behavior"
+    );
+}
+
+#[test]
+fn every_overseers_own_goal_is_a_direct_nudge_and_never_fleet_capacity() {
+    let mut input = multiple_overseer_input(json!({
+        "stoppedDwellMs": 0, "reconciliationDwellMs": 0, "idleFleetDwellMs": 0
+    }));
+    input["sessions"].as_array_mut().expect("sessions").pop();
+    input["metadata"]["sessions"]
+        .as_object_mut()
+        .expect("metadata sessions")
+        .remove("worker");
+    for recipient in ["control-a", "control-b"] {
+        input["metadata"]["sessions"][recipient]["loop"] = json!({
+            "active": true, "goal": "coordinate", "since": "2026-09-09T00:00:00.000Z"
+        });
+    }
+    input["runtimeExchange"] = json!({ "tasks": [{ "id": "unowned", "status": "pending" }] });
+    let sends = LoopWatcher::new().plan_sends(&input, NOW);
+    assert_eq!(
+        sends.len(),
+        2,
+        "control agents must never become worker capacity: {sends:?}"
+    );
+    for recipient in ["control-a", "control-b"] {
+        let send = send_to(&sends, recipient, LoopSendKind::DirectNudge);
+        assert!(send.text.contains("managed loop"));
+    }
+}
+
+#[test]
+fn an_unattempted_recipient_still_receives_its_briefing_after_another_succeeds_and_reload() {
+    let input = multiple_overseer_input(json!({ "stoppedDwellMs": 0, "nudgeCooldownMs": 60_000 }));
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    watcher.commit_send_result(
+        send_to(&sends, "control-a", LoopSendKind::OverseerBriefing),
+        NOW,
+        LoopDeliveryOutcome::Delivered,
+    );
+    let directory = temp_state_dir("multiple-overseers-partial-delivery");
+    let path = loop_watcher_state_path(&directory);
+    save_loop_watcher_state(&path, &watcher).expect("save partial delivery");
+    let mut watcher = load_loop_watcher_state(&path).expect("reload partial delivery");
+    let sends = watcher.plan_sends(&input, NOW + 1);
+    assert_eq!(
+        sends.len(),
+        1,
+        "delivery to one recipient cannot acknowledge another's briefing"
+    );
+    assert_eq!(sends[0].session_id, "control-b");
+    watcher.commit_send_result(
+        &sends[0],
+        NOW + 30_000,
+        LoopDeliveryOutcome::Failed {
+            error: "receiver unavailable".into(),
+        },
+    );
+    assert!(watcher.plan_sends(&input, NOW + 30_001).is_empty());
+    let first_due = watcher.plan_sends(&input, NOW + 60_000);
+    assert_eq!(
+        first_due.len(),
+        1,
+        "a failed recipient keeps its own cooldown"
+    );
+    assert_eq!(first_due[0].session_id, "control-a");
+    watcher.commit_send_result(&first_due[0], NOW + 60_000, LoopDeliveryOutcome::Delivered);
+    let second_due = watcher.plan_sends(&input, NOW + 90_000);
+    assert_eq!(
+        second_due.len(),
+        1,
+        "the failed recipient must eventually retry independently"
+    );
+    assert_eq!(second_due[0].session_id, "control-b");
+}
+
+#[test]
+fn global_pause_buffers_identical_briefings_separately_and_preserves_each_recipient_on_reload() {
+    let input = multiple_overseer_input(json!({ "stoppedDwellMs": 0, "nudgeCooldownMs": 60_000 }));
+    let mut watcher = LoopWatcher::new();
+    watcher.set_global_pause(NOW, NOW + 60_000, LoopAlertPauseProvenance::default());
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 2);
+    assert_eq!(sends[0].signature, sends[1].signature);
+    for send in &sends {
+        watcher.buffer_send(send, NOW);
+        watcher.commit_send_result(send, NOW, LoopDeliveryOutcome::Buffered);
+    }
+    assert_eq!(watcher.buffered_send_count(), 2);
+    assert_eq!(watcher.loop_alert_state(NOW)["bufferedCount"], 2);
+    let directory = temp_state_dir("multiple-overseers-buffered");
+    let path = loop_watcher_state_path(&directory);
+    save_loop_watcher_state(&path, &watcher).expect("save buffers");
+    let mut watcher = load_loop_watcher_state(&path).expect("reload buffers");
+    watcher.clear_global_pause();
+    let buffered = watcher.buffered_sends_to_deliver(8);
+    assert_eq!(buffered.len(), 2);
+    let first = send_to(&buffered, "control-a", LoopSendKind::OverseerBriefing);
+    watcher.commit_send_result(first, NOW + 1, LoopDeliveryOutcome::Delivered);
+    watcher.remove_buffered_send(first);
+    let second = send_to(&buffered, "control-b", LoopSendKind::OverseerBriefing);
+    watcher.commit_send_result(
+        second,
+        NOW + 1,
+        LoopDeliveryOutcome::Failed {
+            error: "unavailable".into(),
+        },
+    );
+    assert_eq!(watcher.buffered_send_count(), 1);
+    assert_eq!(
+        watcher.buffered_sends_to_deliver(8)[0].session_id,
+        "control-b"
+    );
+    watcher.commit_send_result(second, NOW + 2, LoopDeliveryOutcome::Delivered);
+    watcher.remove_buffered_send(second);
+    assert_eq!(watcher.buffered_send_count(), 0);
+    assert!(watcher.plan_sends(&input, NOW + 3).is_empty());
+}
+
+#[test]
+fn loop_exit_delivery_failure_retries_only_the_recipient_that_missed_it() {
+    let mut input =
+        multiple_overseer_input(json!({ "stoppedDwellMs": 0, "nudgeCooldownMs": 60_000 }));
+    let (worker, worker_meta) = self_exited_session_with_status("worker", Some("offline"), "done");
+    input["sessions"][2] = worker;
+    input["metadata"]["sessions"]["worker"] = worker_meta;
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 2);
+    watcher.commit_send_result(
+        send_to(&sends, "control-a", LoopSendKind::LoopExit),
+        NOW,
+        LoopDeliveryOutcome::Delivered,
+    );
+    watcher.commit_send_result(
+        send_to(&sends, "control-b", LoopSendKind::LoopExit),
+        NOW,
+        LoopDeliveryOutcome::Failed {
+            error: "unavailable".into(),
+        },
+    );
+    assert!(watcher.plan_sends(&input, NOW + 1).is_empty());
+    let directory = temp_state_dir("multiple-overseers-loop-exit");
+    let path = loop_watcher_state_path(&directory);
+    save_loop_watcher_state(&path, &watcher).expect("save exit attempts");
+    let mut watcher = load_loop_watcher_state(&path).expect("reload exit attempts");
+    let retry = watcher.plan_sends(&input, NOW + 60_000);
+    assert_eq!(
+        retry.len(),
+        1,
+        "a successful recipient stays acknowledged while a failed one retries"
+    );
+    assert_eq!(retry[0].session_id, "control-b");
+    assert_eq!(retry[0].kind, LoopSendKind::LoopExit);
+    watcher.commit_send_result(&retry[0], NOW + 60_000, LoopDeliveryOutcome::Delivered);
+    assert!(watcher.plan_sends(&input, NOW + 120_000).is_empty());
+}
+
+#[test]
+fn every_overseer_receives_paused_summaries_and_reconciliation_with_independent_dwell() {
+    let input = multiple_overseer_input(json!({
+        "stoppedDwellMs": 60_000, "reconciliationDwellMs": 30_000,
+        "reconciliationCooldownMs": 60_000
+    }));
+    let mut reconciliation_input = input.clone();
+    reconciliation_input["runtimeExchange"] =
+        json!({ "tasks": [{ "id": "unowned", "status": "pending" }] });
+    let mut watcher = LoopWatcher::new();
+    assert!(watcher.plan_sends(&reconciliation_input, NOW).is_empty());
+    assert!(
+        watcher
+            .plan_sends(&reconciliation_input, NOW + 29_999)
+            .is_empty()
+    );
+    let sends = watcher.plan_sends(&reconciliation_input, NOW + 30_000);
+    for recipient in ["control-a", "control-b"] {
+        send_to(&sends, recipient, LoopSendKind::Reconciliation);
+    }
+    watcher.commit_send_result(
+        send_to(&sends, "control-a", LoopSendKind::Reconciliation),
+        NOW + 30_000,
+        LoopDeliveryOutcome::Delivered,
+    );
+    let next = watcher.plan_sends(&reconciliation_input, NOW + 30_001);
+    assert_eq!(next.len(), 1);
+    assert_eq!(next[0].session_id, "control-b");
+
+    let mut watcher = LoopWatcher::new();
+    watcher.pause_loop_alerts(
+        "worker",
+        "2026-09-09T00:00:00.000Z".into(),
+        NOW,
+        LoopAlertPauseProvenance::default(),
+    );
+    for tick in 0..9 {
+        assert!(watcher.plan_sends(&input, NOW + tick).is_empty());
+    }
+    let summaries = watcher.plan_sends(&input, NOW + 9);
+    assert_eq!(summaries.len(), 2);
+    for recipient in ["control-a", "control-b"] {
+        send_to(&summaries, recipient, LoopSendKind::PausedSummary);
+    }
+    watcher.unpause_loop_alerts("worker");
+    assert!(
+        watcher.plan_sends(&input, NOW + 10).is_empty(),
+        "unpaused candidates must dwell afresh"
+    );
+}
+
+#[test]
+fn idle_fleet_summaries_reach_each_overseer_and_exclude_other_overseers_from_capacity() {
+    let mut input = multiple_overseer_input(json!({ "idleFleetDwellMs": 0 }));
+    input["metadata"]["sessions"]["worker"]["loop"]["active"] = json!(false);
+    input["runtimeExchange"] = json!({ "tasks": [{ "id": "unowned", "status": "pending" }] });
+    let sends = LoopWatcher::new().plan_sends(&input, NOW);
+    assert_eq!(
+        sends.len(),
+        2,
+        "every overseer must receive idle-fleet information"
+    );
+    for recipient in ["control-a", "control-b"] {
+        let send = send_to(&sends, recipient, LoopSendKind::IdleFleet);
+        assert!(send.text.contains("worker"));
+        assert!(!send.text.contains("control-a"));
+        assert!(!send.text.contains("control-b"));
+    }
+    input["sessions"].as_array_mut().expect("sessions").pop();
+    assert!(
+        LoopWatcher::new().plan_sends(&input, NOW).is_empty(),
+        "overseers alone never constitute an idle worker fleet"
+    );
+}
+
+fn multiple_overseer_met_token_input() -> Value {
+    let mut input = multiple_overseer_input(json!({
+        "stoppedDwellMs": 0, "nudgeCooldownMs": 60_000, "autoNudgeWithoutOverseer": true
+    }));
+    input["metadata"]["sessions"]["worker"]["loop"]["goalKind"] = json!("tokens");
+    input["metadata"]["sessions"]["worker"]["loop"]["tokenBudget"] = json!(10_000);
+    input["metadata"]["sessions"]["worker"]["tokenSpend"] = json!({ "billed": 10_000 });
+    input
+}
+
+#[test]
+fn multiple_overseers_share_exactly_one_worker_budget_notice_and_acknowledgement_across_reload() {
+    let input = multiple_overseer_met_token_input();
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(
+        sends.len(),
+        1,
+        "worker notices belong to one outer engine, not every overseer"
+    );
+    assert_eq!(sends[0].session_id, "worker");
+    assert_eq!(sends[0].kind, LoopSendKind::DirectNudge);
+    assert!(
+        sends[0]
+            .text
+            .contains("10000-token budget has been reached")
+    );
+    watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Delivered);
+    assert!(watcher.plan_sends(&input, NOW + 120_000).is_empty());
+    let directory = temp_state_dir("multiple-overseers-worker-budget");
+    let path = loop_watcher_state_path(&directory);
+    save_loop_watcher_state(&path, &watcher).expect("save delivered worker notice");
+    let mut watcher = load_loop_watcher_state(&path).expect("reload delivered worker notice");
+    assert!(
+        watcher.plan_sends(&input, NOW + 240_000).is_empty(),
+        "delivered notices stay acknowledged after reload"
+    );
+}
+
+#[test]
+fn a_failed_worker_budget_notice_retries_once_with_multiple_overseers() {
+    let input = multiple_overseer_met_token_input();
+    let mut watcher = LoopWatcher::new();
+    let sends = watcher.plan_sends(&input, NOW);
+    assert_eq!(sends.len(), 1);
+    watcher.commit_send_result(
+        &sends[0],
+        NOW,
+        LoopDeliveryOutcome::Failed {
+            error: "unavailable".into(),
+        },
+    );
+    let directory = temp_state_dir("multiple-overseers-failed-worker-budget");
+    let path = loop_watcher_state_path(&directory);
+    save_loop_watcher_state(&path, &watcher).expect("save worker notice failure");
+    let mut watcher = load_loop_watcher_state(&path).expect("reload worker notice failure");
+    assert!(watcher.plan_sends(&input, NOW + 1).is_empty());
+    let retry = watcher.plan_sends(&input, NOW + 60_000);
+    assert_eq!(retry.len(), 1);
+    assert_eq!(retry[0].session_id, "worker");
+    watcher.commit_send_result(&retry[0], NOW + 60_000, LoopDeliveryOutcome::Delivered);
+    assert!(watcher.plan_sends(&input, NOW + 120_000).is_empty());
+}
+
+#[test]
+fn a_buffered_worker_budget_notice_is_delivered_once_after_reload_and_a_new_due_reminder() {
+    use aimux::project_service::loop_watcher_task::loop_delivery_queue;
+    let input = multiple_overseer_met_token_input();
+    let mut watcher = LoopWatcher::new();
+    let planned = watcher.plan_sends(&input, NOW);
+    assert_eq!(planned.len(), 1);
+    watcher.buffer_send(&planned[0], NOW);
+    watcher.commit_send_result(&planned[0], NOW, LoopDeliveryOutcome::Buffered);
+    let directory = temp_state_dir("multiple-overseers-buffered-worker-budget");
+    let path = loop_watcher_state_path(&directory);
+    save_loop_watcher_state(&path, &watcher).expect("save buffered worker notice");
+    let mut watcher = load_loop_watcher_state(&path).expect("reload buffered worker notice");
+    let newly_due = watcher.plan_sends(&input, NOW + 60_000);
+    assert_eq!(
+        newly_due.len(),
+        1,
+        "an unacknowledged notice becomes due after cooldown"
+    );
+    let queue = loop_delivery_queue(&watcher, &input, newly_due, NOW + 60_000, 8);
+    assert_eq!(
+        queue.len(),
+        1,
+        "the buffered copy and new plan identify the same delivery"
+    );
+    watcher.commit_send_result(&queue[0], NOW + 60_000, LoopDeliveryOutcome::Delivered);
+    watcher.remove_buffered_send(&queue[0]);
+    assert_eq!(watcher.buffered_send_count(), 0);
+    assert!(watcher.plan_sends(&input, NOW + 120_000).is_empty());
+    save_loop_watcher_state(&path, &watcher).expect("save acknowledgement");
+    let mut watcher = load_loop_watcher_state(&path).expect("reload acknowledgement");
+    assert!(watcher.plan_sends(&input, NOW + 180_000).is_empty());
+}
+
+#[test]
+fn buffered_and_new_identical_briefings_are_deduplicated_per_recipient_before_the_scan_cap() {
+    use aimux::project_service::loop_watcher_task::loop_delivery_queue;
+    let input = multiple_overseer_input(json!({ "stoppedDwellMs": 0, "nudgeCooldownMs": 0 }));
+    let mut watcher = LoopWatcher::new();
+    let planned = watcher.plan_sends(&input, NOW);
+    for send in &planned {
+        watcher.buffer_send(send, NOW);
+        watcher.commit_send_result(send, NOW, LoopDeliveryOutcome::Buffered);
+    }
+    let fresh = watcher.plan_sends(&input, NOW + 1);
+    assert_eq!(fresh.len(), 2);
+    let extra = LoopSend {
+        session_id: "later-recipient".into(),
+        text: "later".into(),
+        signature: "distinct".into(),
+        kind: LoopSendKind::OverseerBriefing,
+    };
+    let mut input = input;
+    input["sessions"]
+        .as_array_mut()
+        .expect("sessions")
+        .push(json!({ "id": "later-recipient", "status": "idle", "overseer": true, "projectControl": true }));
+    let mut sends = fresh;
+    sends.push(extra);
+    let queue = loop_delivery_queue(&watcher, &input, sends, NOW + 1, 3);
+    assert_eq!(queue.len(), 3, "duplicates cannot consume the scan cap");
+    assert_eq!(
+        queue
+            .iter()
+            .map(|send| send.session_id.as_str())
+            .collect::<Vec<_>>(),
+        ["control-a", "control-b", "later-recipient"]
+    );
+    let mut another_kind = planned[0].clone();
+    another_kind.kind = LoopSendKind::PausedSummary;
+    let queue = loop_delivery_queue(&watcher, &input, vec![another_kind], NOW + 1, 8);
+    assert_eq!(
+        queue.len(),
+        3,
+        "different kinds with the same signature remain distinct"
+    );
+}
+
+#[test]
+fn automatic_worker_nudges_have_one_owner_when_no_live_overseer_exists() {
+    let mut input = multiple_overseer_input(json!({
+        "stoppedDwellMs": 0, "nudgeCooldownMs": 60_000, "autoNudgeWithoutOverseer": true
+    }));
+    let mut watcher = LoopWatcher::new();
+    let supervised = watcher.plan_sends(&input, NOW);
+    assert_eq!(supervised.len(), 2);
+    assert!(
+        supervised
+            .iter()
+            .all(|send| send.kind == LoopSendKind::OverseerBriefing)
+    );
+    for index in 0..2 {
+        input["sessions"][index]["status"] = json!("offline");
+    }
+    let direct = watcher.plan_sends(&input, NOW + 1);
+    assert_eq!(
+        direct.len(),
+        1,
+        "one direct engine takes over when all overseers are offline"
+    );
+    assert_eq!(direct[0].session_id, "worker");
+    assert_eq!(direct[0].kind, LoopSendKind::DirectNudge);
+    watcher.commit_send_result(&direct[0], NOW + 1, LoopDeliveryOutcome::Delivered);
+    assert!(watcher.plan_sends(&input, NOW + 2).is_empty());
+}
+
+#[test]
+fn topology_only_overseer_identity_and_loop_only_metadata_share_one_set_with_explicit_demote_precedence()
+ {
+    let mut input = multiple_overseer_input(json!({ "stoppedDwellMs": 0 }));
+    input["sessions"][1]["overseer"] = json!(true);
+    input["sessions"][1]["projectControl"] = json!(true);
+    input["metadata"]["sessions"]
+        .as_object_mut()
+        .expect("metadata")
+        .remove("control-b");
+    let sends = LoopWatcher::new().plan_sends(&input, NOW);
+    assert_eq!(
+        sends.len(),
+        2,
+        "a topology-only overseer must receive fleet briefings"
+    );
+    send_to(&sends, "control-b", LoopSendKind::OverseerBriefing);
+
+    let (_, loop_only_metadata) = looping_session("control-b", "idle");
+    input["metadata"]["sessions"]["control-b"] = loop_only_metadata;
+    let sends = LoopWatcher::new().plan_sends(&input, NOW);
+    assert_eq!(
+        sends.len(),
+        3,
+        "loop-only metadata must retain the topology control identity"
+    );
+    send_to(&sends, "control-b", LoopSendKind::DirectNudge);
+    for recipient in ["control-a", "control-b"] {
+        let briefing = send_to(&sends, recipient, LoopSendKind::OverseerBriefing);
+        assert!(briefing_mentions(briefing, "worker"));
+        assert!(
+            !briefing_mentions(briefing, "control-b"),
+            "an overseer's own goal is never fleet news"
+        );
+    }
+
+    input["metadata"]["sessions"]["control-b"]["overseer"] = json!(false);
+    input["metadata"]["sessions"]["control-b"]["projectControl"] = json!(false);
+    let sends = LoopWatcher::new().plan_sends(&input, NOW);
+    assert_eq!(
+        sends.len(),
+        1,
+        "explicit metadata demotion overrides old topology flags"
+    );
+    assert_eq!(sends[0].session_id, "control-a");
+    assert!(
+        briefing_mentions(&sends[0], "control-b"),
+        "a demoted worker returns to fleet handling"
+    );
+}
+
+fn set_budget_session_overseer(input: &mut Value, overseer: bool) {
+    input["metadata"]["sessions"]["worker"]["overseer"] = json!(overseer);
+    input["metadata"]["sessions"]["worker"]["projectControl"] = json!(overseer);
+}
+
+#[test]
+fn delivered_token_notices_follow_the_same_session_goal_across_promotion_demotion_and_reload() {
+    for initially_overseer in [false, true] {
+        let mut input = multiple_overseer_met_token_input();
+        set_budget_session_overseer(&mut input, initially_overseer);
+        let directory = temp_state_dir(if initially_overseer {
+            "budget-delivered-control-worker-control"
+        } else {
+            "budget-delivered-worker-control-worker"
+        });
+        let path = loop_watcher_state_path(&directory);
+        let mut watcher = LoopWatcher::new();
+        let sends = watcher.plan_sends(&input, NOW);
+        assert_eq!(
+            sends.len(),
+            1,
+            "every budget notice has one role-independent owner"
+        );
+        assert_eq!(sends[0].session_id, "worker");
+        assert_eq!(sends[0].kind, LoopSendKind::DirectNudge);
+        watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Delivered);
+        for (tick, overseer) in [!initially_overseer, initially_overseer]
+            .into_iter()
+            .enumerate()
+        {
+            set_budget_session_overseer(&mut input, overseer);
+            save_loop_watcher_state(&path, &watcher).expect("save before role transition");
+            watcher = load_loop_watcher_state(&path).expect("reload before role transition");
+            assert!(
+                watcher
+                    .plan_sends(&input, NOW + (tick as i64 + 1) * 120_000)
+                    .is_empty(),
+                "role transition cannot erase a delivered budget acknowledgement"
+            );
+        }
+        input["metadata"]["sessions"]["worker"]["loop"]["tokenBudget"] = json!(20_000);
+        input["metadata"]["sessions"]["worker"]["tokenSpend"] = json!({ "billed": 20_000 });
+        let raised = watcher.plan_sends(&input, NOW + 360_000);
+        assert_eq!(
+            raised.len(),
+            1,
+            "a newly met raised budget is still announced"
+        );
+        assert_eq!(raised[0].session_id, "worker");
+    }
+}
+
+#[test]
+fn buffered_token_notices_keep_their_owner_across_promotion_demotion_and_reload() {
+    use aimux::project_service::loop_watcher_task::loop_delivery_queue;
+    for initially_overseer in [false, true] {
+        let mut input = multiple_overseer_met_token_input();
+        set_budget_session_overseer(&mut input, initially_overseer);
+        let directory = temp_state_dir(if initially_overseer {
+            "budget-buffered-control-worker-control"
+        } else {
+            "budget-buffered-worker-control-worker"
+        });
+        let path = loop_watcher_state_path(&directory);
+        let mut watcher = LoopWatcher::new();
+        let sends = watcher.plan_sends(&input, NOW);
+        assert_eq!(sends.len(), 1);
+        watcher.buffer_send(&sends[0], NOW);
+        watcher.commit_send_result(&sends[0], NOW, LoopDeliveryOutcome::Buffered);
+        assert_eq!(watcher.buffered_send_count(), 1);
+        save_loop_watcher_state(&path, &watcher).expect("save pending budget notice");
+        watcher = load_loop_watcher_state(&path).expect("reload pending budget notice");
+        set_budget_session_overseer(&mut input, !initially_overseer);
+        let fresh = watcher.plan_sends(&input, NOW + 120_000);
+        assert_eq!(
+            watcher.buffered_send_count(),
+            1,
+            "discarding an old role engine cannot discard the session's budget notice"
+        );
+        let queue = loop_delivery_queue(&watcher, &input, fresh, NOW + 120_000, 8);
+        assert_eq!(
+            queue.len(),
+            1,
+            "old and new plans remain one role-independent notice"
+        );
+        watcher.commit_send_result(&queue[0], NOW + 120_000, LoopDeliveryOutcome::Delivered);
+        watcher.remove_buffered_send(&queue[0]);
+        assert_eq!(watcher.buffered_send_count(), 0);
+        save_loop_watcher_state(&path, &watcher).expect("save transitioned acknowledgement");
+        watcher = load_loop_watcher_state(&path).expect("reload transitioned acknowledgement");
+        assert!(
+            watcher.plan_sends(&input, NOW + 240_000).is_empty(),
+            "delivery after role transition must acknowledge the outer session owner"
+        );
+        set_budget_session_overseer(&mut input, initially_overseer);
+        assert!(
+            watcher.plan_sends(&input, NOW + 360_000).is_empty(),
+            "transition back cannot reannounce the same met goal"
+        );
+    }
+}
+
+fn buffered_fleet_notice(recipient: &str) -> LoopSend {
+    LoopSend {
+        session_id: recipient.into(),
+        text: "fleet work".into(),
+        signature: "shared-fleet-signature".into(),
+        kind: LoopSendKind::OverseerBriefing,
+    }
+}
+
+#[test]
+fn production_queue_skips_eight_offline_buffers_before_its_eight_send_cap_on_every_tick() {
+    use aimux::project_service::loop_watcher_task::{
+        FAILED_BUFFER_RETRY_FLOOR_MS, loop_delivery_queue,
+    };
+    let mut watcher = LoopWatcher::new();
+    // Create recipient engines so their otherwise identical notices remain
+    // separately buffered, as a real paused fleet scan does.
+    let sessions = (0..9).map(|index| json!({
+        "id": format!("overseer-{index}"), "status": "idle", "overseer": true, "projectControl": true
+    })).collect::<Vec<_>>();
+    let mut input = json!({ "sessions": sessions, "metadata": { "sessions": {} }, "config": { "nudgeCooldownMs": 0 } });
+    watcher.plan_sends(&input, NOW);
+    for index in 0..9 {
+        let send = buffered_fleet_notice(&format!("overseer-{index}"));
+        watcher.buffer_send(&send, NOW);
+        watcher.commit_send_result(&send, NOW, LoopDeliveryOutcome::Buffered);
+        if index < 8 {
+            input["sessions"][index]["status"] = json!("offline");
+        }
+    }
+    assert_eq!(watcher.buffered_send_count(), 9);
+    let directory = temp_state_dir("queue-offline-eight-fairness");
+    let path = loop_watcher_state_path(&directory);
+    for tick in 0..3 {
+        let at = NOW + tick * FAILED_BUFFER_RETRY_FLOOR_MS;
+        let queue = loop_delivery_queue(&watcher, &input, vec![], at, 8);
+        assert_eq!(
+            queue.len(),
+            1,
+            "offline entries cannot spend the delivery cap"
+        );
+        assert_eq!(queue[0].session_id, "overseer-8");
+        watcher.commit_send_result(
+            &queue[0],
+            at,
+            LoopDeliveryOutcome::Failed {
+                error: "temporarily unavailable".into(),
+            },
+        );
+        assert!(
+            loop_delivery_queue(&watcher, &input, vec![queue[0].clone()], at + 1, 8).is_empty(),
+            "a fresh identical plan cannot bypass failed-buffer backoff"
+        );
+        save_loop_watcher_state(&path, &watcher).expect("persist failed buffer");
+        watcher = load_loop_watcher_state(&path).expect("reload failed buffer");
+    }
+    input["sessions"][8]["status"] = json!("offline");
+    assert!(loop_delivery_queue(&watcher, &input, vec![], NOW + 60_000, 8).is_empty());
+}
+
+#[test]
+fn production_queue_rotates_after_actual_attempt_when_one_slow_failure_spends_the_tick_budget() {
+    use aimux::project_service::loop_watcher_task::loop_delivery_queue;
+    let sessions = ["a", "b", "c"].map(|id| {
+        json!({
+            "id": id, "status": "idle", "overseer": true, "projectControl": true
+        })
+    });
+    let input = json!({ "sessions": sessions, "metadata": { "sessions": {} }, "config": { "nudgeCooldownMs": 60_000 } });
+    let mut watcher = LoopWatcher::new();
+    watcher.plan_sends(&input, NOW);
+    for id in ["a", "b", "c"] {
+        let send = buffered_fleet_notice(id);
+        watcher.buffer_send(&send, NOW);
+        watcher.commit_send_result(&send, NOW, LoopDeliveryOutcome::Buffered);
+    }
+    let directory = temp_state_dir("queue-slow-recipient-rotation");
+    let path = loop_watcher_state_path(&directory);
+    let mut attempted = Vec::new();
+    for tick in 0..6 {
+        // Every recipient's backoff has elapsed by the next tick: this proves
+        // rotation, independently of filtering the most recent failure out.
+        let at = NOW + tick * 60_000;
+        let queue = loop_delivery_queue(&watcher, &input, vec![], at, 8);
+        assert_eq!(queue.len(), 3);
+        assert_eq!(
+            watcher.last_delivery_recipient(),
+            attempted.last().map(String::as_str),
+            "planning must not advance the actual-attempt cursor"
+        );
+        // Deterministic scheduler budget: only the first callback fits. A real
+        // slow receiver consumes the 10s wall budget at exactly this boundary.
+        let send = &queue[0];
+        attempted.push(send.session_id.clone());
+        watcher.commit_send_result(
+            send,
+            at,
+            LoopDeliveryOutcome::Failed {
+                error: "slow receiver exhausted scan budget".into(),
+            },
+        );
+        save_loop_watcher_state(&path, &watcher).expect("persist fairness cursor");
+        watcher = load_loop_watcher_state(&path).expect("reload fairness cursor");
+    }
+    assert_eq!(attempted, ["a", "b", "c", "a", "b", "c"]);
+}
+
+#[test]
+fn buffered_pause_flushes_immediately_but_failed_buffers_wait_across_reload() {
+    use aimux::project_service::loop_watcher_task::{
+        FAILED_BUFFER_RETRY_FLOOR_MS, loop_delivery_queue,
+    };
+    let input = json!({ "sessions": [{ "id": "a", "status": "idle", "overseer": true, "projectControl": true }],
+        "metadata": { "sessions": {} }, "config": { "nudgeCooldownMs": 0 } });
+    let mut watcher = LoopWatcher::new();
+    watcher.plan_sends(&input, NOW);
+    let notice = buffered_fleet_notice("a");
+    watcher.buffer_send(&notice, NOW);
+    watcher.commit_send_result(&notice, NOW, LoopDeliveryOutcome::Buffered);
+    assert_eq!(
+        loop_delivery_queue(&watcher, &input, vec![], NOW + 1, 8).len(),
+        1,
+        "global-pause buffering does not impose failure backoff"
+    );
+    watcher.commit_send_result(
+        &notice,
+        NOW + 1,
+        LoopDeliveryOutcome::Failed {
+            error: "unavailable".into(),
+        },
+    );
+    let directory = temp_state_dir("queue-failure-backoff");
+    let path = loop_watcher_state_path(&directory);
+    save_loop_watcher_state(&path, &watcher).expect("persist backoff");
+    let watcher = load_loop_watcher_state(&path).expect("reload backoff");
+    assert!(loop_delivery_queue(&watcher, &input, vec![notice.clone()], NOW + 2, 8).is_empty());
+    assert_eq!(
+        loop_delivery_queue(
+            &watcher,
+            &input,
+            vec![],
+            NOW + 1 + FAILED_BUFFER_RETRY_FLOOR_MS,
+            8
+        )
+        .len(),
+        1
+    );
+}
+
+#[test]
+fn current_control_identity_filters_stale_root_and_child_fleet_buffers_but_keeps_session_budget_notice()
+ {
+    use aimux::project_service::loop_watcher_task::loop_delivery_queue;
+    let mut input = multiple_overseer_met_token_input();
+    let mut watcher = LoopWatcher::new();
+    let mut root_fleet = buffered_fleet_notice("control-a");
+    // Buffer before engines exist, modelling a root entry retained on disk.
+    watcher.buffer_send(&root_fleet, NOW);
+    watcher.commit_send_result(&root_fleet, NOW, LoopDeliveryOutcome::Buffered);
+    let budgets = watcher.plan_sends(&input, NOW);
+    assert_eq!(budgets.len(), 1);
+    watcher.buffer_send(&budgets[0], NOW);
+    watcher.commit_send_result(&budgets[0], NOW, LoopDeliveryOutcome::Buffered);
+    root_fleet.session_id = "control-b".into();
+    watcher.buffer_send(&root_fleet, NOW);
+    watcher.commit_send_result(&root_fleet, NOW, LoopDeliveryOutcome::Buffered);
+    for id in ["control-a", "control-b"] {
+        input["metadata"]["sessions"][id]["overseer"] = json!(false);
+        input["metadata"]["sessions"][id]["projectControl"] = json!(false);
+    }
+    let queue = loop_delivery_queue(&watcher, &input, vec![], NOW + 1, 8);
+    assert_eq!(
+        queue.len(),
+        1,
+        "live former overseers cannot receive buffered fleet content"
+    );
+    assert_eq!(queue[0].session_id, "worker");
+    assert_eq!(queue[0].kind, LoopSendKind::DirectNudge);
+    watcher.commit_send_result(&queue[0], NOW + 1, LoopDeliveryOutcome::Delivered);
+    watcher.remove_buffered_send(&queue[0]);
+    assert!(loop_delivery_queue(&watcher, &input, vec![], NOW + 60_000, 8).is_empty());
+}
+
+#[test]
+fn a_failed_root_buffer_does_not_back_off_or_get_removed_by_a_siblings_identical_child_buffer() {
+    use aimux::project_service::loop_watcher_task::loop_delivery_queue;
+    let input = multiple_overseer_input(json!({ "stoppedDwellMs": 0, "nudgeCooldownMs": 60_000 }));
+    let mut watcher = LoopWatcher::new();
+    let first = buffered_fleet_notice("control-a");
+    watcher.buffer_send(&first, NOW);
+    watcher.commit_send_result(&first, NOW, LoopDeliveryOutcome::Buffered);
+    watcher.plan_sends(&input, NOW);
+    let second = buffered_fleet_notice("control-b");
+    watcher.buffer_send(&second, NOW);
+    watcher.commit_send_result(&second, NOW, LoopDeliveryOutcome::Buffered);
+    assert_eq!(watcher.buffered_send_count(), 2);
+    watcher.commit_send_result(
+        &first,
+        NOW,
+        LoopDeliveryOutcome::Failed {
+            error: "old root buffer failed".into(),
+        },
+    );
+    let queue = loop_delivery_queue(&watcher, &input, vec![], NOW + 1, 8);
+    assert_eq!(queue.len(), 1);
+    assert_eq!(
+        queue[0].session_id, "control-b",
+        "a failed sibling's signature is not this recipient's backoff"
+    );
+    watcher.commit_send_result(&second, NOW + 1, LoopDeliveryOutcome::Delivered);
+    watcher.remove_buffered_send(&second);
+    assert_eq!(
+        watcher.buffered_send_count(),
+        1,
+        "removing B cannot remove A's root buffer with the same signature"
+    );
+    let queue = loop_delivery_queue(&watcher, &input, vec![], NOW + 60_000, 8);
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].session_id, "control-a");
+}
+
+#[test]
+fn a_real_delivery_future_deadline_persists_failure_and_rotates_to_healthy_overseers() {
+    use aimux::project_service::loop_watcher_task::{
+        deliver_loop_send_with_budget, loop_delivery_queue,
+    };
+    use aimux::project_service::watcher_delivery::TickLoopBudget;
+    use std::time::Duration;
+    aimux::async_runtime::init_process_runtime().expect("async runtime initialized");
+    // aimux-async-seam: test - drive the production future deadline and queue
+    aimux::async_runtime::block_on_named("test:loop-delivery-budget-rotation", async {
+        let sessions = ["a", "b", "c"].map(|id| {
+            json!({
+                "id": id, "status": "idle", "overseer": true, "projectControl": true
+            })
+        });
+        let input = json!({ "sessions": sessions, "metadata": { "sessions": {} }, "config": { "nudgeCooldownMs": 60_000 } });
+        let directory = temp_state_dir("actual-delivery-deadline-rotation");
+        let path = loop_watcher_state_path(&directory);
+        let mut watcher = LoopWatcher::new();
+        watcher.plan_sends(&input, NOW);
+        for id in ["a", "b", "c"] {
+            let send = buffered_fleet_notice(id);
+            watcher.buffer_send(&send, NOW);
+            watcher.commit_send_result(&send, NOW, LoopDeliveryOutcome::Buffered);
+        }
+        let queue = loop_delivery_queue(&watcher, &input, vec![], NOW, 8);
+        assert_eq!(queue[0].session_id, "a");
+        let budget = TickLoopBudget::new(Duration::from_millis(20));
+        let outcome = tokio::time::timeout(
+            Duration::from_millis(250),
+            deliver_loop_send_with_budget(&queue[0], &budget, std::future::pending::<bool>()),
+        )
+        .await
+        .expect(
+            "the production scan deadline must fire before the outer scheduler cancels bookkeeping",
+        );
+        let LoopDeliveryOutcome::Failed { error } = &outcome else {
+            panic!("a pending delivery must return a named failure: {outcome:?}");
+        };
+        assert!(error.contains("loop delivery to a "), "{error}");
+        assert!(error.contains("remaining scan deadline"), "{error}");
+        watcher.commit_send_result(&queue[0], NOW, outcome);
+        assert!(budget.spent());
+        save_loop_watcher_state(&path, &watcher)
+            .expect("persist timed-out attempt before outer deadline");
+        watcher = load_loop_watcher_state(&path).expect("reload timed-out attempt");
+        assert_eq!(watcher.last_delivery_recipient(), Some("a"));
+        assert!(
+            !watcher.buffered_send_retry_due(&queue[0], NOW + 1, 60_000),
+            "timeout must persist the same failure backoff as a returned delivery error"
+        );
+        let mut attempted = vec!["a".to_owned()];
+        for tick in 1..3 {
+            // A becomes eligible again before the next tick. The durable
+            // attempt cursor, rather than only backoff, must let B and C lead.
+            let at = NOW + tick * 60_000;
+            let queue = loop_delivery_queue(&watcher, &input, vec![], at, 8);
+            let send = &queue[0];
+            let budget = TickLoopBudget::new(Duration::from_secs(1));
+            let outcome =
+                deliver_loop_send_with_budget(send, &budget, std::future::ready(true)).await;
+            assert_eq!(outcome, LoopDeliveryOutcome::Delivered);
+            attempted.push(send.session_id.clone());
+            watcher.commit_send_result(send, at, outcome);
+            watcher.remove_buffered_send(send);
+            save_loop_watcher_state(&path, &watcher).expect("save healthy delivery");
+            watcher = load_loop_watcher_state(&path).expect("reload healthy delivery");
+        }
+        assert_eq!(attempted, ["a", "b", "c"]);
+    });
+}
+
+#[test]
+fn fast_delivery_succeeds_within_the_remaining_budget_and_preparation_cannot_reset_it() {
+    use aimux::project_service::loop_watcher_task::deliver_loop_send_with_budget;
+    use aimux::project_service::watcher_delivery::TickLoopBudget;
+    use std::time::Duration;
+    aimux::async_runtime::init_process_runtime().expect("async runtime initialized");
+    // aimux-async-seam: test - check production deadline success and spent inverse
+    aimux::async_runtime::block_on_named("test:loop-delivery-budget-success", async {
+        let send = buffered_fleet_notice("healthy");
+        let budget = TickLoopBudget::new(Duration::from_secs(1));
+        assert_eq!(
+            deliver_loop_send_with_budget(&send, &budget, std::future::ready(true)).await,
+            LoopDeliveryOutcome::Delivered
+        );
+        let spent_by_preparation = TickLoopBudget::new(Duration::ZERO);
+        let outcome =
+            deliver_loop_send_with_budget(&send, &spent_by_preparation, std::future::ready(true))
+                .await;
+        let LoopDeliveryOutcome::Failed { error } = outcome else {
+            panic!("an already spent scan cannot begin a fresh delivery allowance");
+        };
+        assert!(error.contains("healthy"), "{error}");
+        assert!(error.contains("remaining scan deadline (0ms)"), "{error}");
+    });
 }

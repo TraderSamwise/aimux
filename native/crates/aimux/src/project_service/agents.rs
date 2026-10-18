@@ -1,10 +1,10 @@
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::config::load_config_for_known_project_root;
-use crate::daemon_state::load_metadata_state;
+use crate::daemon_state::try_load_metadata_state;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{
@@ -23,6 +23,71 @@ use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 
 const ACTIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle", "offline"];
+
+pub fn overseer_session_ids(sessions: &[Value]) -> Vec<String> {
+    let mut overseers = sessions
+        .iter()
+        .filter(|session| is_project_overseer(session))
+        .collect::<Vec<_>>();
+    overseers
+        .sort_by(|left, right| crate::team_contract::compare_agent_canonical_order(left, right));
+    let mut seen = BTreeSet::new();
+    overseers
+        .into_iter()
+        .filter_map(|session| session.get("id").and_then(Value::as_str))
+        .filter(|id| !id.is_empty() && seen.insert((*id).to_owned()))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn is_project_overseer(session: &Value) -> bool {
+    crate::team_contract::is_project_control_session(Some(session))
+        && crate::team_contract::is_overseer_session(Some(session))
+}
+
+pub fn publish_project_control_flags(session: &mut Map<String, Value>) {
+    let probe = Value::Object(session.clone());
+    session.insert("overseer".into(), Value::Bool(is_project_overseer(&probe)));
+    session.insert(
+        "scribe".into(),
+        Value::Bool(
+            crate::team_contract::is_project_control_session(Some(&probe))
+                && crate::team_contract::is_scribe_session(Some(&probe)),
+        ),
+    );
+    let normalized = Value::Object(session.clone());
+    session.insert("role".into(), Value::String(agent_role(Some(&normalized))));
+    session.insert("roleState".into(), agent_role_state(Some(&normalized)));
+}
+
+pub fn overseer_session_ids_for_state(sessions: &[Value], metadata: &Value) -> Vec<String> {
+    let stored = metadata.get("sessions").and_then(Value::as_object);
+    let mut seen = BTreeSet::new();
+    let mut classified = sessions
+        .iter()
+        .filter_map(|session| {
+            let id = session.get("id").and_then(Value::as_str)?;
+            seen.insert(id.to_owned());
+            Some(session_with_stored_control_flags(
+                session,
+                stored.and_then(|sessions| sessions.get(id)),
+            ))
+        })
+        .collect::<Vec<_>>();
+    if let Some(stored) = stored {
+        for (id, session) in stored {
+            if seen.contains(id) {
+                continue;
+            }
+            let Some(mut session) = session.as_object().cloned() else {
+                continue;
+            };
+            session.insert("id".into(), Value::String(id.clone()));
+            classified.push(Value::Object(session));
+        }
+    }
+    overseer_session_ids(&classified)
+}
 
 /// Statuses that claim the session is backed by a live tmux window.
 /// The dashboard's "needs input" label is derived from metadata rather than
@@ -289,7 +354,10 @@ pub fn route_agent_read_request(
         return None;
     }
     let project_state_dir = context.project_state_dir();
-    let metadata_state = load_metadata_state(&project_state_dir);
+    let metadata_state = match try_load_metadata_state(&project_state_dir) {
+        Ok(metadata) => metadata,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    };
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
         Ok(topology) => topology,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
@@ -321,15 +389,12 @@ pub fn route_agent_read_request(
     }
     Some(json_response(
         200,
-        json!({
-            "ok": true,
-            "agents": build_agent_list(
-                &projection.sessions,
-                &metadata_state.sessions,
-                array_field(&exchange, "tasks"),
-                Some(&role_registry),
-            ),
-        }),
+        agent_list_response(
+            &projection.sessions,
+            &metadata_state.sessions,
+            array_field(&exchange, "tasks"),
+            &role_registry,
+        ),
     ))
 }
 
@@ -352,7 +417,10 @@ pub async fn route_agent_read_request_async(
         return None;
     }
     let project_state_dir = context.project_state_dir();
-    let metadata_state = load_metadata_state(&project_state_dir);
+    let metadata_state = match try_load_metadata_state(&project_state_dir) {
+        Ok(metadata) => metadata,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    };
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
         Ok(topology) => topology,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
@@ -385,16 +453,23 @@ pub async fn route_agent_read_request_async(
     }
     Some(json_response(
         200,
-        json!({
-            "ok": true,
-            "agents": build_agent_list(
-                &projection.sessions,
-                &metadata_state.sessions,
-                array_field(&exchange, "tasks"),
-                Some(&role_registry),
-            ),
-        }),
+        agent_list_response(
+            &projection.sessions,
+            &metadata_state.sessions,
+            array_field(&exchange, "tasks"),
+            &role_registry,
+        ),
     ))
+}
+
+fn agent_list_response(
+    sessions: &[Value],
+    metadata: &BTreeMap<String, Value>,
+    tasks: &[Value],
+    registry: &Value,
+) -> Value {
+    let agents = build_agent_list(sessions, metadata, tasks, Some(registry));
+    json!({"ok":true, "overseerSessionIds":overseer_session_ids(&agents), "agents":agents})
 }
 
 pub struct TopologyDesktopSessionProjection {
@@ -800,6 +875,9 @@ pub fn build_agent_list(
                 "restartLaunchOptions",
                 "worktreePath",
                 "label",
+                "createdAt",
+                "tmuxTarget",
+                "tmuxWindowIndex",
                 // A kill in flight is the answer, not the turn it interrupted.
                 // Without this the one answer could not see a transient here.
                 "pendingAction",
@@ -845,6 +923,7 @@ pub fn build_agent_list(
                 );
             }
             overlay_agent_role_registry(&mut agent, role_registry);
+            publish_project_control_flags(&mut agent);
             if let Some(task) = task {
                 agent.insert(
                     "task".into(),
@@ -1142,7 +1221,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_team_role_remains_a_display_fallback_without_explicit_flags() {
+    fn legacy_team_role_publishes_normalized_scribe_flags() {
         let agents = build_agent_list(
             &[json!({
                 "id": "legacy-scribe",
@@ -1157,7 +1236,59 @@ mod tests {
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0]["role"], "scribe");
         assert_eq!(agents[0]["lane"], json!({ "kind": "supervisor" }));
-        assert_eq!(agents[0].get("scribe"), None);
+        assert_eq!(agents[0]["scribe"], true);
+        assert_eq!(agents[0]["overseer"], false);
+    }
+
+    #[test]
+    fn normalized_control_flags_determine_role_even_with_stale_registry_roles() {
+        for role in ["overseer", "scribe"] {
+            let mut source = json!({
+                "id": "former", "status": "running", "projectControl": true,
+                "role": role, "team": { "role": role },
+            });
+            source[role] = json!(true);
+            let metadata = BTreeMap::from([("former".into(), json!({ "projectControl": false }))]);
+            let registry = json!({ "sessions": { "former": { "role": role } } });
+            let agents = build_agent_list(&[source], &metadata, &[], Some(&registry));
+            let agent = &agents[0];
+            assert_eq!(agent[role], false);
+            assert_eq!(agent["projectControl"], false);
+            assert_eq!(agent["role"], "coder");
+            assert_eq!(agent["roleState"]["role"], "coder");
+            assert_eq!(agent["roleState"]["projectControl"], false);
+            assert_eq!(agent["roleState"]["showRoleSuffix"], false);
+        }
+    }
+
+    #[test]
+    fn role_publication_preserves_worker_teams_and_effective_relaunch_state() {
+        let mut worker = json!({
+            "projectControl": false, "overseer": true, "role": "overseer",
+            "team": { "role": "reviewer", "parentSessionId": "parent" },
+            "pendingRelaunchForRole": true,
+            "effectiveRole": "overseer", "effectiveLane": { "kind": "supervisor" },
+            "runtimeWorkingDirectory": "/repo",
+        })
+        .as_object()
+        .expect("worker record")
+        .clone();
+        publish_project_control_flags(&mut worker);
+        assert_eq!(worker["role"], "coder");
+        assert_eq!(worker["team"]["role"], "reviewer");
+        assert_eq!(worker["team"]["parentSessionId"], "parent");
+        assert_eq!(worker["roleState"]["status"], "pending-relaunch");
+        assert_eq!(worker["roleState"]["declaredRole"], "coder");
+        assert_eq!(worker["roleState"]["effectiveRole"], "overseer");
+        assert_eq!(worker["roleState"]["effectiveLane"]["kind"], "supervisor");
+        assert_eq!(worker["roleState"]["runtimeWorkingDirectory"], "/repo");
+        let mut control = json!({ "projectControl": true, "role": "reviewer" })
+            .as_object()
+            .expect("control record")
+            .clone();
+        publish_project_control_flags(&mut control);
+        assert_eq!(control["role"], "reviewer");
+        assert_eq!(control["roleState"]["role"], "reviewer");
     }
 
     #[test]

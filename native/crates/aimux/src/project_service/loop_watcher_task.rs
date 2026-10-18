@@ -4,7 +4,7 @@
 //! real inputs, delivers over the agent input route, and is the only place that
 //! decides which sessions the watcher is even allowed to see.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,8 +18,8 @@ use crate::backend_session_ids::claude_transcript_path;
 use crate::daemon_state::{MetadataState, metadata_state_path};
 use crate::debug_logging::{LogLevel, log_at};
 use crate::loop_watcher::{
-    LoopDeliveryOutcome, LoopScanIndeterminate, load_loop_watcher_state, loop_watcher_state_path,
-    save_loop_watcher_state,
+    LoopDeliveryOutcome, LoopScanIndeterminate, LoopSend, LoopSendKind, LoopWatcher,
+    load_loop_watcher_state, loop_watcher_state_path, save_loop_watcher_state,
 };
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
@@ -27,6 +27,7 @@ use crate::runtime_topology::{
 use crate::transcript_turn_state::{default_codex_sessions_dir, find_codex_transcript_path};
 
 use super::agent_output::AgentOutputResponseMode;
+use super::agents::overseer_session_ids_for_state;
 use super::coordination_worklist::{build_coordination_thread_entries, build_coordination_view};
 use super::interactions::pending_interactions_for_stream;
 use super::metadata::update_session_metadata;
@@ -185,6 +186,9 @@ impl PeriodicTask for LoopWatcherTask {
 
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
+            // Preparation and delivery share one allowance, leaving the
+            // scheduler's extra second for durable outcome bookkeeping.
+            let budget = TickLoopBudget::new(SCAN_BUDGET);
             self.refresh_config_if_changed();
             let project_state_dir = context.project_state_dir();
             let state_path = loop_watcher_state_path(&project_state_dir);
@@ -237,7 +241,6 @@ impl PeriodicTask for LoopWatcherTask {
             let indeterminate = apply_live_activity_overrides_for_scan(context, &mut input).await?;
             self.apply_token_spend(&mut input);
 
-            let budget = TickLoopBudget::new(SCAN_BUDGET);
             let planned_at = now_ms();
             watcher.expire_global_pause(planned_at);
             let sends = watcher.plan_sends(&input, planned_at);
@@ -260,26 +263,22 @@ impl PeriodicTask for LoopWatcherTask {
                 return Ok(());
             }
 
-            let mut delivery_queue = watcher.buffered_sends_to_deliver(MAX_SENDS_PER_SCAN);
-            let remaining = MAX_SENDS_PER_SCAN.saturating_sub(delivery_queue.len());
-            delivery_queue.extend(sends.into_iter().take(remaining));
+            let delivery_queue =
+                loop_delivery_queue(&watcher, &input, sends, planned_at, MAX_SENDS_PER_SCAN);
             for send in delivery_queue {
                 if budget.spent() {
                     break;
                 }
-                let delivered = if deliver_agent_input_async(
-                    Arc::clone(&delivery_context),
-                    &send.session_id,
-                    &send.text,
+                let delivered = deliver_loop_send_with_budget(
+                    &send,
+                    &budget,
+                    deliver_agent_input_async(
+                        Arc::clone(&delivery_context),
+                        &send.session_id,
+                        &send.text,
+                    ),
                 )
-                .await
-                {
-                    LoopDeliveryOutcome::Delivered
-                } else {
-                    LoopDeliveryOutcome::Failed {
-                        error: "deliver_agent_input_async returned false".to_owned(),
-                    }
-                };
+                .await;
                 let delivered_ok = matches!(delivered, LoopDeliveryOutcome::Delivered);
                 watcher.commit_send_result(&send, now_ms(), delivered);
                 if delivered_ok {
@@ -297,6 +296,123 @@ impl PeriodicTask for LoopWatcherTask {
             }
             Ok(())
         })
+    }
+}
+
+/// Bound the complete activity-probe and submission future by the remaining
+/// scan allowance. Returning a named failure lets the caller persist its
+/// recipient cursor and retry backoff before the scheduler's outer timeout.
+pub async fn deliver_loop_send_with_budget<F>(
+    send: &LoopSend,
+    budget: &TickLoopBudget,
+    delivery: F,
+) -> LoopDeliveryOutcome
+where
+    F: std::future::Future<Output = bool>,
+{
+    let remaining = budget.remaining();
+    let timed_out = || LoopDeliveryOutcome::Failed {
+        error: format!(
+            "loop delivery to {} exceeded the remaining scan deadline ({}ms)",
+            send.session_id,
+            remaining.as_millis()
+        ),
+    };
+    if remaining.is_zero() {
+        return timed_out();
+    }
+    match tokio::time::timeout(remaining, delivery).await {
+        Ok(true) => LoopDeliveryOutcome::Delivered,
+        Ok(false) => LoopDeliveryOutcome::Failed {
+            error: format!(
+                "loop delivery to {} failed: deliver_agent_input_async returned false",
+                send.session_id
+            ),
+        },
+        Err(_) => timed_out(),
+    }
+}
+
+/// Buffered entries without a failed attempt flush immediately when a global
+/// pause ends. Failed entries wait at least one normal scan interval, even if
+/// stopped-agent reminder cooldowns were explicitly disabled.
+pub const FAILED_BUFFER_RETRY_FLOOR_MS: i64 = 15_000;
+
+/// Select current, retryable recipients before applying the scan cap. Rotate
+/// after the last actual delivery attempt, not the last planned send: a slow
+/// recipient can consume the whole time budget but cannot own the next tick.
+pub fn loop_delivery_queue(
+    watcher: &LoopWatcher,
+    input: &Value,
+    sends: Vec<LoopSend>,
+    now_ms: i64,
+    limit: usize,
+) -> Vec<LoopSend> {
+    let sessions = input.get("sessions").and_then(Value::as_array);
+    let overseer_ids = overseer_session_ids_for_state(
+        sessions.map(Vec::as_slice).unwrap_or(&[]),
+        input.get("metadata").unwrap_or(&Value::Null),
+    );
+    let cooldown_ms = input
+        .pointer("/config/nudgeCooldownMs")
+        .and_then(Value::as_i64)
+        .unwrap_or(60_000)
+        .max(FAILED_BUFFER_RETRY_FLOOR_MS);
+    let mut recipients = BTreeMap::<String, VecDeque<LoopSend>>::new();
+    for send in watcher
+        .buffered_sends_to_deliver(usize::MAX)
+        .into_iter()
+        .chain(sends)
+    {
+        let ready = sessions.is_some_and(|sessions| {
+            sessions.iter().any(|session| {
+                session.get("id").and_then(Value::as_str) == Some(send.session_id.as_str())
+                    && session
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_none_or(|status| NUDGEABLE_SESSION_STATUSES.contains(&status))
+            })
+        });
+        if !ready
+            || (send.kind != LoopSendKind::DirectNudge && !overseer_ids.contains(&send.session_id))
+            || !watcher.buffered_send_retry_due(&send, now_ms, cooldown_ms)
+        {
+            continue;
+        }
+        let queue = recipients.entry(send.session_id.clone()).or_default();
+        if !queue
+            .iter()
+            .any(|queued| queued.kind == send.kind && queued.signature == send.signature)
+        {
+            queue.push_back(send);
+        }
+    }
+    let ids = recipients.keys().cloned().collect::<Vec<_>>();
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let start = watcher
+        .last_delivery_recipient()
+        .map(|last| ids.partition_point(|id| id.as_str() <= last) % ids.len())
+        .unwrap_or(0);
+    let mut queue = Vec::new();
+    loop {
+        let mut progressed = false;
+        for offset in 0..ids.len() {
+            if queue.len() >= limit {
+                return queue;
+            }
+            if let Some(send) = recipients
+                .get_mut(&ids[(start + offset) % ids.len()])
+                .and_then(VecDeque::pop_front)
+            {
+                queue.push(send);
+                progressed = true;
+            }
+        }
+        if !progressed {
+            return queue;
+        }
     }
 }
 

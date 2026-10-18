@@ -5,7 +5,9 @@ use aimux::daemon::text::agents::{
     DaemonAgentTextRuntime, ProjectServicePostOptions, route_agent_text_request,
 };
 use aimux::daemon::text::params::ProjectServiceJsonResult;
-use aimux::native_cli_dispatch::{CORE_SERVICE_CREATE_TEXT_ROUTE, CORE_SERVICE_REMOVE_TEXT_ROUTE};
+use aimux::native_cli_dispatch::{
+    CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_SERVICE_CREATE_TEXT_ROUTE, CORE_SERVICE_REMOVE_TEXT_ROUTE,
+};
 use aimux::project_api_contract::routes as project_routes;
 use serde_json::{Value, json};
 
@@ -26,6 +28,7 @@ struct FakeAgentRuntime {
     fail_event: bool,
     invalid_agents: bool,
     tmux_live_window_error: Option<String>,
+    agent_response: Option<Value>,
 }
 
 impl DaemonAgentTextRuntime for FakeAgentRuntime {
@@ -51,6 +54,12 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
             timeout_ms: None,
         });
         match route_path {
+            project_routes::agents::LIST if self.agent_response.is_some() => {
+                ProjectServiceJsonResult::ok(
+                    "/repo",
+                    self.agent_response.clone().expect("response"),
+                )
+            }
             project_routes::agents::LIST if self.invalid_agents => ProjectServiceJsonResult::ok(
                 "/repo",
                 json!({ "agents": [{ "id": "claude-1" }, []] }),
@@ -241,6 +250,88 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
             _ => ProjectServiceJsonResult::error(DaemonRouteResponse::text(404, "not found\n")),
         }
     }
+}
+
+#[test]
+fn overseer_status_renders_the_complete_published_set_in_service_order() {
+    for json_output in [false, true] {
+        let mut runtime = FakeAgentRuntime {
+            agent_response: Some(json!({
+                "agents": [
+                    {"id":"first", "status":"running", "overseer":true},
+                    {"id":"overseer-impostor", "status":"running", "projectControl":false},
+                    {"id":"second", "status":"running", "overseer":true},
+                    {"id":"third", "status":"running", "overseer":true}
+                ],
+                "overseerSessionIds":["third","first","second"]
+            })),
+            ..Default::default()
+        };
+        let path = format!(
+            "{CORE_OVERSEER_STATUS_TEXT_ROUTE}?project=/repo{}",
+            if json_output { "&json=1" } else { "" }
+        );
+        let response =
+            route_agent_text_request(&mut runtime, "GET", &path, None).expect("status route");
+        assert_eq!(response.status, 200);
+        if json_output {
+            assert_eq!(
+                json_text(response)["agents"]
+                    .as_array()
+                    .expect("agents")
+                    .iter()
+                    .map(|agent| agent["id"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                ["third", "first", "second"]
+            );
+        } else {
+            let text = text_body(response);
+            assert!(text.find("third").unwrap() < text.find("first").unwrap());
+            assert!(text.find("first").unwrap() < text.find("second").unwrap());
+            assert!(!text.contains("overseer-impostor"));
+        }
+    }
+}
+
+#[test]
+fn overseer_status_rejects_missing_invalid_or_unresolvable_published_identities() {
+    for ids in [
+        Value::Null,
+        json!([null]),
+        json!(["missing"]),
+        json!(["first", "first"]),
+    ] {
+        let mut payload = json!({"agents":[{"id":"first"}]});
+        if !ids.is_null() {
+            payload["overseerSessionIds"] = ids;
+        }
+        let mut runtime = FakeAgentRuntime {
+            agent_response: Some(payload),
+            ..Default::default()
+        };
+        let response = route_agent_text_request(
+            &mut runtime,
+            "GET",
+            &format!("{CORE_OVERSEER_STATUS_TEXT_ROUTE}?project=/repo"),
+            None,
+        )
+        .expect("status route");
+        assert_eq!(response.status, 502);
+        assert!(!text_body(response).contains("No overseer running"));
+    }
+    let mut runtime = FakeAgentRuntime {
+        agent_response: Some(json!({"agents":[], "overseerSessionIds":[]})),
+        ..Default::default()
+    };
+    let response = route_agent_text_request(
+        &mut runtime,
+        "GET",
+        &format!("{CORE_OVERSEER_STATUS_TEXT_ROUTE}?project=/repo"),
+        None,
+    )
+    .expect("empty status route");
+    assert_eq!(response.status, 200);
+    assert_eq!(text_body(response), "No overseer running.\n");
 }
 
 fn text_body(response: DaemonRouteResponse) -> String {
