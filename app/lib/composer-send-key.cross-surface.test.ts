@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 
 // The command allowlist is a plain array, but it lives beside the bridge, and
@@ -11,17 +12,12 @@ vi.mock("react-native", () => ({
   Platform: { OS: "web" },
 }));
 
-import { shouldSubmitComposerKey } from "@/lib/composer-protocol";
+import { shouldSubmitComposerKey, type ComposerKeyEventLike } from "@/lib/composer-protocol";
 import { NATIVE_APP_COMMANDS } from "@/lib/native-app-commands";
 
-// AGENTS.md "One Answer, Many Surfaces". Three surfaces decide whether Enter
-// sends, and only one of them is reachable from a unit test: web calls
-// `shouldSubmitComposerKey`, while iOS and Android each match the key against
-// the device it came from, in Swift and Kotlin. On 2026-09-13 `7adb41638`
-// changed the TS rule, the Swift modifier set AND the assertion that guarded
-// them, in one commit, and Shift+Enter became a second send key on every
-// surface at once. A per-surface test could not have caught that; this compares
-// them to each other.
+// AGENTS.md "One Answer, Many Surfaces": compare web, iOS, Android and screen.
+// On 2026-09-13 `7adb41638` changed TS, Swift and its assertion together,
+// accidentally allowing Shift+Enter. Keep an independent newline invariant.
 
 const SWIFT_SOURCE = readFileSync(
   join(__dirname, "..", "plugins", "ios", "AimuxNativeCommands.swift"),
@@ -73,31 +69,108 @@ const kotlinSendRule = () => kotlinRule("fun isSendKeyEvent(");
 const kotlinIdentityRule = () => kotlinRule("private fun isHardwareKeyboardEvent(");
 
 function iosDisallowedModifiers(): string {
-  const match = SWIFT_SOURCE.match(/let disallowedModifiers: UIKeyModifierFlags = \[([^\]]*)\]/);
+  const match = withoutComments(SWIFT_SOURCE).match(
+    /let disallowedModifiers: UIKeyModifierFlags = \[([^\]]*)\]/,
+  );
   expect(match, "iOS must still refuse a return key by a list of modifiers").toBeTruthy();
   return match![1];
 }
 
-describe("composer send key, across surfaces", () => {
-  it("refuses the same modified Enter on web and on iOS", () => {
-    const disallowed = iosDisallowedModifiers();
-    for (const modifier of MODIFIERS) {
-      expect(
-        shouldSubmitComposerKey({ key: "Enter", [modifier.web]: true }, true),
-        `web must not send on ${modifier.web}+Enter`,
-      ).toBe(false);
-      expect(
-        disallowed.includes(modifier.swift),
-        `iOS must not send on ${modifier.swift}+Enter, so ${modifier.swift} belongs in disallowedModifiers`,
-      ).toBe(true);
-    }
-  });
+type ScreenKeyEvent = ComposerKeyEventLike & {
+  nativeEvent?: ComposerKeyEventLike;
+  preventDefault?: () => void;
+};
 
-  it("sends an unmodified Enter on web and on iOS", () => {
-    expect(shouldSubmitComposerKey({ key: "Enter" }, true)).toBe(true);
-    // A denylist, so a flag nobody listed -- caps lock, the numeric pad -- is
-    // not silently turned into a refusal to send.
-    expect(SWIFT_SOURCE).toContain("key.modifierFlags.intersection(disallowedModifiers).isEmpty");
+// Execute the screen's callback and keyboard-props wiring without its stores.
+const screenStart = SCREEN_SOURCE.indexOf("const handleComposerKeyboardEvent = useCallback(");
+const screenEnd = SCREEN_SOURCE.indexOf("const handleComposerDraftChange", screenStart);
+const propsStart = SCREEN_SOURCE.indexOf("const composerKeyboardProps = useMemo(");
+const propsEnd = SCREEN_SOURCE.indexOf("\n  );", propsStart) + "\n  );".length;
+expect(screenStart).toBeGreaterThan(0);
+expect(screenEnd).toBeGreaterThan(screenStart);
+expect(propsStart).toBeGreaterThan(0);
+expect(propsEnd).toBeGreaterThan(propsStart);
+const screenCallback = ts.transpileModule(
+  SCREEN_SOURCE.slice(screenStart, screenEnd) + SCREEN_SOURCE.slice(propsStart, propsEnd),
+  {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+  },
+).outputText;
+
+function screenKeyboardHandler(hasHardwareKeyboard: boolean) {
+  const send = vi.fn();
+  const handler = new Function(
+    "Platform",
+    "useCallback",
+    "useMemo",
+    "shouldSubmitComposerKey",
+    "hasHardwareKeyboard",
+    "canUseOwnerControls",
+    "handleInterrupt",
+    "handleSendMessage",
+    `${screenCallback}\nreturn composerKeyboardProps.onKeyDown;`,
+  )(
+    { OS: "web" },
+    (callback: unknown) => callback,
+    (factory: () => unknown) => factory(),
+    shouldSubmitComposerKey,
+    hasHardwareKeyboard,
+    true,
+    vi.fn(),
+    send,
+  ) as (event: ScreenKeyEvent) => void;
+  return { handler, send };
+}
+
+describe("composer send key, across surfaces", () => {
+  it("agrees on Enter and Ctrl+Enter while every Shift/Alt/Meta combination stays a newline", () => {
+    const disallowed = iosDisallowedModifiers();
+    const kotlin = kotlinSendRule().replace(/\s+/g, " ");
+    expect(kotlin).toBe(
+      "fun isSendKeyEvent(event: KeyEvent): Boolean = event.action == KeyEvent.ACTION_DOWN && " +
+        "event.repeatCount == 0 && isReturnKeyCode(event.keyCode) && " +
+        "(event.hasNoModifiers() || event.hasModifiers(KeyEvent.META_CTRL_ON)) && isHardwareKeyboardEvent(event)",
+    );
+    const swift = withoutComments(SWIFT_SOURCE).match(
+      /private func isSendReturnKey\(_ key: UIKey\) -> Bool \{([^}]+)\}/,
+    );
+    expect(swift, "iOS must expose the scoped send predicate").toBeTruthy();
+    expect(swift![1].trim().replace(/\s+/g, " ")).toBe(
+      "let disallowedModifiers: UIKeyModifierFlags = [.shift, .command, .alternate] " +
+        "return isReturnKey(key) && key.modifierFlags.intersection(disallowedModifiers).isEmpty",
+    );
+    for (const modifier of MODIFIERS) {
+      expect(disallowed.includes(modifier.swift), modifier.swift).toBe(modifier.web !== "ctrlKey");
+    }
+    for (let mask = 0; mask < 16; mask++) {
+      const event: ComposerKeyEventLike = { key: "Enter", code: "Enter" };
+      MODIFIERS.forEach((modifier, index) => {
+        event[modifier.web] = Boolean(mask & (1 << index));
+      });
+      const expected = !event.shiftKey && !event.altKey && !event.metaKey;
+      const iosSends = !MODIFIERS.some(
+        (modifier) => event[modifier.web] && disallowed.includes(modifier.swift),
+      );
+      expect(iosSends, `iOS modifiers ${mask}`).toBe(expected);
+      expect(shouldSubmitComposerKey(event, true), `web modifiers ${mask}`).toBe(iosSends);
+      expect(shouldSubmitComposerKey(event, false), `undetected keyboard modifiers ${mask}`).toBe(
+        expected && event.ctrlKey,
+      );
+      for (const hardware of [false, true]) {
+        for (const nested of [false, true]) {
+          const { handler, send } = screenKeyboardHandler(hardware);
+          const preventDefault = vi.fn();
+          handler({ ...(nested ? { nativeEvent: event } : event), preventDefault });
+          const sends = shouldSubmitComposerKey(event, hardware);
+          expect(
+            send.mock.calls.length,
+            `screen modifiers ${mask}, hardware ${hardware}, nativeEvent ${nested}`,
+          ).toBe(Number(sends));
+          expect(preventDefault.mock.calls.length).toBe(Number(sends));
+          if (sends) expect(send).toHaveBeenCalledWith({ preserveFocus: true });
+        }
+      }
+    }
   });
 
   it("needs no keyboard detection on iOS, because only a real key arrives", () => {
@@ -108,8 +181,26 @@ describe("composer send key, across surfaces", () => {
     expect(SWIFT_SOURCE).toContain("isSendReturnKey(key)");
   });
 
-  it("gates the web rule on the hardware answer, never on a literal", () => {
-    expect(SCREEN_SOURCE).toContain("shouldSubmitComposerKey(keyEvent, hasHardwareKeyboard)");
+  it("preserves physical key identity and nativeEvent precedence through the screen", () => {
+    for (const code of [undefined, "Enter", "NumpadEnter", ""]) {
+      const event = { key: "Enter", code, ctrlKey: true };
+      const { handler, send } = screenKeyboardHandler(false);
+      handler({ nativeEvent: event });
+      expect(send.mock.calls.length).toBe(Number(shouldSubmitComposerKey(event, false)));
+    }
+    const { handler, send } = screenKeyboardHandler(false);
+    handler({ key: "Enter", ctrlKey: true, nativeEvent: { key: "Enter", ctrlKey: false } });
+    handler({ key: "a", ctrlKey: true });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("attaches the shared keyboard props to the rendered composer input", () => {
+    const screen = withoutComments(SCREEN_SOURCE);
+    expect(screen).toMatch(
+      /<ComposerDraftTextInput\b[^]*?composerKeyboardProps=\{composerKeyboardProps\}/,
+    );
+    const input = screen.slice(screen.indexOf("const ComposerDraftTextInput ="));
+    expect(input).toMatch(/<TextInput\b[^]*?\{\.\.\.composerKeyboardProps\}/);
   });
 
   it("hands Android's Enter to no editor action", () => {
@@ -125,24 +216,6 @@ describe("composer send key, across surfaces", () => {
     expect(props).not.toContain("submitBehavior");
     expect(props).not.toContain("onSubmitEditing");
     expect(props).not.toContain("returnKeyType");
-  });
-
-  it("refuses the same modified Enter on Android as on web", () => {
-    // Kotlin does not spell the modifiers out: `hasNoModifiers()` is the very
-    // predicate AOSP's `TextView.doKeyDown` gates the editor action on, so the
-    // platform and this rule cannot drift. A hand-rolled shift check could.
-    const rule = kotlinSendRule();
-    expect(rule).toContain("event.hasNoModifiers()");
-    // And names no individual modifier, because naming one is how it drifts.
-    for (const named of ["META_SHIFT", "META_ALT", "META_CTRL", "isShiftPressed"]) {
-      expect(KOTLIN_SOURCE).not.toContain(named);
-    }
-    for (const modifier of MODIFIERS) {
-      expect(
-        shouldSubmitComposerKey({ key: "Enter", [modifier.web]: true }, true),
-        `web must not send on ${modifier.web}+Enter`,
-      ).toBe(false);
-    }
   });
 
   it("asks and answers with the same idea of a keyboard on Android", () => {
