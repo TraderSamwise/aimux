@@ -3056,6 +3056,7 @@ pub fn load_buffer_argv(buffer_name: &str, path: &str) -> Vec<String> {
 
 pub const GUARDED_PASTE_SUCCESS: &str = "AIMUX_GUARDED_PASTE_OK\n";
 pub const GUARDED_PASTE_REFUSED: &str = "AIMUX_GUARDED_PASTE_REFUSED\n";
+pub const GUARDED_PASTE_UNAVAILABLE: &str = "AIMUX_GUARDED_PASTE_UNAVAILABLE\n";
 pub const FRAMED_PASTE_SUCCESS: &str = "AIMUX_FRAMED_PASTE_OK\n";
 pub const PASTE_FRAME_OPTION: &str = "@aimux-input-paste-frame";
 
@@ -3169,6 +3170,22 @@ pub fn guarded_paste_buffer_argv(paste_argv: &[String], window_id: &str) -> Vec<
         .map(|argument| shell_quote(argument))
         .collect::<Vec<_>>()
         .join(" ");
+    let refusal = [
+        "if-shell".to_owned(),
+        "-F".to_owned(),
+        "-t".to_owned(),
+        window_id.to_owned(),
+        "#{==:#{bracket_paste_flag},0}".to_owned(),
+        format!("display-message -p {}", GUARDED_PASTE_REFUSED.trim_end()),
+        format!(
+            "display-message -p {}",
+            GUARDED_PASTE_UNAVAILABLE.trim_end()
+        ),
+    ]
+    .iter()
+    .map(|argument| shell_quote(argument))
+    .collect::<Vec<_>>()
+    .join(" ");
     vec![
         "if-shell".to_owned(),
         "-F".to_owned(),
@@ -3179,7 +3196,7 @@ pub fn guarded_paste_buffer_argv(paste_argv: &[String], window_id: &str) -> Vec<
             "{paste}; display-message -p {}",
             GUARDED_PASTE_SUCCESS.trim_end()
         ),
-        format!("display-message -p {}", GUARDED_PASTE_REFUSED.trim_end()),
+        refusal,
     ]
 }
 
@@ -3190,6 +3207,10 @@ pub fn validate_guarded_paste_output(window_id: &str, stdout: &[u8]) -> Result<(
     } else if stdout == GUARDED_PASTE_REFUSED.as_bytes() {
         Err(format!(
             "multiline prompt not delivered to {window_id}: receiver must enable bracketed paste; its LF input behavior is unknown"
+        ))
+    } else if stdout == GUARDED_PASTE_UNAVAILABLE.as_bytes() {
+        Err(format!(
+            "multiline prompt not delivered to {window_id}: tmux cannot query bracketed paste capability; this receiver's LF input behavior cannot be established"
         ))
     } else {
         Err(format!(
@@ -4734,7 +4755,7 @@ mod staged_prompt_tests {
                 "@1",
                 "#{==:#{bracket_paste_flag},1}",
                 "'paste-buffer' '-d' '-p' '-r' '-b' 'aimux-prompt-test' '-t' '@1'; display-message -p AIMUX_GUARDED_PASTE_OK",
-                "display-message -p AIMUX_GUARDED_PASTE_REFUSED",
+                "'if-shell' '-F' '-t' '@1' '#{==:#{bracket_paste_flag},0}' 'display-message -p AIMUX_GUARDED_PASTE_REFUSED' 'display-message -p AIMUX_GUARDED_PASTE_UNAVAILABLE'",
             ]
         );
         assert_eq!(
@@ -4746,9 +4767,15 @@ mod staged_prompt_tests {
                 .expect_err("refusal is not a successful paste")
                 .contains("multiline prompt not delivered")
         );
+        assert!(
+            super::validate_guarded_paste_output("@1", super::GUARDED_PASTE_UNAVAILABLE.as_bytes())
+                .expect_err("missing capability is not mode-off or a successful paste")
+                .contains("cannot query bracketed paste capability")
+        );
         for stdout in [
             b"".as_slice(),
             b"1\n",
+            b"AIMUX_GUARDED_PASTE_UNAVAILABLE",
             b"AIMUX_GUARDED_PASTE_OK",
             b"AIMUX_GUARDED_PASTE_OK\nextra\n",
             &[0xff],

@@ -197,6 +197,21 @@ pub fn normalize_submitted_prompt(data: &str) -> String {
         .replace('\r', "\n")
 }
 
+/// A body must not be able to open or close the terminal's paste frame.
+/// Older tmux releases forward these controls without escaping them.
+pub fn validate_submitted_prompt(prompt: &str) -> Result<(), String> {
+    if ["\u{1b}[200~", "\u{1b}[201~", "\u{9b}200~", "\u{9b}201~"]
+        .iter()
+        .any(|delimiter| prompt.contains(delimiter))
+    {
+        return Err(
+            "agent input contains a terminal paste delimiter; replace its escape byte with a printable spelling before sending"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PromptPasteMode {
     Raw,

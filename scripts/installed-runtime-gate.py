@@ -212,22 +212,68 @@ def host_platform_arch() -> str:
 
 
 def write_config(scope: Any) -> None:
-    helper = scope.root / "bin" / "gate-shell"
+    # This controlled fixture implements Codex's bracketed-paste protocol.
+    # The shell key is an alias; no provider process is launched.
+    helper = scope.root / "bin" / "controlled-receiver" / "codex"
     helper.parent.mkdir(parents=True, exist_ok=True)
     helper.write_text(
-        textwrap.dedent(
-            """\
-            #!/usr/bin/env bash
-            printf 'GATE_READY:%s\\n' "$AIMUX_SESSION_ID"
-            while :; do
-              if IFS= read -r line; then
-                printf 'GATE_INPUT:%s\\n' "$line"
-              else
-                sleep 1
-              fi
-            done
+        f"#!{sys.executable}\n"
+        + textwrap.dedent(
+            r"""
+            import os
+            import signal
+            import termios
+            import tty
+
+            fd = 0
+            saved = termios.tcgetattr(fd)
+            def stop(signum, frame):
+                raise SystemExit(0)
+            signal.signal(signal.SIGTERM, stop)
+            signal.signal(signal.SIGHUP, stop)
+            try:
+                tty.setraw(fd)
+                os.write(1, b'\x1b[?2004hGATE_READY:' + os.environ['AIMUX_SESSION_ID'].encode() + '\r\n› '.encode())
+                draft = bytearray()
+                pending = bytearray()
+                inside = False
+                markers = [(b'\x1b[200~', True), (b'\x1b[201~', False)]
+                while True:
+                    chunk = os.read(fd, 4096)
+                    if not chunk:
+                        break
+                    pending.extend(chunk)
+                    while pending:
+                        matched = False
+                        for marker, opening in markers:
+                            if pending.startswith(marker):
+                                if opening == inside:
+                                    raise RuntimeError('unexpected paste boundary')
+                                del pending[:len(marker)]
+                                inside = opening
+                                if not opening:
+                                    os.write(1, ('\r\n› [Pasted Content %d chars]\r\n' % len(draft.decode('utf-8'))).encode())
+                                matched = True
+                                break
+                        if matched:
+                            continue
+                        if any(marker.startswith(bytes(pending)) for marker, _ in markers):
+                            break
+                        byte = pending.pop(0)
+                        if byte == 13 and not inside:
+                            os.write(1, b'GATE_INPUT:' + bytes(draft).replace(b'\n', b'\r\n') + '\r\n› '.encode())
+                            draft.clear()
+                        elif byte == 10 and not inside:
+                            raise RuntimeError('unframed linefeed outside paste')
+                        else:
+                            draft.append(byte)
+            finally:
+                try:
+                    os.write(1, b'\x1b[?2004l')
+                finally:
+                    termios.tcsetattr(fd, termios.TCSAFLUSH, saved)
             """
-        ),
+        ).lstrip(),
         encoding="utf-8",
     )
     helper.chmod(0o755)

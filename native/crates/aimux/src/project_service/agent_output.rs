@@ -3,7 +3,7 @@ use crate::agent_prompt_delivery::{
     DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS, PromptPasteMode,
     SETTLE_BEFORE_SUBMIT_MS, SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS,
     composer_shows_pasted_draft, composer_still_holds_prompt_text, prompt_draft_signature,
-    prompt_paste_mode,
+    prompt_paste_mode, validate_submitted_prompt,
 };
 #[cfg(test)]
 use crate::async_subprocess::AsyncCommand;
@@ -2255,6 +2255,7 @@ pub(super) fn deliver_prompt_to_tmux_for_tool(
     tool: Option<&str>,
 ) -> Result<(), String> {
     let prompt = normalize_submitted_prompt(prompt);
+    validate_submitted_prompt(&prompt)?;
     let prompt = prompt.as_str();
     let mode = prompt_paste_mode(prompt, tool);
     match prompt_submit_mode_for_tool(tool) {
@@ -2733,6 +2734,7 @@ pub(super) async fn deliver_prompt_to_tmux_async_for_tool(
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     let prompt = normalize_submitted_prompt(prompt);
+    validate_submitted_prompt(&prompt)?;
     let prompt = prompt.as_str();
     let mode = prompt_paste_mode(prompt, tool);
     match prompt_submit_mode_for_tool(tool) {
@@ -3521,6 +3523,31 @@ mod tests {
             "no per-newline keypresses, got {:?}",
             runtime.key_sends
         );
+    }
+
+    #[test]
+    fn terminal_paste_delimiters_are_refused_before_any_input() {
+        for delimiter in ["\u{1b}[200~", "\u{1b}[201~", "\u{9b}200~", "\u{9b}201~"] {
+            for separator in ["", "\n"] {
+                for tool in [None, Some("shell"), Some("claude"), Some("codex")] {
+                    let mut runtime = FakeAgentInputRuntime::default();
+                    let prompt = format!("prefix{delimiter}{separator}rest");
+                    let error = deliver_prompt_to_tmux_for_tool(&mut runtime, "@1", &prompt, tool)
+                        .expect_err("terminal framing controls must not reach a receiver");
+                    assert!(error.contains("terminal paste delimiter"));
+                    assert!(runtime.text_sends.is_empty());
+                    assert!(runtime.submit_prompts.is_empty());
+                    assert_eq!(runtime.carriage_returns, 0);
+                    assert_eq!(runtime.guarded_pastes + runtime.framed_pastes, 0);
+                }
+            }
+        }
+        let prompt = "1. Printable \\x1b[201~\n  2. \\u009b200~ café 界🙂\ttext";
+        let mut runtime = FakeAgentInputRuntime::default();
+        deliver_prompt_to_tmux_for_tool(&mut runtime, "@1", prompt, Some("claude"))
+            .expect("printable spellings preserve ordinary multiline input");
+        assert_eq!(runtime.text_sends, vec![prompt]);
+        assert_eq!(runtime.submit_prompts, vec![prompt]);
     }
 
     #[test]

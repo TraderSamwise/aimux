@@ -28,19 +28,42 @@ enum RecordedCommand {
     Null,
 }
 
+#[derive(Clone, Copy)]
+enum FixtureInput {
+    Mixed,
+    BareCr,
+    Delimiter(&'static str, bool),
+    Printable,
+    MissingCapability,
+}
+
 #[test]
 fn one_submit_after_the_whole_multiline_body_lands() {
     let isolation = TestIsolation::new("multiline-composer");
     let tmux = resolve_program("tmux");
     let python = resolve_program("python3");
     let race_path = isolation.root().join("paste-race.json");
-    let wrapper = install_tmux_wrapper(isolation.root(), &tmux, &python, &race_path);
+    let legacy_raw_path = isolation.root().join("legacy-raw-paste.json");
+    let wrapper = install_tmux_wrapper(
+        isolation.root(),
+        &tmux,
+        &python,
+        &race_path,
+        &legacy_raw_path,
+    );
     let _wrapper_env = TmuxBinaryOverride::set(&wrapper);
     assert_eq!(
         aimux::tmux::tmux_program_from_env().expect("resolve production tmux wrapper once"),
         wrapper.as_os_str().to_os_string()
     );
     let mut server = PrivateServer::start(isolation.root(), tmux.into_os_string());
+    let paste_usage = server.run(&["list-commands", "paste-buffer"]);
+    let paste_flags = paste_usage
+        .split_once('[')
+        .and_then(|(_, flags)| flags.split_once(']'))
+        .map(|(flags, _)| flags)
+        .expect("paste-buffer advertises its flags");
+    let supports_raw_paste_flag = paste_flags.contains('S');
     let peer_path = isolation.root().join("composer.py");
     fs::write(&peer_path, COMPOSER).expect("write controlled raw-terminal composer");
     aimux::async_runtime::init_process_runtime().expect("test process runtime");
@@ -50,126 +73,211 @@ fn one_submit_after_the_whole_multiline_body_lands() {
     assert!(expected.len() > 4_000, "exercise the old chunk boundary");
     let mut cases = 0;
     let mut checked_stale_frame_cleanup = false;
+    let mut capability_format_available = None;
 
+    let normal_cases = [
+        (
+            "claude-remapped-lf",
+            Some("claude"),
+            RecordedCommand::Tool,
+            true,
+            true,
+            true,
+        ),
+        (
+            "codex-remapped-lf",
+            Some("codex"),
+            RecordedCommand::Tool,
+            true,
+            true,
+            false,
+        ),
+        (
+            "claude",
+            Some("claude"),
+            RecordedCommand::Tool,
+            true,
+            false,
+            false,
+        ),
+        (
+            "codex",
+            Some("codex"),
+            RecordedCommand::Tool,
+            true,
+            false,
+            false,
+        ),
+        (
+            "shell",
+            Some("shell"),
+            RecordedCommand::Tool,
+            false,
+            true,
+            false,
+        ),
+        (
+            "custom",
+            Some("custom"),
+            RecordedCommand::Tool,
+            false,
+            true,
+            false,
+        ),
+        (
+            "missing-tool",
+            None,
+            RecordedCommand::Missing,
+            false,
+            true,
+            false,
+        ),
+        (
+            "claude-label-shell",
+            Some("claude"),
+            RecordedCommand::Explicit("/bin/sh"),
+            false,
+            true,
+            false,
+        ),
+        (
+            "claude-missing-command",
+            Some("claude"),
+            RecordedCommand::Missing,
+            false,
+            true,
+            false,
+        ),
+        (
+            "claude-null-command",
+            Some("claude"),
+            RecordedCommand::Null,
+            false,
+            true,
+            false,
+        ),
+        (
+            "alias-claude",
+            Some("claude-fast"),
+            RecordedCommand::Explicit("/installed/claude"),
+            true,
+            false,
+            false,
+        ),
+        (
+            "alias-codex",
+            Some("codex-fast"),
+            RecordedCommand::Explicit("/installed/codex"),
+            true,
+            false,
+            false,
+        ),
+    ];
+    let mut fixtures = vec![(
+        "custom-missing-capability".to_owned(),
+        Some("custom"),
+        RecordedCommand::Tool,
+        false,
+        true,
+        FixtureInput::MissingCapability,
+    )];
+    for (name, delimiter, multiline) in [
+        ("esc-close-multi", "\u{1b}[201~", true),
+        ("esc-open-multi", "\u{1b}[200~", true),
+        ("c1-close-multi", "\u{9b}201~", true),
+        ("c1-open-multi", "\u{9b}200~", true),
+        ("esc-close-single", "\u{1b}[201~", false),
+        ("esc-open-single", "\u{1b}[200~", false),
+        ("c1-close-single", "\u{9b}201~", false),
+        ("c1-open-single", "\u{9b}200~", false),
+    ] {
+        for (tool, framed) in [("claude", true), ("custom", false)] {
+            fixtures.push((
+                format!("{tool}-{name}"),
+                Some(tool),
+                RecordedCommand::Tool,
+                framed,
+                true,
+                FixtureInput::Delimiter(delimiter, multiline),
+            ));
+        }
+    }
+    fixtures.extend(normal_cases.into_iter().map(
+        |(name, tool, command, framed, lf_submits, bare_cr)| {
+            (
+                name.to_owned(),
+                tool,
+                command,
+                framed,
+                lf_submits,
+                if bare_cr {
+                    FixtureInput::BareCr
+                } else {
+                    FixtureInput::Mixed
+                },
+            )
+        },
+    ));
+    for (tool, framed) in [("claude", true), ("custom", false)] {
+        fixtures.push((
+            format!("{tool}-printable-delimiters"),
+            Some(tool),
+            RecordedCommand::Tool,
+            framed,
+            true,
+            FixtureInput::Printable,
+        ));
+    }
     for executor in ["sync", "async"] {
-        // Framing capability and key bindings are independent fixture facts.
-        // Keep the remapped Claude case first: raw LF or unnormalized CR must
-        // fail on an early submit, before route/argument assertions can pass.
         for (
             tool_name,
             tool,
             command_override,
             supports_explicit_framing,
             peer_lf_submits,
-            only_bare_cr,
-        ) in [
-            (
-                "claude-remapped-lf",
-                Some("claude"),
-                RecordedCommand::Tool,
-                true,
-                true,
-                true,
-            ),
-            (
-                "codex-remapped-lf",
-                Some("codex"),
-                RecordedCommand::Tool,
-                true,
-                true,
-                false,
-            ),
-            (
-                "claude",
-                Some("claude"),
-                RecordedCommand::Tool,
-                true,
-                false,
-                false,
-            ),
-            (
-                "codex",
-                Some("codex"),
-                RecordedCommand::Tool,
-                true,
-                false,
-                false,
-            ),
-            (
-                "shell",
-                Some("shell"),
-                RecordedCommand::Tool,
-                false,
-                true,
-                false,
-            ),
-            (
-                "custom",
-                Some("custom"),
-                RecordedCommand::Tool,
-                false,
-                true,
-                false,
-            ),
-            (
-                "missing-tool",
-                None,
-                RecordedCommand::Missing,
-                false,
-                true,
-                false,
-            ),
-            (
-                "claude-label-shell",
-                Some("claude"),
-                RecordedCommand::Explicit("/bin/sh"),
-                false,
-                true,
-                false,
-            ),
-            (
-                "claude-missing-command",
-                Some("claude"),
-                RecordedCommand::Missing,
-                false,
-                true,
-                false,
-            ),
-            (
-                "claude-null-command",
-                Some("claude"),
-                RecordedCommand::Null,
-                false,
-                true,
-                false,
-            ),
-            (
-                "alias-claude",
-                Some("claude-fast"),
-                RecordedCommand::Explicit("/installed/claude"),
-                true,
-                false,
-                false,
-            ),
-            (
-                "alias-codex",
-                Some("codex-fast"),
-                RecordedCommand::Explicit("/installed/codex"),
-                true,
-                false,
-                false,
-            ),
-        ] {
+            input_kind,
+        ) in fixtures.clone()
+        {
             for (route_name, route) in [
                 ("agents", routes::agents::INPUT),
                 ("pane", routes::live_pane::INPUT),
             ] {
                 for (bracketed, race) in [(false, false), (true, false), (true, true)] {
-                    if race && !matches!(tool_name, "shell" | "custom") {
+                    let unsafe_delimiter = matches!(input_kind, FixtureInput::Delimiter(..));
+                    let emulate_missing_capability =
+                        matches!(input_kind, FixtureInput::MissingCapability);
+                    if race && !matches!(tool_name.as_str(), "shell" | "custom") {
+                        continue;
+                    }
+                    if !supports_explicit_framing
+                        && !bracketed
+                        && matches!(
+                            input_kind,
+                            FixtureInput::Delimiter(..) | FixtureInput::Printable
+                        )
+                    {
                         continue;
                     }
                     cases += 1;
-                    let unsupported = !supports_explicit_framing && (!bracketed || race);
+                    let (case_input, expected) = match input_kind {
+                        FixtureInput::Mixed | FixtureInput::MissingCapability => {
+                            (input.clone(), expected.clone())
+                        }
+                        FixtureInput::BareCr => (bare_cr_input.clone(), expected.clone()),
+                        FixtureInput::Delimiter(marker, multiline) => {
+                            let body = format!(
+                                "prefix café\t{marker}{}rest 界🙂",
+                                if multiline { "\n" } else { " " }
+                            );
+                            (format!("{body}\n"), body)
+                        }
+                        FixtureInput::Printable => {
+                            let body = format!(
+                                "{expected}\nLiteral \\x1b[200~ \\x1b[201~ \\u009b200~ \\u009b201~"
+                            );
+                            (format!("{body}\r\n"), body)
+                        }
+                    };
                     let label = format!(
                         "{executor}-{tool_name}-{route_name}-{bracketed}{}",
                         if race { "-race" } else { "" }
@@ -217,24 +325,45 @@ fn one_submit_after_the_whole_multiline_body_lands() {
                     server
                         .peer_pids
                         .push(ready["pid"].as_u64().expect("peer pid") as i32);
-                    let expected_mode = if bracketed { "1" } else { "0" };
-                    let mode_deadline = Instant::now() + Duration::from_secs(3);
-                    loop {
-                        let mode = server.run(&[
+                    if capability_format_available.is_none() {
+                        let value = server.run(&[
                             "display-message",
                             "-p",
                             "-t",
                             window,
                             "#{bracket_paste_flag}",
                         ]);
-                        if mode.trim() == expected_mode {
-                            break;
+                        capability_format_available = Some(match value.trim() {
+                            "0" | "1" => true,
+                            "" => false,
+                            other => panic!("{label}: invalid bracket mode format value {other:?}"),
+                        });
+                    }
+                    let format_available = capability_format_available.expect("capability probe");
+                    let unavailable = !supports_explicit_framing
+                        && (!format_available || emulate_missing_capability);
+                    let unsupported =
+                        !supports_explicit_framing && (!bracketed || race || unavailable);
+                    let expected_mode = if bracketed { "1" } else { "0" };
+                    let mode_deadline = Instant::now() + Duration::from_secs(3);
+                    if format_available {
+                        loop {
+                            let mode = server.run(&[
+                                "display-message",
+                                "-p",
+                                "-t",
+                                window,
+                                "#{bracket_paste_flag}",
+                            ]);
+                            if mode.trim() == expected_mode {
+                                break;
+                            }
+                            assert!(
+                                Instant::now() < mode_deadline,
+                                "{label}: pane bracketed-paste mode was {mode:?}, expected {expected_mode}"
+                            );
+                            thread::sleep(Duration::from_millis(10));
                         }
-                        assert!(
-                            Instant::now() < mode_deadline,
-                            "{label}: pane bracketed-paste mode was {mode:?}, expected {expected_mode}"
-                        );
-                        thread::sleep(Duration::from_millis(10));
                     }
                     let buffer_artifact = root.join("loaded-buffer.txt");
                     if race {
@@ -244,13 +373,24 @@ fn one_submit_after_the_whole_multiline_body_lands() {
                                 "pid": ready["pid"], "observation": observation_path,
                                 "window": window, "socket": server.socket,
                                 "bufferArtifact": buffer_artifact,
+                                "formatAvailable": format_available,
                             })
                             .to_string(),
                         )
                         .expect("arm deterministic paste-mode race");
                     }
                     let context = route_context(&root, &label, window, tool, command_override);
-                    let case_input = if only_bare_cr { &bare_cr_input } else { &input };
+                    if unsafe_delimiter || emulate_missing_capability {
+                        fs::write(
+                            &legacy_raw_path,
+                            json!({
+                                "addRawFlag": unsafe_delimiter && supports_raw_paste_flag,
+                                "missingFormat": emulate_missing_capability,
+                            })
+                            .to_string(),
+                        )
+                        .expect("arm legacy raw body transport");
+                    }
                     let body = json!({"sessionId":"receiver", "text":case_input, "force":true});
                     let response = if executor == "sync" {
                         route_agent_output_request(&context, "POST", route, Some(&body))
@@ -268,6 +408,42 @@ fn one_submit_after_the_whole_multiline_body_lands() {
                         })
                     }
                     .expect("input route exists");
+                    if unsafe_delimiter || emulate_missing_capability {
+                        fs::remove_file(&legacy_raw_path)
+                            .expect("disarm private transport emulation");
+                    }
+                    if unsafe_delimiter {
+                        let observed = server.wait_for_peer(
+                            &observation_path,
+                            "delimiter refusal leaves composer untouched",
+                            |value| value["ready"] == true,
+                        );
+                        assert_eq!(
+                            observed["inputBytes"], 0,
+                            "{label}: unsafe delimiter reached receiver: {observed}; route={}",
+                            response.body
+                        );
+                        assert_eq!(
+                            observed["submits"],
+                            json!([]),
+                            "{label}: delimiter submitted: {observed}"
+                        );
+                        assert_eq!(observed["draft"], "", "{label}: delimiter left a draft");
+                        assert_eq!(response.status, 500, "{label}: {}", response.body);
+                        let cause = response.body["error"]
+                            .as_str()
+                            .expect("visible delimiter refusal");
+                        assert!(
+                            cause.contains("terminal paste delimiter"),
+                            "{label}: unrelated refusal: {cause}"
+                        );
+                        server.run(&["kill-session", "-t", &label]);
+                        server.wait_for_peer(&observation_path, "peer shutdown", |value| {
+                            value["stopped"] == true
+                        });
+                        server.peer_pids.clear();
+                        continue;
+                    }
                     if race {
                         fs::remove_file(&race_path).expect("disarm paste-mode race");
                     }
@@ -316,6 +492,11 @@ fn one_submit_after_the_whole_multiline_body_lands() {
                         assert!(
                             cause.contains("multiline") && cause.contains("bracketed paste"),
                             "{label}: unrelated error cannot prove multiline refusal: {cause}"
+                        );
+                        assert_eq!(
+                            cause.contains("cannot query bracketed paste capability"),
+                            unavailable,
+                            "{label}: missing capability and mode-off must differ: {cause}"
                         );
                         server.run(&["kill-session", "-t", &label]);
                         server.wait_for_peer(&observation_path, "peer shutdown", |value| {
@@ -416,7 +597,7 @@ fn one_submit_after_the_whole_multiline_body_lands() {
         }
     }
     assert_eq!(
-        cases, 104,
+        cases, 220,
         "retain all identity, keymap, route, and race cases"
     );
     assert!(
@@ -531,14 +712,21 @@ fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn install_tmux_wrapper(root: &Path, tmux: &Path, python: &Path, race: &Path) -> PathBuf {
+fn install_tmux_wrapper(
+    root: &Path,
+    tmux: &Path,
+    python: &Path,
+    race: &Path,
+    legacy_raw: &Path,
+) -> PathBuf {
     let script = root.join("tmux-wrapper.py");
     fs::write(
         &script,
         format!(
-            "REAL = {}\nRACE = {}\nSOCKET = {}\n{TMUX_WRAPPER}",
+            "REAL = {}\nRACE = {}\nLEGACY_RAW = {}\nSOCKET = {}\n{TMUX_WRAPPER}",
             json!(tmux.to_str().expect("real tmux path UTF-8")),
             json!(race.to_str().expect("race path UTF-8")),
+            json!(legacy_raw.to_str().expect("legacy raw marker path UTF-8")),
             json!(root.join("tmux.sock").to_str().expect("socket path UTF-8")),
         ),
     )
@@ -851,6 +1039,14 @@ const TMUX_WRAPPER: &str = r#"import json, os, signal, subprocess, sys, time
 args = sys.argv[1:]
 if len(args) < 3 or args[0] != '-S' or args[1] != SOCKET:
     raise RuntimeError('fixture wrapper refuses a tmux command outside its private socket: %r' % args)
+if os.path.exists(LEGACY_RAW):
+    with open(LEGACY_RAW, encoding='utf-8') as source:
+        legacy = json.load(source)
+    if legacy['addRawFlag'] and 'paste-buffer' in args:
+        args.insert(args.index('paste-buffer') + 1, '-S')
+    if legacy['missingFormat']:
+        args = [arg.replace('#{bracket_paste_flag}', '#{aimux_fixture_missing_bracket_paste_flag}')
+                for arg in args]
 if args[2] != 'load-buffer' or not os.path.exists(RACE):
     os.execv(REAL, [REAL] + args)
 loaded = subprocess.run([REAL] + args, capture_output=True, timeout=5)
@@ -873,6 +1069,8 @@ while True:
     with open(race['observation'], encoding='utf-8') as source:
         observation = json.load(source)
     if observation.get('modeDisabled'):
+        if not race['formatAvailable']:
+            break
         mode = subprocess.run([REAL, '-S', SOCKET, 'display-message', '-p', '-t', race['window'],
                                '#{bracket_paste_flag}'], capture_output=True, timeout=1)
         if mode.returncode != 0:
