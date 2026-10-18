@@ -91,7 +91,7 @@
     "audit:test-classification": "python3 scripts/native-test-runner.py --check-classification",
     "native:cargo-sweep": "bash scripts/cargo-sweep-stale-targets.sh",
     "native:cargo-sweep:install-schedule": "bash scripts/install-cargo-sweep-schedule.sh",
-    "prepack": "node scripts/verify-npm-package.mjs --staged-natives && scripts/run-yarn build:ui:local",
+    "prepack": "./scripts/verify-npm-package.mjs --staged-natives && scripts/run-yarn build:ui:local",
     "prepare": "husky",
     "check:hosted": "scripts/run-yarn native:build && ./scripts/hosted-check.mjs",
     "hook:attest": "bash scripts/check-commit-hook-attestations.sh",
