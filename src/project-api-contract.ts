@@ -1180,6 +1180,7 @@ export type TaskStatus =
 
 export interface ThreadSummaryResponse {
   thread: { id: string; title?: string; status?: string; kind?: string };
+  terminal: boolean;
   latestMessage?: { body?: string; ts?: string; from?: string; kind?: string };
   [k: string]: unknown;
 }

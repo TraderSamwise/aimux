@@ -160,8 +160,8 @@ fn terminal_obligations_agree_across_worklist_desktop_and_derived_waits() {
     });
     let metadata = std::collections::BTreeMap::new();
     let windows = support::live_windows("aimux-test", &[]);
-    for status in ["waiting", "closed", "done", "abandoned"] {
-        let terminal = status != "waiting";
+    for status in ["open", "waiting", "closed", "done", "abandoned"] {
+        let terminal = matches!(status, "closed" | "done" | "abandoned");
         let mut exchange = exchange_with_thread(status);
         exchange["threads"][0]["owner"] = json!("reviewer");
         exchange["threads"][0]["waitingOn"] = json!(["reviewer"]);
@@ -177,6 +177,25 @@ fn terminal_obligations_agree_across_worklist_desktop_and_derived_waits() {
         let exchange =
             try_read_runtime_exchange(runtime_exchange_path(context.project_state_dir())).unwrap();
         let list = worklist(&context);
+        let summaries = route_project_service_request(
+            &context,
+            "GET",
+            &format!("{}?session=reviewer", routes::threads::LIST),
+            None,
+        );
+        assert_eq!(summaries.status, 200, "{}", summaries.body);
+        let summary = &summaries.body[0];
+        assert_eq!(summary["thread"]["id"], THREAD_ID);
+        assert_eq!(summary["terminal"], terminal, "{status}: {summary}");
+        assert_eq!(
+            list["items"][0]["thread"]["terminal"], summary["terminal"],
+            "{status}: both summary routes must agree"
+        );
+        assert_eq!(
+            list["items"][0]["actionable"],
+            !summary["terminal"].as_bool().unwrap(),
+            "{status}: summary terminal flag must match worklist actionability"
+        );
         let desktop = build_desktop_state_with_live_window_ids(
             DesktopStateInput {
                 project_root: project.clone(),
@@ -343,6 +362,8 @@ fn thread_and_worklist_reads_distinguish_empty_actionable_and_unreadable_state()
     for legacy in [
         "version: 1\ngeneratedAt: now\n",
         "version: 1\ngeneratedAt: now\ntasks: [{id: legacy-task}]\n",
+        "version: 1\ngeneratedAt: now\nthreads: [{id: legacy-thread}]\n",
+        "version: 1\ngeneratedAt: now\nthreads: [{id: legacy-thread, waitingOn: [], participants: [], unreadBy: []}]\n",
         "version: 1\ngeneratedAt: now\ntasks: [{id: legacy-task, status: null, assignedTo: null}]\n",
     ] {
         std::fs::write(&path, legacy).unwrap();
@@ -358,6 +379,9 @@ fn thread_and_worklist_reads_distinguish_empty_actionable_and_unreadable_state()
         "{",
         "version: 1\ngeneratedAt: now\nthreads: {}\n",
         "version: 1\ngeneratedAt: now\nthreads: [null]\n",
+        "version: 1\ngeneratedAt: now\nthreads: [{id: thread, waitingOn: null}]\n",
+        "version: 1\ngeneratedAt: now\nthreads: [{id: thread, participants: null}]\n",
+        "version: 1\ngeneratedAt: now\nthreads: [{id: thread, unreadBy: null}]\n",
         "version: 1\ngeneratedAt: now\ntasks: {}\n",
         "version: 1\ngeneratedAt: now\ntasks: [null]\n",
         "version: 1\ngeneratedAt: now\ntasks: [{}]\n",

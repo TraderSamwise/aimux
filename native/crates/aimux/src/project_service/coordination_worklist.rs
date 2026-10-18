@@ -421,6 +421,7 @@ pub fn build_coordination_thread_entries(
                 });
             let mut entry = Map::new();
             entry.insert("thread".into(), thread.clone());
+            entry.insert("terminal".into(), Value::Bool(terminal));
             if let Some(latest_message) = latest_message {
                 entry.insert("latestMessage".into(), latest_message);
             }

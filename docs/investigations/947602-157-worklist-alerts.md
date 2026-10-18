@@ -259,3 +259,71 @@ These gates exercise isolated production routes, scheduler/planner paths, and
 the delivery queue. They do not establish that an already running installed
 daemon or shared agent fleet has changed; no live-fleet validation is claimed
 by this document.
+
+
+## Post-PR GUI correction
+
+The independent post-PR thread review at `ff51fa84b` found one more terminal
+status decision in `ThreadWorkflowActions`: its local list omitted `closed`.
+The service correctly retired that work, but the GUI still offered Close rather
+than Reopen. The component now consumes a required server `terminal` flag.
+Both the actual `/threads` summary route and coordination-worklist summaries
+emit that flag from `runtime_exchange::thread_is_terminal`.
+
+The existing `terminal_obligations_agree_across_worklist_desktop_and_derived_waits`
+gate now compares `/threads?session=reviewer` with the worklist and desktop
+counters for open, waiting, closed, done, and abandoned threads. Four mounted
+React Native Web cases exercise real buttons and their status-update requests:
+closed/terminal offers Reopen; open/nonterminal offers Close; deliberately
+contradictory status text proves that the server flag controls both directions.
+
+Two additional component-source mutation experiments were run before committing
+this correction. Reinstating the old local status list produced three runtime
+case failures; inverting the server flag produced four. Restoring each mutation
+passed all four mounted cases. The captured report is
+`/tmp/aimux-157-gui-mutation-results.json`; the failed and restored logs are
+listed there. These are mounted web-rendering proofs, not native-rendering claims.
+
+A third post-PR mutation forced the actual `/threads` summary to emit
+`terminal: false` for closed threads. The named cross-surface gate failed at
+its runtime `closed` flag assertion, then passed after source restoration
+(`/tmp/aimux-157-summary-mutation-results.json`). Together with the earlier
+16 experiments, this is 19 production-source mutation experiments; the three
+post-PR experiments cover the service flag and both mounted GUI directions.
+
+The GUI correction passed 13 scoped Rust tests (`project_service_exchange_reads`
+and `project_service_worklist_alerts`), 41 scoped app tests (including all four
+mounted cases), app typechecking, and scoped app lint. These supplement rather
+than replace the earlier 265-test post-restoration run.
+
+
+## Explicit-null review triage
+
+CodeRabbit proposed accepting null thread list fields as absent. This was
+rejected after checking recovered Node contracts and current writers. Node
+required `participants: string[]`; null participants failed its required-array
+reader. Its optional `waitingOn`/`unreadBy` reader discarded every non-array,
+including objects and numbers. Rejecting present malformed lists deliberately
+tightens that permissive Node behavior under the three-outcome requirement.
+Canonical writers emit arrays or omit optional fields; no null-list fixture or
+writer was found. Missing lists and empty arrays remain supported.
+
+The read-outcomes gate now explicitly covers all three null lists plus the
+missing/empty inverses. Applying CodeRabbit's null-as-absent suggestion made
+`thread_and_worklist_reads_distinguish_empty_actionable_and_unreadable_state`
+fail because the malformed wait list returned HTTP 200; restoration passed.
+The report is `/tmp/aimux-157-null-mutation-results.json`. This fourth post-PR
+experiment brings the total to 20 production-source experiments across the
+recorded phase heads. The report does not claim they all ran at one head.
+
+Root `yarn verify` passed again on the restored final GUI/server source in
+102.67 seconds (`/tmp/aimux-157-final-gui-verify.log`). An earlier verification
+was stopped while a mutation experiment was active and is not counted as proof.
+
+The final coordination fixture rerun initially found four workflow snapshot
+mismatches because the new required `terminal` field was absent from the old
+Node-era output. Only that field was added to the 36 expected summary objects;
+all other fixture values remain unchanged. This is an intentional additive
+service contract change. The eight coordination fixtures then passed, and both
+desktop fixtures passed (`/tmp/aimux-157-gui-coordination-fixtures-restored.log`
+and `/tmp/aimux-157-gui-desktop-fixtures.log`).
