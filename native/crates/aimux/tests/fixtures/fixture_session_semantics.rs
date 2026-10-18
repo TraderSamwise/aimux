@@ -173,6 +173,7 @@ fn semantics_input(input: &Value) -> SessionSemanticsInput {
         // Absent from every frozen case: the Node semantics this contract
         // pins had no sub-agents to report.
         subagent_label: string(input, "subagentLabel"),
+        input_delivery: input.get("inputDelivery").cloned(),
     }
 }
 

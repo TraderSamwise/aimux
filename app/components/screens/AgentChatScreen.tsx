@@ -561,6 +561,7 @@ export default function ChatScreen() {
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [composerWidth, setComposerWidth] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [sendWarning, setSendWarning] = useState<string | null>(null);
   // An accepted send the project service queued rather than delivered. Kept
   // apart from `sendError`: the route returns it with `accepted: true`. The
   // hold duration rides along so the notice retires on its own rather than
@@ -808,6 +809,7 @@ export default function ChatScreen() {
     setAcceptedComposerMessages([]);
     sendBusyRef.current = false;
     setSendError(null);
+    setSendWarning(null);
     // Carrying it into another agent's composer would strand "Input held, not
     // delivered yet" on a composer that never sent anything.
     setHeldDelivery(null);
@@ -1287,6 +1289,7 @@ export default function ChatScreen() {
     awaitingEcho: composerSendPendingEcho,
     error: sendError,
     heldNotice: heldDeliveryNotice,
+    warningNotice: sendWarning,
     mode: agentOutputViewMode,
     rawOutputAllowed: canUseOwnerControls,
     sending: sendBusy,
@@ -1440,6 +1443,7 @@ export default function ChatScreen() {
         chatViewportRef.current?.showNewest();
         terminalViewportRef.current?.showNewest();
         setSendError(null);
+        setSendWarning(null);
         setHeldDelivery(null);
         for (let idx = 0; idx < attachments.length; idx += 1) {
           const attachment = attachments[idx];
@@ -1494,6 +1498,8 @@ export default function ChatScreen() {
           // back with `accepted: true`, so it is a wait, not a failure.
           if (deliveryState.kind === "held") {
             setHeldDelivery({ holdMs: deliveryState.holdMs, notice: deliveryState.notice });
+          } else if (deliveryState.kind === "warning") {
+            setSendWarning(deliveryState.notice);
           } else {
             setSendError(deliveryState.text);
           }
@@ -1582,6 +1588,7 @@ export default function ChatScreen() {
       setHeldDelivery,
       setPendingComposerAck,
       setSendError,
+      setSendWarning,
       sharedChatActor,
       token,
     ],
@@ -3990,6 +3997,15 @@ function ComposerFooterContentView({ content }: { content: ComposerFooterState }
       return (
         <View className="min-w-0 flex-row items-start gap-1.5">
           <Clock size={13} color="#e0b341" style={{ marginTop: 1 }} />
+          <Text className="min-w-0 flex-1 text-xs text-muted-foreground" numberOfLines={3}>
+            {content.text}
+          </Text>
+        </View>
+      );
+    case "warning":
+      return (
+        <View className="min-w-0 flex-row items-start gap-1.5">
+          <CircleAlert size={13} color="#e0b341" style={{ marginTop: 1 }} />
           <Text className="min-w-0 flex-1 text-xs text-muted-foreground" numberOfLines={3}>
             {content.text}
           </Text>

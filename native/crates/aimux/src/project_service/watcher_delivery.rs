@@ -31,13 +31,14 @@ pub const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatcherDeliveryResult {
     Delivered,
+    Unverified,
     Queued,
     Failed,
 }
 
 impl WatcherDeliveryResult {
     pub fn consumes_cooldown(self) -> bool {
-        matches!(self, Self::Delivered | Self::Queued)
+        matches!(self, Self::Delivered | Self::Unverified | Self::Queued)
     }
 }
 
@@ -88,6 +89,14 @@ pub fn deliver_agent_input_with_runtime(
         .and_then(Value::as_str)
     {
         Some("held") => WatcherDeliveryResult::Queued,
+        _ if response
+            .body
+            .pointer("/delivery/verified")
+            .and_then(Value::as_bool)
+            == Some(false) =>
+        {
+            WatcherDeliveryResult::Unverified
+        }
         _ => WatcherDeliveryResult::Delivered,
     }
 }
@@ -133,9 +142,28 @@ async fn deliver_agent_input_direct_async(
             .force_task_next_tick(super::agent_input_delivery::AGENT_INPUT_DELIVERY_TASK_NAME);
         return WatcherDeliveryResult::Queued;
     }
-    match deliver_prompt_to_tmux_async(&window_id, &prompt, DELIVERY_TIMEOUT).await {
-        Ok(()) => WatcherDeliveryResult::Delivered,
-        Err(_) => WatcherDeliveryResult::Failed,
+    let attempt = match super::input_delivery_receipt::begin_input_delivery(
+        context, session_id, &window_id,
+    ) {
+        Ok(attempt) => attempt,
+        Err(error) => {
+            record_agent_input_delivery_probe_failure(context, session_id, &error);
+            return WatcherDeliveryResult::Failed;
+        }
+    };
+    let result = deliver_prompt_to_tmux_async(&window_id, &prompt, DELIVERY_TIMEOUT).await;
+    super::input_delivery_receipt::finish_input_delivery(
+        context,
+        &attempt,
+        result.as_ref().copied().map_err(String::as_str),
+    );
+    match result {
+        Ok(verification) if verification.is_verified() => WatcherDeliveryResult::Delivered,
+        Ok(_) => WatcherDeliveryResult::Unverified,
+        Err(error) => {
+            record_agent_input_delivery_probe_failure(context, session_id, &error);
+            WatcherDeliveryResult::Failed
+        }
     }
 }
 

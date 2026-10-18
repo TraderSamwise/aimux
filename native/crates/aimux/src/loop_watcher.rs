@@ -1714,6 +1714,14 @@ pub fn find_loop_candidates_excluding(input: &Value, excluded: Option<&str>) -> 
             }
 
             let mut candidate = Map::new();
+            if let Some(delivery) =
+                crate::project_service::input_delivery_receipt::projected_input_delivery(
+                    session,
+                    Some(meta),
+                )
+            {
+                candidate.insert("inputDelivery".into(), delivery);
+            }
             insert_str(&mut candidate, "id", Some(id));
             insert_str(
                 &mut candidate,
@@ -2420,7 +2428,18 @@ pub fn describe_candidate(candidate: &Value) -> String {
         })
         .unwrap_or_default();
 
-    format!("- {id}{condition}{tool}{where_text}{provenance}{last_action}{goal}")
+    let delivery = candidate.get("inputDelivery");
+    let delivery_label =
+        crate::project_service::input_delivery_receipt::delivery_display_label(delivery)
+            .map(|label| format!(" — {label}"))
+            .unwrap_or_default();
+    let notice = delivery
+        .and_then(|value| optional_str(value, "notice"))
+        .map(|notice| format!(" — {notice}"))
+        .unwrap_or_default();
+    format!(
+        "- {id}{condition}{tool}{where_text}{provenance}{last_action}{goal}{delivery_label}{notice}"
+    )
 }
 
 pub fn build_canned_nudge(candidate: &Value) -> String {

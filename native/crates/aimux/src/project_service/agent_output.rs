@@ -1,8 +1,9 @@
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{
-    DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS, SETTLE_BEFORE_SUBMIT_MS,
-    SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS, composer_shows_pasted_draft,
-    composer_still_holds_prompt_text, prompt_draft_signature,
+    DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS,
+    PromptDeliveryVerification, SETTLE_BEFORE_SUBMIT_MS, SIGNATURE_CAPTURE_START_LINE,
+    VERIFY_AFTER_SUBMIT_MS, composer_shows_complete_prompt_draft, composer_shows_pasted_draft,
+    prompt_draft_signature, prompt_submit_verification,
 };
 #[cfg(test)]
 use crate::async_subprocess::AsyncCommand;
@@ -54,6 +55,7 @@ use super::http::{
     parse_integer_value, parse_optional_integer, parse_positive_integer_value, query_params,
     trimmed_query,
 };
+use super::input_delivery_receipt::{begin_input_delivery, finish_input_delivery};
 use super::metadata::update_session_metadata;
 use super::notification_display_context::project_display_name;
 use super::notifications::{NotificationWriteInput, upsert_notification};
@@ -152,8 +154,9 @@ pub trait AgentOutputCaptureRuntime {
         window_id: &str,
         _draft: &str,
         _before: Option<&str>,
-    ) -> Result<(), String> {
-        self.send_carriage_return(window_id)
+    ) -> Result<PromptDeliveryVerification, String> {
+        self.send_carriage_return(window_id)?;
+        Ok(PromptDeliveryVerification::Unverified)
     }
 
     fn send_escape(&mut self, _window_id: &str) -> Result<(), String> {
@@ -330,7 +333,7 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
         window_id: &str,
         draft: &str,
         before: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<PromptDeliveryVerification, String> {
         let mut runtime = SystemSyncPromptSubmitRuntime {
             window_id: window_id.to_owned(),
             generation: claim_submit_generation(window_id),
@@ -497,7 +500,7 @@ impl AgentOutputCaptureRuntime for BoundedAgentOutputCaptureRuntime {
         window_id: &str,
         draft: &str,
         before: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<PromptDeliveryVerification, String> {
         let mut runtime = BoundedPromptSubmitRuntime {
             window_id: window_id.to_owned(),
             generation: claim_submit_generation(window_id),
@@ -1680,10 +1683,26 @@ fn input_live_pane_route(
             }),
         );
     }
-    if let Err(error) =
-        deliver_prompt_to_tmux_for_tool(runtime, &target.window_id, &prompt, target.tool.as_deref())
-    {
-        return json_error(500, error);
+    let attempt = match begin_input_delivery(context, &session_id, &target.window_id) {
+        Ok(attempt) => attempt,
+        Err(error) => return json_error(500, error),
+    };
+    let result = deliver_prompt_to_tmux_for_tool(
+        runtime,
+        &target.window_id,
+        &prompt,
+        target.tool.as_deref(),
+    );
+    let delivery = finish_input_delivery(
+        context,
+        &attempt,
+        result.as_ref().copied().map_err(String::as_str),
+    );
+    if result.is_err() {
+        return ProjectServiceDispatchResponse::json(
+            500,
+            json!({ "ok": false, "error": delivery["notice"], "delivery": delivery }),
+        );
     }
     ProjectServiceDispatchResponse::json(
         200,
@@ -1693,6 +1712,7 @@ fn input_live_pane_route(
             "accepted": true,
             "turnSemantics": agent_input_turn_semantics(),
             "loopWatch": agent_loop_watch(context, &session_id),
+            "delivery": delivery,
         }),
     )
 }
@@ -2076,18 +2096,30 @@ async fn input_live_pane_route_async(
             }),
         );
     }
+    let attempt = match begin_input_delivery(context, &session_id, &target.window_id) {
+        Ok(attempt) => attempt,
+        Err(error) => return json_error(500, error),
+    };
     if let Some(flag) = irreversible_input {
         flag.store(true, Ordering::SeqCst);
     }
-    if let Err(error) = deliver_prompt_to_tmux_async_for_tool(
+    let result = deliver_prompt_to_tmux_async_for_tool(
         &target.window_id,
         &prompt,
         AGENT_INPUT_ROUTE_TIMEOUT,
         target.tool.as_deref(),
     )
-    .await
-    {
-        return json_error(500, error);
+    .await;
+    let delivery = finish_input_delivery(
+        context,
+        &attempt,
+        result.as_ref().copied().map_err(String::as_str),
+    );
+    if result.is_err() {
+        return ProjectServiceDispatchResponse::json(
+            500,
+            json!({ "ok": false, "error": delivery["notice"], "delivery": delivery }),
+        );
     }
     ProjectServiceDispatchResponse::json(
         200,
@@ -2097,6 +2129,7 @@ async fn input_live_pane_route_async(
             "accepted": true,
             "turnSemantics": agent_input_turn_semantics(),
             "loopWatch": agent_loop_watch(context, &session_id),
+            "delivery": delivery,
         }),
     )
 }
@@ -2200,11 +2233,12 @@ pub(super) fn deliver_prompt_to_tmux_for_tool(
     window_id: &str,
     prompt: &str,
     tool: Option<&str>,
-) -> Result<(), String> {
+) -> Result<PromptDeliveryVerification, String> {
     match prompt_submit_mode_for_tool(tool) {
         PromptSubmitMode::DirectShell => {
             send_prompt_to_tmux(runtime, window_id, prompt)?;
-            runtime.send_carriage_return(window_id)
+            runtime.send_carriage_return(window_id)?;
+            Ok(PromptDeliveryVerification::Unverified)
         }
         PromptSubmitMode::AgentComposer => {
             // Read the composer BEFORE the paste: a marker already sitting
@@ -2570,7 +2604,7 @@ pub(super) async fn deliver_prompt_to_tmux_async(
     window_id: &str,
     prompt: &str,
     timeout: Duration,
-) -> Result<(), String> {
+) -> Result<PromptDeliveryVerification, String> {
     deliver_prompt_to_tmux_async_for_tool(window_id, prompt, timeout, None).await
 }
 
@@ -2579,7 +2613,7 @@ pub(super) async fn deliver_prompt_to_tmux_async_for_tool(
     prompt: &str,
     timeout: Duration,
     tool: Option<&str>,
-) -> Result<(), String> {
+) -> Result<PromptDeliveryVerification, String> {
     let deadline = Instant::now() + timeout;
     match prompt_submit_mode_for_tool(tool) {
         PromptSubmitMode::DirectShell => {
@@ -2590,7 +2624,7 @@ pub(super) async fn deliver_prompt_to_tmux_async_for_tool(
                 remaining_until(deadline)?,
             )
             .await
-            .map(|_| ())
+            .map(|_| PromptDeliveryVerification::Unverified)
         }
         PromptSubmitMode::AgentComposer => {
             // Same baseline as the sync path, and inside this arm for the same
@@ -2650,7 +2684,7 @@ async fn wait_for_prompt_submit_async(
     draft: &str,
     deadline: Instant,
     before: Option<&str>,
-) -> Result<(), String> {
+) -> Result<PromptDeliveryVerification, String> {
     let mut runtime = SystemAsyncPromptSubmitRuntime {
         window_id: window_id.to_owned(),
         generation: claim_submit_generation(window_id),
@@ -2663,7 +2697,7 @@ async fn wait_for_prompt_submit_with_runtime_async(
     runtime: &mut dyn AsyncPromptSubmitRuntime,
     draft: &str,
     before: Option<&str>,
-) -> Result<(), String> {
+) -> Result<PromptDeliveryVerification, String> {
     let mut visible_count = 0u32;
     let mut last_signature = String::new();
 
@@ -2704,17 +2738,23 @@ async fn wait_for_prompt_submit_with_runtime_async(
         };
         last_signature = signature;
         if visible_count >= 2 {
-            return submit_prompt_with_runtime_async(runtime, draft).await;
+            return submit_prompt_with_runtime_async(
+                runtime,
+                draft,
+                composer_shows_complete_prompt_draft(&pane, draft),
+            )
+            .await;
         }
     }
 
-    submit_prompt_with_runtime_async(runtime, draft).await
+    submit_prompt_with_runtime_async(runtime, draft, false).await
 }
 
 async fn submit_prompt_with_runtime_async(
     runtime: &mut dyn AsyncPromptSubmitRuntime,
     draft: &str,
-) -> Result<(), String> {
+    complete_draft_observed: bool,
+) -> Result<PromptDeliveryVerification, String> {
     if !runtime.sleep(SETTLE_BEFORE_SUBMIT_MS).await {
         return Err("agent input submit timed out before carriage return".to_owned());
     }
@@ -2732,14 +2772,7 @@ async fn submit_prompt_with_runtime_async(
         .capture(DRAFT_CAPTURE_START_LINE)
         .await
         .map_err(|error| format!("agent input submit verification failed after submit: {error}"))?;
-    if composer_still_holds_prompt_text(&pane, draft) {
-        Err(
-            "agent input submit verification failed: prompt draft remained visible after submit"
-                .to_owned(),
-        )
-    } else {
-        Ok(())
-    }
+    prompt_submit_verification(complete_draft_observed, &pane, draft)
 }
 
 type AsyncPromptSubmitFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -2864,7 +2897,7 @@ fn wait_for_prompt_submit_confirmed_sync(
     runtime: &mut dyn SyncPromptSubmitRuntime,
     draft: &str,
     before: Option<&str>,
-) -> Result<(), String> {
+) -> Result<PromptDeliveryVerification, String> {
     let mut visible_count = 0u32;
     let mut last_signature = String::new();
 
@@ -2897,17 +2930,22 @@ fn wait_for_prompt_submit_confirmed_sync(
         };
         last_signature = signature;
         if visible_count >= 2 {
-            return submit_prompt_with_runtime_sync(runtime, draft);
+            return submit_prompt_with_runtime_sync(
+                runtime,
+                draft,
+                composer_shows_complete_prompt_draft(&pane, draft),
+            );
         }
     }
 
-    submit_prompt_with_runtime_sync(runtime, draft)
+    submit_prompt_with_runtime_sync(runtime, draft, false)
 }
 
 fn submit_prompt_with_runtime_sync(
     runtime: &mut dyn SyncPromptSubmitRuntime,
     draft: &str,
-) -> Result<(), String> {
+    complete_draft_observed: bool,
+) -> Result<PromptDeliveryVerification, String> {
     if !runtime.sleep(SETTLE_BEFORE_SUBMIT_MS) {
         return Err("agent input submit timed out before carriage return".to_owned());
     }
@@ -2923,14 +2961,7 @@ fn submit_prompt_with_runtime_sync(
     let pane = runtime
         .capture(DRAFT_CAPTURE_START_LINE)
         .map_err(|error| format!("agent input submit verification failed after submit: {error}"))?;
-    if composer_still_holds_prompt_text(&pane, draft) {
-        Err(
-            "agent input submit verification failed: prompt draft remained visible after submit"
-                .to_owned(),
-        )
-    } else {
-        Ok(())
-    }
+    prompt_submit_verification(complete_draft_observed, &pane, draft)
 }
 
 struct SystemSyncPromptSubmitRuntime {
@@ -3174,10 +3205,10 @@ mod tests {
             _window_id: &str,
             draft: &str,
             before: Option<&str>,
-        ) -> Result<(), String> {
+        ) -> Result<PromptDeliveryVerification, String> {
             self.submitted_baseline = Some(before.map(str::to_owned));
             self.submit_prompts.push(draft.to_owned());
-            Ok(())
+            Ok(PromptDeliveryVerification::Unverified)
         }
     }
 
@@ -3302,12 +3333,39 @@ mod tests {
     fn shell_prompt_delivery_submits_directly_without_composer_wait() {
         let mut runtime = FakeAgentInputRuntime::default();
 
-        deliver_prompt_to_tmux_for_tool(&mut runtime, "@1", "echo hi", Some("shell"))
-            .expect("shell delivery");
+        let verification =
+            deliver_prompt_to_tmux_for_tool(&mut runtime, "@1", "echo hi", Some("shell"))
+                .expect("shell delivery");
 
+        assert_eq!(verification, PromptDeliveryVerification::Unverified);
         assert_eq!(runtime.text_sends, vec!["echo hi"]);
         assert_eq!(runtime.carriage_returns, 1);
         assert!(runtime.submit_prompts.is_empty());
+    }
+
+    #[test]
+    fn default_prompt_submit_reports_unverified() {
+        struct DefaultSubmitRuntime;
+
+        impl AgentOutputCaptureRuntime for DefaultSubmitRuntime {
+            fn capture_pane(
+                &mut self,
+                _window_id: &str,
+                _options: CapturePaneOptions,
+            ) -> Result<String, String> {
+                panic!("default submit must not claim a composer read");
+            }
+
+            fn send_carriage_return(&mut self, _window_id: &str) -> Result<(), String> {
+                Ok(())
+            }
+        }
+
+        let verification = DefaultSubmitRuntime
+            .submit_prompt("@1", "hello agent", None)
+            .expect("default submit still sends Enter");
+        assert_eq!(verification, PromptDeliveryVerification::Unverified);
+        assert!(!verification.is_verified());
     }
 
     #[test]
@@ -3725,6 +3783,158 @@ mod tests {
                 self.sleeps.push(millis);
                 true
             })
+        }
+    }
+
+    struct SubmitEvidenceScenario {
+        name: &'static str,
+        before_submit: Result<String, String>,
+        after_submit: Result<String, String>,
+        expected: Result<PromptDeliveryVerification, String>,
+    }
+
+    const EVIDENCE_DRAFT: &str = "The complete first sentence must reach the agent. The second sentence alone is not complete delivery. The final sentence carries the remaining instructions.";
+
+    fn submit_evidence_scenarios() -> Vec<SubmitEvidenceScenario> {
+        let full = format!("› {EVIDENCE_DRAFT}");
+        let markers = "> [Pasted Content 4577 chars][Pasted Content 3941 chars]";
+        vec![
+            SubmitEvidenceScenario {
+                name: "complete settled draft then readable empty composer",
+                before_submit: Ok(full.clone()),
+                after_submit: Ok("assistant response\n› ".into()),
+                expected: Ok(PromptDeliveryVerification::Verified),
+            },
+            SubmitEvidenceScenario {
+                name: "head loss with a surviving matching fragment then empty composer",
+                before_submit: Ok("› The second sentence alone is not complete delivery.".into()),
+                after_submit: Ok("› ".into()),
+                expected: Ok(PromptDeliveryVerification::Unverified),
+            },
+            SubmitEvidenceScenario {
+                name: "head loss without a matching fragment then empty composer",
+                before_submit: Ok("› remaining tail".into()),
+                after_submit: Ok("› ".into()),
+                expected: Ok(PromptDeliveryVerification::Unverified),
+            },
+            SubmitEvidenceScenario {
+                name: "unreadable TUI still sends",
+                before_submit: Ok("custom TUI without a recognized composer".into()),
+                after_submit: Ok("custom TUI without a recognized composer".into()),
+                expected: Ok(PromptDeliveryVerification::Unverified),
+            },
+            SubmitEvidenceScenario {
+                name: "complete draft followed by unreadable composer",
+                before_submit: Ok(full.clone()),
+                after_submit: Ok("custom TUI without a recognized composer".into()),
+                expected: Ok(PromptDeliveryVerification::Unverified),
+            },
+            SubmitEvidenceScenario {
+                name: "complete text inside a larger composer is not exact evidence",
+                before_submit: Ok(format!("{full} unrelated remaining draft")),
+                after_submit: Ok("› ".into()),
+                expected: Ok(PromptDeliveryVerification::Unverified),
+            },
+            SubmitEvidenceScenario {
+                name: "two large pasted blocks remain after Enter",
+                before_submit: Ok(markers.into()),
+                after_submit: Ok(markers.into()),
+                expected: Ok(PromptDeliveryVerification::Unverified),
+            },
+            SubmitEvidenceScenario {
+                name: "two large pasted blocks clear after Enter",
+                before_submit: Ok(markers.into()),
+                after_submit: Ok("> ".into()),
+                expected: Ok(PromptDeliveryVerification::Unverified),
+            },
+            SubmitEvidenceScenario {
+                name: "positive stuck draft remains an error",
+                before_submit: Ok(full.clone()),
+                after_submit: Ok(full.clone()),
+                expected: Err("agent input submit verification failed: prompt draft remained visible after submit".into()),
+            },
+            SubmitEvidenceScenario {
+                name: "pre-submit child capture error",
+                before_submit: Err("tmux child exited 19".into()),
+                after_submit: Ok("› ".into()),
+                expected: Err("agent input submit verification failed before submit: tmux child exited 19".into()),
+            },
+            SubmitEvidenceScenario {
+                name: "post-submit child capture error",
+                before_submit: Ok(full),
+                after_submit: Err("tmux child exited 23".into()),
+                expected: Err("agent input submit verification failed after submit: tmux child exited 23".into()),
+            },
+        ]
+    }
+
+    fn scenario_poll_count(scenario: &SubmitEvidenceScenario) -> usize {
+        match &scenario.before_submit {
+            Err(_) => 1,
+            Ok(pane) if composer_shows_pasted_draft(pane, EVIDENCE_DRAFT, Some("› ")) => 2,
+            Ok(_) => MAX_POLL_ATTEMPTS as usize,
+        }
+    }
+
+    #[test]
+    fn sync_submit_distinguishes_verified_unverifiable_and_failed_delivery() {
+        for scenario in submit_evidence_scenarios() {
+            let polls = scenario_poll_count(&scenario);
+            let mut runtime = FakeSyncPromptSubmitRuntime {
+                captures: std::iter::repeat_n(scenario.before_submit.clone(), polls)
+                    .chain([scenario.after_submit.clone()])
+                    .collect(),
+                ..FakeSyncPromptSubmitRuntime::showing(EVIDENCE_DRAFT)
+            };
+            let result =
+                wait_for_prompt_submit_confirmed_sync(&mut runtime, EVIDENCE_DRAFT, Some("› "));
+            assert_eq!(result, scenario.expected, "{}", scenario.name);
+            assert_eq!(
+                runtime.carriage_returns,
+                usize::from(scenario.before_submit.is_ok()),
+                "{}",
+                scenario.name
+            );
+        }
+    }
+
+    #[test]
+    fn async_submit_distinguishes_verified_unverifiable_and_failed_delivery() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        for scenario in submit_evidence_scenarios() {
+            let mut captures = std::collections::VecDeque::new();
+            for _ in 0..scenario_poll_count(&scenario) {
+                captures.push_back(scenario.before_submit.clone());
+                if scenario
+                    .before_submit
+                    .as_ref()
+                    .is_ok_and(|pane| composer_shows_pasted_draft(pane, EVIDENCE_DRAFT, Some("› ")))
+                {
+                    captures.push_back(scenario.before_submit.clone());
+                }
+            }
+            captures.push_back(scenario.after_submit.clone());
+            let mut runtime = FakeAsyncPromptSubmitRuntime {
+                captures,
+                ..FakeAsyncPromptSubmitRuntime::successful(EVIDENCE_DRAFT)
+            };
+            let result =
+                // aimux-async-seam: test - exercise production async verification.
+                crate::async_runtime::block_on_named("agent-output:test-submit-evidence", async {
+                    wait_for_prompt_submit_with_runtime_async(
+                        &mut runtime,
+                        EVIDENCE_DRAFT,
+                        Some("› "),
+                    )
+                    .await
+                });
+            assert_eq!(result, scenario.expected, "{}", scenario.name);
+            assert_eq!(
+                runtime.carriage_returns,
+                usize::from(scenario.before_submit.is_ok()),
+                "{}",
+                scenario.name
+            );
         }
     }
 

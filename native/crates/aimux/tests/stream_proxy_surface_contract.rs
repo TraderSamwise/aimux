@@ -5,6 +5,7 @@
 //! reporting an error rather than success. Recorded during the async cutover;
 //! the behaviour is current.
 
+use aimux::agent_prompt_delivery::PromptDeliveryVerification;
 use aimux::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
 use aimux::daemon::jobs::DaemonJobRouteRuntime;
 use aimux::daemon::json::ProjectEventStreamTarget;
@@ -526,13 +527,17 @@ fn project_agent_input_half_delivery_case() -> CharacterizationCase {
     )
     .expect("input route");
 
+    let mut response_body = response.body;
+    for key in ["operationId", "startedAt", "finishedAt"] {
+        response_body["delivery"][key] = json!(format!("<{key}>"));
+    }
     CharacterizationCase {
         name: "project-agent-input-half-delivery-is-error".into(),
         surface: "project-service-agent-input".into(),
         catches: "Recording current corrected behavior: a prompt whose submit carriage return was dropped must return an explicit error instead of accepted:true.".into(),
         observed: json!({
             "status": response.status,
-            "body": response.body,
+            "body": response_body,
             "actions": runtime.actions,
         }),
         pending_intended: false,
@@ -1631,10 +1636,10 @@ impl AgentOutputCaptureRuntime for FixtureAgentInputRuntime {
         window_id: &str,
         _draft: &str,
         _before: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<PromptDeliveryVerification, String> {
         self.send_carriage_return(window_id)?;
         match self.submit_outcome {
-            FixtureSubmitOutcome::Landed => Ok(()),
+            FixtureSubmitOutcome::Landed => Ok(PromptDeliveryVerification::Verified),
             FixtureSubmitOutcome::Dropped => {
                 self.actions.push(FixtureInputAction::SubmitDropped {
                     window_id: window_id.to_owned(),

@@ -257,6 +257,43 @@ describe("api relay routing", () => {
     });
   });
 
+  it.each(["local", "relay"] as const)(
+    "preserves the post-Enter failure receipt and original cause through %s input HTTP errors",
+    async (transport) => {
+      const cause = "capture after Enter failed";
+      const canonicalNotice = `Input delivery failed: ${cause}. Inspect the terminal before retrying.`;
+      for (const notice of [canonicalNotice, "Inspect the terminal before retrying.", undefined]) {
+        const body = {
+          ok: false,
+          error: cause,
+          delivery: {
+            state: "failed",
+            verified: false,
+            error: cause,
+            ...(notice ? { notice } : {}),
+          },
+        };
+        if (transport === "local") {
+          globalThis.fetch = vi.fn(async () => new Response(JSON.stringify(body), { status: 500 }));
+        } else {
+          setApiRelay({
+            wsConnected: true,
+            request: vi.fn(async () => ({ status: 500, body })),
+          } as unknown as RelayTransport);
+        }
+        await expect(
+          sendLivePaneInput(endpoint, "agent-1", "already submitted prompt"),
+        ).rejects.toMatchObject({
+          status: 500,
+          body,
+          message: expect.stringContaining(
+            notice === canonicalNotice ? canonicalNotice : notice ? `${notice} (${cause})` : cause,
+          ),
+        });
+      }
+    },
+  );
+
   it("preserves global expose project read errors", async () => {
     installFetchMock({
       ok: true,

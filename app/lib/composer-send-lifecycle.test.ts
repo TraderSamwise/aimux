@@ -17,6 +17,7 @@ import {
 } from "@/lib/input-delivery";
 import { attachmentTooLargeMessage, firstOversizedAttachment } from "@/lib/attachment-limits";
 import { isTransientRequestError } from "@/lib/request-errors";
+import type { LivePaneInputResponse } from "../../src/project-api-contract";
 
 type Attachment = {
   id: string;
@@ -96,7 +97,11 @@ function runtime() {
     store: createStore(),
     drafts: new Map(),
     seeded: new Set<string>(),
-    sendLivePaneInput: vi.fn(async (..._args: unknown[]) => ({ accepted: true })),
+    sendLivePaneInput: vi.fn(
+      async (
+        ..._args: unknown[]
+      ): Promise<Pick<LivePaneInputResponse, "accepted" | "delivery">> => ({ accepted: true }),
+    ),
     uploadAttachment: vi.fn(async (..._args: unknown[]) => ({
       attachment: { id: "uploaded-one" },
     })),
@@ -119,6 +124,7 @@ function harness(
   }
   const state = {
     error: null as string | null,
+    warning: null as string | null,
     ack: null as Ack | null,
     attachments: initialAttachments,
     accepted: [] as unknown[],
@@ -188,6 +194,9 @@ function harness(
       terminalViewportRef: { current: { showNewest: vi.fn() } },
       setSendError: (value: string | null) => {
         state.error = value;
+      },
+      setSendWarning: (value: string | null) => {
+        state.warning = value;
       },
       setHeldDelivery: vi.fn(),
       setPendingComposerAck: (value: Ack | null) => {
@@ -393,6 +402,29 @@ describe("the screen's composer send lifecycle without a renderer", () => {
       expect(h.releasePickedAttachment).not.toHaveBeenCalled();
     },
   );
+
+  it("releases an unverified delivery reservation without an optimistic echo and clears its warning on the next success", async () => {
+    const h = harness();
+    const notice = "Input sent, but submission could not be verified.";
+    h.sendLivePaneInput.mockResolvedValueOnce({
+      accepted: true,
+      delivery: { state: "delivered", verified: false, notice },
+    });
+    await h.send();
+    expect(h.state.warning).toBe(notice);
+    expect(h.state.error).toBeNull();
+    expect(h.draft()).toBe("");
+    expect(h.state.accepted).toEqual([]);
+    expect(h.shared.store.get(h.composerSendOperationAtom)).toBeNull();
+    expect(h.sendBusyRef.current).toBe(false);
+    h.setDraft("next verified send");
+    await h.send();
+    expect(h.sendLivePaneInput).toHaveBeenCalledTimes(2);
+    expect(h.state.warning).toBeNull();
+    expect(h.state.error).toBeNull();
+    expect(h.draft()).toBe("");
+    expect(h.state.accepted).toHaveLength(1);
+  });
 
   it("restores a nontransient failure without creating a pending acknowledgement", async () => {
     const h = harness([attachment()]);

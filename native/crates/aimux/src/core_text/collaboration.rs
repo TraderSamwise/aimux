@@ -133,9 +133,11 @@ pub fn render_core_thread_open_lines(payload: &Value) -> Vec<String> {
 }
 
 pub fn render_core_thread_send_lines(payload: &Value) -> Vec<String> {
-    vec![js_string(
+    let mut lines = vec![js_string(
         field(payload, "message").and_then(|message| field(message, "id")),
-    )]
+    )];
+    lines.extend(delivery_notice_lines(payload));
+    lines
 }
 
 pub fn render_core_thread_mark_seen_lines() -> Vec<String> {
@@ -177,6 +179,7 @@ pub fn render_core_message_send_lines(payload: &Value) -> Vec<String> {
                 .join(",")
         ));
     }
+    lines.extend(delivery_notice_lines(payload));
     lines
 }
 
@@ -309,6 +312,32 @@ pub fn render_core_review_request_changes_lines(payload: &Value) -> Vec<String> 
                 js_string(field(payload, "followUpTask").and_then(|task| field(task, "id")))
             ),
         );
+    }
+    lines
+}
+
+fn delivery_notice_lines(payload: &Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(deliveries) = payload.get("deliveries").and_then(Value::as_object) {
+        for (recipient, delivery) in deliveries {
+            if let Some(notice) = delivery.get("notice").and_then(Value::as_str) {
+                lines.push(format!("{recipient}: {notice}"));
+            }
+        }
+    }
+    let queued = array(payload, "queuedTo");
+    if !queued.is_empty() {
+        lines.push(format!(
+            "queued {}",
+            queued
+                .iter()
+                .map(|value| js_string(Some(value)))
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    }
+    for error in array(payload, "deliveryErrors") {
+        lines.push(js_string(Some(error)));
     }
     lines
 }

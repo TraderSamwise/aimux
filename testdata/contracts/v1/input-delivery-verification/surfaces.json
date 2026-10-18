@@ -1,0 +1,59 @@
+{
+  "prompt": "> [Pasted Content 4577 chars][Pasted Content 3941 chars]",
+  "state": "ready",
+  "cases": [
+    {
+      "name": "verified",
+      "delivery": {
+        "state": "delivered",
+        "verified": true
+      },
+      "expectedOutcome": "delivered",
+      "expectedNotice": null
+    },
+    {
+      "name": "two-pasted-blocks-unverified",
+      "delivery": {
+        "state": "delivered",
+        "verified": false,
+        "notice": "Submission unverified; inspect the terminal before retrying. Ready does not confirm an answer.",
+        "displayLabel": "last submit unverified"
+      },
+      "expectedOutcome": "unverified",
+      "expectedNotice": "Submission unverified; inspect the terminal before retrying. Ready does not confirm an answer."
+    },
+    {
+      "name": "held",
+      "delivery": {
+        "state": "held",
+        "reason": "active-client-recent-input"
+      },
+      "expectedOutcome": "pending",
+      "expectedNotice": "Input held, not delivered yet: a tmux client typed in the agent terminal recently. Aimux will retry after the terminal is quiet for a moment."
+    },
+    {
+      "name": "failed",
+      "delivery": {
+        "state": "failed",
+        "verified": false,
+        "error": "tmux is gone",
+        "notice": "Input delivery failed: tmux is gone. Inspect the terminal before retrying.",
+        "displayLabel": "last submit failed"
+      },
+      "expectedOutcome": "failed",
+      "expectedNotice": "Input delivery failed: tmux is gone. Inspect the terminal before retrying."
+    },
+    {
+      "name": "post-submit-capture-failed",
+      "delivery": {
+        "state": "failed",
+        "verified": false,
+        "error": "capture after Enter failed",
+        "notice": "Input delivery failed: capture after Enter failed. Inspect the terminal before retrying.",
+        "displayLabel": "last submit failed"
+      },
+      "expectedOutcome": "failed",
+      "expectedNotice": "Input delivery failed: capture after Enter failed. Inspect the terminal before retrying."
+    }
+  ]
+}
