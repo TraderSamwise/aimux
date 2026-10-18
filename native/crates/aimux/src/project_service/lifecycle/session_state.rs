@@ -125,9 +125,6 @@ pub(super) fn set_session_control_role(
     }
     let overseer = role == "overseer";
     let scribe = role == "scribe";
-    if !overseer && !scribe {
-        // Generic supervisor roles still need durable project-control metadata.
-    }
     let now = now_iso();
     let _ = mutate_metadata_state(project_state_dir, |state| {
         for (id, session) in &mut state.sessions {
@@ -141,7 +138,7 @@ pub(super) fn set_session_control_role(
                 if scribe && map.remove("scribe").is_some() {
                     map.insert("updatedAt".into(), Value::String(now.clone()));
                 }
-                if session_has_supervisor_role(map, role) {
+                if (overseer || scribe) && session_has_supervisor_role(map, role) {
                     clear_supervisor_role(map, role);
                     map.insert("updatedAt".into(), Value::String(now.clone()));
                 }

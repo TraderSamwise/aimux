@@ -150,6 +150,7 @@ secure_permissions
 session_launch
 state_update_lock
 subagent_activity_task
+supervisor_lane_surfaces
 transcript_tail_encoding
 terminal_key_parser_contract
 tmux_expose

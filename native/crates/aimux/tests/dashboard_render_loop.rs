@@ -693,6 +693,10 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
     std::fs::create_dir_all(&root).expect("project root");
     let mut fixture = snapshot();
     fixture.agent_restore_offer = None;
+    fixture.extra.insert(
+        "agentCreation".into(),
+        json!({"defaultTarget": "supervisor", "defaultRole": "control", "worktreeRole": "coder"}),
+    );
     fixture.main_checkout_path = Some("/preview-worktree".into());
     fixture.sessions.clear();
     fixture.teammates.clear();

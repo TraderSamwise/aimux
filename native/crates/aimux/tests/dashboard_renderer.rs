@@ -145,6 +145,10 @@ fn matches_node_dashboard_full_frame_with_project_controls_and_scribe_preview() 
 
     let overseer_sessions = vec![overseer.clone()];
     let scribe_sessions = vec![scribe.clone()];
+    snapshot.extra.insert(
+        "supervisorLane".into(),
+        json!({"sessions": [overseer, scribe]}),
+    );
     snapshot.sessions.splice(0..0, [overseer, scribe]);
     let preview_entries = vec![WorkOutlineEntry {
         entry_id: "outline-1".into(),
@@ -1863,6 +1867,8 @@ fn supervisor_section_renders_project_control_sessions() {
 
     snapshot.sessions = vec![overseer.clone(), plain_agent, scribe.clone()];
 
+    snapshot.extra.insert("supervisorLane".into(), json!({"sessions": snapshot.sessions.iter().filter(|session| session.project_control == Some(true)).collect::<Vec<_>>()}));
+
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
         overseer_sessions: &[overseer],
@@ -1909,6 +1915,8 @@ fn focused_supervisor_section_renders_cursor() {
     overseer.overseer = Some(true);
     overseer.project_control = Some(true);
     snapshot.sessions.insert(0, overseer);
+
+    snapshot.extra.insert("supervisorLane".into(), json!({"sessions": snapshot.sessions.iter().filter(|session| session.project_control == Some(true)).collect::<Vec<_>>()}));
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
@@ -1966,6 +1974,8 @@ fn supervisor_section_does_not_change_main_session_membership() {
     snapshot.worktree_groups[0]
         .sessions
         .splice(0..0, [overseer.clone(), scribe.clone()]);
+
+    snapshot.extra.insert("supervisorLane".into(), json!({"sessions": snapshot.sessions.iter().filter(|session| session.project_control == Some(true)).collect::<Vec<_>>()}));
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
@@ -3280,6 +3290,8 @@ fn the_supervisor_lane_badges_its_unread_count() {
     });
     let overseer_sessions = vec![overseer.clone()];
     snapshot.sessions.insert(0, overseer);
+
+    snapshot.extra.insert("supervisorLane".into(), json!({"sessions": snapshot.sessions.iter().filter(|session| session.project_control == Some(true)).collect::<Vec<_>>()}));
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,

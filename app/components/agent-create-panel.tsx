@@ -9,6 +9,9 @@ import { Text } from "@/components/ui/text";
 import { spawnAgent } from "@/lib/api";
 import {
   AGENT_TOOL_CHOICES,
+  agentCreationRole,
+  agentCreationPolicyIsAvailable,
+  type AgentCreationTarget,
   AGENT_CREATION_REFRESH_VIEWS,
   creatableWorktreeChoices,
   isSelectableWorktreePath,
@@ -22,19 +25,26 @@ import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
+import type { AgentCreationPolicy } from "../../src/project-api-contract";
+
 export function AgentCreatePanel({
   endpoint,
   token,
   projectStateKey,
   groups,
+  agentCreation,
 }: {
   endpoint: ServiceEndpoint | null;
   token: string | null;
   projectStateKey: ProjectStateKey;
   groups: WorktreeBucket[];
+  agentCreation?: AgentCreationPolicy;
 }) {
   const [tool, setTool] = useState<AgentToolChoice>("claude");
   const toolRef = useRef<AgentToolChoice>("claude");
+  const [targetOverride, setTarget] = useState<AgentCreationTarget | null>(null);
+  const targetRef = useRef<AgentCreationTarget | null>(null);
+  const target = targetOverride ?? agentCreation?.defaultTarget;
   const [worktreePath, setWorktreePath] = useState<string | null>(null);
   const worktreePathRef = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -54,16 +64,23 @@ export function AgentCreatePanel({
   }
 
   function selectWorktree(path: string | null) {
+    targetRef.current = "worktree";
+    setTarget("worktree");
     worktreePathRef.current = path;
     setWorktreePath(path);
   }
 
+  const policyUnavailable = !agentCreationPolicyIsAvailable(agentCreation);
+
   async function createAgent() {
-    if (!endpoint || busy) return;
+    if (!endpoint || busy || policyUnavailable) return;
     const selectedTool = toolRef.current;
-    const selectedPath = isSelectableWorktreePath(worktreeChoices, worktreePathRef.current)
-      ? worktreePathRef.current
-      : null;
+    const selectedTarget = targetRef.current ?? agentCreation?.defaultTarget;
+    const selectedPath =
+      selectedTarget === "worktree" &&
+      isSelectableWorktreePath(worktreeChoices, worktreePathRef.current)
+        ? worktreePathRef.current
+        : null;
     setBusy(true);
     setError(null);
     try {
@@ -71,6 +88,7 @@ export function AgentCreatePanel({
         endpoint,
         {
           tool: selectedTool,
+          role: agentCreationRole(agentCreation, selectedTarget),
           worktreePath: selectedPath ?? undefined,
           open: false,
         },
@@ -125,8 +143,16 @@ export function AgentCreatePanel({
 
         <View className="min-w-[180px] flex-1 flex-row flex-wrap gap-2">
           <WorktreeChip
+            label="Supervisor Lane"
+            active={target === "supervisor"}
+            onPress={() => {
+              targetRef.current = "supervisor";
+              setTarget("supervisor");
+            }}
+          />
+          <WorktreeChip
             label="Main checkout"
-            active={selectedWorktreePath === null}
+            active={target === "worktree" && selectedWorktreePath === null}
             onPress={() => selectWorktree(null)}
           />
           {worktreeChoices
@@ -135,7 +161,7 @@ export function AgentCreatePanel({
               <WorktreeChip
                 key={choice.key}
                 label={choice.label}
-                active={selectedWorktreePath === choice.path}
+                active={target === "worktree" && selectedWorktreePath === choice.path}
                 onPress={() => selectWorktree(choice.path)}
               />
             ))}
@@ -144,7 +170,7 @@ export function AgentCreatePanel({
         <Button
           variant="outline"
           size="sm"
-          disabled={!endpoint || busy}
+          disabled={!endpoint || busy || policyUnavailable}
           onPress={createAgent}
           accessibilityLabel="Create agent"
           className="gap-2"
@@ -155,6 +181,15 @@ export function AgentCreatePanel({
           </Text>
         </Button>
       </View>
+      {policyUnavailable ? (
+        <Text
+          className="mt-2 text-xs text-destructive"
+          accessibilityLabel="Creation policy unavailable"
+        >
+          Agent creation policy is unavailable from the project host. Refresh project state before
+          launching an agent.
+        </Text>
+      ) : null}
       {error ? <Text className="mt-2 text-xs text-destructive">{error}</Text> : null}
     </Card>
   );

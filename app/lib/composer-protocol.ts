@@ -45,23 +45,20 @@ export function normalizeComposerDraft(draft: string): string | null {
   return text ? text : null;
 }
 
-/// Enter sends only from a hardware keyboard, where Shift+Enter is the newline.
-/// A soft keyboard's return key IS the newline key, so there Enter never sends
-/// and the send control is the only way out.
-///
-/// `code` names the physical key that was pressed, so an empty one is a key
-/// that does not physically exist. That catches the on-screen keyboards no
-/// measurement can see -- the floating and split ones, which overlay the page
-/// instead of taking a bite out of it. Absent rather than empty is a browser
-/// that does not report it, which is not evidence either way.
+/// Ctrl+Enter sends even before hardware detection catches up. Plain Enter
+/// needs hardware detection; Shift+Enter stays a newline. An empty `code`
+/// explicitly identifies a virtual key, while an absent one is inconclusive.
 export function shouldSubmitComposerKey(
   event: ComposerKeyEventLike,
   hasHardwareKeyboard: boolean,
 ): boolean {
-  if (!hasHardwareKeyboard) return false;
   if (event.code === "") return false;
   return (
-    event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
+    event.key === "Enter" &&
+    !event.shiftKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    (event.ctrlKey === true || hasHardwareKeyboard)
   );
 }
 

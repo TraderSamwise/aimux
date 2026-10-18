@@ -594,7 +594,9 @@ fn coalesced_input_stops_after_opening_command_surfaces() {
     let picker = picker_controller.handle_key(&snapshot, DashboardKey::Printable('n'));
     assert_eq!(
         picker,
-        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create)
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create(
+            creation_policy()
+        ))
     );
     assert!(picker_controller.should_stop_coalesced_input(before_picker, &picker));
 }
@@ -762,7 +764,9 @@ fn new_agent_key_opens_tool_picker_effect() {
 
     assert_eq!(
         controller.handle_key(&snapshot, DashboardKey::NewAgent),
-        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create)
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create(
+            creation_policy()
+        ))
     );
 }
 
@@ -781,7 +785,7 @@ fn tool_picker_enter_dispatches_agent_spawn_request() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create,
+        DashboardToolPickerMode::Create(creation_policy()),
     );
 
     let DashboardControllerEffect::Request(request) =
@@ -795,7 +799,7 @@ fn tool_picker_enter_dispatches_agent_spawn_request() {
         request.body,
         json!({
             "tool": "codex",
-            "worktreePath": "<ROOT>",
+            "role": "control",
             "open": false
         })
     );
@@ -814,7 +818,7 @@ fn tool_picker_escape_closes_and_restores_dashboard_quit() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create,
+        DashboardToolPickerMode::Create(creation_policy()),
     );
 
     assert_eq!(
@@ -840,7 +844,7 @@ fn tool_picker_quit_key_quits_instead_of_trapping_input() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create,
+        DashboardToolPickerMode::Create(creation_policy()),
     );
 
     assert_eq!(
@@ -861,7 +865,7 @@ fn tool_picker_options_create_launch_override_request() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create,
+        DashboardToolPickerMode::Create(creation_policy()),
     );
 
     assert_eq!(
@@ -881,6 +885,7 @@ fn tool_picker_options_create_launch_override_request() {
         request.body,
         json!({
             "tool": "codex",
+            "role": "control",
             "launchOverride": {
                 "command": "codex",
                 "args": ["--base", "--model", "gpt"]
@@ -902,7 +907,7 @@ fn tool_picker_options_surface_parse_errors_without_request() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create,
+        DashboardToolPickerMode::Create(creation_policy()),
     );
     controller.handle_key(&snapshot, DashboardKey::Printable('o'));
     for key in parse_dashboard_keys(b"\"unterminated") {
@@ -3149,9 +3154,14 @@ fn snapshot_without_restore_offer() -> DesktopStateSnapshot {
 }
 
 fn snapshot() -> DesktopStateSnapshot {
-    serde_json::from_str::<DesktopStateGoldenFixture>(GOLDEN)
+    let mut snapshot = serde_json::from_str::<DesktopStateGoldenFixture>(GOLDEN)
         .expect("valid fixture")
-        .runtime_full
+        .runtime_full;
+    snapshot.extra.insert(
+        "agentCreation".into(),
+        serde_json::to_value(creation_policy()).unwrap(),
+    );
+    snapshot
 }
 
 fn operation_failure(
@@ -3224,6 +3234,10 @@ fn snapshot_with_supervisor_lane() -> DesktopStateSnapshot {
     snapshot.worktree_groups[1].sessions[0].tmux_window_id = Some("@wt".into());
     let overseer = overseer_session(&snapshot.sessions[0]);
     let scribe = scribe_session(&snapshot.sessions[0]);
+    snapshot.extra.insert(
+        "supervisorLane".into(),
+        json!({"sessions": [overseer, scribe]}),
+    );
     snapshot.sessions.splice(0..0, [overseer, scribe]);
     snapshot
 }
@@ -4419,7 +4433,10 @@ fn bulk_graveyard_waits_for_existing_picker_before_showing_confirmation_or_repor
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
     controller.agent_restore_prompt_dismissed = true;
-    controller.open_tool_picker(Vec::new(), DashboardToolPickerMode::Create);
+    controller.open_tool_picker(
+        Vec::new(),
+        DashboardToolPickerMode::Create(creation_policy()),
+    );
     controller
         .receive_bulk_graveyard_preview(json!({"scope": "project", "dryRun": true,
         "sessionIds": ["server-chosen"], "summary": "Graveyard 1 offline agents?"}))
@@ -4440,10 +4457,70 @@ fn bulk_graveyard_waits_for_existing_picker_before_showing_confirmation_or_repor
         DashboardControllerEffect::Ignored
     );
     controller.handle_key(&snapshot, DashboardKey::Back);
-    controller.open_tool_picker(Vec::new(), DashboardToolPickerMode::Create);
+    controller.open_tool_picker(
+        Vec::new(),
+        DashboardToolPickerMode::Create(creation_policy()),
+    );
     controller.receive_bulk_graveyard_report("One failure: permission denied".into());
     assert!(controller.bulk_graveyard_report.is_none());
     controller.handle_key(&snapshot, DashboardKey::Back);
     controller.promote_bulk_graveyard_preview();
     assert!(controller.bulk_graveyard_report.is_some());
+}
+
+fn creation_policy() -> aimux::dashboard_create::DashboardAgentCreationPolicy {
+    serde_json::from_value(
+        json!({ "defaultTarget": "supervisor", "defaultRole": "control", "worktreeRole": "coder" }),
+    )
+    .unwrap()
+}
+
+#[test]
+fn new_agent_requires_service_creation_defaults() {
+    let mut snapshot = snapshot();
+    snapshot.extra.remove("agentCreation");
+    let mut controller = DashboardController::new(&snapshot);
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::NewAgent),
+        DashboardControllerEffect::Render
+    );
+    assert!(
+        controller
+            .footer_alert
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("creation defaults")
+    );
+    snapshot
+        .extra
+        .insert("agentCreation".into(), json!({"defaultTarget":"invalid"}));
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::NewAgent),
+        DashboardControllerEffect::Render
+    );
+    assert!(
+        controller
+            .footer_alert
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("Invalid agent creation")
+    );
+    snapshot.extra.insert(
+        "agentCreation".into(),
+        json!({"defaultTarget":"supervisor", "defaultRole":"", "worktreeRole":"coder"}),
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::NewAgent),
+        DashboardControllerEffect::Render
+    );
+    assert!(
+        controller
+            .footer_alert
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("roles must not be empty")
+    );
 }
