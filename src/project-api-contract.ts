@@ -1362,6 +1362,11 @@ export interface AgentSessionInput {
   sessionId: string;
 }
 
+export interface ResumeAgentInput extends AgentSessionInput {
+  fresh?: boolean;
+  restartArgs?: string[];
+}
+
 export interface StopAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId: string;
   status: "offline";

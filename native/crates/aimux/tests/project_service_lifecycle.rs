@@ -62,6 +62,8 @@ struct FakeLifecycleRuntime {
     create_worktree_from_branch_error: Option<String>,
     create_worktree_error: Option<String>,
     create_window_error: Option<String>,
+    restart_window_dead: bool,
+    restart_window_query_error: Option<String>,
     /// Read while the git work is still running, which is the only moment the
     /// in-flight record exists.
     topology_probe_path: Option<PathBuf>,
@@ -240,6 +242,27 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
 
     fn has_window(&mut self, target: &TmuxTarget) -> bool {
         self.existing_windows.contains(&target.window_id)
+    }
+
+    fn list_windows(
+        &mut self,
+        _session_name: &str,
+    ) -> Result<Vec<aimux::tmux::TmuxWindowInfo>, String> {
+        if let Some(error) = &self.restart_window_query_error {
+            return Err(error.clone());
+        }
+        Ok(self
+            .existing_windows
+            .iter()
+            .map(|id| aimux::tmux::TmuxWindowInfo {
+                id: id.clone(),
+                index: 1,
+                name: "mock".into(),
+                active: false,
+                activity: None,
+                pane_dead: Some(self.restart_window_dead),
+            })
+            .collect())
     }
 
     fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String> {
@@ -7121,4 +7144,277 @@ fn operation_failure_notification_bodies(state_dir: &std::path::Path) -> Vec<Str
     .filter(|record| record["kind"] == "operation_failure")
     .map(|record| record["body"].as_str().unwrap_or_default().to_owned())
     .collect()
+}
+
+fn restart_args_fixture(
+    label: &str,
+    status: &str,
+) -> (PathBuf, PathBuf, ProjectServiceRequestContext) {
+    let project = temp_project(label);
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-offline", "nodeId": "agent:mock-offline", "status": status,
+            "tool": "mock", "command": "/bin/mock", "args": ["--base", "--model", "original"],
+            "backendSessionId": "backend-123", "worktreePath": "/repo/worktree", "label": "same agent",
+        "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    (project, state_dir, context)
+}
+
+#[test]
+fn restart_args_reach_launch_and_persist_with_identity_and_history() {
+    for status in ["offline", "running"] {
+        let (project, state_dir, context) = restart_args_fixture("restart-args", status);
+        let mut runtime = FakeLifecycleRuntime::default();
+        let response = route_lifecycle_request_with_runtime(&context, "POST", routes::agents::RESUME,
+            Some(&json!({ "sessionId": "mock-offline", "restartArgs": ["--model", "new model", "--config", "a='b'"] })), &mut runtime).unwrap();
+        assert_eq!(response.status, 200, "{}", response.body);
+        let command = runtime.created[0].args.join(" ");
+        assert!(command.contains("new model"), "{command}");
+        assert!(!command.contains("original"), "{command}");
+        assert!(command.contains("backend-123"), "{command}");
+        let saved = session(&read_topology(&state_dir), "mock-offline");
+        assert_eq!(
+            saved["args"],
+            json!(["--base", "--model", "new model", "--config", "a='b'"])
+        );
+        assert_eq!(saved["backendSessionId"], "backend-123");
+        assert_eq!(saved["worktreePath"], "/repo/worktree");
+        assert_eq!(saved["label"], "same agent");
+        cleanup(project);
+    }
+}
+
+#[test]
+fn restart_args_refuse_live_windows_even_when_recorded_offline() {
+    for status in ["running", "offline"] {
+        let (project, state_dir, _) = restart_args_fixture("restart-live", status);
+        update_runtime_topology(runtime_topology_path(&state_dir), |mut topology| {
+            topology["bindings"] = json!([{
+                "id": "tmux:mock-offline", "nodeId": "agent:mock-offline", "tmuxSession": "aimux-test", "tmuxWindowId": "@live",
+                "tmuxWindowIndex": 1, "tmuxWindowName": "mock", "updatedAt": "2026-01-01T00:00:00.000Z"
+            }]);
+            topology
+        }).unwrap();
+        let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+            .with_live_windows(LiveWindowIndex::from_pairs([("@live", "aimux-test")]));
+        let mut runtime = FakeLifecycleRuntime::default();
+        let response = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::RESUME,
+            Some(&json!({ "sessionId": "mock-offline", "restartArgs": [] })),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, 409, "{}", response.body);
+        assert!(
+            response.body["error"]
+                .as_str()
+                .unwrap()
+                .contains("offline only")
+        );
+        assert!(runtime.created.is_empty());
+        assert_eq!(
+            session(&read_topology(&state_dir), "mock-offline")["args"],
+            json!(["--base", "--model", "original"])
+        );
+        cleanup(project);
+    }
+}
+
+#[test]
+fn restart_args_preserve_launch_failure_and_saved_args() {
+    let (project, state_dir, context) = restart_args_fixture("restart-failure", "offline");
+    let mut runtime = FakeLifecycleRuntime {
+        create_window_error: Some(
+            "Command failed: tmux new-window: permission denied OPENAI_API_KEY=sk-secret".into(),
+        ),
+        ..Default::default()
+    };
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESUME,
+        Some(&json!({ "sessionId": "mock-offline", "restartArgs": ["--new"] })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["ok"], false);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("permission denied"),
+        "{}",
+        response.body
+    );
+    assert_eq!(
+        session(&read_topology(&state_dir), "mock-offline")["args"],
+        json!(["--base", "--model", "original"])
+    );
+    assert!(!response.body.to_string().contains("sk-secret"));
+    cleanup(project);
+}
+
+#[test]
+fn restart_args_bound_complete_wrapped_command_in_bytes() {
+    for arg in ["x".repeat(16_000), "界".repeat(6_000), "'".repeat(4_000)] {
+        let (project, state_dir, context) = restart_args_fixture("restart-bound", "offline");
+        let mut runtime = FakeLifecycleRuntime::default();
+        let response = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::RESUME,
+            Some(&json!({ "sessionId": "mock-offline", "restartArgs": [arg] })),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, 400, "{}", response.body);
+        assert!(
+            response.body["error"]
+                .as_str()
+                .unwrap()
+                .contains("16000 bytes")
+        );
+        assert!(runtime.created.is_empty());
+        assert_eq!(
+            session(&read_topology(&state_dir), "mock-offline")["status"],
+            "offline"
+        );
+        cleanup(project);
+    }
+}
+
+#[test]
+fn restart_args_empty_clears_saved_extras_and_malformed_args_refuse() {
+    for args in [
+        json!([]),
+        json!(null),
+        json!("--model x"),
+        json!([1]),
+        json!(["a\u{0}b"]),
+    ] {
+        let (project, state_dir, context) = restart_args_fixture("restart-validation", "offline");
+        let mut runtime = FakeLifecycleRuntime::default();
+        let response = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::RESUME,
+            Some(&json!({ "sessionId": "mock-offline", "restartArgs": args })),
+            &mut runtime,
+        )
+        .unwrap();
+        if args == json!([]) {
+            assert_eq!(response.status, 200, "{}", response.body);
+            assert_eq!(
+                session(&read_topology(&state_dir), "mock-offline")["args"],
+                json!(["--base"])
+            );
+        } else {
+            assert_eq!(response.status, 400);
+            assert!(runtime.created.is_empty());
+        }
+        cleanup(project);
+    }
+}
+
+#[test]
+fn restart_args_tmux_query_failure_is_visible_and_prevents_launch() {
+    let (project, state_dir, _) = restart_args_fixture("restart-inventory", "offline");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids_error("inventory unavailable");
+    let mut runtime = FakeLifecycleRuntime::default();
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESUME,
+        Some(&json!({ "sessionId": "mock-offline", "restartArgs": [] })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(response.status, 409);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("inventory unavailable")
+    );
+    assert!(runtime.created.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn restart_args_detect_child_exit_and_post_launch_inventory_error() {
+    for error in [None, Some("post-launch inventory failed".to_string())] {
+        let (project, state_dir, context) = restart_args_fixture("restart-child-exit", "offline");
+        let mut runtime = FakeLifecycleRuntime {
+            restart_window_dead: true,
+            restart_window_query_error: error.clone(),
+            ..Default::default()
+        };
+        let response = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::RESUME,
+            Some(&json!({ "sessionId": "mock-offline", "restartArgs": ["--new"] })),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, 500, "{}", response.body);
+        assert_eq!(response.body["ok"], false);
+        assert!(
+            response.body["error"]
+                .as_str()
+                .unwrap()
+                .contains(error.as_deref().unwrap_or("exited"))
+        );
+        assert_eq!(
+            session(&read_topology(&state_dir), "mock-offline")["status"],
+            "offline"
+        );
+        assert_eq!(runtime.killed, vec!["@11"]);
+        cleanup(project);
+    }
+}
+
+#[test]
+fn restart_args_rejected_length_preserves_fresh_recovery_for_retry() {
+    let (project, state_dir, context) = restart_args_fixture("restart-retry", "offline");
+    update_runtime_topology(runtime_topology_path(&state_dir), |mut topology| {
+        topology["sessions"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("backendSessionId");
+        topology
+    })
+    .unwrap();
+    fs::write(
+        state_dir.join("metadata.json"),
+        serde_json::to_string(&json!({
+            "version": 1, "sessions": { "mock-offline": { "derived": { "activity": "error" } } }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let mut runtime = FakeLifecycleRuntime::default();
+    for (arg, expected) in [("x".repeat(16_000), 400), ("--new".to_string(), 200)] {
+        let response = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::RESUME,
+            Some(&json!({ "sessionId": "mock-offline", "restartArgs": [arg] })),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, expected, "{}", response.body);
+    }
+    cleanup(project);
 }

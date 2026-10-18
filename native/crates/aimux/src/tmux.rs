@@ -719,9 +719,10 @@ impl TmuxRuntimeManager {
                     ..TmuxExecOptions::default()
                 }),
             )
-            .map_err(|_| {
+            .map_err(|error| {
+                let error = crate::debug_logging::sanitize_log_string(&error);
                 format!(
-                    "tmux failed to create window \"{name}\" in session {session_name} ({argv_bytes}-byte command)"
+                    "tmux failed to create window \"{name}\" in session {session_name} ({argv_bytes}-byte command): {error}"
                 )
             })?;
         parse_window_target(session_name, &raw)

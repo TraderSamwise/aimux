@@ -29,6 +29,45 @@ use super::json_helpers::string_field;
 pub(super) struct LiveWindows(Result<LiveWindowIndex, String>);
 
 impl LiveWindows {
+    pub(super) fn verify_offline_for_restart(
+        &self,
+        session: &Value,
+        topology: &Value,
+    ) -> Result<(), String> {
+        let windows = self.0.as_ref().map_err(|error| {
+            format!("Cannot restart with changed args: could not verify tmux liveness: {error}")
+        })?;
+        let status = string_field(session, "status");
+        // The display projection hides bindings for offline records.
+        let has_live_binding = topology
+            .get("bindings")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|binding| binding.get("nodeId") == session.get("nodeId"))
+            .any(|binding| {
+                let Some(window_id) = binding.get("tmuxWindowId").and_then(Value::as_str) else {
+                    return false;
+                };
+                match binding.get("tmuxSession").and_then(Value::as_str) {
+                    Some(name) => windows.window_is_in_session(window_id, name),
+                    None => windows.contains_window(window_id),
+                }
+            });
+        if has_live_binding {
+            return Err(format!(
+                "Cannot restart session \"{}\" with changed args: its tmux window is running; this action is offline only",
+                string_field(session, "id")
+            ));
+        }
+        if status != "offline" && !LIVE_STATUSES.contains(&status.as_str()) {
+            return Err(format!(
+                "Cannot restart with changed args: session status is {status}; expected offline"
+            ));
+        }
+        Ok(())
+    }
+
     /// Prefers the inventory the request already carries, so one request does
     /// not ask tmux the same question twice and gets one consistent answer.
     pub(super) fn for_context(context: &ProjectServiceRequestContext, surface: &str) -> Self {
