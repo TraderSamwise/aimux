@@ -479,9 +479,8 @@ pub fn build_desktop_state_with_live_window_projection(
     state.insert("serviceInfo".into(), service_info());
     state.insert("pendingInteractions".into(), Value::Array(Vec::new()));
     state.insert("sessions".into(), Value::Array(sessions));
-    if let Some(supervisor_lane) = supervisor_lane {
-        state.insert("supervisorLane".into(), supervisor_lane);
-    }
+    state.insert("supervisorLane".into(), supervisor_lane);
+    state.insert("agentCreation".into(), agent_creation_policy());
     state.insert("teammates".into(), Value::Array(teammates));
     state.insert("services".into(), Value::Array(services));
     state.insert("worktrees".into(), Value::Array(worktrees));
@@ -595,9 +594,8 @@ async fn build_desktop_state_with_live_window_projection_async(
     state.insert("serviceInfo".into(), service_info());
     state.insert("pendingInteractions".into(), Value::Array(Vec::new()));
     state.insert("sessions".into(), Value::Array(sessions));
-    if let Some(supervisor_lane) = supervisor_lane {
-        state.insert("supervisorLane".into(), supervisor_lane);
-    }
+    state.insert("supervisorLane".into(), supervisor_lane);
+    state.insert("agentCreation".into(), agent_creation_policy());
     state.insert("teammates".into(), Value::Array(teammates));
     state.insert("services".into(), Value::Array(services));
     state.insert("worktrees".into(), Value::Array(worktrees));
@@ -1206,7 +1204,11 @@ fn dashboard_session(
     Value::Object(item)
 }
 
-fn supervisor_lane_from_sessions(sessions: &[Value]) -> Option<Value> {
+fn agent_creation_policy() -> Value {
+    json!({ "defaultTarget": "supervisor", "defaultRole": "control", "worktreeRole": "coder" })
+}
+
+fn supervisor_lane_from_sessions(sessions: &[Value]) -> Value {
     let mut sessions = sessions
         .iter()
         .enumerate()
@@ -1223,7 +1225,7 @@ fn supervisor_lane_from_sessions(sessions: &[Value]) -> Option<Value> {
         .into_iter()
         .map(|(_, session)| session)
         .collect::<Vec<_>>();
-    (!sessions.is_empty()).then(|| json!({ "sessions": sessions }))
+    json!({ "sessions": sessions })
 }
 
 fn dashboard_service(
