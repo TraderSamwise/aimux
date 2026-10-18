@@ -89,7 +89,15 @@ fn production_delivery_executors_preserve_payload_and_failures() {
         let case = format!("direct:bounded:{outcome}");
         observations.insert(case.clone(), run_isolated_child(&root.0, &case));
     }
-    assert_eq!(observations.len(), 28, "every scenario must execute");
+    for route in ["agents", "pane"] {
+        let case = format!("route:async:deadline-load:{route}");
+        observations.insert(case.clone(), run_isolated_child(&root.0, &case));
+    }
+    assert_eq!(observations.len(), 30, "every scenario must execute");
+    assert_observations_match(
+        &observations["route:async:deadline-load:agents"],
+        &observations["route:async:deadline-load:pane"],
+    );
     for outcome in ["ok", "load-fail", "paste-fail"] {
         assert_observations_match(
             &observations[&format!("direct:system:{outcome}")],
