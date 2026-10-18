@@ -828,14 +828,14 @@ pub fn render_bulk_graveyard_confirm_overlay(
 }
 
 pub fn bulk_graveyard_report_lines(report: &str, width: usize) -> Vec<String> {
-    use crate::tui_render::theme::visible_width;
+    use crate::tui_render::box_render::display_cell_width;
     let width = width.max(1);
     let plain = crate::tui_render::text::strip_ansi(report);
     let mut lines = Vec::new();
     let mut current = String::new();
     for word in plain.split_whitespace() {
         if !current.is_empty() {
-            if visible_width(&current) + 1 + visible_width(word) <= width {
+            if display_cell_width(&current) + 1 + display_cell_width(word) <= width {
                 current.push(' ');
             } else {
                 lines.push(std::mem::take(&mut current));
@@ -843,7 +843,7 @@ pub fn bulk_graveyard_report_lines(report: &str, width: usize) -> Vec<String> {
         }
         for character in word.chars() {
             if !current.is_empty()
-                && visible_width(&current) + visible_width(&character.to_string()) > width
+                && display_cell_width(&current) + display_cell_width(&character.to_string()) > width
             {
                 lines.push(std::mem::take(&mut current));
             }
@@ -871,7 +871,7 @@ pub fn render_bulk_graveyard_report_overlay(
             .skip(offset)
             .take(rows.saturating_sub(8).max(1)),
     );
-    render_overlay_box(&OverlayBoxSpec {
+    crate::tui_render::box_render::render_overlay_box_cells(&OverlayBoxSpec {
         title: "Bulk Graveyard Result",
         body: &body,
         cols,

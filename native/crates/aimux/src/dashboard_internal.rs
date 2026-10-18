@@ -6193,8 +6193,10 @@ mod bulk_graveyard_tests {
             .frame;
             let mut terminal = vt100::Parser::new(16, 80, 0);
             terminal.process(frame.as_bytes());
-            seen.push_str(&terminal.screen().contents());
-            seen.push('\n');
+            for row in terminal.screen().rows(0, 80) {
+                seen.push_str(&row);
+                seen.push('\n');
+            }
             controller.handle_key(&snapshot, DashboardKey::Down);
         }
         assert!(
