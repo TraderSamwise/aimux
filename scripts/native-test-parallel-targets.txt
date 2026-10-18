@@ -148,6 +148,8 @@ runtime_topology_state_save
 scribe_watcher_guards
 secure_permissions
 session_launch
+session_bootstrap
+fork_runtime
 state_update_lock
 subagent_activity_task
 supervisor_lane_surfaces

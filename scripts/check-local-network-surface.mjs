@@ -396,16 +396,10 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   {
     path: "native/crates/aimux/src/tmux.rs",
     marker: "new_window_argv(session_name, name, cwd, command, args, detached);",
+    count: 2,
     command: "tmux new-window target command",
     argv: "command/args from runtime launch request",
     input: "user/config/runtime-derived session launch",
-  },
-  {
-    path: "native/crates/aimux/src/tmux.rs",
-    marker: "new_window_argv(session_name, name, cwd, command, args, true);",
-    command: "tmux new-window target command with retained restart pane",
-    argv: "wrapped agent command/args, then fixed remain-on-exit on command",
-    input: "user-edited restart args plus config/runtime-derived session identity and shell integration; bounded to 16000 packed bytes",
   },
   {
     path: "native/crates/aimux/src/tmux.rs",

@@ -18,9 +18,8 @@ use crate::runtime_topology::{
     update_runtime_topology,
 };
 use crate::session_bootstrap::{
-    build_codex_migration_continuity_preamble, build_fork_preamble,
-    build_tool_switch_continuity_preamble, read_fork_source_snapshot, seed_fork_artifacts,
-    supervisor_team,
+    ForkArtifacts, build_codex_migration_continuity_preamble, build_fork_preamble,
+    build_tool_switch_continuity_preamble, read_fork_source_snapshot, supervisor_team,
 };
 use crate::team_contract::{
     is_project_control_session, project_control_display_role, session_with_stored_control_flags,
@@ -44,7 +43,10 @@ use super::agent_topology::{
 use super::ids::{now_iso, random_id};
 use super::json_helpers::*;
 use super::response_helpers::{json_error, lifecycle_response};
-use super::runtime_adapter::{AsyncProjectLifecycleRuntime, ProjectLifecycleRuntime};
+use super::runtime_adapter::{
+    AgentSessionLaunchError, AsyncProjectLifecycleRuntime, ProjectLifecycleRuntime,
+    verify_started_window,
+};
 use super::session_liveness::LiveWindows;
 use super::session_state::relocate_claude_transcript;
 use super::topology_helpers::{live_window_id_for_session, object_value, upsert_array_item};
@@ -90,7 +92,10 @@ pub(super) fn route_agent_migrate(
     let backend_session_id = trimmed_string(source_session.get("backendSessionId"));
     let use_backend_resume =
         can_resume_with_backend_session_id(tool_config, backend_session_id.as_deref());
-    let snapshot = read_fork_source_snapshot(context.project_root(), &session_id);
+    let snapshot = match read_fork_source_snapshot(context.project_root(), &session_id) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return json_error(500, error),
+    };
     let (launch_args, extra_preamble, persist_args, backend_override, suppress_startup_preamble) =
         if use_backend_resume {
             let resume = resume_args(
@@ -155,6 +160,7 @@ pub(super) fn route_agent_migrate(
             allow_replace_session: true,
             supervisor_role: source_supervisor_role,
         },
+        false,
     );
     match result {
         Ok(result) => lifecycle_response(
@@ -292,6 +298,7 @@ pub(super) fn route_agent_spawn(
             allow_replace_session: false,
             supervisor_role: supervisor_role.clone(),
         },
+        false,
     );
     match result {
         Ok(result) => lifecycle_response(
@@ -755,55 +762,115 @@ pub(super) fn route_agent_fork(
     };
     let target_session_id = trimmed_string(body.get("targetSessionId"))
         .unwrap_or_else(|| generated_session_id_for_launch(&topology, &command, None));
-    if let Some(existing) = find_by_id(&topology, "sessions", &target_session_id)
-        && LIVE_STATUSES.contains(&string_field(&existing, "status").as_str())
+    if crate::project_service::plans::validate_plan_session_id(&target_session_id).is_none() {
+        return json_error(
+            400,
+            "targetSessionId must contain only letters, digits, underscores, and hyphens",
+        );
+    }
+    if find_by_id(&topology, "sessions", &target_session_id).is_some()
+        || find_by_id(&topology, "nodes", &format!("agent:{target_session_id}")).is_some()
+        || find_by_id(&topology, "bindings", &format!("tmux:{target_session_id}")).is_some()
     {
         return json_error(
-            500,
+            409,
             format!("Session \"{target_session_id}\" already exists"),
         );
+    }
+    if let Err(error) = super::fork_cleanup::ensure_fork_target_state_absent(
+        &context.project_state_dir(),
+        &target_session_id,
+    ) {
+        return json_error(409, error);
     }
     let source_worktree = trimmed_string(source_session.get("worktreePath"));
     let target_worktree = trimmed_string(body.get("worktreePath"))
         .or(source_worktree.clone())
         .filter(|path| path != &project_root);
-    let thread_id = match create_fork_handoff(
-        context,
-        &source_session,
-        &source_session_id,
-        &target_session_id,
-        &command,
-        target_worktree.as_deref(),
-        trimmed_string(body.get("instruction")).as_deref(),
-    ) {
-        Ok(thread_id) => thread_id,
-        Err(error) => return json_error(500, error),
-    };
     let native_fork_args = resolve_native_fork_args(
         &source_session,
         &tool_key,
         tool_config,
         launch_override.as_ref(),
     );
+    let instruction = trimmed_string(body.get("instruction"));
+    if (native_fork_args.is_none() || instruction.is_some())
+        && !super::agent_session_launch::supports_launch_preamble(tool_config)
+    {
+        return json_error(
+            400,
+            format!(
+                "Cannot carry fork context to tool \"{tool_key}\": configure preambleFlag or developerInstructionsConfigKey"
+            ),
+        );
+    }
+    let snapshot = if native_fork_args.is_none() {
+        let snapshot = match read_fork_source_snapshot(context.project_root(), &source_session_id) {
+            Ok(snapshot) => snapshot,
+            Err(error) => return json_error(500, error),
+        };
+        if snapshot.history_text.is_none()
+            && snapshot.live_text.is_none()
+            && snapshot.plan_text.is_none()
+            && snapshot.status_text.is_none()
+        {
+            return json_error(
+                409,
+                format!(
+                    "Cannot fork {source_session_id} into {tool_key}: source history/context is unavailable"
+                ),
+            );
+        }
+        Some(snapshot)
+    } else {
+        None
+    };
+    let mut artifacts = match ForkArtifacts::prepare(context.project_root(), &target_session_id) {
+        Ok(artifacts) => artifacts,
+        Err(error) => return json_error(409, error),
+    };
+    let preparation = if let Some(snapshot) = snapshot.as_ref() {
+        artifacts.seed(
+            &source_session_id,
+            &tool_key,
+            source_worktree.as_deref(),
+            snapshot,
+        )
+    } else {
+        artifacts.write_default_plan(&command, target_worktree.as_deref())
+    };
+    if let Err(error) = preparation {
+        return fork_failure(context, &mut artifacts, &target_session_id, error);
+    }
+    if tool_config.get("wrapperEnabled").and_then(Value::as_bool) != Some(false)
+        && Path::new(&command)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some("claude")
+        && let Err(error) = artifacts.reserve_file(
+            context
+                .project_state_dir()
+                .join("claude-settings")
+                .join(format!("{target_session_id}.json")),
+        )
+    {
+        return fork_failure(context, &mut artifacts, &target_session_id, error);
+    }
+    if let Err(error) = artifacts.reserve_runtime_files() {
+        return fork_failure(context, &mut artifacts, &target_session_id, error);
+    }
     let (args, extra_preamble, persist_args) = if let Some(native_fork_args) = native_fork_args {
         (
             native_fork_args,
-            trimmed_string(body.get("instruction")),
-            launch_override
-                .as_ref()
-                .map(|launch| launch.args.clone())
-                .or(Some(string_array_field(tool_config.get("args")))),
+            instruction.clone(),
+            Some(
+                launch_override
+                    .as_ref()
+                    .map(|launch| launch.args.clone())
+                    .unwrap_or_else(|| string_array_field(tool_config.get("args"))),
+            ),
         )
     } else {
-        let snapshot = read_fork_source_snapshot(context.project_root(), &source_session_id);
-        seed_fork_artifacts(
-            context.project_root(),
-            &source_session_id,
-            &target_session_id,
-            &tool_key,
-            source_worktree.as_deref(),
-            &snapshot,
-        );
         let fork_preamble = build_fork_preamble(
             context.project_root(),
             &source_session_id,
@@ -814,12 +881,11 @@ pub(super) fn route_agent_fork(
                 .and_then(|team| team.get("role"))
                 .and_then(Value::as_str),
             source_worktree.as_deref(),
-            &snapshot,
+            snapshot.as_ref().expect("portable fork snapshot"),
         );
-        let extra = [Some(fork_preamble), trimmed_string(body.get("instruction"))]
+        let extra = [Some(fork_preamble), instruction.clone()]
             .into_iter()
             .flatten()
-            .filter(|part| !part.trim().is_empty())
             .collect::<Vec<_>>()
             .join("\n\n");
         (
@@ -832,15 +898,23 @@ pub(super) fn route_agent_fork(
         )
     };
     let backend_session_id = launch_backend_session_id(tool_config, &command, &args);
+    let recovery_metadata = agent_window_metadata(
+        &json!({"label": command, "worktreePath": target_worktree}),
+        &target_session_id,
+        &tool_key,
+        &command,
+        persist_args.clone().unwrap_or_else(|| args.clone()),
+        None,
+    );
     let result = launch_agent_session(
         context,
         runtime,
         AgentSessionLaunchInput {
             session_id: target_session_id.clone(),
             tool_key: tool_key.clone(),
-            command,
+            command: command.clone(),
             args,
-            worktree_path: target_worktree,
+            worktree_path: target_worktree.clone(),
             label: None,
             team: None,
             extra_preamble,
@@ -852,16 +926,101 @@ pub(super) fn route_agent_fork(
             allow_replace_session: false,
             supervisor_role: None,
         },
+        true,
     );
-    match result {
-        Ok(result) => lifecycle_response(
-            json!({ "sessionId": result.session_id, "threadId": thread_id, "tool": tool_key }),
-            "agent.fork",
-            "agent",
-            Some(&result.session_id),
-        ),
-        Err(error) => json_user_facing_error(500, &error),
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => {
+            if let Some(target) = error.unreaped_target.as_ref() {
+                let mut message = error.to_string();
+                for recovery in [
+                    runtime.set_window_metadata(&target.window_id, &recovery_metadata),
+                    apply_agent_window_policy(runtime, &target.window_id, &tool_key),
+                    update_runtime_topology(
+                        runtime_topology_path(context.project_state_dir()),
+                        |topology| {
+                            upsert_agent_topology(
+                                topology,
+                                &recovery_metadata,
+                                target_worktree.as_deref(),
+                                target,
+                                "running",
+                                &project_root,
+                            )
+                        },
+                    )
+                    .map(|_| ()),
+                ] {
+                    if let Err(recovery) = recovery {
+                        message.push_str(&format!("; recovery tracking failed: {recovery}"));
+                    }
+                }
+                artifacts.commit();
+                return json_error(
+                    500,
+                    crate::debug_logging::sanitize_log_string(&format!(
+                        "{message}; fork target {} remains; retained its context for recovery",
+                        target.window_id
+                    )),
+                );
+            }
+            return fork_failure(
+                context,
+                &mut artifacts,
+                &target_session_id,
+                error.to_string(),
+            );
+        }
+    };
+    let thread_id = match create_fork_handoff(
+        context,
+        &source_session,
+        &source_session_id,
+        &target_session_id,
+        &command,
+        target_worktree.as_deref(),
+        instruction.as_deref(),
+    ) {
+        Ok(thread_id) => thread_id,
+        Err(error) => {
+            if let Err(cleanup) = runtime.kill_window(&result.target.window_id) {
+                artifacts.commit();
+                return json_error(
+                    500,
+                    crate::debug_logging::sanitize_log_string(&format!(
+                        "{error}; cleanup of {} failed: {cleanup}; fork context retained for recovery",
+                        result.target.window_id
+                    )),
+                );
+            }
+            return fork_failure(context, &mut artifacts, &target_session_id, error);
+        }
+    };
+    artifacts.commit();
+    lifecycle_response(
+        json!({ "sessionId": result.session_id, "threadId": thread_id, "tool": tool_key }),
+        "agent.fork",
+        "agent",
+        Some(&result.session_id),
+    )
+}
+
+fn fork_failure(
+    context: &ProjectServiceRequestContext,
+    artifacts: &mut ForkArtifacts,
+    target_session_id: &str,
+    mut error: String,
+) -> ProjectServiceDispatchResponse {
+    if let Err(cleanup) = super::fork_cleanup::rollback_fork_target_state(
+        context.project_state_dir().as_path(),
+        target_session_id,
+    ) {
+        error.push_str(&format!("; tracking rollback failed: {cleanup}"));
     }
+    if let Err(cleanup) = artifacts.rollback() {
+        error.push_str(&format!("; artifact rollback failed: {cleanup}"));
+    }
+    json_error(500, crate::debug_logging::sanitize_log_string(&error))
 }
 
 fn valid_fork_launch_fields(input: &Value) -> bool {
@@ -929,7 +1088,10 @@ pub(super) fn route_agent_switch_tool(
             Some(&session_id),
         );
     }
-    let snapshot = read_fork_source_snapshot(context.project_root(), &session_id);
+    let snapshot = match read_fork_source_snapshot(context.project_root(), &session_id) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return json_error(500, error),
+    };
     let source_tool_label = source_tool_key.clone();
     let target_tool_label = target_tool_key.clone();
     let continuity_preamble = build_tool_switch_continuity_preamble(
@@ -976,6 +1138,7 @@ pub(super) fn route_agent_switch_tool(
             allow_replace_session: true,
             supervisor_role: source_supervisor_role,
         },
+        false,
     );
     match result {
         Ok(result) => lifecycle_response(
@@ -1223,6 +1386,7 @@ fn resume_agent_session_with_args(
             &launch_cwd,
             &launch_command,
             &final_args,
+            true,
         ));
         if bytes > 16_000 {
             return json_error(
@@ -1243,61 +1407,27 @@ fn resume_agent_session_with_args(
             &launch_cwd,
             &launch_command,
             &final_args,
-        )
-    } else {
-        runtime.create_window(
-            &session_name,
-            &label,
-            &launch_cwd,
-            &launch_command,
-            &final_args,
             true,
         )
+    } else {
+        runtime
+            .create_window(
+                &session_name,
+                &label,
+                &launch_cwd,
+                &launch_command,
+                &final_args,
+                true,
+            )
+            .map_err(AgentSessionLaunchError::from)
     };
     let target = match created {
         Ok(target) => target,
         Err(error) => return resume_launch_error(&error, restart_args.is_some()),
     };
     if restart_args.is_some() {
-        for observation in 0..2 {
-            if observation > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(500));
-            }
-            let verification = runtime
-            .list_windows(&target.session_name)
-            .map_err(|error| {
-                format!(
-                    "Restart could not verify launched window {}: {error}",
-                    target.window_id
-                )
-            })
-            .and_then(|windows| {
-                match windows.iter().find(|window| window.id == target.window_id) {
-                    Some(window) if window.pane_dead != Some(true) => Ok(()),
-                    window => Err(format!(
-                        "Restart failed: tmux window {} for session {session_id} {} during launch",
-                        target.window_id,
-                        if window.is_some() {
-                            "exited"
-                        } else {
-                            "disappeared"
-                        },
-                    )),
-                }
-            });
-            if let Err(error) = verification {
-                let error = match runtime.capture_restart_window(&target) {
-                    Ok(Some(output)) if !output.trim().is_empty() => {
-                        format!("{error}: {}", output.trim())
-                    }
-                    Ok(_) => error,
-                    Err(capture) => format!("{error}; could not read child output: {capture}"),
-                };
-                return resume_launch_error(
-                    &cleanup_restart_window(runtime, &target, error),
-                    restart_args.is_some(),
-                );
-            }
+        if let Err(error) = verify_started_window(runtime, &target, &session_id) {
+            return resume_launch_error(&cleanup_restart_window(runtime, &target, error), true);
         }
         if let Err(error) = runtime.set_window_option(&target.window_id, "remain-on-exit", "off") {
             return resume_launch_error(&cleanup_restart_window(runtime, &target, error), true);

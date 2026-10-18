@@ -30,7 +30,10 @@ use super::agent_topology::{
 };
 use super::ids::{now_iso, pseudo_uuid_v4};
 use super::json_helpers::{find_by_id, string_array_field, string_field, trimmed_string};
-use super::runtime_adapter::{AsyncProjectLifecycleRuntime, ProjectLifecycleRuntime};
+use super::runtime_adapter::{
+    AgentSessionLaunchError, AsyncProjectLifecycleRuntime, ProjectLifecycleRuntime,
+    cleanup_launched_window, verify_started_window, window_launch_diagnostic,
+};
 use super::session_state::{clear_session_transcript_path, set_session_control_role};
 
 const AGENT_LAUNCH_WINDOW_VISIBLE_TIMEOUT: Duration = Duration::from_millis(500);
@@ -59,11 +62,27 @@ pub(super) struct AgentSessionLaunchResult {
     pub(super) target: crate::tmux::TmuxTarget,
 }
 
+pub(super) fn supports_launch_preamble(tool_config: &Value) -> bool {
+    let valid_flag = tool_config
+        .get("preambleFlag")
+        .and_then(Value::as_array)
+        .is_some_and(|flag| {
+            !flag.is_empty()
+                && flag
+                    .iter()
+                    .all(|arg| arg.as_str().is_some_and(|arg| !arg.contains('\0')))
+        });
+    valid_flag
+        || trimmed_string(tool_config.get("developerInstructionsConfigKey"))
+            .is_some_and(|key| !key.contains('\0'))
+}
+
 pub(super) fn launch_agent_session(
     context: &ProjectServiceRequestContext,
     runtime: &mut impl ProjectLifecycleRuntime,
     input: AgentSessionLaunchInput,
-) -> Result<AgentSessionLaunchResult, String> {
+    require_child_start: bool,
+) -> Result<AgentSessionLaunchResult, AgentSessionLaunchError> {
     let project_state_dir = context.project_state_dir();
     let project_root = context.project_root().to_string_lossy().into_owned();
     let config = load_config_for_known_project_root(context.project_root());
@@ -112,7 +131,7 @@ pub(super) fn launch_agent_session(
                 None,
                 None,
             );
-            return Err(error);
+            return Err(error.into());
         }
     };
     if !input.allow_replace_session
@@ -128,7 +147,7 @@ pub(super) fn launch_agent_session(
             None,
             None,
         );
-        return Err(error);
+        return Err(error.into());
     }
     let automatic_preamble_enabled = config
         .get("runtime")
@@ -150,7 +169,7 @@ pub(super) fn launch_agent_session(
                 automatic_preamble_enabled,
                 input.team.as_ref(),
             ),
-        )
+        )?
     };
     ensure_default_plan(
         context.project_root(),
@@ -169,7 +188,7 @@ pub(super) fn launch_agent_session(
         final_args.push(preamble.clone());
     }
     if !input.suppress_startup_preamble
-        && is_configured_codex
+        && is_configured_tool_command
         && !preamble.trim().is_empty()
         && let Some(key) = trimmed_string(tool_config.get("developerInstructionsConfigKey"))
     {
@@ -206,7 +225,7 @@ pub(super) fn launch_agent_session(
                 None,
                 None,
             );
-            return Err(error);
+            return Err(error.into());
         }
     };
     let launch_cwd = input
@@ -215,6 +234,30 @@ pub(super) fn launch_agent_session(
         .unwrap_or_else(|| project_root.clone());
     let label = input.label.clone().unwrap_or_else(|| input.command.clone());
     let session_name = project_session(&project_root, "aimux").session_name;
+    if require_child_start {
+        let bytes = crate::tmux::packed_argv_bytes(&crate::tmux::restart_window_argv(
+            &session_name,
+            &label,
+            &launch_cwd,
+            &launch_command,
+            &final_args,
+            input.detached,
+        ));
+        if bytes > 16_000 {
+            let error = format!(
+                "Cannot launch agent: launch command is {bytes} bytes; tmux command limit is 16000 bytes. Shorten the launch args."
+            );
+            record_launch_failure(
+                &project_state_dir,
+                &input,
+                "command-size",
+                &error,
+                None,
+                None,
+            );
+            return Err(error.into());
+        }
+    }
     if let Err(error) = runtime.ensure_project_session(context.project_root()) {
         record_launch_failure(
             &project_state_dir,
@@ -224,16 +267,30 @@ pub(super) fn launch_agent_session(
             None,
             None,
         );
-        return Err(error);
+        return Err(error.into());
     }
-    let target = match runtime.create_window(
-        &session_name,
-        &label,
-        &launch_cwd,
-        &launch_command,
-        &final_args,
-        input.detached,
-    ) {
+    let created = if require_child_start {
+        runtime.create_restart_window(
+            &session_name,
+            &label,
+            &launch_cwd,
+            &launch_command,
+            &final_args,
+            input.detached,
+        )
+    } else {
+        runtime
+            .create_window(
+                &session_name,
+                &label,
+                &launch_cwd,
+                &launch_command,
+                &final_args,
+                input.detached,
+            )
+            .map_err(AgentSessionLaunchError::from)
+    };
+    let target = match created {
         Ok(target) => {
             record_launch_outcome(LaunchOutcome {
                 project_state_dir: &project_state_dir,
@@ -253,13 +310,46 @@ pub(super) fn launch_agent_session(
                 &input,
                 "create-window",
                 &error,
-                None,
+                error.unreaped_target.as_ref(),
                 None,
             );
             return Err(error);
         }
     };
-    let _ = runtime.clear_history(&target.window_id);
+    if require_child_start {
+        if let Err(error) = verify_started_window(runtime, &target, &input.session_id) {
+            let error = cleanup_launched_window(runtime, &target, error);
+            record_launch_failure(
+                &project_state_dir,
+                &input,
+                "verify-child-start",
+                &error,
+                Some(&target),
+                None,
+            );
+            return Err(error);
+        }
+        if let Err(error) = runtime.set_window_option(&target.window_id, "remain-on-exit", "off") {
+            return Err(failed_created_launch(
+                runtime,
+                &project_state_dir,
+                &input,
+                "release-retained-window",
+                &target,
+                error,
+            ));
+        }
+    }
+    if let Err(error) = runtime.clear_history(&target.window_id) {
+        return Err(failed_created_launch(
+            runtime,
+            &project_state_dir,
+            &input,
+            "clear-history",
+            &target,
+            error,
+        ));
+    }
     let mut metadata_seed = Map::new();
     metadata_seed.insert("label".into(), Value::String(label));
     if let Some(team) = input.team.clone() {
@@ -284,48 +374,40 @@ pub(super) fn launch_agent_session(
         apply_supervisor_role_metadata(map, input.supervisor_role.as_deref());
     }
     if let Err(error) = runtime.set_window_metadata(&target.window_id, &metadata) {
-        let first_pane_capture = runtime.capture_window(&target);
-        let _ = runtime.kill_window(&target.window_id);
-        record_launch_failure(
+        return Err(failed_created_launch(
+            runtime,
             &project_state_dir,
             &input,
             "set-window-metadata",
-            &error,
-            Some(&target),
-            first_pane_capture,
-        );
-        return Err(error);
+            &target,
+            error,
+        ));
     }
     if let Err(error) = apply_agent_window_policy(runtime, &target.window_id, &input.tool_key) {
-        let first_pane_capture = runtime.capture_window(&target);
-        let _ = runtime.kill_window(&target.window_id);
-        record_launch_failure(
+        return Err(failed_created_launch(
+            runtime,
             &project_state_dir,
             &input,
             "apply-window-policy",
-            &error,
-            Some(&target),
-            first_pane_capture,
-        );
-        return Err(error);
+            &target,
+            error,
+        ));
     }
-    let visible =
-        runtime.wait_for_window_after_launch(&target, AGENT_LAUNCH_WINDOW_VISIBLE_TIMEOUT);
+    let visible = require_child_start
+        || runtime.wait_for_window_after_launch(&target, AGENT_LAUNCH_WINDOW_VISIBLE_TIMEOUT);
     if !visible {
         let error = format!(
             "agent launch failed: tmux window {} for session {} disappeared before startup completed",
             target.window_id, input.session_id
         );
-        let first_pane_capture = runtime.capture_window(&target);
-        record_launch_failure(
+        return Err(failed_created_launch(
+            runtime,
             &project_state_dir,
             &input,
             "wait-window-visible",
-            &error,
-            Some(&target),
-            first_pane_capture,
-        );
-        return Err(error);
+            &target,
+            error,
+        ));
     }
     if let Err(error) =
         update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
@@ -339,16 +421,14 @@ pub(super) fn launch_agent_session(
             )
         })
     {
-        let first_pane_capture = runtime.capture_window(&target);
-        record_launch_failure(
+        return Err(failed_created_launch(
+            runtime,
             &project_state_dir,
             &input,
             "persist-topology",
-            &error,
-            Some(&target),
-            first_pane_capture,
-        );
-        return Err(error);
+            &target,
+            error,
+        ));
     }
     let first_pane_capture = runtime.capture_window(&target);
     record_launch_outcome(LaunchOutcome {
@@ -370,6 +450,27 @@ pub(super) fn launch_agent_session(
         session_id: input.session_id,
         target,
     })
+}
+
+fn failed_created_launch(
+    runtime: &mut impl ProjectLifecycleRuntime,
+    project_state_dir: &Path,
+    input: &AgentSessionLaunchInput,
+    stage: &'static str,
+    target: &crate::tmux::TmuxTarget,
+    message: String,
+) -> AgentSessionLaunchError {
+    let (message, capture) = window_launch_diagnostic(runtime, target, message);
+    let error = cleanup_launched_window(runtime, target, message);
+    record_launch_failure(
+        project_state_dir,
+        input,
+        stage,
+        &error,
+        Some(target),
+        capture,
+    );
+    error
 }
 
 pub(super) async fn launch_agent_session_async(
@@ -464,7 +565,7 @@ pub(super) async fn launch_agent_session_async(
                 automatic_preamble_enabled,
                 input.team.as_ref(),
             ),
-        )
+        )?
     };
     ensure_default_plan(
         context.project_root(),
@@ -483,7 +584,7 @@ pub(super) async fn launch_agent_session_async(
         final_args.push(preamble.clone());
     }
     if !input.suppress_startup_preamble
-        && is_configured_codex
+        && is_configured_tool_command
         && !preamble.trim().is_empty()
         && let Some(key) = trimmed_string(tool_config.get("developerInstructionsConfigKey"))
     {

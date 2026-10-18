@@ -137,6 +137,7 @@ pub fn ensure_default_scribe_agent(
             allow_replace_session: false,
             supervisor_role: Some("scribe".to_owned()),
         },
+        false,
     ) {
         Ok(result) => json!({
             "created": true,
