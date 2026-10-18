@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React from "react";
 import type { ProjectStateKey } from "@/lib/project-key";
-import { View } from "react-native";
-import { useSetAtom } from "jotai";
+import { ActivityIndicator, View } from "react-native";
+import { useAtomValue, useSetAtom } from "jotai";
 import {
   GitFork,
   Layers,
@@ -27,10 +27,10 @@ import { agentCompactIdentity } from "@/lib/agent-display";
 import { canResumeSession } from "@/lib/agent-lifecycle";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { type DesktopSession, isSupervisorLaneSession } from "@/lib/desktop-state";
-import { isTransientRequestError } from "@/lib/request-errors";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
+import { agentActionsFamily, type AgentRowAction } from "@/stores/agentActions";
 import {
   failLocalProjectLifecycleTransition,
   localProjectLifecycleTransition,
@@ -73,13 +73,14 @@ export function AgentActions({
   mainCheckoutPath?: string | null;
   onKilled?: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const actions = agentActionsFamily({ projectStateKey, sessionId: session.id });
+  const { busyAction, error } = useAtomValue(actions);
+  const performAction = useSetAtom(actions);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
   const hasPendingAction = Boolean(session.pendingAction);
-  const canAct = !!endpoint && !busy && !hasPendingAction;
+  const canAct = !!endpoint && busyAction === null && !hasPendingAction;
   const isRunning =
     session.status === "running" || session.status === "waiting" || session.status === "idle";
   const canResume = canResumeSession(session);
@@ -97,78 +98,86 @@ export function AgentActions({
   const planeAction = planeActionForSession(session, mainCheckoutPath);
 
   function runAction(
+    action: AgentRowAction,
     fn: () => Promise<{ transition?: ProjectLifecycleTransition }>,
     opts?: { isKill?: boolean; localTransition?: () => ProjectLifecycleTransition },
   ) {
     return async () => {
       if (!endpoint) return;
-      setBusy(true);
-      setError(null);
-      const localTransition = opts?.localTransition?.();
-      if (localTransition) {
-        recordTransition({
-          projectStateKey,
-          transition: localTransition,
-          label: session.label || session.id,
-          tool: forkTool || session.toolConfigKey || firstTokenOf(session.command),
-          worktreePath: session.worktreePath,
-        });
-      }
-      try {
-        const response = await fn();
-        recordTransition({
-          projectStateKey,
-          transition: response.transition,
-          label: session.label || session.id,
-          tool: forkTool || session.toolConfigKey || firstTokenOf(session.command),
-          worktreePath: session.worktreePath,
-        });
-        kickDesktopRefresh();
-        kickProjectViewRefresh(
-          opts?.isKill ? [...AGENT_ACTION_REFRESH_VIEWS, "graveyard"] : AGENT_ACTION_REFRESH_VIEWS,
-        );
-        if (opts?.isKill) onKilled?.();
-      } catch (e) {
-        if (localTransition) {
+      let localTransition: ProjectLifecycleTransition | undefined;
+      return performAction({
+        action,
+        request: fn,
+        onStarted: () => {
+          localTransition = opts?.localTransition?.();
+          if (!localTransition) return;
           recordTransition({
             projectStateKey,
-            transition: failLocalProjectLifecycleTransition(localTransition),
+            transition: localTransition,
             label: session.label || session.id,
             tool: forkTool || session.toolConfigKey || firstTokenOf(session.command),
             worktreePath: session.worktreePath,
           });
-        }
-        if (!isTransientRequestError(e)) {
-          setError(e instanceof Error ? e.message : String(e));
-        }
-      } finally {
-        setBusy(false);
-      }
+        },
+        onSucceeded: (response) => {
+          recordTransition({
+            projectStateKey,
+            transition: response.transition,
+            label: session.label || session.id,
+            tool: forkTool || session.toolConfigKey || firstTokenOf(session.command),
+            worktreePath: session.worktreePath,
+          });
+          kickDesktopRefresh();
+          kickProjectViewRefresh(
+            opts?.isKill
+              ? [...AGENT_ACTION_REFRESH_VIEWS, "graveyard"]
+              : AGENT_ACTION_REFRESH_VIEWS,
+          );
+          if (opts?.isKill) onKilled?.();
+        },
+        onFailed: () => {
+          if (localTransition) {
+            recordTransition({
+              projectStateKey,
+              transition: failLocalProjectLifecycleTransition(localTransition),
+              label: session.label || session.id,
+              tool: forkTool || session.toolConfigKey || firstTokenOf(session.command),
+              worktreePath: session.worktreePath,
+            });
+          }
+        },
+      });
     };
   }
 
   if (!endpoint) {
-    return compact ? null : <Text className="text-xs text-muted-foreground">controls offline</Text>;
+    return (
+      <View>
+        {busyAction === "resume" ? (
+          <ActivityIndicator accessibilityLabel={`Starting ${displayName}`} size="small" />
+        ) : compact ? null : (
+          <Text className="text-xs text-muted-foreground">controls offline</Text>
+        )}
+        {error ? (
+          <Text accessibilityRole="alert" className="mt-1 text-[11px] text-destructive">
+            {error}
+          </Text>
+        ) : null}
+      </View>
+    );
   }
 
   const sizeClass = compact ? "h-7 w-7" : "h-9 w-9";
   const iconSize = compact ? 13 : 15;
-  // No second filter: `error` only ever holds something the catch site
-  // already judged worth showing, and by then it is a string -- so re-asking
-  // `isTransientRequestError` here reads a message with no `kind` on it and
-  // silently answers "not transient" for every cancellation. A dead guard that
-  // looks like a live one.
-  const visibleError = error;
-
   return (
     <View>
       <View className="flex-row items-center gap-1">
-        {isRunning ? (
+        {isRunning && busyAction !== "resume" ? (
           <ActionButton
             icon={Square}
             iconSize={iconSize}
             sizeClass={sizeClass}
-            onPress={runAction(() => stopAgent(endpoint, session.id, { token }), {
+            onPress={runAction("stop", () => stopAgent(endpoint, session.id, { token }), {
               localTransition: () =>
                 localProjectLifecycleTransition({
                   operation: "agent.stop",
@@ -179,12 +188,12 @@ export function AgentActions({
             disabled={!canAct}
             label={`Stop ${displayName}`}
           />
-        ) : canResume ? (
+        ) : canResume || busyAction === "resume" ? (
           <ActionButton
             icon={Play}
             iconSize={iconSize}
             sizeClass={sizeClass}
-            onPress={runAction(() => resumeAgent(endpoint, session.id, { token }), {
+            onPress={runAction("resume", () => resumeAgent(endpoint, session.id, { token }), {
               localTransition: () =>
                 localProjectLifecycleTransition({
                   operation: "agent.resume",
@@ -193,7 +202,8 @@ export function AgentActions({
                 }),
             })}
             disabled={!canAct}
-            label={`Resume ${displayName}`}
+            loading={busyAction === "resume"}
+            label={busyAction === "resume" ? `Starting ${displayName}` : `Resume ${displayName}`}
           />
         ) : resumeBlocked ? (
           <ActionButton
@@ -212,7 +222,7 @@ export function AgentActions({
             icon={GitFork}
             iconSize={iconSize}
             sizeClass={sizeClass}
-            onPress={runAction(() =>
+            onPress={runAction("fork", () =>
               forkAgent(
                 endpoint,
                 {
@@ -235,7 +245,7 @@ export function AgentActions({
             icon={overseerAction === "demote" ? ShieldOff : Radar}
             iconSize={iconSize}
             sizeClass={sizeClass}
-            onPress={runAction(async () => {
+            onPress={runAction("overseer", async () => {
               await setAgentOverseer(
                 endpoint,
                 { sessionId: session.id, active: overseerAction === "promote" },
@@ -257,7 +267,7 @@ export function AgentActions({
           icon={planeAction.kind === "leave" ? LogOut : Layers}
           iconSize={iconSize}
           sizeClass={sizeClass}
-          onPress={runAction(async () => {
+          onPress={runAction("plane", async () => {
             await setAgentPlane(
               endpoint,
               {
@@ -284,7 +294,7 @@ export function AgentActions({
           icon={Trash2}
           iconSize={iconSize}
           sizeClass={sizeClass}
-          onPress={runAction(() => killAgent(endpoint, session.id, { token }), {
+          onPress={runAction("kill", () => killAgent(endpoint, session.id, { token }), {
             isKill: true,
             localTransition: () =>
               localProjectLifecycleTransition({
@@ -297,8 +307,10 @@ export function AgentActions({
           label={`Kill ${displayName}`}
         />
       </View>
-      {visibleError ? (
-        <Text className="mt-1 text-[11px] text-destructive">{visibleError}</Text>
+      {error ? (
+        <Text accessibilityRole="alert" className="mt-1 text-[11px] text-destructive">
+          {error}
+        </Text>
       ) : null}
     </View>
   );
@@ -349,6 +361,7 @@ function ActionButton({
   sizeClass,
   onPress,
   disabled,
+  loading,
   label,
 }: {
   icon: LucideIcon;
@@ -356,6 +369,7 @@ function ActionButton({
   sizeClass: string;
   onPress: () => void;
   disabled?: boolean;
+  loading?: boolean;
   label: string;
 }) {
   return (
@@ -365,9 +379,14 @@ function ActionButton({
       onPress={onPress}
       disabled={disabled}
       accessibilityLabel={label}
+      accessibilityState={{ busy: Boolean(loading), disabled: Boolean(disabled) }}
       className={cn("p-0", sizeClass)}
     >
-      <Icon size={iconSize} color="#a1a1aa" />
+      {loading ? (
+        <ActivityIndicator size="small" color="#a1a1aa" />
+      ) : (
+        <Icon size={iconSize} color="#a1a1aa" />
+      )}
     </Button>
   );
 }
