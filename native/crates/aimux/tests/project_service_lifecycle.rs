@@ -1302,6 +1302,95 @@ fn agent_spawn_accepts_generic_supervisor_role() {
 }
 
 #[test]
+fn agent_spawn_keeps_existing_control_agents_in_supervisor_lane() {
+    let project = temp_project("agent-spawn-control-peers");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+    for id in ["control-first", "control-second"] {
+        let response = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::SPAWN,
+            Some(&json!({"tool": "mock", "sessionId": id, "role": "control", "open": false})),
+            &mut runtime,
+        )
+        .expect("spawn route");
+        assert_eq!(response.status, 200, "{id}: {}", response.body);
+    }
+    assert_eq!(runtime.created.len(), 2);
+    let metadata = load_metadata_state(&state_dir);
+    for id in ["control-first", "control-second"] {
+        assert_eq!(metadata.sessions[id]["projectControl"], true, "{id}");
+        assert_eq!(metadata.sessions[id]["role"], "control", "{id}");
+    }
+    let live_windows = LiveWindowIndex::from_pairs(
+        runtime
+            .created
+            .iter()
+            .enumerate()
+            .map(|(index, window)| (format!("@{}", index + 11), window.session_name.clone())),
+    );
+    let topology = read_topology(&state_dir);
+    let state = aimux::project_service::desktop_state::build_desktop_state_with_live_window_ids(
+        aimux::project_service::desktop_state::DesktopStateInput {
+            project_root: project.to_string_lossy().into_owned(),
+            topology: &topology,
+            metadata_sessions: &metadata.sessions,
+            exchange: &json!({}),
+        },
+        Some(&live_windows),
+    );
+    let supervisors = state["supervisorLane"]["sessions"]
+        .as_array()
+        .expect("supervisor sessions");
+    assert_eq!(
+        supervisors
+            .iter()
+            .map(|session| session["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["control-first", "control-second"]
+    );
+    cleanup(project);
+}
+
+#[test]
+fn agent_spawn_keeps_overseer_and_scribe_roles_singleton() {
+    for role in ["overseer", "scribe"] {
+        let project = temp_project(&format!("agent-spawn-singleton-{role}"));
+        write_project_tool_config(&project);
+        let state_dir = project.join("state");
+        let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+        let mut runtime = FakeLifecycleRuntime::default();
+        for id in ["first", "second"] {
+            let response = route_lifecycle_request_with_runtime(
+                &context,
+                "POST",
+                routes::agents::SPAWN,
+                Some(&json!({"tool": "mock", "sessionId": id, "role": role, "open": false})),
+                &mut runtime,
+            )
+            .expect("spawn route");
+            assert_eq!(response.status, 200, "{role}/{id}: {}", response.body);
+        }
+        assert_eq!(runtime.created.len(), 2, "{role}");
+        let metadata = load_metadata_state(&state_dir);
+        assert_eq!(
+            metadata.sessions["first"]["projectControl"], false,
+            "{role}"
+        );
+        assert!(metadata.sessions["first"].get(role).is_none(), "{role}");
+        assert_eq!(
+            metadata.sessions["second"]["projectControl"], true,
+            "{role}"
+        );
+        assert_eq!(metadata.sessions["second"][role], true, "{role}");
+        cleanup(project);
+    }
+}
+
+#[test]
 fn agent_spawn_without_role_keeps_worktree_coder_default() {
     let project = temp_project("agent-spawn-coder-default");
     write_project_tool_config(&project);

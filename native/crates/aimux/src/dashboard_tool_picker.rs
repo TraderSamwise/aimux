@@ -49,7 +49,7 @@ impl DashboardToolPickerState {
 
     pub fn with_mode(tools: Vec<DashboardToolEntry>, mode: DashboardToolPickerMode) -> Self {
         let create_in_worktree = matches!(&mode, DashboardToolPickerMode::Create(policy)
-            if policy.default_target != DashboardAgentCreationTarget::Worktree);
+            if policy.default_target == DashboardAgentCreationTarget::Worktree);
         Self {
             tools,
             index: 0,
