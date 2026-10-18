@@ -8,6 +8,7 @@
 
 use crate::agent_goal::GoalKind;
 use crate::atomic_write::write_json_atomic;
+use crate::project_service::agents::overseer_session_ids_for_state;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -92,6 +93,8 @@ pub struct BufferedLoopSend {
     pub text: String,
     pub signature: String,
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_failed_at_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub candidate_keys: Vec<BufferedLoopCandidateKey>,
 }
@@ -133,6 +136,11 @@ pub struct BufferedLoopCandidateKey {
 /// Cross-scan state: who was nudged when, and when the overseer was last woken.
 #[derive(Debug, Default)]
 pub struct LoopWatcher {
+    // The outer watcher owns shared pauses and observable records. Each
+    // recipient engine owns its delivery cadence; engines only call the
+    // internal planner and never create children.
+    recipient_watchers: BTreeMap<String, LoopWatcher>,
+    last_delivery_recipient: Option<String>,
     last_nudge_at: BTreeMap<String, i64>,
     last_overseer_wake_at: i64,
     stopped_since: BTreeMap<LoopDwellKey, LoopStoppedState>,
@@ -157,6 +165,8 @@ pub struct LoopWatcher {
     unchanged_idle_fleet_ticks: u64,
     idle_fleet_condition_since_ms: Option<i64>,
     reported_loop_exits: BTreeSet<String>,
+    loop_exit_attempts: BTreeMap<String, i64>,
+    pending_loop_exits: BTreeMap<String, Vec<String>>,
     /// Token budgets whose "you have reached it" has already been said, keyed
     /// by session and budget so raising the budget arms it again.
     announced_token_goals: BTreeSet<String>,
@@ -271,11 +281,91 @@ impl LoopWatcher {
     }
 
     pub fn plan_sends(&mut self, input: &Value, now_ms: i64) -> Vec<LoopSend> {
-        let mut sends = Vec::new();
         let metadata = input.get("metadata").unwrap_or(&Value::Null);
-        let overseer_id = find_overseer_session_id(metadata);
+        let overseer_ids = overseer_session_ids_for_state(array_field(input, "sessions"), metadata);
+        self.recipient_watchers
+            .retain(|id, _| overseer_ids.contains(id));
         self.gc_stale_pauses(input);
-        let loop_exit_summary = self.plan_loop_exit_summary(overseer_id.as_deref(), input);
+        let recipients = overseer_ids
+            .iter()
+            .filter(|id| session_can_receive_loop_send(input, id))
+            .collect::<Vec<_>>();
+        if recipients.is_empty() {
+            return self.plan_sends_for_recipient(input, now_ms, None);
+        }
+        let mut sends = self.plan_session_token_announcements(input, now_ms);
+        for id in recipients {
+            let watcher = self.recipient_watchers.entry(id.clone()).or_default();
+            watcher.paused_loop_alerts = self.paused_loop_alerts.clone();
+            sends.extend(watcher.plan_sends_for_recipient(input, now_ms, Some(id.clone())));
+        }
+        sends
+    }
+
+    fn plan_session_token_announcements(&mut self, input: &Value, now_ms: i64) -> Vec<LoopSend> {
+        // Budget ownership follows the session and goal, never its current
+        // role. Promotion/demotion can replace a recipient engine without
+        // discarding a delivered or buffered budget announcement.
+        let mut candidates = find_loop_candidates_excluding(input, None)
+            .into_iter()
+            .filter(candidate_token_goal_reached)
+            .collect::<Vec<_>>();
+        self.extract_paused_candidates(&mut candidates);
+        let live_token_goals = live_token_goal_keys(input);
+        self.announced_token_goals
+            .retain(|key| live_token_goals.contains(key));
+        self.pending_token_goal_announcements
+            .retain(|_, key| live_token_goals.contains(key));
+        let candidates = self.dwelled_candidates(
+            candidates,
+            now_ms,
+            config_i64(input, "stoppedDwellMs", 0),
+            config_i64(input, "nudgeCooldownMs", 60_000),
+            config_u64(input, "unchangedReminderTicks"),
+        );
+        self.plan_token_goal_announcements(candidates, input)
+    }
+
+    fn plan_token_goal_announcements(
+        &mut self,
+        candidates: Vec<DwelledCandidate>,
+        input: &Value,
+    ) -> Vec<LoopSend> {
+        let mut sends = Vec::new();
+        for candidate in candidates {
+            let id = str_field(&candidate.value, "id").to_owned();
+            let Some(key) = token_goal_announcement_key(&candidate.value) else {
+                continue;
+            };
+            if self.announced_token_goals.contains(&key)
+                || !session_can_receive_loop_send(input, &id)
+            {
+                continue;
+            }
+            let signature = candidate_signature(std::slice::from_ref(&candidate.value));
+            self.pending_send_keys
+                .insert(signature.clone(), vec![candidate.key.clone()]);
+            self.pending_token_goal_announcements
+                .insert(signature.clone(), key);
+            sends.push(LoopSend {
+                session_id: id,
+                text: build_token_goal_met_notice(&candidate.value),
+                signature,
+                kind: LoopSendKind::DirectNudge,
+            });
+        }
+        sends
+    }
+
+    fn plan_sends_for_recipient(
+        &mut self,
+        input: &Value,
+        now_ms: i64,
+        overseer_id: Option<String>,
+    ) -> Vec<LoopSend> {
+        let mut sends = Vec::new();
+        self.gc_stale_pauses(input);
+        let loop_exit_summary = self.plan_loop_exit_summary(overseer_id.as_deref(), input, now_ms);
         // The fleet scan still excludes the overseer, because it also answers
         // "who is spare capacity" -- an idle overseer under a goal would read
         // as capacity forever and silence idle-fleet briefings. Its own goal
@@ -296,6 +386,12 @@ impl LoopWatcher {
         self.announced_token_goals
             .retain(|key| live_token_goals.contains(key));
         let paused_candidates = self.extract_paused_candidates(&mut raw_candidates);
+        if overseer_id.is_some() {
+            // All budget announcements belong to the outer watcher. Keep
+            // paused goals in summaries, while recipient engines only nudge
+            // their own non-met goals and report fleet work.
+            raw_candidates.retain(|candidate| !candidate_token_goal_reached(candidate));
+        }
         let paused_summary =
             self.plan_paused_summary(&paused_candidates, overseer_id.as_deref(), input);
         let reconciliation =
@@ -316,31 +412,7 @@ impl LoopWatcher {
         let (budget_reached, candidates): (Vec<_>, Vec<_>) = candidates
             .into_iter()
             .partition(|candidate| candidate_token_goal_reached(&candidate.value));
-        for candidate in budget_reached {
-            let id = str_field(&candidate.value, "id").to_owned();
-            let Some(key) = token_goal_announcement_key(&candidate.value) else {
-                continue;
-            };
-            if self.announced_token_goals.contains(&key) {
-                continue;
-            }
-            if !session_can_receive_loop_send(input, &id) {
-                continue;
-            }
-            let signature = candidate_signature(std::slice::from_ref(&candidate.value));
-            self.pending_send_keys
-                .insert(signature.clone(), vec![candidate.key.clone()]);
-            // Marked as said only once it lands, so a failed send is retried
-            // rather than silently counted as delivered.
-            self.pending_token_goal_announcements
-                .insert(signature.clone(), key);
-            sends.push(LoopSend {
-                session_id: id,
-                text: build_token_goal_met_notice(&candidate.value),
-                signature,
-                kind: LoopSendKind::DirectNudge,
-            });
-        }
+        sends.extend(self.plan_token_goal_announcements(budget_reached, input));
         // Split after dwelling, not before: its own goal is not news about the
         // fleet, so it is a direct nudge rather than a line in a briefing the
         // overseer is meant to act on.
@@ -482,6 +554,17 @@ impl LoopWatcher {
         now_ms: i64,
         outcome: LoopDeliveryOutcome,
     ) {
+        if !matches!(outcome, LoopDeliveryOutcome::Buffered) {
+            self.last_delivery_recipient = Some(send.session_id.clone());
+        }
+        if !self.owns_token_goal_announcement(send)
+            && !self.owns_buffered_send(send)
+            && let Some(watcher) = self.recipient_watchers.get_mut(&send.session_id)
+        {
+            watcher.commit_send_result(send, now_ms, outcome.clone());
+            self.record_delivery(send, now_ms, outcome);
+            return;
+        }
         match send.kind {
             LoopSendKind::OverseerBriefing | LoopSendKind::LoopExit => {
                 self.last_overseer_wake_at = now_ms;
@@ -506,10 +589,34 @@ impl LoopWatcher {
             }
         }
         let delivered = matches!(outcome, LoopDeliveryOutcome::Delivered);
-        if let Some(key) = self
-            .pending_token_goal_announcements
-            .remove(&send.signature)
-            && delivered
+        if let Some(buffered) = self
+            .buffered_sends
+            .get_mut(&buffered_send_key(send))
+            .filter(|buffered| buffered.session_id == send.session_id)
+        {
+            match &outcome {
+                LoopDeliveryOutcome::Failed { .. } => buffered.last_failed_at_ms = Some(now_ms),
+                LoopDeliveryOutcome::Delivered => buffered.last_failed_at_ms = None,
+                LoopDeliveryOutcome::Buffered => {}
+            }
+        }
+        if send.kind == LoopSendKind::LoopExit {
+            if let Some(keys) = self.pending_loop_exits.get(&send.signature) {
+                for key in keys {
+                    self.loop_exit_attempts.insert(key.clone(), now_ms);
+                    if delivered {
+                        self.reported_loop_exits.insert(key.clone());
+                    }
+                }
+            }
+            if delivered {
+                self.pending_loop_exits.remove(&send.signature);
+            }
+        }
+        if delivered
+            && let Some(key) = self
+                .pending_token_goal_announcements
+                .remove(&send.signature)
         {
             self.announced_token_goals.insert(key);
         }
@@ -554,9 +661,7 @@ impl LoopWatcher {
         sends: &[LoopSend],
         indeterminate: Vec<LoopScanIndeterminate>,
     ) {
-        let metadata = input.get("metadata").unwrap_or(&Value::Null);
-        let overseer_id = find_overseer_session_id(metadata);
-        let raw_candidates = find_loop_candidates_with_overseer(input, overseer_id.as_deref());
+        let raw_candidates = find_loop_candidates_with_overseer(input, None);
         let mut raw_candidate_ids = raw_candidates
             .iter()
             .filter_map(|candidate| optional_str(candidate, "id").map(ToOwned::to_owned))
@@ -567,7 +672,7 @@ impl LoopWatcher {
             at_ms: now_ms,
             raw_candidate_count: raw_candidates.len(),
             planned_send_count: sends.len(),
-            buffered_send_count: self.buffered_sends.len(),
+            buffered_send_count: self.buffered_send_count(),
             raw_candidate_ids,
             planned_send_kinds: sends
                 .iter()
@@ -659,7 +764,27 @@ impl LoopWatcher {
             .is_some_and(|pause| pause.expires_at_ms > now_ms)
     }
 
+    fn owns_buffered_send(&self, send: &LoopSend) -> bool {
+        self.buffered_sends
+            .get(&buffered_send_key(send))
+            .is_some_and(|buffered| buffered.session_id == send.session_id)
+    }
+
+    fn owns_token_goal_announcement(&self, send: &LoopSend) -> bool {
+        send.kind == LoopSendKind::DirectNudge
+            && self
+                .pending_token_goal_announcements
+                .contains_key(&send.signature)
+    }
+
     pub fn buffer_send(&mut self, send: &LoopSend, now_ms: i64) {
+        if !self.owns_token_goal_announcement(send)
+            && !self.owns_buffered_send(send)
+            && let Some(watcher) = self.recipient_watchers.get_mut(&send.session_id)
+        {
+            watcher.buffer_send(send, now_ms);
+            return;
+        }
         let key = buffered_send_key(send);
         let candidate_keys = self
             .pending_send_keys
@@ -682,6 +807,7 @@ impl LoopWatcher {
                 text: send.text.clone(),
                 signature: send.signature.clone(),
                 kind: loop_send_kind_name(send.kind).to_owned(),
+                last_failed_at_ms: None,
                 candidate_keys: Vec::new(),
             });
         entry.last_seen_at_ms = now_ms;
@@ -690,10 +816,31 @@ impl LoopWatcher {
         entry.text = send.text.clone();
         entry.signature = send.signature.clone();
         entry.kind = loop_send_kind_name(send.kind).to_owned();
-        entry.candidate_keys = candidate_keys
-            .iter()
-            .map(BufferedLoopCandidateKey::from_dwell_key)
-            .collect();
+        if !candidate_keys.is_empty() {
+            entry.candidate_keys = candidate_keys
+                .iter()
+                .map(BufferedLoopCandidateKey::from_dwell_key)
+                .collect();
+        }
+    }
+
+    pub fn last_delivery_recipient(&self) -> Option<&str> {
+        self.last_delivery_recipient.as_deref()
+    }
+
+    pub fn buffered_send_retry_due(&self, send: &LoopSend, now_ms: i64, cooldown_ms: i64) -> bool {
+        if let Some(buffered) = self
+            .buffered_sends
+            .get(&buffered_send_key(send))
+            .filter(|buffered| buffered.session_id == send.session_id)
+        {
+            return buffered
+                .last_failed_at_ms
+                .is_none_or(|failed_at| now_ms.saturating_sub(failed_at) >= cooldown_ms);
+        }
+        self.recipient_watchers
+            .get(&send.session_id)
+            .is_none_or(|watcher| watcher.buffered_send_retry_due(send, now_ms, cooldown_ms))
     }
 
     pub fn buffered_sends_to_deliver(&self, limit: usize) -> Vec<LoopSend> {
@@ -701,15 +848,31 @@ impl LoopWatcher {
             .values()
             .take(limit)
             .filter_map(buffered_send_to_loop_send)
+            .chain(
+                self.recipient_watchers
+                    .values()
+                    .flat_map(|watcher| watcher.buffered_sends_to_deliver(limit)),
+            )
+            .take(limit)
             .collect()
     }
 
     pub fn remove_buffered_send(&mut self, send: &LoopSend) {
-        self.buffered_sends.remove(&buffered_send_key(send));
+        if self.owns_buffered_send(send) {
+            self.buffered_sends.remove(&buffered_send_key(send));
+        }
+        if let Some(watcher) = self.recipient_watchers.get_mut(&send.session_id) {
+            watcher.remove_buffered_send(send);
+        }
     }
 
     pub fn buffered_send_count(&self) -> usize {
         self.buffered_sends.len()
+            + self
+                .recipient_watchers
+                .values()
+                .map(Self::buffered_send_count)
+                .sum::<usize>()
     }
 
     pub fn note_global_pause_tick(&mut self) {
@@ -725,7 +888,7 @@ impl LoopWatcher {
                 "pausedAtMs": pause.paused_at_ms,
                 "expiresAtMs": pause.expires_at_ms,
                 "remainingMs": pause.expires_at_ms.saturating_sub(now_ms),
-                "bufferedCount": self.buffered_sends.len(),
+                "bufferedCount": self.buffered_send_count(),
                 "pausedBy": pause.paused_by,
                 "pausedBySessionId": pause.paused_by_session_id,
                 "pausedByRole": pause.paused_by_role,
@@ -737,10 +900,10 @@ impl LoopWatcher {
             "ok": true,
             "globalPause": global_pause.unwrap_or_else(|| json!({
                 "enabled": false,
-                "bufferedCount": self.buffered_sends.len()
+                "bufferedCount": self.buffered_send_count()
             })),
             "pausedCount": self.paused_loop_alerts.len(),
-            "bufferedCount": self.buffered_sends.len(),
+            "bufferedCount": self.buffered_send_count(),
             "recentScans": self.scan_records
         })
     }
@@ -945,20 +1108,33 @@ impl LoopWatcher {
         &mut self,
         overseer_id: Option<&str>,
         input: &Value,
+        now_ms: i64,
     ) -> Option<LoopSend> {
         let overseer_id = overseer_id.filter(|id| session_can_receive_loop_send(input, id))?;
         let candidates = find_loop_exit_candidates_with_overseer(input, Some(overseer_id));
+        let cooldown_ms = config_i64(input, "nudgeCooldownMs", 60_000).max(0);
         let unreported = candidates
             .into_iter()
             .filter(|candidate| {
-                self.reported_loop_exits
-                    .insert(loop_exit_candidate_signature(candidate))
+                let key = loop_exit_candidate_signature(candidate);
+                !self.reported_loop_exits.contains(&key)
+                    && self
+                        .loop_exit_attempts
+                        .get(&key)
+                        .is_none_or(|at| now_ms.saturating_sub(*at) >= cooldown_ms)
             })
             .collect::<Vec<_>>();
         if unreported.is_empty() {
             return None;
         }
         let signature = format!("loop-exit:{}", candidate_signature(&unreported));
+        self.pending_loop_exits.insert(
+            signature.clone(),
+            unreported
+                .iter()
+                .map(loop_exit_candidate_signature)
+                .collect(),
+        );
         Some(LoopSend {
             session_id: overseer_id.to_owned(),
             text: build_loop_exit_briefing(&unreported),
@@ -1107,6 +1283,10 @@ pub fn clear_loop_alert_pause_for_work(
 #[serde(rename_all = "camelCase")]
 struct PersistentLoopWatcherState {
     version: u32,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    recipient_watchers: BTreeMap<String, PersistentLoopWatcherState>,
+    #[serde(default)]
+    last_delivery_recipient: Option<String>,
     last_nudge_at: BTreeMap<String, i64>,
     last_overseer_wake_at: i64,
     stopped_since: Vec<PersistentStoppedSince>,
@@ -1159,7 +1339,13 @@ struct PersistentLoopWatcherState {
     #[serde(default)]
     reported_loop_exits: Vec<String>,
     #[serde(default)]
+    loop_exit_attempts: BTreeMap<String, i64>,
+    #[serde(default)]
+    pending_loop_exits: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
     announced_token_goals: Vec<String>,
+    #[serde(default)]
+    pending_token_goal_announcements: BTreeMap<String, String>,
     #[serde(default)]
     scan_records: Vec<LoopScanRecord>,
 }
@@ -1188,6 +1374,12 @@ impl PersistentLoopWatcherState {
     fn from_watcher(watcher: &LoopWatcher) -> Self {
         Self {
             version: 1,
+            recipient_watchers: watcher
+                .recipient_watchers
+                .iter()
+                .map(|(id, recipient)| (id.clone(), Self::from_watcher(recipient)))
+                .collect(),
+            last_delivery_recipient: watcher.last_delivery_recipient.clone(),
             last_nudge_at: watcher.last_nudge_at.clone(),
             last_overseer_wake_at: watcher.last_overseer_wake_at,
             stopped_since: watcher
@@ -1236,7 +1428,10 @@ impl PersistentLoopWatcherState {
             unchanged_idle_fleet_ticks: watcher.unchanged_idle_fleet_ticks,
             idle_fleet_condition_since_ms: watcher.idle_fleet_condition_since_ms,
             reported_loop_exits: watcher.reported_loop_exits.iter().cloned().collect(),
+            loop_exit_attempts: watcher.loop_exit_attempts.clone(),
+            pending_loop_exits: watcher.pending_loop_exits.clone(),
             announced_token_goals: watcher.announced_token_goals.iter().cloned().collect(),
+            pending_token_goal_announcements: watcher.pending_token_goal_announcements.clone(),
             scan_records: watcher.scan_records.clone(),
         }
     }
@@ -1259,6 +1454,12 @@ impl PersistentLoopWatcherState {
             .map(|_| self.last_overseer_wake_at)
             .filter(|at_ms| *at_ms > 0);
         Ok(LoopWatcher {
+            recipient_watchers: self
+                .recipient_watchers
+                .into_iter()
+                .map(|(id, state)| state.into_watcher().map(|watcher| (id, watcher)))
+                .collect::<Result<_, _>>()?,
+            last_delivery_recipient: self.last_delivery_recipient,
             last_nudge_at: self.last_nudge_at,
             last_overseer_wake_at: self.last_overseer_wake_at,
             stopped_since: self
@@ -1308,16 +1509,18 @@ impl PersistentLoopWatcherState {
             unchanged_idle_fleet_ticks: self.unchanged_idle_fleet_ticks,
             idle_fleet_condition_since_ms: self.idle_fleet_condition_since_ms,
             reported_loop_exits: self.reported_loop_exits.into_iter().collect(),
+            loop_exit_attempts: self.loop_exit_attempts,
+            pending_loop_exits: self.pending_loop_exits,
             announced_token_goals: self.announced_token_goals.into_iter().collect(),
-            // Not persisted: a send in flight when the service restarted was
-            // never delivered, so the announcement is planned again.
-            pending_token_goal_announcements: BTreeMap::new(),
+            pending_token_goal_announcements: self.pending_token_goal_announcements,
             scan_records: self.scan_records,
         })
     }
 }
 
 fn buffered_send_key(send: &LoopSend) -> String {
+    // Recipient engines keep their own maps, so identical content for two
+    // overseers remains separate without changing persisted buffer keys.
     format!("{}:{}", loop_send_kind_name(send.kind), send.signature)
 }
 
@@ -1431,7 +1634,14 @@ pub fn loop_pause_key_from_loop_metadata(loop_meta: &Value) -> Option<String> {
 }
 
 pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&str>) -> Vec<Value> {
+    let ids = overseer_session_ids_for_state(
+        array_field(input, "sessions"),
+        input.get("metadata").unwrap_or(&Value::Null),
+    );
     find_loop_candidates_excluding(input, overseer_id)
+        .into_iter()
+        .filter(|candidate| !ids.iter().any(|id| id == str_field(candidate, "id")))
+        .collect()
 }
 
 /// Loop candidates narrowed to one session, which is how the overseer's own
@@ -1555,11 +1765,15 @@ pub fn find_loop_exit_candidates_with_overseer(
         Some(sessions) => sessions,
         None => empty_object(),
     };
+    let overseer_ids = overseer_session_ids_for_state(array_field(input, "sessions"), metadata);
     array_field(input, "sessions")
         .iter()
         .filter_map(|session| {
             let id = str_field(session, "id");
-            if overseer_id == Some(id) || !is_known_loop_exit_session_status(session) {
+            if overseer_id == Some(id)
+                || overseer_ids.iter().any(|overseer| overseer == id)
+                || !is_known_loop_exit_session_status(session)
+            {
                 return None;
             }
             let meta = metadata_sessions.get(id)?;
@@ -1888,12 +2102,14 @@ fn fleet_is_fully_idle(input: &Value, overseer_id: Option<&str>) -> bool {
 
 fn fleet_worker_sessions<'a>(input: &'a Value, overseer_id: Option<&str>) -> Vec<&'a Value> {
     let metadata = input.get("metadata").unwrap_or(&Value::Null);
+    let overseer_ids = overseer_session_ids_for_state(array_field(input, "sessions"), metadata);
     array_field(input, "sessions")
         .iter()
         .filter(|session| {
             let id = str_field(session, "id");
             !id.is_empty()
                 && overseer_id != Some(id)
+                && !overseer_ids.iter().any(|overseer| overseer == id)
                 && !is_scribe_metadata_session(metadata, session)
                 && optional_str(session, "status")
                     .map(|status| matches!(status, "starting" | "running" | "idle"))
@@ -2262,20 +2478,6 @@ pub fn candidate_goal_kind(candidate: &Value) -> GoalKind {
         optional_str(candidate, "goalKind"),
         candidate.get("tokenBudget").and_then(Value::as_u64),
     )
-}
-
-pub fn find_overseer_session_id(metadata: &Value) -> Option<String> {
-    metadata
-        .get("sessions")
-        .and_then(Value::as_object)
-        .and_then(|sessions| {
-            sessions.iter().find_map(|(id, meta)| {
-                meta.get("overseer")
-                    .and_then(Value::as_bool)
-                    .filter(|overseer| *overseer)
-                    .map(|_| id.clone())
-            })
-        })
 }
 
 fn session_can_receive_loop_send(input: &Value, id: &str) -> bool {

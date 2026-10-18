@@ -1484,6 +1484,7 @@ export interface AgentListItem {
 
 export interface AgentListResponse extends ProjectApiOk {
   agents: AgentListItem[];
+  overseerSessionIds: string[];
   tmuxLiveWindowQuery?: TmuxLiveWindowQueryUnavailable;
 }
 

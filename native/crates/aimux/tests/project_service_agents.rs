@@ -10,6 +10,7 @@ use aimux::project_service::agents::{
     route_agent_read_request_async, select_direct_teammates, teammate_api_record,
     topology_desktop_session_list_with_live_window_ids,
 };
+use aimux::project_service::desktop_state::route_desktop_state_request_async;
 use aimux::project_service::lifecycle::{
     ProjectLifecycleRuntime, route_lifecycle_request_with_runtime,
 };
@@ -30,6 +31,88 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod support;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn agent_and_desktop_routes_distinguish_metadata_errors_from_absence() {
+    let isolation = support::TestIsolation::new("agent-metadata-errors");
+    for kind in ["absent", "corrupt", "unreadable"] {
+        let project = isolation.root().join(kind);
+        let state_dir = project.join("state");
+        create_dir_all(&state_dir).expect("create state directory");
+        write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+            .expect("write empty topology");
+        let metadata_path = state_dir.join("metadata.json");
+        match kind {
+            "corrupt" => write(&metadata_path, "{broken").expect("write corrupt metadata"),
+            "unreadable" => create_dir_all(&metadata_path).expect("make metadata a directory"),
+            _ => {}
+        }
+        let context = isolation.project_context(&project, &state_dir);
+        for route in [routes::agents::LIST, routes::DESKTOP_STATE] {
+            let response = route_project_service_request(&context, "GET", route, None);
+            assert_metadata_route_response(&response, kind, route);
+        }
+    }
+}
+
+#[test]
+fn async_agent_and_desktop_routes_distinguish_metadata_errors_from_absence() {
+    let isolation = support::TestIsolation::new("async-agent-metadata-errors");
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    // aimux-async-seam: test - route test drives both native async read handlers
+    aimux::async_runtime::block_on_named("test:async-metadata-read-errors", async {
+        for kind in ["absent", "corrupt", "unreadable"] {
+            let project = isolation.root().join(kind);
+            let state_dir = project.join("state");
+            create_dir_all(&state_dir).expect("create state directory");
+            write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+                .expect("write empty topology");
+            let metadata_path = state_dir.join("metadata.json");
+            match kind {
+                "corrupt" => write(&metadata_path, "{broken").expect("write corrupt metadata"),
+                "unreadable" => create_dir_all(&metadata_path).expect("make metadata a directory"),
+                _ => {}
+            }
+            let context = isolation.project_context(&project, &state_dir);
+            let agents = route_agent_read_request_async(&context, "GET", routes::agents::LIST)
+                .await
+                .expect("agent route handled");
+            assert_metadata_route_response(&agents, kind, routes::agents::LIST);
+            let desktop = route_desktop_state_request_async(&context, "GET", routes::DESKTOP_STATE)
+                .await
+                .expect("desktop route handled");
+            assert_metadata_route_response(&desktop, kind, routes::DESKTOP_STATE);
+        }
+    });
+}
+
+fn assert_metadata_route_response(
+    response: &aimux::project_service::dispatcher::ProjectServiceDispatchResponse,
+    kind: &str,
+    route: &str,
+) {
+    if kind == "absent" {
+        assert_eq!(response.status, 200, "{route}: {}", response.body);
+        assert_eq!(response.body["ok"], true);
+        assert_eq!(response.body["overseerSessionIds"], json!([]));
+    } else {
+        assert_eq!(response.status, 500, "{kind}/{route}: {}", response.body);
+        assert_eq!(response.body["ok"], false);
+        let error = response.body["error"].as_str().expect("visible read error");
+        assert!(error.contains("metadata.json"), "{error}");
+        assert!(
+            error.contains(if kind == "corrupt" {
+                "parse metadata state"
+            } else {
+                "read metadata state"
+            }),
+            "{error}"
+        );
+        assert!(response.body.get("overseerSessionIds").is_none());
+        assert!(response.body.get("agents").is_none());
+        assert!(response.body.get("sessions").is_none());
+    }
+}
 
 #[test]
 fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
@@ -110,8 +193,8 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
     assert_eq!(agents[1]["restoreState"], "ready");
     assert_eq!(agents[1]["role"], "coder");
     assert_eq!(agents[1]["lane"], json!({ "kind": "worktree" }));
-    assert!(agents[1].get("overseer").is_none());
-    assert!(agents[1].get("scribe").is_none());
+    assert_eq!(agents[1]["overseer"], false);
+    assert_eq!(agents[1]["scribe"], false);
     assert!(agents[1]["task"].is_null());
     // The derivation resolves an owner by `assignee` too, so a task assigned
     // that way has to reach this record or `ps` answers `ready` for an agent
@@ -1691,6 +1774,89 @@ fn bulk_offline_worktree_scope_matches_published_dashboard_lane() {
     assert_eq!(result.body["moved"].as_array().unwrap().len(), 2);
     let after = read_runtime_topology(runtime_topology_path(&state_dir)).unwrap();
     assert_eq!(after["sessions"][1]["status"], "offline");
+    cleanup(project);
+}
+
+#[test]
+fn bulk_offline_worktree_scope_matches_dashboard_after_control_metadata_changes() {
+    use aimux::project_service::desktop_state::{
+        DesktopStateInput, build_desktop_state_with_live_window_ids,
+    };
+    let isolation = support::TestIsolation::new("bulk-control-metadata");
+    let project = temp_project("bulk-control-metadata");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let mut topology = reap_dead_topology_fixture(&[
+        ("promoted", "node-promoted", "good", "@promoted", "offline"),
+        ("demoted", "node-demoted", "good", "@demoted", "offline"),
+    ]);
+    topology["bindings"] = json!([]);
+    topology["sessions"][0]["worktreePath"] = json!(project);
+    topology["sessions"][0]["projectControl"] = json!(false);
+    topology["sessions"][0]["role"] = json!("overseer");
+    topology["sessions"][1]["worktreePath"] = json!(project);
+    topology["sessions"][1]["projectControl"] = json!(true);
+    topology["sessions"][1]["overseer"] = json!(true);
+    topology["sessions"][1]["role"] = json!("overseer");
+    topology["sessions"][1]["team"] = json!({"role": "overseer", "teamId": "overseer"});
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let metadata_sessions = BTreeMap::from([
+        ("promoted".to_owned(), json!({"overseer": true})),
+        ("demoted".to_owned(), json!({"overseer": false})),
+    ]);
+    let mut metadata = MetadataState::empty();
+    metadata.sessions = metadata_sessions.clone();
+    save_metadata_state(&state_dir, &metadata).unwrap();
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: project.to_string_lossy().into_owned(),
+            topology: &topology,
+            metadata_sessions: &metadata_sessions,
+            exchange: &json!({}),
+        },
+        Some(&aimux::tmux::LiveWindowIndex::default()),
+    );
+    let worktree_ids = state["worktreeGroups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group["sessions"].as_array().unwrap())
+        .map(|session| session["id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(worktree_ids, vec!["demoted"]);
+    assert_eq!(state["supervisorLane"]["sessions"][0]["id"], "promoted");
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_live_windows(aimux::tmux::LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+    let preview = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "worktree", "path": project, "dryRun": true})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(preview.body["sessionIds"], json!(worktree_ids));
+    let result = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "worktree", "path": project, "confirmed": true, "sessionIds": preview.body["sessionIds"]})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(result.body["moved"], json!([{"sessionId": "demoted"}]));
+    assert_eq!(result.body["failed"], json!([]));
+    let after = read_runtime_topology(runtime_topology_path(&state_dir)).unwrap();
+    assert_eq!(after["sessions"][0]["status"], "offline");
+    assert_eq!(after["sessions"][1]["status"], "graveyard");
+    assert!(
+        !runtime
+            .calls
+            .iter()
+            .any(|call| call["method"] == "kill_window")
+    );
     cleanup(project);
 }
 

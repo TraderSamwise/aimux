@@ -16,6 +16,7 @@ use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_
 use aimux::dashboard_service_input::DashboardThreadReplyState;
 use aimux::dashboard_tool_picker::{DashboardToolEntry, DashboardToolPickerMode};
 use aimux::project_api_contract::routes;
+use aimux::project_service::agents::overseer_session_ids;
 use aimux::project_service::session_semantics::attention_score_for;
 use aimux::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineSource, WorkOutlineStatus,
@@ -1622,6 +1623,7 @@ fn shifted_o_opens_overseer_overlay_and_overlay_keys_follow_node_actions() {
     snapshot
         .sessions
         .push(overseer_session(&snapshot.sessions[0]));
+    publish_overseer_ids(&mut snapshot);
     let mut controller = DashboardController::new(&snapshot);
     focus_session(&mut controller, &snapshot, "claude-0");
 
@@ -2415,6 +2417,7 @@ fn overseer_overlay_d_demotes_configured_overseer() {
     let overseer = overseer_session(&snapshot.sessions[0]);
     let overseer_id = overseer.id.clone();
     snapshot.sessions.insert(0, overseer);
+    publish_overseer_ids(&mut snapshot);
     let mut controller = DashboardController::new(&snapshot);
 
     assert_eq!(
@@ -2432,6 +2435,187 @@ fn overseer_overlay_d_demotes_configured_overseer() {
     assert_eq!(
         request.body,
         json!({ "sessionId": overseer_id, "active": false })
+    );
+}
+
+#[test]
+fn overseer_overlay_targets_the_selected_second_published_overseer() {
+    let snapshot = snapshot_with_two_published_overseers();
+    for (key, path, body) in [
+        (
+            DashboardKey::Enter,
+            routes::controls::FOCUS_WINDOW,
+            json!({ "windowId": "@second", "focus": true }),
+        ),
+        (
+            DashboardKey::Printable('x'),
+            routes::agents::STOP,
+            json!({ "sessionId": "second" }),
+        ),
+        (
+            DashboardKey::Printable('d'),
+            routes::agents::OVERSEER,
+            json!({ "sessionId": "second", "active": false }),
+        ),
+    ] {
+        let mut controller = DashboardController::new(&snapshot);
+        focus_session(&mut controller, &snapshot, "second");
+        assert_eq!(
+            controller
+                .overseer_overlay_target(&snapshot)
+                .map(|session| session.id.as_str()),
+            Some("second")
+        );
+        controller.handle_key(&snapshot, DashboardKey::Printable('O'));
+        let DashboardControllerEffect::Request(request) = controller.handle_key(&snapshot, key)
+        else {
+            panic!("expected selected second overseer request");
+        };
+        assert_eq!(request.path, path);
+        assert_eq!(request.body, body);
+    }
+}
+
+#[test]
+fn overseer_overlay_keeps_the_selected_offline_target_instead_of_stopping_a_peer() {
+    let mut snapshot = snapshot_with_two_published_overseers();
+    let second = snapshot
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == "second")
+        .expect("second overseer");
+    second.status = SessionStatus::Offline;
+    second.tmux_window_id = None;
+    second.restore_state = Some("ready".into());
+    second.restore_blocked_reason = None;
+    snapshot
+        .extra
+        .get_mut("supervisorLane")
+        .expect("supervisor lane")["sessions"][1] =
+        serde_json::to_value(second).expect("offline second");
+    publish_overseer_ids(&mut snapshot);
+    let mut controller = DashboardController::new(&snapshot);
+    focus_session(&mut controller, &snapshot, "second");
+    controller.handle_key(&snapshot, DashboardKey::Printable('O'));
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('x')),
+        DashboardControllerEffect::Render
+    );
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected selected offline overseer resume");
+    };
+    assert_eq!(request.path, routes::agents::RESUME);
+    assert_eq!(request.body["sessionId"], "second");
+}
+
+#[test]
+fn overseer_overlay_n_always_creates_another_and_closes_the_overlay() {
+    let snapshot = snapshot_with_two_published_overseers();
+    let mut controller = DashboardController::new(&snapshot);
+    focus_session(&mut controller, &snapshot, "second");
+    controller.handle_key(&snapshot, DashboardKey::Printable('O'));
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('n')),
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::CreateOverseer)
+    );
+    assert!(!controller.overseer_overlay_open);
+}
+
+#[test]
+fn overseer_overlay_default_preserves_service_order_within_live_subset() {
+    let mut snapshot = snapshot_with_two_published_overseers();
+    let first = snapshot
+        .sessions
+        .iter()
+        .find(|session| session.id == "claude-overseer")
+        .expect("first overseer")
+        .clone();
+    let mut offline = first.clone();
+    offline.id = "offline-first".into();
+    offline.status = SessionStatus::Offline;
+    offline.tmux_window_id = None;
+    offline.restore_state = Some("ready".into());
+    offline.restore_blocked_reason = None;
+    snapshot.sessions.push(offline);
+    snapshot.extra.insert(
+        "overseerSessionIds".into(),
+        json!(["offline-first", "second", "claude-overseer"]),
+    );
+    let mut controller = DashboardController::new(&snapshot);
+    focus_session(&mut controller, &snapshot, "claude-0");
+    assert_eq!(
+        controller
+            .overseer_overlay_target(&snapshot)
+            .map(|session| session.id.as_str()),
+        Some("second")
+    );
+    controller.handle_key(&snapshot, DashboardKey::Printable('O'));
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected first published live overseer focus");
+    };
+    assert_eq!(request.body["windowId"], "@second");
+    for session in snapshot
+        .sessions
+        .iter_mut()
+        .filter(|session| session.overseer == Some(true))
+    {
+        session.status = SessionStatus::Offline;
+        session.tmux_window_id = None;
+        session.restore_state = Some("ready".into());
+        session.restore_blocked_reason = None;
+    }
+    assert_eq!(
+        controller
+            .overseer_overlay_target(&snapshot)
+            .map(|session| session.id.as_str()),
+        Some("offline-first")
+    );
+}
+
+#[test]
+fn overseer_overlay_defaults_use_published_order_and_exclude_explicit_demotions() {
+    let mut snapshot = snapshot_with_two_published_overseers();
+    snapshot.extra.insert(
+        "overseerSessionIds".into(),
+        json!(["second", "claude-overseer"]),
+    );
+    let mut controller = DashboardController::new(&snapshot);
+    focus_session(&mut controller, &snapshot, "claude-0");
+    controller.handle_key(&snapshot, DashboardKey::Printable('O'));
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('d'))
+    else {
+        panic!("expected published default demotion");
+    };
+    assert_eq!(request.body["sessionId"], "second");
+    snapshot
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == "claude-overseer")
+        .expect("first overseer")
+        .project_control = Some(false);
+    publish_overseer_ids(&mut snapshot);
+    let mut controller = DashboardController::new(&snapshot);
+    focus_session(&mut controller, &snapshot, "claude-overseer");
+    controller.handle_key(&snapshot, DashboardKey::Printable('O'));
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('x'))
+    else {
+        panic!("expected remaining published overseer stop");
+    };
+    assert_eq!(request.body["sessionId"], "second");
+    snapshot
+        .extra
+        .insert("overseerSessionIds".into(), json!([]));
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('O'));
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::CreateOverseer)
     );
 }
 
@@ -3161,6 +3345,7 @@ fn snapshot() -> DesktopStateSnapshot {
         "agentCreation".into(),
         serde_json::to_value(creation_policy()).unwrap(),
     );
+    publish_overseer_ids(&mut snapshot);
     snapshot
 }
 
@@ -3229,6 +3414,16 @@ fn semantic_with_pending(
     .unwrap()
 }
 
+fn publish_overseer_ids(snapshot: &mut DesktopStateSnapshot) {
+    let sessions = serde_json::to_value(&snapshot.sessions).expect("serialize service sessions");
+    snapshot.extra.insert(
+        "overseerSessionIds".into(),
+        json!(overseer_session_ids(
+            sessions.as_array().expect("session array")
+        )),
+    );
+}
+
 fn snapshot_with_supervisor_lane() -> DesktopStateSnapshot {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[1].sessions[0].tmux_window_id = Some("@wt".into());
@@ -3239,6 +3434,33 @@ fn snapshot_with_supervisor_lane() -> DesktopStateSnapshot {
         json!({"sessions": [overseer, scribe]}),
     );
     snapshot.sessions.splice(0..0, [overseer, scribe]);
+    publish_overseer_ids(&mut snapshot);
+    snapshot
+}
+
+fn snapshot_with_two_published_overseers() -> DesktopStateSnapshot {
+    let mut snapshot = snapshot_with_supervisor_lane();
+    let first = snapshot
+        .sessions
+        .iter()
+        .find(|session| session.id == "claude-overseer")
+        .expect("first overseer")
+        .clone();
+    let mut second = first.clone();
+    second.id = "second".into();
+    second.tmux_window_id = Some("@second".into());
+    snapshot.sessions.push(second.clone());
+    let scribe = snapshot
+        .sessions
+        .iter()
+        .find(|session| session.scribe == Some(true))
+        .expect("scribe")
+        .clone();
+    snapshot.extra.insert(
+        "supervisorLane".into(),
+        json!({ "sessions": [first, second, scribe] }),
+    );
+    publish_overseer_ids(&mut snapshot);
     snapshot
 }
 
@@ -3849,13 +4071,7 @@ mod what_a_transient_footer_line_claims {
     }
 }
 
-/// Enter on the overseer menu starts the overseer this project already has,
-/// even when it is offline.
-///
-/// It looked for a LIVE overseer, so an offline one — which is exactly when
-/// you reach for this menu — was invisible to it and Enter fell through to the
-/// create picker, making a SECOND overseer and demoting the existing one to a
-/// plain coder.
+/// Enter resumes an existing offline overseer.
 #[test]
 fn overseer_menu_enter_resumes_an_offline_overseer_instead_of_making_another() {
     let mut snapshot = snapshot();
@@ -3870,6 +4086,7 @@ fn overseer_menu_enter_resumes_an_offline_overseer_instead_of_making_another() {
     overseer.restore_blocked_reason = None;
     snapshot.sessions.insert(0, overseer);
 
+    publish_overseer_ids(&mut snapshot);
     let mut controller = DashboardController::new(&snapshot);
     controller.handle_key(&snapshot, DashboardKey::Printable('O'));
     let effect = controller.handle_key(&snapshot, DashboardKey::Enter);
@@ -3903,13 +4120,7 @@ fn overseer_menu_enter_still_creates_when_the_project_has_none() {
     );
 }
 
-/// An overseer that cannot be resumed must not become unstartable.
-///
-/// Finding the existing overseer and refusing a blocked restore are each
-/// right; together they left Enter doing nothing on the one menu whose job is
-/// to start an overseer, with no other key on it that would. The service
-/// rejects a restore-blocked candidate for reuse, so a replacement really is
-/// the only way out — it just has to say so first.
+/// A blocked restore offers creation and explains the failure.
 #[test]
 fn overseer_menu_enter_offers_a_replacement_when_the_overseer_cannot_be_resumed() {
     let mut snapshot = snapshot();
@@ -3924,6 +4135,7 @@ fn overseer_menu_enter_offers_a_replacement_when_the_overseer_cannot_be_resumed(
     overseer.restore_blocked_reason = Some("missing exact resumable backend session id".into());
     snapshot.sessions.insert(0, overseer);
 
+    publish_overseer_ids(&mut snapshot);
     let mut controller = DashboardController::new(&snapshot);
     controller.handle_key(&snapshot, DashboardKey::Printable('O'));
     let effect = controller.handle_key(&snapshot, DashboardKey::Enter);
@@ -3965,6 +4177,7 @@ fn overseer_menu_enter_prefers_a_running_overseer_over_a_stale_one() {
     snapshot.sessions.insert(0, live);
     snapshot.sessions.insert(0, stale);
 
+    publish_overseer_ids(&mut snapshot);
     let mut controller = DashboardController::new(&snapshot);
     controller.handle_key(&snapshot, DashboardKey::Printable('O'));
     let effect = controller.handle_key(&snapshot, DashboardKey::Enter);

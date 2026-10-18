@@ -81,6 +81,10 @@ pub(super) fn route_offline_agents(
         .filter(|session| string_field(session, "status") == "offline")
         .map(|session| {
             let id = string_field(&session, "id");
+            let session = crate::team_contract::session_with_stored_control_flags(
+                &session,
+                metadata.sessions.get(&id),
+            );
             let mut item = session
                 .as_object()
                 .expect("topology session projection is an object")

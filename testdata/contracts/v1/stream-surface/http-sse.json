@@ -286,6 +286,7 @@
             "buildStamp": "<build-stamp>"
           },
           "pendingInteractions": [],
+          "overseerSessionIds": [],
           "sessions": [],
           "supervisorLane": {
             "sessions": []
