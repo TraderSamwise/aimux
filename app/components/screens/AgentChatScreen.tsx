@@ -124,6 +124,7 @@ import {
   normalizeComposerDraft,
   shouldSubmitComposerKey,
   userMessageAcknowledgesComposerSend,
+  type ComposerKeyEventLike,
 } from "@/lib/composer-protocol";
 import {
   COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
@@ -1806,23 +1807,12 @@ export default function ChatScreen() {
   );
 
   const handleComposerKeyboardEvent = useCallback(
-    (event: {
-      key?: string;
-      code?: string;
-      shiftKey?: boolean;
-      ctrlKey?: boolean;
-      metaKey?: boolean;
-      altKey?: boolean;
-      nativeEvent?: {
-        key?: string;
-        code?: string;
-        shiftKey?: boolean;
-        ctrlKey?: boolean;
-        metaKey?: boolean;
-        altKey?: boolean;
-      };
-      preventDefault?: () => void;
-    }) => {
+    (
+      event: ComposerKeyEventLike & {
+        nativeEvent?: ComposerKeyEventLike;
+        preventDefault?: () => void;
+      },
+    ) => {
       if (Platform.OS !== "web") return;
       const keyEvent = {
         key: event.nativeEvent?.key ?? event.key,
