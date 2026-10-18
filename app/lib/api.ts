@@ -84,6 +84,8 @@ import {
   type ProjectHealthResponse,
   type ProjectObservabilityResponse,
   type ProjectTopologyResponse,
+  type BulkOfflineAgentsInput,
+  type BulkOfflineAgentsResponse,
   type ReapDeadAgentsInput,
   type ReapDeadAgentsResponse,
   type RenameAgentInput,
@@ -1880,6 +1882,20 @@ export async function resurrectGraveyardAgent(
     PROJECT_API_ROUTES.graveyardActions.resurrectAgent,
     opts,
     { sessionId },
+  );
+}
+
+export async function graveyardOfflineAgents(
+  endpoint: ServiceEndpoint,
+  input: BulkOfflineAgentsInput,
+  opts?: ApiOpts,
+): Promise<BulkOfflineAgentsResponse> {
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.graveyardActions.offlineAgents,
+    opts,
+    input,
   );
 }
 

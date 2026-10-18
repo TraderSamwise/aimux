@@ -13,6 +13,7 @@ const AUDITED_LOCAL_PACKAGE_IDENTITIES = [
   "registry+https://github.com/rust-lang/crates.io-index#anstyle-wincon@3.0.11",
   "registry+https://github.com/rust-lang/crates.io-index#anstyle@1.0.14",
   "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
+  "registry+https://github.com/rust-lang/crates.io-index#arrayvec@0.7.8",
   "registry+https://github.com/rust-lang/crates.io-index#block-buffer@0.10.4",
   "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
   "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
@@ -61,9 +62,12 @@ const AUDITED_LOCAL_PACKAGE_IDENTITIES = [
   "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
   "registry+https://github.com/rust-lang/crates.io-index#typenum@1.20.1",
   "registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24",
+  "registry+https://github.com/rust-lang/crates.io-index#unicode-width@0.2.2",
   "registry+https://github.com/rust-lang/crates.io-index#unsafe-libyaml@0.2.11",
   "registry+https://github.com/rust-lang/crates.io-index#utf8parse@0.2.2",
   "registry+https://github.com/rust-lang/crates.io-index#version_check@0.9.5",
+  "registry+https://github.com/rust-lang/crates.io-index#vt100@0.16.2",
+  "registry+https://github.com/rust-lang/crates.io-index#vte@0.15.0",
   "registry+https://github.com/rust-lang/crates.io-index#wasi@0.11.1+wasi-snapshot-preview1",
   "registry+https://github.com/rust-lang/crates.io-index#windows-link@0.2.1",
   "registry+https://github.com/rust-lang/crates.io-index#windows-sys@0.61.2",
@@ -81,6 +85,8 @@ const AUDITED_LOCAL_ROOT_DEPENDENCY_EDGES = [
   "sha2->registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
   "time->registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
   "tokio->registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+  "unicode_width->registry+https://github.com/rust-lang/crates.io-index#unicode-width@0.2.2",
+  "vt100->registry+https://github.com/rust-lang/crates.io-index#vt100@0.16.2",
 ];
 
 const AUDITED_PROCESS_SPAWN_SITES = [

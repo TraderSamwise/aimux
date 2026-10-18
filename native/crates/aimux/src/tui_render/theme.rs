@@ -334,12 +334,21 @@ pub enum BandTone {
 }
 
 pub fn modal_band(label: &str, tone: BandTone, width: usize) -> String {
+    modal_band_with_padding(label, tone, width, pad_visible)
+}
+
+pub(super) fn modal_band_with_padding(
+    label: &str,
+    tone: BandTone,
+    width: usize,
+    pad: fn(&str, usize) -> String,
+) -> String {
     let sgr = match tone {
         BandTone::Info => "\x1b[1;48;5;24;38;5;195m",
         BandTone::Danger => "\x1b[1;48;5;52;38;5;224m",
         BandTone::Progress => "\x1b[1;48;5;23;38;5;195m",
     };
-    format!("{sgr}{}{RESET}", pad_visible(&format!(" {label}"), width))
+    format!("{sgr}{}{RESET}", pad(&format!(" {label}"), width))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

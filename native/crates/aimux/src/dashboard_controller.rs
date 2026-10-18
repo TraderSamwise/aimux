@@ -100,6 +100,14 @@ pub struct DashboardController {
     pub worktree_remove_confirm: Option<DashboardWorktreeRemoveConfirm>,
     pub worktree_list_open: bool,
     pub worktree_cache_cleanup_confirm: Option<Value>,
+    pub bulk_graveyard_confirm: Option<Value>,
+    pub bulk_graveyard_confirm_visible: bool,
+    bulk_graveyard_waiting_preview: Option<Value>,
+    bulk_graveyard_waiting_report: Option<String>,
+    pub bulk_graveyard_report: Option<String>,
+    pub bulk_graveyard_report_visible: bool,
+    pub bulk_graveyard_report_offset: usize,
+    pub bulk_graveyard_report_width: usize,
     pub agent_restore_prompt_dismissed: bool,
     pub overseer_overlay_open: bool,
     pub goal_overlay: Option<DashboardGoalOverlayState>,
@@ -129,6 +137,7 @@ pub enum DashboardControllerEffect {
         next_item_index: usize,
     },
     WorktreeCacheCleanupPreview(DashboardActionRequest),
+    BulkGraveyardPreview(DashboardActionRequest),
     WorktreeCacheCleanupApply(DashboardActionRequest),
     LoadOrchestrationRoutes {
         mode: DashboardOrchestrationMode,
@@ -164,6 +173,8 @@ enum DashboardInputOverlay {
     WorktreeRemoveConfirm,
     WorktreeList,
     WorktreeCacheCleanupConfirm,
+    BulkGraveyardConfirm,
+    BulkGraveyardReport,
     Goal,
     Overseer,
     OverseerWatchInstructions,
@@ -186,6 +197,7 @@ impl DashboardControllerEffect {
                 | Self::Request(_)
                 | Self::MoveSelectedEntry { .. }
                 | Self::WorktreeCacheCleanupPreview(_)
+                | Self::BulkGraveyardPreview(_)
                 | Self::WorktreeCacheCleanupApply(_)
                 | Self::LoadOrchestrationRoutes { .. }
                 | Self::OpenRelevantThread { .. }
@@ -613,6 +625,14 @@ impl DashboardController {
             worktree_remove_confirm: None,
             worktree_list_open: false,
             worktree_cache_cleanup_confirm: None,
+            bulk_graveyard_confirm: None,
+            bulk_graveyard_confirm_visible: false,
+            bulk_graveyard_waiting_preview: None,
+            bulk_graveyard_waiting_report: None,
+            bulk_graveyard_report: None,
+            bulk_graveyard_report_visible: false,
+            bulk_graveyard_report_offset: 0,
+            bulk_graveyard_report_width: 68,
             agent_restore_prompt_dismissed: false,
             overseer_overlay_open: false,
             goal_overlay: None,
@@ -643,6 +663,7 @@ impl DashboardController {
         key: DashboardKey,
     ) -> DashboardControllerEffect {
         self.navigation.clamp(snapshot);
+        self.promote_bulk_graveyard_preview();
         // A note is spent the moment the next key arrives. Dispatched work is
         // not: it is still running, and the keypress that erased it was how a
         // 12s fleet restore came to look like nothing happened.
@@ -664,6 +685,12 @@ impl DashboardController {
         }
         if self.agent_restore_prompt_active(snapshot) {
             return self.handle_agent_restore_prompt_key(snapshot, key);
+        }
+        if self.bulk_graveyard_report.is_some() {
+            return self.handle_bulk_graveyard_report_key(key);
+        }
+        if self.bulk_graveyard_confirm.is_some() {
+            return self.handle_bulk_graveyard_confirm_key(key);
         }
         if self.worktree_cache_cleanup_confirm.is_some() {
             return self.handle_worktree_cache_cleanup_confirm_key(key);
@@ -788,6 +815,8 @@ impl DashboardController {
                 self.worktree_list_open = true;
                 DashboardControllerEffect::Render
             }
+            DashboardKey::Printable('K') => self.preview_bulk_graveyard(snapshot, false),
+            DashboardKey::Ctrl('k') => self.preview_bulk_graveyard(snapshot, true),
             DashboardKey::Printable('D') => {
                 self.worktree_cache_cleanup_confirm = None;
                 DashboardControllerEffect::WorktreeCacheCleanupPreview(DashboardActionRequest {
@@ -1100,6 +1129,7 @@ impl DashboardController {
         self.worktree_remove_confirm = None;
         self.worktree_list_open = false;
         self.worktree_cache_cleanup_confirm = None;
+        self.bulk_graveyard_confirm = None;
         self.overseer_overlay_open = false;
         self.overseer_watch_instructions = None;
         self.work_outline_overlay = None;
@@ -1166,6 +1196,10 @@ impl DashboardController {
             DashboardInputOverlay::WorktreeRemoveConfirm
         } else if self.worktree_list_open {
             DashboardInputOverlay::WorktreeList
+        } else if self.bulk_graveyard_report.is_some() {
+            DashboardInputOverlay::BulkGraveyardReport
+        } else if self.bulk_graveyard_confirm.is_some() {
+            DashboardInputOverlay::BulkGraveyardConfirm
         } else if self.worktree_cache_cleanup_confirm.is_some() {
             DashboardInputOverlay::WorktreeCacheCleanupConfirm
         } else if self.goal_overlay.is_some() {
@@ -1778,6 +1812,127 @@ impl DashboardController {
                     buffer.push_str(&text);
                 }
                 DashboardControllerEffect::Render
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn handle_bulk_graveyard_report_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+        if !self.bulk_graveyard_report_visible {
+            return DashboardControllerEffect::Ignored;
+        }
+        match key {
+            DashboardKey::Enter | DashboardKey::Back | DashboardKey::Printable('q') => {
+                self.bulk_graveyard_report = None;
+                self.bulk_graveyard_report_visible = false;
+                self.bulk_graveyard_report_offset = 0;
+            }
+            DashboardKey::Down | DashboardKey::Printable('j') => {
+                let total = crate::dashboard_service_input::bulk_graveyard_report_lines(
+                    self.bulk_graveyard_report.as_deref().unwrap_or_default(),
+                    self.bulk_graveyard_report_width,
+                )
+                .len();
+                self.bulk_graveyard_report_offset =
+                    (self.bulk_graveyard_report_offset + 1).min(total.saturating_sub(1));
+            }
+            DashboardKey::Up | DashboardKey::Printable('k') => {
+                self.bulk_graveyard_report_offset =
+                    self.bulk_graveyard_report_offset.saturating_sub(1);
+            }
+            _ => return DashboardControllerEffect::Ignored,
+        }
+        DashboardControllerEffect::Render
+    }
+
+    fn preview_bulk_graveyard(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        whole_project: bool,
+    ) -> DashboardControllerEffect {
+        let body = if whole_project {
+            json!({"scope": "project", "dryRun": true})
+        } else {
+            let Some(group) = self.navigation.focused_group(snapshot) else {
+                return DashboardControllerEffect::Ignored;
+            };
+            if group.kind == DashboardNavigationGroupKind::Supervisor {
+                self.set_note("Select a worktree, or Ctrl-K for the whole project".into());
+                return DashboardControllerEffect::Render;
+            }
+            let Some(path) = group.path.or(snapshot.main_checkout_path.as_deref()) else {
+                self.footer_alert =
+                    Some("Project service did not supply the main checkout path".into());
+                return DashboardControllerEffect::Render;
+            };
+            json!({"scope": "worktree", "path": path, "dryRun": true})
+        };
+        DashboardControllerEffect::BulkGraveyardPreview(DashboardActionRequest {
+            method: "POST",
+            path: routes::graveyard_actions::OFFLINE_AGENTS,
+            body,
+        })
+    }
+
+    pub fn receive_bulk_graveyard_preview(&mut self, preview: Value) -> Result<(), String> {
+        if preview.get("dryRun").and_then(Value::as_bool) != Some(true)
+            || preview
+                .get("sessionIds")
+                .and_then(Value::as_array)
+                .is_none()
+            || preview.get("summary").and_then(Value::as_str).is_none()
+        {
+            return Err("Invalid bulk graveyard preview response".into());
+        }
+        self.bulk_graveyard_waiting_preview = Some(preview);
+        self.promote_bulk_graveyard_preview();
+        Ok(())
+    }
+
+    pub fn receive_bulk_graveyard_report(&mut self, report: String) {
+        self.bulk_graveyard_waiting_report = Some(report);
+        self.promote_bulk_graveyard_preview();
+    }
+
+    pub fn promote_bulk_graveyard_preview(&mut self) {
+        if self.input_surface().overlay != DashboardInputOverlay::None {
+            return;
+        }
+        if let Some(report) = self.bulk_graveyard_waiting_report.take() {
+            self.bulk_graveyard_report = Some(report);
+            self.bulk_graveyard_report_visible = false;
+            self.bulk_graveyard_report_offset = 0;
+        } else if let Some(preview) = self.bulk_graveyard_waiting_preview.take() {
+            self.bulk_graveyard_confirm = Some(preview);
+            self.bulk_graveyard_confirm_visible = false;
+        }
+    }
+
+    fn handle_bulk_graveyard_confirm_key(
+        &mut self,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back | DashboardKey::Printable('n') => {
+                self.bulk_graveyard_confirm = None;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Enter | DashboardKey::Printable('y')
+                if self.bulk_graveyard_confirm_visible =>
+            {
+                let Some(preview) = self.bulk_graveyard_confirm.take() else {
+                    return DashboardControllerEffect::Ignored;
+                };
+                if preview["sessionIds"].as_array().is_none_or(Vec::is_empty) {
+                    self.set_note("Offline agents: none in this scope".into());
+                    return DashboardControllerEffect::Render;
+                }
+                DashboardControllerEffect::Request(DashboardActionRequest {
+                    method: "POST",
+                    path: routes::graveyard_actions::OFFLINE_AGENTS,
+                    body: json!({"scope": preview["scope"], "path": preview["path"],
+                        "sessionIds": preview["sessionIds"], "confirmed": true}),
+                })
             }
             _ => DashboardControllerEffect::Ignored,
         }
@@ -3612,7 +3767,7 @@ fn dashboard_keys_from_event(event: KeyEvent) -> Vec<DashboardKey> {
 
 fn shifted_dashboard_command_key(event: &KeyEvent, lower_key: &str) -> Option<DashboardKey> {
     for letter in [
-        "a", "h", "t", "l", "w", "d", "o", "p", "v", "x", "r", "s", "u",
+        "a", "h", "t", "l", "w", "d", "o", "p", "v", "x", "r", "s", "k", "u",
     ] {
         if is_shifted_letter_command(event, lower_key, letter) {
             return letter

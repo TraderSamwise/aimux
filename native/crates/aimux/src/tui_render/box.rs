@@ -1,6 +1,8 @@
 use super::theme::{
-    BandTone, PROGRESS_MARK, PROGRESS_TONE, Tone, modal_band, pad_visible, style, visible_width,
+    BandTone, PROGRESS_MARK, PROGRESS_TONE, Tone, modal_band_with_padding, pad_visible, style,
+    visible_width,
 };
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum OverlayVariant {
@@ -23,6 +25,50 @@ pub struct OverlayBoxSpec<'a> {
 }
 
 pub fn render_overlay_box(spec: &OverlayBoxSpec<'_>) -> String {
+    render_overlay_box_measured(spec, visible_width, pad_visible)
+}
+
+pub fn render_overlay_box_cells(spec: &OverlayBoxSpec<'_>) -> String {
+    render_overlay_box_measured(spec, display_cell_width, pad_display_cells)
+}
+
+pub(crate) fn display_cell_width(text: &str) -> usize {
+    UnicodeWidthStr::width(super::text::strip_ansi(text).as_str())
+}
+
+fn pad_display_cells(text: &str, width: usize) -> String {
+    let current = display_cell_width(text);
+    if current <= width {
+        return format!("{text}{}", " ".repeat(width - current));
+    }
+    let mut output = String::new();
+    let mut cells = 0;
+    let mut index = 0;
+    while index < text.len() {
+        if let Some(end) = super::text::sgr_end(text.as_bytes(), index) {
+            output.push_str(&text[index..end]);
+            index = end;
+            continue;
+        }
+        let character = text[index..].chars().next().expect("character boundary");
+        let next = character.width().unwrap_or(0);
+        if cells + next > width {
+            break;
+        }
+        output.push(character);
+        cells += next;
+        index += character.len_utf8();
+    }
+    output.push_str("\x1b[0m");
+    output.push_str(&" ".repeat(width - cells));
+    output
+}
+
+fn render_overlay_box_measured(
+    spec: &OverlayBoxSpec<'_>,
+    measure: fn(&str) -> usize,
+    pad: fn(&str, usize) -> String,
+) -> String {
     let (tone, band_tone, default_icon) = match spec.variant {
         OverlayVariant::Blue => (Tone::Info, BandTone::Info, None),
         OverlayVariant::Red => (Tone::Danger, BandTone::Danger, Some("⚠")),
@@ -40,8 +86,8 @@ pub fn render_overlay_box(spec: &OverlayBoxSpec<'_>) -> String {
     let measured_content_width = spec
         .body
         .iter()
-        .map(|line| visible_width(line))
-        .chain([visible_width(&band_label) + 1, 0])
+        .map(|line| measure(line))
+        .chain([measure(&band_label) + 1, 0])
         .max()
         .unwrap_or_default();
     let content_width = 20.max(max_content_width.min(measured_content_width));
@@ -66,7 +112,7 @@ pub fn render_overlay_box(spec: &OverlayBoxSpec<'_>) -> String {
     push_row(format!(
         "{}{}{}",
         border("│"),
-        modal_band(&band_label, band_tone, band_width),
+        modal_band_with_padding(&band_label, band_tone, band_width, pad),
         border("│")
     ));
     push_row(border(&format!("├{}┤", "─".repeat(box_width - 2))));
@@ -74,7 +120,7 @@ pub fn render_overlay_box(spec: &OverlayBoxSpec<'_>) -> String {
         push_row(format!(
             "{} {} {}",
             border("│"),
-            pad_visible(line, inner_width),
+            pad(line, inner_width),
             border("│")
         ));
     }

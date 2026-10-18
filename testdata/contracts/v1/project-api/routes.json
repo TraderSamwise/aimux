@@ -91,6 +91,7 @@
     "/worktrees/graveyard",
     "/graveyard/resurrect",
     "/graveyard/reap-dead-agents",
+    "/graveyard/offline-agents",
     "/graveyard/worktrees/resurrect",
     "/graveyard/worktrees/delete",
     "/graveyard/cleanup",

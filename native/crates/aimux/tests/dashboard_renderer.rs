@@ -2325,6 +2325,10 @@ fn help_screen_names_global_loop_alert_pause_shortcut_path() {
     assert!(plain.contains("[A] edit offline restart args"));
     assert!(plain.contains("[O] overseer menu"));
     assert!(plain.contains("[O then p] pause/resume loop alerts"));
+    assert!(plain.contains("[K] graveyard offline in worktree"));
+    assert!(plain.contains("[Ctrl-K] whole project (confirm)"));
+    assert!(plain.contains("[t] topology"));
+    assert!(plain.contains("[g] graveyard"));
 }
 
 #[test]
@@ -2476,6 +2480,56 @@ fn every_surface_agrees_whether_there_is_anything_to_clear() {
             "with {label} the X gate, the drawn hint row and the contract mirror \
              disagree: gate={gate}, drawn={drawn}, contract={contract}"
         );
+    }
+}
+
+#[test]
+fn footer_contract_preserves_the_rendered_hint_order_and_preview_override() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_full;
+    let mut scribe = snapshot.sessions[0].clone();
+    scribe.id = "footer-live-scribe".into();
+    scribe.scribe = Some(true);
+    scribe.status = SessionStatus::Idle;
+    snapshot.sessions.push(scribe);
+    snapshot.sessions[0].status = SessionStatus::Offline;
+    snapshot.sessions[0]
+        .extra
+        .insert("restartLaunchOptions".into(), json!({}));
+    let mut input = clearable_failure_render_input(&snapshot);
+    input.selected_session_id = Some(&snapshot.sessions[0].id);
+    input.cols = 2000;
+    let contract = render_dashboard_footer_hints_contract(&input, "scribe");
+    assert!(
+        contract
+            .as_array()
+            .unwrap()
+            .contains(&json!(["V", "preview output"]))
+    );
+    assert!(
+        contract
+            .as_array()
+            .unwrap()
+            .contains(&json!(["A", "restart args"]))
+    );
+    input.preview_source = "scribe";
+    let frame = strip_ansi(&render_dashboard_frame(&input).frame);
+    let footer = frame
+        .lines()
+        .find(|line| line.contains("K/^K graveyard offline"))
+        .expect("wide frame keeps the complete hint row visible");
+    let mut remaining = footer;
+    for hint in contract.as_array().expect("contract hints") {
+        let text = format!(
+            "{} {}",
+            hint[0].as_str().unwrap(),
+            hint[1].as_str().unwrap()
+        );
+        let offset = remaining.find(&text).unwrap_or_else(|| {
+            panic!("contract hint {text:?} is missing or reordered in footer {footer:?}")
+        });
+        remaining = &remaining[offset + text.len()..];
     }
 }
 

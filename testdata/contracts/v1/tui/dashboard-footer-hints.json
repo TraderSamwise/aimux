@@ -5,7 +5,7 @@
   "source": "src/tui/screens/dashboard-renderers.test.ts",
   "sources": ["src/tui/screens/dashboard-renderers.test.ts", "src/tui/screens/dashboard-renderers.ts"],
   "subject": "buildDashboardFooterHints",
-  "description": "Dashboard footer hint ordering and labels captured from TypeScript.",
+  "description": "Dashboard footer hints originally captured from TypeScript; outputs now use the actual Rust renderer, including intentional bulk graveyard and remote branch actions. Case 006 supplies the server-owned supervisor lane explicitly. Case 007 covers the Usage screen hint when a cached service snapshot is present.",
   "caseCount": 7,
   "cases": [
     {
@@ -521,8 +521,9 @@
         ["f", "fork"],
         ["D", "cache cleanup"],
         ["w", "worktree"],
+        ["B", "remote branch"],
         ["a", "hide offline"],
-        ["O p", "loop alerts"],
+        ["K/^K", "graveyard offline", "danger"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1055,7 +1056,7 @@
         ["M", "plane"],
         ["r", "name"],
         ["x", "stop", "danger"],
-        ["O p", "loop alerts"],
+        ["K/^K", "graveyard offline", "danger"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1585,7 +1586,7 @@
         ["R", "reply"],
         ["m", "migrate"],
         ["x", "stop", "danger"],
-        ["O p", "loop alerts"],
+        ["K/^K", "graveyard offline", "danger"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1837,6 +1838,7 @@
         ["S", "switch"],
         ["D", "cache cleanup"],
         ["w", "worktree"],
+        ["B", "remote branch"],
         ["a", "hide offline"],
         ["s", "msg"],
         ["H", "handoff"],
@@ -1845,10 +1847,10 @@
         ["O", "overseer menu"],
         ["P", "scribe"],
         ["R", "reply"],
-        ["M", "plane"],
         ["x", "kill", "danger"],
+        ["M", "plane"],
         ["r", "name"],
-        ["O p", "loop alerts"],
+        ["K/^K", "graveyard offline", "danger"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1909,7 +1911,6 @@
         ["O", "overseer menu"],
         ["P", "scribe"],
         ["R", "reply"],
-        ["O p", "loop alerts"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -2443,8 +2444,9 @@
         ["f", "fork"],
         ["D", "cache cleanup"],
         ["w", "worktree"],
+        ["B", "remote branch"],
         ["a", "hide offline"],
-        ["O p", "loop alerts"],
+        ["K/^K", "graveyard offline", "danger"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -2457,7 +2459,17 @@
       "api": "buildDashboardFooterHints",
       "input": {
         "snapshot": {
-          "usage": {"state": "absent","observedAt": 1000,"startedAt": 1000,"collectionIntervalMs": 300000,"tools": [],"displayLines": ["Usage: unknown: no observations"],"reason": null},
+          "usage": {
+            "state": "absent",
+            "observedAt": 1000,
+            "startedAt": 1000,
+            "collectionIntervalMs": 300000,
+            "tools": [],
+            "displayLines": [
+              "Usage: unknown: no observations"
+            ],
+            "reason": null
+          },
           "agentRestoreOffer": null,
           "sessions": [],
           "teammates": [],
@@ -2480,7 +2492,10 @@
           ],
           "worktreeGroups": [],
           "operationFailures": [],
-          "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+          "mainCheckoutInfo": {
+            "name": "Main Checkout",
+            "branch": "master"
+          },
           "mainCheckoutPath": "<REPO>"
         },
         "state": {
@@ -2492,24 +2507,74 @@
         }
       },
       "output": [
-        ["Tab", "details"],
-        ["u", "attention"],
-        ["n", "agent"],
-        ["v", "service"],
-        ["f", "fork"],
-        ["D", "cache cleanup"],
-        ["a", "hide offline"],
-        ["s", "msg"],
-        ["H", "handoff"],
-        ["T", "task"],
-        ["o", "thread"],
-        ["O", "overseer menu"],
-        ["P", "scribe"],
-        ["R", "reply"],
-        ["O p", "loop alerts"],
-        ["U", "usage"],
-        ["?", "help"],
-        ["q", "quit"]
+        [
+          "Tab",
+          "details"
+        ],
+        [
+          "u",
+          "attention"
+        ],
+        [
+          "n",
+          "agent"
+        ],
+        [
+          "v",
+          "service"
+        ],
+        [
+          "f",
+          "fork"
+        ],
+        [
+          "D",
+          "cache cleanup"
+        ],
+        [
+          "a",
+          "hide offline"
+        ],
+        [
+          "s",
+          "msg"
+        ],
+        [
+          "H",
+          "handoff"
+        ],
+        [
+          "T",
+          "task"
+        ],
+        [
+          "o",
+          "thread"
+        ],
+        [
+          "O",
+          "overseer menu"
+        ],
+        [
+          "P",
+          "scribe"
+        ],
+        [
+          "R",
+          "reply"
+        ],
+        [
+          "U",
+          "usage"
+        ],
+        [
+          "?",
+          "help"
+        ],
+        [
+          "q",
+          "quit"
+        ]
       ],
       "inputSha256": "38d3acc1ff32253a28306c2703393203df9a8e9c05a65382524fee19f479ab6b"
     }
