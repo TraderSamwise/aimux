@@ -79,6 +79,7 @@ fn run_case(case: &Value) -> Value {
                 | DashboardControllerEffect::MoveSelectedEntry { .. }
                 | DashboardControllerEffect::OpenAgentToolPicker(_)
                 | DashboardControllerEffect::WorktreeCacheCleanupPreview(_)
+                | DashboardControllerEffect::BulkGraveyardPreview(_)
                 | DashboardControllerEffect::WorktreeCacheCleanupApply(_)
                 | DashboardControllerEffect::LoadWorkOutlineOverlay { .. }
                 | DashboardControllerEffect::LoadOrchestrationRoutes { .. }

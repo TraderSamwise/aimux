@@ -794,3 +794,89 @@ fn teammate_label(teammate: &DashboardSession) -> String {
         label.to_owned()
     }
 }
+
+pub fn render_bulk_graveyard_confirm_overlay(
+    preview: &serde_json::Value,
+    cols: usize,
+    rows: usize,
+) -> String {
+    let scope = if preview["scope"] == "project" {
+        "Whole project".into()
+    } else {
+        format!(
+            "Worktree: {}",
+            preview["path"].as_str().unwrap_or("unknown")
+        )
+    };
+    let body = vec![
+        format!("  {}", style(&scope, Tone::Muted)),
+        format!(
+            "  {}",
+            preview["summary"].as_str().unwrap_or("Invalid preview")
+        ),
+        String::new(),
+        modal_hints("[Enter/y] graveyard  [n/Esc] cancel"),
+    ];
+    render_overlay_box(&OverlayBoxSpec {
+        title: "Graveyard Offline Agents",
+        body: &body,
+        cols,
+        rows,
+        variant: OverlayVariant::Red,
+        icon: None,
+    })
+}
+
+pub fn bulk_graveyard_report_lines(report: &str, width: usize) -> Vec<String> {
+    use crate::tui_render::theme::visible_width;
+    let width = width.max(1);
+    let plain = crate::tui_render::text::strip_ansi(report);
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in plain.split_whitespace() {
+        if !current.is_empty() {
+            if visible_width(&current) + 1 + visible_width(word) <= width {
+                current.push(' ');
+            } else {
+                lines.push(std::mem::take(&mut current));
+            }
+        }
+        for character in word.chars() {
+            if !current.is_empty()
+                && visible_width(&current) + visible_width(&character.to_string()) > width
+            {
+                lines.push(std::mem::take(&mut current));
+            }
+            current.push(character);
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+pub fn render_bulk_graveyard_report_overlay(
+    report: &str,
+    offset: usize,
+    cols: usize,
+    rows: usize,
+) -> String {
+    let lines = bulk_graveyard_report_lines(report, cols.saturating_sub(12).max(1));
+    let offset = offset.min(lines.len().saturating_sub(1));
+    let mut body = vec![modal_hints("[j/k/↑↓] scroll  [Enter/Esc] close")];
+    body.extend(
+        lines
+            .into_iter()
+            .skip(offset)
+            .take(rows.saturating_sub(8).max(1)),
+    );
+    render_overlay_box(&OverlayBoxSpec {
+        title: "Bulk Graveyard Result",
+        body: &body,
+        cols,
+        rows,
+        variant: OverlayVariant::Red,
+        icon: None,
+    })
+}

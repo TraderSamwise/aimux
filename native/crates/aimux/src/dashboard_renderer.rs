@@ -586,6 +586,11 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
                 tone: Some(KeyTone::Danger),
             });
         }
+        hints.push(FooterHint {
+            key: "K/^K",
+            label: "graveyard offline",
+            tone: Some(KeyTone::Danger),
+        });
         hints.extend(system);
         return hints;
     }
@@ -658,6 +663,11 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
             },
         ]);
         hints.extend(visibility);
+        hints.push(FooterHint {
+            key: "K/^K",
+            label: "graveyard offline",
+            tone: Some(KeyTone::Danger),
+        });
         hints.extend(system);
         return hints;
     }
@@ -759,6 +769,11 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
                 tone: None,
             });
         }
+        hints.push(FooterHint {
+            key: "K/^K",
+            label: "graveyard offline",
+            tone: Some(KeyTone::Danger),
+        });
         hints.extend(system);
         return hints;
     }
@@ -2985,6 +3000,7 @@ fn render_help_content() -> Vec<String> {
         format!("  {}", style("Actions", Tone::Strong)),
         "    [n] agent  [v] service  [f] fork  [S] switch tool".into(),
         "    [a] hide/show offline agents  [x] stop/kill".into(),
+        "    [K] graveyard offline in worktree  [Ctrl-K] whole project (confirm)".into(),
         "    [O] overseer menu  [O then p] pause/resume loop alerts".into(),
     ]
 }

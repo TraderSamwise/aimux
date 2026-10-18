@@ -559,3 +559,268 @@ fn a_burst_longer_than_the_buffer_is_dropped_whole() {
          apply whatever suffix it kept"
     );
 }
+
+/// Enter already buffered behind the destructive key is not consent to the
+/// preview that key has not shown yet. Exercise the real HTTP/loop boundary,
+/// then prove that a later, fresh Enter still performs the confirmed action.
+#[test]
+fn bulk_graveyard_discards_buffered_confirmation_but_accepts_a_fresh_enter() {
+    drive_bulk_graveyard_confirmation(false);
+}
+
+#[test]
+fn bulk_graveyard_preview_waits_for_an_overlapping_tool_picker_to_close() {
+    drive_bulk_graveyard_confirmation(true);
+}
+
+fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
+    use std::io::{BufRead, BufReader, Read};
+    use std::net::TcpListener;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Instant;
+
+    use aimux::dashboard_client::ProjectServiceEndpoint;
+    use aimux::project_api_contract::routes;
+    use serde_json::{Value, json};
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind preview server");
+    listener
+        .set_nonblocking(true)
+        .expect("nonblocking listener");
+    let endpoint = ProjectServiceEndpoint {
+        host: "127.0.0.1".into(),
+        port: listener.local_addr().expect("preview address").port(),
+    };
+    let finished = Arc::new(AtomicBool::new(false));
+    let server_finished = Arc::clone(&finished);
+    let release_preview = Arc::new(AtomicBool::new(false));
+    let server_release_preview = Arc::clone(&release_preview);
+    let preview_answered = Arc::new(AtomicBool::new(false));
+    let server_preview_answered = Arc::clone(&preview_answered);
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let server_requests = Arc::clone(&requests);
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(7);
+        while !server_finished.load(Ordering::Relaxed) && Instant::now() < deadline {
+            let (mut stream, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(2));
+                    continue;
+                }
+                Err(error) => panic!("accept preview request: {error}"),
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .expect("bounded request read");
+            stream
+                .set_write_timeout(Some(Duration::from_secs(1)))
+                .expect("bounded response write");
+            let mut reader = BufReader::new(&mut stream);
+            let mut first_line = String::new();
+            reader.read_line(&mut first_line).expect("request line");
+            let mut content_length = 0;
+            loop {
+                let mut header = String::new();
+                reader.read_line(&mut header).expect("request header");
+                if header == "\r\n" || header.is_empty() {
+                    break;
+                }
+                if let Some((name, value)) = header.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    content_length = value.trim().parse::<usize>().expect("content length");
+                }
+            }
+            let mut bytes = vec![0; content_length];
+            reader.read_exact(&mut bytes).expect("request body");
+            drop(reader);
+            let mut is_preview = false;
+            let response = if first_line.split_whitespace().nth(1)
+                == Some(routes::graveyard_actions::OFFLINE_AGENTS)
+            {
+                let body: Value = serde_json::from_slice(&bytes).expect("JSON action body");
+                server_requests.lock().expect("requests").push(body.clone());
+                if body["dryRun"] == true {
+                    is_preview = true;
+                    while !server_release_preview.load(Ordering::Relaxed)
+                        && !server_finished.load(Ordering::Relaxed)
+                        && Instant::now() < deadline
+                    {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                    json!({"scope": "worktree", "path": "/preview-worktree",
+                        "dryRun": true, "sessionIds": ["offline-confirmed"],
+                        "summary": "Graveyard 1 offline agents?"})
+                } else {
+                    json!({"summary": "Graveyarded 1 offline agents; 0 failed",
+                        "partialFailure": false, "moved": [{"sessionId": "offline-confirmed"}],
+                        "failed": []})
+                }
+            } else {
+                json!({"ok": true})
+            }
+            .to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            )
+            .expect("preview response");
+            if is_preview {
+                server_preview_answered.store(true, Ordering::Relaxed);
+            }
+        }
+    });
+
+    let painted = Captured::default();
+    let before_fresh_enter = Arc::new(Mutex::new(None));
+    let before_fresh_output = Arc::clone(&before_fresh_enter);
+    let before_fresh_requests = Arc::clone(&requests);
+    let output_for_keys = Arc::clone(&painted.0);
+    let picker_observation = Arc::new(Mutex::new(None));
+    let picker_output = Arc::clone(&picker_observation);
+    let stopped_requests = Arc::clone(&requests);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut stage = 0;
+    let mut answered_picker_polls = 0;
+    let root = std::env::temp_dir().join(format!(
+        "aimux-render-loop-bulk-confirm-{}-{}",
+        std::process::id(),
+        endpoint.port
+    ));
+    std::fs::create_dir_all(&root).expect("project root");
+    let mut fixture = snapshot();
+    fixture.agent_restore_offer = None;
+    fixture.main_checkout_path = Some("/preview-worktree".into());
+    fixture.sessions.clear();
+    fixture.teammates.clear();
+    fixture.services.clear();
+    let mut group = fixture.worktree_groups[0].clone();
+    group.path = Some("/preview-worktree".into());
+    group.sessions.clear();
+    group.services.clear();
+    fixture.worktree_groups = vec![group];
+    let seams = DashboardLoopSeams {
+        keys: Box::new(move || {
+            let output = output_for_keys.lock().expect("painted preview").clone();
+            match stage {
+                0 => {
+                    stage = 1;
+                    Vec::new()
+                }
+                1 => {
+                    stage = 2;
+                    vec![DashboardKey::Printable('K'), DashboardKey::Enter]
+                }
+                2 if overlapping_picker => {
+                    stage = 3;
+                    vec![DashboardKey::Printable('n')]
+                }
+                3 if !output.contains("SELECT TOOL") => Vec::new(),
+                3 => {
+                    release_preview.store(true, Ordering::Relaxed);
+                    stage = 4;
+                    vec![DashboardKey::Printable('y')]
+                }
+                4 => {
+                    if preview_answered.load(Ordering::Relaxed) {
+                        answered_picker_polls += 1;
+                    }
+                    if answered_picker_polls >= 2 {
+                        *picker_output.lock().expect("picker observation") = Some(output);
+                        stage = 5;
+                        vec![DashboardKey::Back]
+                    } else {
+                        vec![DashboardKey::Printable('y')]
+                    }
+                }
+                2 | 5 => {
+                    release_preview.store(true, Ordering::Relaxed);
+                    stage = 5;
+                    if output.contains("GRAVEYARD OFFLINE AGENTS") {
+                        *before_fresh_output.lock().expect("before fresh Enter") = Some((
+                            output,
+                            before_fresh_requests
+                                .lock()
+                                .expect("preview requests")
+                                .clone(),
+                        ));
+                        stage = 6;
+                    }
+                    // Until a confirmation frame actually appears, each Enter
+                    // belongs to an independent read before the preview is
+                    // visible. Removing the painted-readiness gate consumes
+                    // one of these in the same pass that drains the response.
+                    vec![DashboardKey::Enter]
+                }
+                _ => Vec::new(),
+            }
+        }),
+        snapshot: Box::new(move || {
+            Ok(DashboardSnapshotLoad {
+                snapshot: fixture.clone(),
+                endpoint: Some(endpoint.clone()),
+            })
+        }),
+        stop: Box::new(move || {
+            stopped_requests.lock().expect("completed requests").len() >= 2
+                || Instant::now() > deadline
+        }),
+        output: Box::new(painted),
+        frame: Box::new(|_| {}),
+        deferral: DashboardRefreshDeferral::PRODUCTION,
+    };
+    let outcome = run_native_dashboard_with_seams(
+        NativeDashboardOptions {
+            project_root: root.clone(),
+            desktop_state_file: Some(root.join("desktop-state.json")),
+            cols: 120,
+            rows: 40,
+            once: false,
+        },
+        Some(seams),
+    );
+    finished.store(true, Ordering::Relaxed);
+    server.join().expect("preview server returns");
+    let _ = std::fs::remove_dir_all(root);
+    outcome.expect("driven bulk-confirmation loop returns");
+
+    if overlapping_picker {
+        let picker = picker_observation
+            .lock()
+            .expect("picker observation")
+            .take()
+            .expect("the preview response arrived while the picker was visible");
+        assert!(picker.contains("SELECT TOOL"));
+        assert!(!picker.contains("GRAVEYARD OFFLINE AGENTS"));
+        assert!(!picker.contains("Graveyarding confirmed offline agents"));
+    }
+
+    let (preview_frame, earlier_requests) = before_fresh_enter
+        .lock()
+        .expect("before fresh Enter")
+        .take()
+        .expect("the fresh confirmation poll was reached");
+    assert!(preview_frame.contains("GRAVEYARD OFFLINE AGENTS"));
+    assert!(preview_frame.contains("Graveyard 1 offline agents?"));
+    assert_eq!(
+        earlier_requests.len(),
+        1,
+        "buffered Enter performed a mutation"
+    );
+    assert_eq!(earlier_requests[0]["dryRun"], true);
+    assert!(
+        !preview_frame.contains("Graveyarding confirmed offline agents"),
+        "buffered Enter dismissed the confirmation before fresh input"
+    );
+    let requests = requests.lock().expect("all requests");
+    assert_eq!(
+        requests.len(),
+        2,
+        "fresh Enter must perform exactly one mutation"
+    );
+    assert_eq!(requests[1]["confirmed"], true);
+    assert_eq!(requests[1]["sessionIds"], json!(["offline-confirmed"]));
+}

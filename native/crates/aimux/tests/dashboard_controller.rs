@@ -4332,3 +4332,118 @@ fn next_attention_key_still_finds_an_agent_whose_score_was_never_published() {
         json!({ "windowId": "@legacy", "focus": true })
     );
 }
+
+#[test]
+fn bulk_graveyard_key_previews_scope_then_requires_separate_confirmation() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.agent_restore_prompt_dismissed = true;
+    controller
+        .navigation
+        .select_worktree(&snapshot, "<WORKTREE>");
+    let DashboardControllerEffect::BulkGraveyardPreview(preview) =
+        controller.handle_key(&snapshot, parse_dashboard_key(b"K"))
+    else {
+        panic!("K must preview, never execute");
+    };
+    assert_eq!(preview.path, routes::graveyard_actions::OFFLINE_AGENTS);
+    assert_eq!(
+        preview.body,
+        json!({"scope": "worktree", "path": "<WORKTREE>", "dryRun": true})
+    );
+    assert!(controller.bulk_graveyard_confirm.is_none());
+    controller
+        .receive_bulk_graveyard_preview(
+            json!({"scope": "worktree", "path": "<WORKTREE>", "dryRun": true,
+        "sessionIds": ["server-chosen"], "summary": "Graveyard 1 offline agents?"}),
+        )
+        .unwrap();
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('K')),
+        DashboardControllerEffect::Ignored
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Ignored
+    );
+    controller.bulk_graveyard_confirm_visible = true;
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("Enter must confirm");
+    };
+    assert_eq!(
+        request.body,
+        json!({"scope": "worktree", "path": "<WORKTREE>", "sessionIds": ["server-chosen"], "confirmed": true})
+    );
+    assert!(controller.bulk_graveyard_confirm.is_none());
+    assert_eq!(parse_dashboard_key(b"\x0b"), DashboardKey::Ctrl('k'));
+    let DashboardControllerEffect::BulkGraveyardPreview(project) =
+        controller.handle_key(&snapshot, parse_dashboard_key(b"\x0b"))
+    else {
+        panic!("Ctrl-K must preview project");
+    };
+    assert_eq!(project.body, json!({"scope": "project", "dryRun": true}));
+    controller.receive_bulk_graveyard_preview(json!({"scope": "project", "dryRun": true, "sessionIds": ["server-chosen"], "summary": "Graveyard 1 offline agents?"})).unwrap();
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Back),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.bulk_graveyard_confirm.is_none());
+    assert_ne!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Request(request)
+    );
+}
+
+#[test]
+fn bulk_graveyard_empty_preview_dismisses_without_mutation() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.receive_bulk_graveyard_preview(json!({"scope": "project", "dryRun": true, "sessionIds": [], "summary": "Graveyard 0 offline agents?"})).unwrap();
+    controller.bulk_graveyard_confirm_visible = true;
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.bulk_graveyard_confirm.is_none());
+    assert!(
+        controller
+            .receive_bulk_graveyard_preview(json!({"dryRun": false}))
+            .is_err()
+    );
+}
+
+#[test]
+fn bulk_graveyard_waits_for_existing_picker_before_showing_confirmation_or_report() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.agent_restore_prompt_dismissed = true;
+    controller.open_tool_picker(Vec::new(), DashboardToolPickerMode::Create);
+    controller
+        .receive_bulk_graveyard_preview(json!({"scope": "project", "dryRun": true,
+        "sessionIds": ["server-chosen"], "summary": "Graveyard 1 offline agents?"}))
+        .unwrap();
+    assert!(controller.bulk_graveyard_confirm.is_none());
+    assert!(controller.tool_picker.is_some());
+    assert!(!matches!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Request(_)
+    ));
+    assert!(controller.bulk_graveyard_confirm.is_none());
+    controller.handle_key(&snapshot, DashboardKey::Back);
+    controller.promote_bulk_graveyard_preview();
+    assert!(controller.bulk_graveyard_confirm.is_some());
+    assert!(!controller.bulk_graveyard_confirm_visible);
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Ignored
+    );
+    controller.handle_key(&snapshot, DashboardKey::Back);
+    controller.open_tool_picker(Vec::new(), DashboardToolPickerMode::Create);
+    controller.receive_bulk_graveyard_report("One failure: permission denied".into());
+    assert!(controller.bulk_graveyard_report.is_none());
+    controller.handle_key(&snapshot, DashboardKey::Back);
+    controller.promote_bulk_graveyard_preview();
+    assert!(controller.bulk_graveyard_report.is_some());
+}

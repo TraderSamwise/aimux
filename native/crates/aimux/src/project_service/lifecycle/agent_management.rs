@@ -303,8 +303,17 @@ pub(super) fn route_agent_kill_checked(
             record_agent_kill_operation_failure(&project_state_dir, &session_id, &message),
         );
     }
-    clear_prompt_context(&project_state_dir, &session_id);
+    let mut offline_guard_error = None;
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
+        if confirmed_topology.is_some()
+            && find_by_id(&topology, "sessions", &session_id)
+                .is_none_or(|current| string_field(&current, "status") != "offline")
+        {
+            offline_guard_error = Some(format!(
+                "Session {session_id} changed while checking offline state"
+            ));
+            return topology;
+        }
         let now = now_iso();
         let retained_bindings = confirmed_topology.map(|_| {
             array_field(&topology, "bindings")
@@ -336,6 +345,10 @@ pub(super) fn route_agent_kill_checked(
     if let Err(error) = result {
         return json_error(500, error);
     }
+    if let Some(error) = offline_guard_error {
+        return json_error(409, error);
+    }
+    clear_prompt_context(&project_state_dir, &session_id);
     prune_restore_eligibility(&project_state_dir, &session_id);
     clear_agent_destructive_operation_failures(&project_state_dir, &session_id);
     lifecycle_response(

@@ -1260,6 +1260,7 @@ struct FakeLifecycleRuntime {
     window_visible_after_launch: bool,
     capture: Option<String>,
     window_lists: BTreeMap<String, Result<Vec<TmuxWindowInfo>, String>>,
+    topology_update_during_query: Option<(PathBuf, Value)>,
 }
 
 impl Default for FakeLifecycleRuntime {
@@ -1270,6 +1271,7 @@ impl Default for FakeLifecycleRuntime {
             window_visible_after_launch: true,
             capture: None,
             window_lists: BTreeMap::new(),
+            topology_update_during_query: None,
         }
     }
 }
@@ -1383,6 +1385,9 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
             "method": "list_windows",
             "sessionName": session_name
         }));
+        if let Some((path, topology)) = self.topology_update_during_query.take() {
+            write_runtime_topology(path, &topology).unwrap();
+        }
         self.window_lists
             .get(session_name)
             .cloned()
@@ -1698,5 +1703,44 @@ fn bulk_offline_graveyard_metadata_failure_is_not_an_empty_scope() {
     )
     .unwrap();
     assert_eq!(absent.body["moved"], json!([{"sessionId": "offline"}]));
+    cleanup(project);
+}
+
+#[test]
+fn bulk_offline_graveyard_rechecks_status_under_the_topology_write_lock() {
+    let isolation = support::TestIsolation::new("bulk-race");
+    let project = temp_project("bulk-race");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let topology = reap_dead_topology_fixture(&[("resumed", "node", "good", "@r", "offline")]);
+    let path = runtime_topology_path(&state_dir);
+    write_runtime_topology(&path, &topology).unwrap();
+    let context = isolation.project_context(&project, &state_dir);
+    let mut resumed = topology.clone();
+    resumed["sessions"][0]["status"] = json!("running");
+    let mut runtime = FakeLifecycleRuntime {
+        topology_update_during_query: Some((path.clone(), resumed)),
+        ..Default::default()
+    };
+    let result = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "project", "confirmed": true, "sessionIds": ["resumed"]})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(result.body["moved"], json!([]));
+    assert!(
+        result.body["failed"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("changed while checking")
+    );
+    assert_eq!(
+        read_runtime_topology(path).unwrap()["sessions"][0]["status"],
+        "running"
+    );
+    assert!(!runtime.calls.iter().any(|c| c["method"] == "kill_window"));
     cleanup(project);
 }
