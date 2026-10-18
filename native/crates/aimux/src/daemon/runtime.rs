@@ -144,7 +144,7 @@ use crate::runtime_topology::{
 };
 use crate::secure_permissions;
 use crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots;
-use crate::team_contract::{is_overseer_session, is_project_control_session};
+use crate::team_contract::is_project_control_session;
 use crate::tmux::{
     LiveWindowIndex, TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION,
     TMUX_RUNTIME_CONTRACT_OPTION, TMUX_RUNTIME_OWNER_OPTION, TmuxRuntimeManager, TmuxTarget,
@@ -4073,7 +4073,9 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         {
             return Err(CoreCommandFailure { status: 502, error });
         }
-        let initial_agents = self.read_project_agents(&project_root)?;
+        let (_, inventory) =
+            self.project_service_json(&project_root, project_routes::agents::LIST, None, None)?;
+        let (initial_agents, overseer_ids) = overseer_watch_inventory(&inventory)?;
         let Some(target) = find_agent(&initial_agents, session_id) else {
             return Err(CoreCommandFailure {
                 status: 404,
@@ -4093,35 +4095,71 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             });
         }
 
-        let overseer_session_id = initial_agents
-            .iter()
-            .find(|agent| is_overseer_agent(agent) && is_agent_input_ready(agent))
-            .and_then(agent_id)
-            .map(str::to_owned)
-            .map(Ok)
-            .unwrap_or_else(|| {
-                let (_, spawned) = self.project_service_json(
-                    &project_root,
-                    project_routes::agents::SPAWN,
-                    Some(json!({
-                        "tool": load_config_for_project(&project_root)
-                            .get("defaultTool")
-                            .and_then(Value::as_str)
-                            .unwrap_or("claude"),
-                        "open": false,
-                        "overseer": true,
-                    })),
-                    None,
-                )?;
-                let Some(session_id) = trimmed_value_string(spawned.get("sessionId")) else {
-                    return Err(CoreCommandFailure {
-                        status: 502,
-                        error: "project service returned invalid overseer spawn response"
-                            .to_owned(),
-                    });
-                };
-                Ok(session_id.to_owned())
+        let bound_owner = match target.get("watchedBy") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(id)) if !id.trim().is_empty() => Some(id.as_str()),
+            _ => {
+                return Err(CoreCommandFailure {
+                    status: 502,
+                    error: format!(
+                        "invalid watch owner for {session_id}: expected a non-empty session identity"
+                    ),
+                });
+            }
+        };
+        let overseer_session_id = if let Some(owner_id) = bound_owner {
+            if !overseer_ids.iter().any(|id| id == owner_id) {
+                return Err(CoreCommandFailure {
+                    status: 409,
+                    error: format!(
+                        "cannot update watch for {session_id}: existing overseer {owner_id} is not a published project overseer"
+                    ),
+                });
+            }
+            let owner = find_agent(&initial_agents, owner_id).ok_or_else(|| CoreCommandFailure {
+                status: 409,
+                error: format!("cannot update watch for {session_id}: existing overseer {owner_id} is missing"),
             })?;
+            if !is_agent_input_ready(owner) {
+                return Err(CoreCommandFailure {
+                    status: 409,
+                    error: format!(
+                        "cannot update watch for {session_id}: existing overseer {owner_id} is not ready for input (status: {})",
+                        agent_status(owner).unwrap_or("unknown")
+                    ),
+                });
+            }
+            owner_id.to_owned()
+        } else {
+            overseer_ids
+                .iter()
+                .find(|id| find_agent(&initial_agents, id).is_some_and(is_agent_input_ready))
+                .cloned()
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    let (_, spawned) = self.project_service_json(
+                        &project_root,
+                        project_routes::agents::SPAWN,
+                        Some(json!({
+                            "tool": load_config_for_project(&project_root)
+                                .get("defaultTool")
+                                .and_then(Value::as_str)
+                                .unwrap_or("claude"),
+                            "open": false,
+                            "overseer": true,
+                        })),
+                        None,
+                    )?;
+                    let Some(session_id) = trimmed_value_string(spawned.get("sessionId")) else {
+                        return Err(CoreCommandFailure {
+                            status: 502,
+                            error: "project service returned invalid overseer spawn response"
+                                .to_owned(),
+                        });
+                    };
+                    Ok(session_id.to_owned())
+                })?
+        };
 
         self.wait_for_project_agent_input(&project_root, &overseer_session_id)?;
         let mut loop_body = Map::new();
@@ -5055,6 +5093,61 @@ fn is_agent_live(agent: &Value) -> bool {
     !matches!(agent_status(agent), Some("offline" | "exited"))
 }
 
+fn overseer_watch_inventory(
+    payload: &Value,
+) -> Result<(Vec<Value>, Vec<String>), CoreCommandFailure> {
+    if payload
+        .pointer("/tmuxLiveWindowQuery/ok")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        let reason = payload
+            .pointer("/tmuxLiveWindowQuery/error")
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.trim().is_empty())
+            .unwrap_or("unknown tmux liveness query failure");
+        return Err(CoreCommandFailure {
+            status: 503,
+            error: format!("could not verify agent tmux liveness: {reason}"),
+        });
+    }
+    let invalid = |reason: &str| CoreCommandFailure {
+        status: 502,
+        error: format!("project service returned invalid overseer watch inventory: {reason}"),
+    };
+    let agents = payload
+        .get("agents")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid("agents array is required"))?;
+    let mut agent_ids = BTreeSet::new();
+    for agent in agents {
+        let id = agent_id(agent).ok_or_else(|| invalid("agent identity is required"))?;
+        if !agent_ids.insert(id) {
+            return Err(invalid("duplicate agent identity"));
+        }
+    }
+    let ids = payload
+        .get("overseerSessionIds")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid("overseerSessionIds array is required"))?;
+    let mut seen = BTreeSet::new();
+    let mut overseer_ids = Vec::new();
+    for id in ids {
+        let id = id
+            .as_str()
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| invalid("overseer identity is required"))?;
+        if !seen.insert(id) {
+            return Err(invalid("duplicate overseer identity"));
+        }
+        if !agent_ids.contains(id) {
+            return Err(invalid(&format!("overseer session {id} is missing")));
+        }
+        overseer_ids.push(id.to_owned());
+    }
+    Ok((agents.clone(), overseer_ids))
+}
+
 fn is_agent_input_ready(agent: &Value) -> bool {
     if !is_agent_live(agent) || js_truthy(agent.get("pendingAction")) {
         return false;
@@ -5070,10 +5163,6 @@ fn is_agent_input_ready(agent: &Value) -> bool {
 
 fn is_project_control_agent(agent: &Value) -> bool {
     is_project_control_session(Some(agent))
-}
-
-fn is_overseer_agent(agent: &Value) -> bool {
-    is_overseer_session(Some(agent))
 }
 
 fn agent_watch_label(agent: &Value) -> &str {
@@ -6702,7 +6791,15 @@ mod tests {
         });
 
         assert!(!is_project_control_agent(&worker));
-        assert!(!is_overseer_agent(&worker));
+        let (agents, published) = overseer_watch_inventory(&json!({
+            "agents": [worker], "overseerSessionIds": []
+        }))
+        .expect("valid worker inventory");
+        assert_eq!(agents.len(), 1);
+        assert!(
+            published.is_empty(),
+            "watch owner selection follows the published set"
+        );
     }
 
     #[test]

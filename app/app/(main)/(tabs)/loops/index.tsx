@@ -37,7 +37,7 @@ type BusyAction =
 
 interface SessionEntry {
   session: DesktopSession;
-  worktree: WorktreeBucket;
+  worktree?: WorktreeBucket;
   order: number;
 }
 
@@ -62,19 +62,26 @@ export default function LoopsScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const entries = useMemo(() => flattenSessions(groups), [groups]);
-  const overseer = useMemo(
-    () => entries.find((entry) => entry.session.overseer === true) ?? null,
-    [entries],
+  const overseerIds = useMemo(
+    () => new Set(state?.overseerSessionIds ?? []),
+    [state?.overseerSessionIds],
   );
+  const overseers = useMemo(() => {
+    const sessions = new Map(state?.sessions.map((session) => [session.id, session]));
+    return (state?.overseerSessionIds ?? []).flatMap((id, order) => {
+      const session = sessions.get(id);
+      return session ? [{ session, order }] : [];
+    });
+  }, [state?.overseerSessionIds, state?.sessions]);
   const watched = useMemo(
     () =>
       entries.filter(
         (entry) =>
           entry.session.loop?.active === true &&
-          entry.session.overseer !== true &&
+          !overseerIds.has(entry.session.id) &&
           entry.session.scribe !== true,
       ),
-    [entries],
+    [entries, overseerIds],
   );
   const stateErrorCopy = stateError ? projectStateErrorCopy(stateError) : null;
   const activeCandidates = useMemo(
@@ -85,28 +92,29 @@ export default function LoopsScreen() {
     () =>
       activeCandidates.filter(
         (entry) =>
-          entry.session.overseer !== true &&
+          !overseerIds.has(entry.session.id) &&
           entry.session.scribe !== true &&
           entry.session.loop?.active !== true,
       ),
-    [activeCandidates],
+    [activeCandidates, overseerIds],
   );
   const overseerCandidates = useMemo(
     () =>
       activeCandidates.filter(
         (entry) =>
-          entry.session.overseer !== true &&
+          !overseerIds.has(entry.session.id) &&
           entry.session.scribe !== true &&
           entry.session.loop?.active !== true,
       ),
-    [activeCandidates],
+    [activeCandidates, overseerIds],
   );
   const canMutate = Boolean(endpoint) && !busyAction;
   const defaultDemotionWorktreePath = useMemo(
     () =>
+      state?.mainCheckoutPath ??
       groups.find((group) => group.isMainCheckout)?.path ??
       groups.find((group) => group.path)?.path,
-    [groups],
+    [groups, state?.mainCheckoutPath],
   );
 
   async function runAction(action: BusyAction, fn: () => Promise<void>, success: string) {
@@ -203,10 +211,7 @@ export default function LoopsScreen() {
       ) : (
         <View>
           <View className="mb-5 flex-row flex-wrap">
-            <SummaryCard
-              label="Overseer"
-              value={overseer ? sessionLabel(overseer.session) : "None"}
-            />
+            <SummaryCard label="Overseers" value={String(overseers.length)} />
             <SummaryCard label="Watched" value={String(watched.length)} />
             <SummaryCard label="Available" value={String(watchCandidates.length)} />
           </View>
@@ -214,45 +219,51 @@ export default function LoopsScreen() {
           {message ? <Notice tone="default" body={message} /> : null}
           {error ? <Notice tone="danger" body={error} /> : null}
 
-          <Section title="Overseer" subtitle="One project-level loop runner owns follow-up state.">
-            {overseer ? (
-              <AgentRow
-                entry={overseer}
-                icon={ShieldCheck}
-                detail="Project overseer"
-                onOpen={() => openAgent(overseer)}
-                actions={
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={!canMutate || !defaultDemotionWorktreePath}
-                    onPress={() =>
-                      runAction(
-                        `overseer:off:${overseer.session.id}`,
-                        async () => {
-                          const token = await getToken();
-                          await setAgentOverseer(
-                            endpoint,
-                            {
-                              sessionId: overseer.session.id,
-                              active: false,
-                              worktreePath: defaultDemotionWorktreePath ?? undefined,
-                            },
-                            { token },
-                          );
-                        },
-                        "Overseer cleared",
-                      )
-                    }
-                  >
-                    <Text className="text-sm text-muted-foreground">
-                      {busyAction === `overseer:off:${overseer.session.id}` ? "Clearing" : "Clear"}
-                    </Text>
-                  </Button>
-                }
-              />
+          <Section title="Overseers" subtitle="Project overseers receive loop follow-up state.">
+            {overseers.length > 0 ? (
+              overseers.map((overseer) => (
+                <AgentRow
+                  key={overseer.session.id}
+                  entry={overseer}
+                  icon={ShieldCheck}
+                  detail="Project overseer"
+                  onOpen={() => openAgent(overseer)}
+                  actions={
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      accessibilityLabel={`Clear overseer ${sessionLabel(overseer.session)}`}
+                      disabled={!canMutate || !defaultDemotionWorktreePath}
+                      onPress={() =>
+                        runAction(
+                          `overseer:off:${overseer.session.id}`,
+                          async () => {
+                            const token = await getToken();
+                            await setAgentOverseer(
+                              endpoint,
+                              {
+                                sessionId: overseer.session.id,
+                                active: false,
+                                worktreePath: defaultDemotionWorktreePath ?? undefined,
+                              },
+                              { token },
+                            );
+                          },
+                          "Overseer cleared",
+                        )
+                      }
+                    >
+                      <Text className="text-sm text-muted-foreground">
+                        {busyAction === `overseer:off:${overseer.session.id}`
+                          ? "Clearing"
+                          : "Clear"}
+                      </Text>
+                    </Button>
+                  }
+                />
+              ))
             ) : (
-              <EmptyText>No overseer set.</EmptyText>
+              <EmptyText>No overseers set.</EmptyText>
             )}
             {overseerCandidates.length > 0 ? (
               <View className="mt-3">
@@ -475,7 +486,12 @@ function AgentRow({
               {/* The service's word, not `entry.session.status`: that is whether
                   the process is alive, and it read "running" for an agent that
                   had finished its turn and was sitting at an empty prompt. */}
-              {[entry.worktree.name, servedStatusWord(entry.session)].filter(Boolean).join(" · ")}
+              {[
+                entry.worktree?.name ?? entry.session.worktreeName ?? "Project",
+                servedStatusWord(entry.session),
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             </Text>
             {detail ? (
               <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={2}>

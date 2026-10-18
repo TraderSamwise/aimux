@@ -10,6 +10,7 @@ use aimux::project_service::agents::{
     route_agent_read_request_async, select_direct_teammates, teammate_api_record,
     topology_desktop_session_list_with_live_window_ids,
 };
+use aimux::project_service::desktop_state::route_desktop_state_request_async;
 use aimux::project_service::lifecycle::{
     ProjectLifecycleRuntime, route_lifecycle_request_with_runtime,
 };
@@ -30,6 +31,88 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod support;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn agent_and_desktop_routes_distinguish_metadata_errors_from_absence() {
+    let isolation = support::TestIsolation::new("agent-metadata-errors");
+    for kind in ["absent", "corrupt", "unreadable"] {
+        let project = isolation.root().join(kind);
+        let state_dir = project.join("state");
+        create_dir_all(&state_dir).expect("create state directory");
+        write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+            .expect("write empty topology");
+        let metadata_path = state_dir.join("metadata.json");
+        match kind {
+            "corrupt" => write(&metadata_path, "{broken").expect("write corrupt metadata"),
+            "unreadable" => create_dir_all(&metadata_path).expect("make metadata a directory"),
+            _ => {}
+        }
+        let context = isolation.project_context(&project, &state_dir);
+        for route in [routes::agents::LIST, routes::DESKTOP_STATE] {
+            let response = route_project_service_request(&context, "GET", route, None);
+            assert_metadata_route_response(&response, kind, route);
+        }
+    }
+}
+
+#[test]
+fn async_agent_and_desktop_routes_distinguish_metadata_errors_from_absence() {
+    let isolation = support::TestIsolation::new("async-agent-metadata-errors");
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    // aimux-async-seam: test - route test drives both native async read handlers
+    aimux::async_runtime::block_on_named("test:async-metadata-read-errors", async {
+        for kind in ["absent", "corrupt", "unreadable"] {
+            let project = isolation.root().join(kind);
+            let state_dir = project.join("state");
+            create_dir_all(&state_dir).expect("create state directory");
+            write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+                .expect("write empty topology");
+            let metadata_path = state_dir.join("metadata.json");
+            match kind {
+                "corrupt" => write(&metadata_path, "{broken").expect("write corrupt metadata"),
+                "unreadable" => create_dir_all(&metadata_path).expect("make metadata a directory"),
+                _ => {}
+            }
+            let context = isolation.project_context(&project, &state_dir);
+            let agents = route_agent_read_request_async(&context, "GET", routes::agents::LIST)
+                .await
+                .expect("agent route handled");
+            assert_metadata_route_response(&agents, kind, routes::agents::LIST);
+            let desktop = route_desktop_state_request_async(&context, "GET", routes::DESKTOP_STATE)
+                .await
+                .expect("desktop route handled");
+            assert_metadata_route_response(&desktop, kind, routes::DESKTOP_STATE);
+        }
+    });
+}
+
+fn assert_metadata_route_response(
+    response: &aimux::project_service::dispatcher::ProjectServiceDispatchResponse,
+    kind: &str,
+    route: &str,
+) {
+    if kind == "absent" {
+        assert_eq!(response.status, 200, "{route}: {}", response.body);
+        assert_eq!(response.body["ok"], true);
+        assert_eq!(response.body["overseerSessionIds"], json!([]));
+    } else {
+        assert_eq!(response.status, 500, "{kind}/{route}: {}", response.body);
+        assert_eq!(response.body["ok"], false);
+        let error = response.body["error"].as_str().expect("visible read error");
+        assert!(error.contains("metadata.json"), "{error}");
+        assert!(
+            error.contains(if kind == "corrupt" {
+                "parse metadata state"
+            } else {
+                "read metadata state"
+            }),
+            "{error}"
+        );
+        assert!(response.body.get("overseerSessionIds").is_none());
+        assert!(response.body.get("agents").is_none());
+        assert!(response.body.get("sessions").is_none());
+    }
+}
 
 #[test]
 fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
@@ -110,8 +193,8 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
     assert_eq!(agents[1]["restoreState"], "ready");
     assert_eq!(agents[1]["role"], "coder");
     assert_eq!(agents[1]["lane"], json!({ "kind": "worktree" }));
-    assert!(agents[1].get("overseer").is_none());
-    assert!(agents[1].get("scribe").is_none());
+    assert_eq!(agents[1]["overseer"], false);
+    assert_eq!(agents[1]["scribe"], false);
     assert!(agents[1]["task"].is_null());
     // The derivation resolves an owner by `assignee` too, so a task assigned
     // that way has to reach this record or `ps` answers `ready` for an agent

@@ -192,6 +192,7 @@ export interface DesktopState {
   ok: boolean;
   usage?: UsageSnapshot;
   sessions: DesktopSession[];
+  overseerSessionIds?: string[];
   agentCreation?: AgentCreationPolicy;
   supervisorLane?: {
     sessions: DesktopSession[];

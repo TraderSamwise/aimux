@@ -510,7 +510,7 @@
       },
       "output": [
         ["↑↓/jk", "worktrees"],
-        ["1-9", "worktree"],
+        ["1-9", "worktrees"],
         ["Enter/→/l", "step in"],
         ["Tab", "details"],
         ["P", "scribe"],
@@ -521,6 +521,7 @@
         ["D", "cache cleanup"],
         ["w", "worktree"],
         ["a", "hide offline"],
+        ["O p", "loop alerts"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1046,13 +1047,14 @@
         ["H", "handoff"],
         ["T", "task"],
         ["o", "thread"],
-        ["O", "overseer"],
+        ["O", "overseer menu"],
         ["P", "scribe"],
         ["R", "reply"],
         ["m", "migrate"],
         ["M", "plane"],
         ["r", "name"],
         ["x", "stop", "danger"],
+        ["O p", "loop alerts"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1577,11 +1579,12 @@
         ["H", "handoff"],
         ["T", "task"],
         ["o", "thread"],
-        ["O", "overseer"],
+        ["O", "overseer menu"],
         ["P", "scribe"],
         ["R", "reply"],
         ["m", "migrate"],
         ["x", "stop", "danger"],
+        ["O p", "loop alerts"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1838,12 +1841,13 @@
         ["H", "handoff"],
         ["T", "task"],
         ["o", "thread"],
-        ["O", "overseer"],
+        ["O", "overseer menu"],
         ["P", "scribe"],
         ["R", "reply"],
         ["M", "plane"],
         ["x", "kill", "danger"],
         ["r", "name"],
+        ["O p", "loop alerts"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -1901,9 +1905,10 @@
         ["H", "handoff"],
         ["T", "task"],
         ["o", "thread"],
-        ["O", "overseer"],
+        ["O", "overseer menu"],
         ["P", "scribe"],
         ["R", "reply"],
+        ["O p", "loop alerts"],
         ["?", "help"],
         ["q", "quit"]
       ],
@@ -2401,7 +2406,19 @@
           ],
           "operationFailures": [],
           "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
-          "mainCheckoutPath": "<REPO>"
+          "mainCheckoutPath": "<REPO>",
+          "supervisorLane": {
+            "sessions": [
+              {
+                "index": 4,
+                "id": "scribe-1",
+                "command": "codex",
+                "status": "running",
+                "active": false,
+                "scribe": true
+              }
+            ]
+          }
         },
         "state": {
           "selectedSessionId": null,
@@ -2413,6 +2430,7 @@
       },
       "output": [
         ["↑↓/jk", "worktrees"],
+        ["0", "supervisor"],
         ["1-9", "worktrees"],
         ["Enter/→/l", "step in"],
         ["Tab", "details"],
@@ -2429,7 +2447,7 @@
         ["?", "help"],
         ["q", "quit"]
       ],
-      "inputSha256": "1df91cc987bf1e223adc375f2a5a1f2a54aced4bb5d60682e06f0f228c26fcdd"
+      "inputSha256": "bf90d193ca5edad1b0f77960797f881afbb364b4d22abd98989c397dae2a8fba"
     },
     {
       "id": "dashboard-footer-hints-007",
@@ -2484,9 +2502,10 @@
         ["H", "handoff"],
         ["T", "task"],
         ["o", "thread"],
-        ["O", "overseer"],
+        ["O", "overseer menu"],
         ["P", "scribe"],
         ["R", "reply"],
+        ["O p", "loop alerts"],
         ["U", "usage"],
         ["?", "help"],
         ["q", "quit"]

@@ -7,6 +7,7 @@
 
 mod support;
 
+use aimux::async_subprocess::AsyncCommand;
 use aimux::daemon_state::{load_metadata_endpoint, load_metadata_state};
 use aimux::paths::{PathResolver, compute_project_id};
 use aimux::runtime_topology::{
@@ -18,6 +19,8 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::FileTypeExt;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -145,6 +148,17 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
     }
     let project_root = isolation.root().join("repo");
     fs::create_dir_all(&project_root).expect("create project root");
+    // This fixture characterizes empty HTTP/SSE surfaces, not agent startup.
+    // Disable the opt-out default scribe before ensure so installed agent
+    // executables cannot create a late tmux session and change /projects.
+    let config_dir = project_root.join(".aimux");
+    fs::create_dir_all(&config_dir).expect("create isolated project config directory");
+    fs::write(
+        config_dir.join("config.json"),
+        serde_json::to_vec(&json!({ "scribe": { "defaultAgent": null } }))
+            .expect("serialize isolated project config"),
+    )
+    .expect("disable default agents for empty HTTP/SSE fixture");
     let git_init = Command::new("git")
         .arg("init")
         .arg("--initial-branch=main")
@@ -157,13 +171,6 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
         "git init failed: {}",
         String::from_utf8_lossy(&git_init.stderr)
     );
-
-    // HTTP characterization must not depend on which agent tools are installed.
-    fs::write(
-        isolation.aimux_home().join("config.json"),
-        r#"{"scribe":{"defaultAgent":null}}"#,
-    )
-    .expect("disable unrelated automatic scribe startup");
 
     let mut daemon = DaemonChild::spawn(&isolation);
     wait_for_daemon_health(isolation.daemon_port());
@@ -715,6 +722,8 @@ fn write_explicit_empty_topology(project_state_dir: &Path) {
 
 struct DaemonChild {
     child: Option<Child>,
+    // Capture this harness-owned identity before environment restoration.
+    private_tmux_socket: PathBuf,
 }
 
 impl DaemonChild {
@@ -727,17 +736,23 @@ impl DaemonChild {
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn daemon");
-        Self { child: Some(child) }
+        Self {
+            child: Some(child),
+            private_tmux_socket: isolation.root().join("tmux.sock"),
+        }
     }
 
     fn terminate(&mut self) {
         let Some(mut child) = self.child.take() else {
+            cleanup_private_tmux(&self.private_tmux_socket).expect("clean up private tmux server");
             return;
         };
         signal_pid(child.id(), libc::SIGTERM);
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if child.try_wait().expect("wait daemon").is_some() {
+                cleanup_private_tmux(&self.private_tmux_socket)
+                    .expect("clean up private tmux server");
                 return;
             }
             if Instant::now() >= deadline {
@@ -756,7 +771,128 @@ impl Drop for DaemonChild {
             signal_pid(child.id(), libc::SIGTERM);
             let _ = child.wait();
         }
+        if let Err(error) = cleanup_private_tmux(&self.private_tmux_socket) {
+            if thread::panicking() {
+                eprintln!("private tmux cleanup also failed during test unwind: {error}");
+            } else {
+                panic!("private tmux cleanup failed: {error}");
+            }
+        }
     }
+}
+
+fn cleanup_private_tmux(socket: &Path) -> Result<(), String> {
+    let metadata = match fs::symlink_metadata(socket) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "inspect private tmux socket {}: {error}",
+                socket.display()
+            ));
+        }
+    };
+    if !metadata.file_type().is_socket() {
+        return Err(format!(
+            "private tmux cleanup target is not a socket: {}",
+            socket.display()
+        ));
+    }
+    match UnixStream::connect(socket) {
+        Ok(stream) => drop(stream),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+            ) =>
+        {
+            // A socket inode can outlive its server. The connection error
+            // proves absence; other probe failures must remain failures.
+            return match fs::remove_file(socket) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(format!(
+                    "remove stale private tmux socket {}: {error}",
+                    socket.display()
+                )),
+            };
+        }
+        Err(error) => {
+            return Err(format!(
+                "probe private tmux socket {}: {error}",
+                socket.display()
+            ));
+        }
+    }
+    let program = aimux::tmux::tmux_program_from_env().map_err(|error| {
+        format!(
+            "resolve tmux for private socket {}: {error}",
+            socket.display()
+        )
+    })?;
+    let output = AsyncCommand::new(program)
+        .arg("-S")
+        .arg(socket)
+        .arg("kill-server")
+        .env_remove("TMUX")
+        .env_remove("TMUX_PANE")
+        .output_timeout("test:http-sse-private-tmux-cleanup", Duration::from_secs(3))
+        .map_err(|error| format!("kill private tmux server {}: {error}", socket.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "kill private tmux server {} failed ({}): stdout={}; stderr={}",
+            socket.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match UnixStream::connect(socket) {
+            Ok(stream) => drop(stream),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                ) =>
+            {
+                return Ok(());
+            }
+            Err(error) => {
+                return Err(format!(
+                    "verify private tmux shutdown {}: {error}",
+                    socket.display()
+                ));
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "private tmux server {} still accepts connections after kill-server",
+                socket.display()
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn private_tmux_cleanup_distinguishes_absence_stale_sockets_and_non_socket_errors() {
+    let isolation = TestIsolation::new("http-sse-private-tmux-cleanup");
+    let socket = isolation.root().join("tmux.sock");
+    cleanup_private_tmux(&socket).expect("a genuinely absent server needs no cleanup");
+    fs::write(&socket, "not a socket").expect("write invalid cleanup target");
+    let error =
+        cleanup_private_tmux(&socket).expect_err("a failed identity check is not server absence");
+    assert!(error.contains("not a socket"), "{error}");
+    assert_eq!(
+        fs::read_to_string(&socket).expect("preserve invalid target"),
+        "not a socket"
+    );
+    fs::remove_file(&socket).expect("remove invalid target");
+    drop(UnixListener::bind(&socket).expect("create owned stale socket"));
+    cleanup_private_tmux(&socket).expect("a connection-refused owned socket has no live server");
+    assert!(!socket.exists());
 }
 
 struct HttpExchange {
