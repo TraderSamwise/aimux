@@ -260,7 +260,10 @@ pub fn render_launch_options_overlay(
         format!(
             "{} {} {}",
             field_marker(state.active_field == LaunchOptionsField::Args),
-            style(&format!("{:<11}", "Extra args:"), Tone::Muted),
+            style(
+                &format!("{:<11}", if restarting { "Args:" } else { "Extra args:" }),
+                Tone::Muted
+            ),
             args
         ),
     ];

@@ -51,8 +51,8 @@ use crate::dashboard_service_input::{
     render_worktree_list_overlay, render_worktree_remove_confirm_overlay,
 };
 use crate::dashboard_terminal::{
-    DashboardTerminalGuard, consume_terminal_resize, ensure_dashboard_stdin_nonblocking,
-    read_dashboard_keys, terminal_size, wait_for_dashboard_input,
+    DashboardKeyReader, DashboardTerminalGuard, consume_terminal_resize,
+    ensure_dashboard_stdin_nonblocking, terminal_size, wait_for_dashboard_input,
 };
 use crate::dashboard_tool_picker::{enabled_dashboard_tools, render_tool_picker_overlay};
 use crate::dashboard_tui_visibility::{
@@ -506,6 +506,7 @@ pub fn run_native_dashboard_with_seams(
         None => dashboard_output(options.once),
     };
     let mut stdin = io::stdin();
+    let mut key_reader = DashboardKeyReader::default();
     // Not entered for a driven loop: there is no terminal to put into raw mode,
     // and the guard is not harmless on the way past. `enable_nonblocking_stdin`
     // has no `is_terminal` check, so it sets `O_NONBLOCK` on the real fd 0
@@ -554,7 +555,9 @@ pub fn run_native_dashboard_with_seams(
             Some(keys) => keys(),
             None => {
                 ensure_dashboard_stdin_nonblocking().context("keep dashboard stdin nonblocking")?;
-                read_dashboard_keys(&mut stdin).context("read dashboard key")?
+                key_reader
+                    .read_keys(&mut stdin)
+                    .context("read dashboard key")?
             }
         };
         if !read_keys.is_empty() {

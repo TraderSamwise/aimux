@@ -4358,8 +4358,8 @@ fn restart_options_dashboard() -> (DesktopStateSnapshot, DashboardController, St
     session.extra.insert(
         "restartLaunchOptions".into(),
         json!({
-            "key": "custom-codex", "command": "/bin/codex", "args": ["--configured"],
-            "defaultArgs": ["--model", "old model", ""], "defaultEnv": {}
+            "key": "custom-codex", "command": "/bin/codex", "args": [],
+            "defaultArgs": ["--configured", "--model", "old model", ""], "defaultEnv": {}
         }),
     );
     sync_restart_dashboard_session(&mut snapshot, &id);

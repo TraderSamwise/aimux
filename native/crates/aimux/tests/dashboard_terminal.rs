@@ -1,5 +1,5 @@
 use aimux::dashboard_controller::DashboardKey;
-use aimux::dashboard_terminal::{read_dashboard_key, read_dashboard_keys};
+use aimux::dashboard_terminal::{DashboardKeyReader, read_dashboard_key, read_dashboard_keys};
 use std::io::{self, Read};
 
 #[test]
@@ -40,6 +40,155 @@ struct WouldBlockReader;
 impl Read for WouldBlockReader {
     fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
         Err(io::Error::from(io::ErrorKind::WouldBlock))
+    }
+}
+
+struct FragmentedReader {
+    bytes: Vec<u8>,
+    position: usize,
+    chunk_size: usize,
+}
+
+impl FragmentedReader {
+    fn new(bytes: impl Into<Vec<u8>>, chunk_size: usize) -> Self {
+        Self {
+            bytes: bytes.into(),
+            position: 0,
+            chunk_size,
+        }
+    }
+}
+
+impl Read for FragmentedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let length = (self.bytes.len() - self.position)
+            .min(self.chunk_size)
+            .min(buffer.len());
+        buffer[..length].copy_from_slice(&self.bytes[self.position..self.position + length]);
+        self.position += length;
+        Ok(length)
+    }
+}
+
+#[test]
+fn incremental_reader_preserves_split_utf8_and_escape_sequences() {
+    let bytes = "界🙂\x1b[A\x1b[97;2u\x1bOD";
+    for chunk_size in [1, 2, 7, 32] {
+        let mut input = FragmentedReader::new(bytes.as_bytes(), chunk_size);
+        let mut reader = DashboardKeyReader::default();
+        let mut keys = Vec::new();
+        while input.position < input.bytes.len() {
+            keys.extend(reader.read_keys(&mut input).expect("read fragment"));
+        }
+        assert_eq!(
+            keys,
+            vec![
+                DashboardKey::Printable('界'),
+                DashboardKey::Printable('🙂'),
+                DashboardKey::Up,
+                DashboardKey::Printable('A'),
+                DashboardKey::Left,
+            ],
+            "chunk size {chunk_size}"
+        );
+    }
+}
+
+#[test]
+fn incremental_reader_releases_standalone_escape_on_idle_input() {
+    let mut reader = DashboardKeyReader::default();
+    assert!(
+        reader
+            .read_keys(&mut b"\x1b".as_slice())
+            .unwrap()
+            .is_empty()
+    );
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    assert_eq!(
+        reader.read_keys(&mut WouldBlockReader).unwrap(),
+        vec![DashboardKey::Back]
+    );
+    assert_eq!(
+        read_dashboard_key(&mut b"\x1b".as_slice()).unwrap(),
+        Some(DashboardKey::Back)
+    );
+}
+
+#[test]
+fn fragmented_multiline_unicode_paste_edits_restart_until_explicit_enter() {
+    use aimux::dashboard_controller::{DashboardController, DashboardControllerEffect};
+    use aimux::dashboard_model::{DesktopStateGoldenFixture, SessionStatus};
+    use serde_json::json;
+
+    let mut snapshot = serde_json::from_str::<DesktopStateGoldenFixture>(include_str!(
+        "../../../../src/multiplexer/desktop-state-golden.fixture.json"
+    ))
+    .unwrap()
+    .runtime_full;
+    snapshot.agent_restore_offer = None;
+    let session = &mut snapshot.sessions[0];
+    session.status = SessionStatus::Offline;
+    session.pending = false;
+    session.pending_action = None;
+    session.restore_state = Some("ready".into());
+    session.restore_blocked_reason = None;
+    session.extra.insert(
+        "restartLaunchOptions".into(),
+        json!({
+            "key": "claude", "command": "claude", "args": [],
+            "defaultArgs": ["--old"], "defaultEnv": {}
+        }),
+    );
+    let session = session.clone();
+    for group in &mut snapshot.worktree_groups {
+        for item in &mut group.sessions {
+            if item.id == session.id {
+                *item = session.clone();
+            }
+        }
+    }
+    let pasted = format!("--model '界🙂{}'\n--config 'a=b'", "long value ".repeat(8));
+    let normalized = pasted.replace('\n', " ");
+    for chunk_size in [1, 2, 7, 32] {
+        let mut controller = DashboardController::new(&snapshot);
+        assert!(controller.navigation.select_session(&snapshot, &session.id));
+        let mut reader = DashboardKeyReader::default();
+        for key in reader.read_keys(&mut b"A\x15".as_slice()).unwrap() {
+            assert!(!matches!(
+                controller.handle_key(&snapshot, key),
+                DashboardControllerEffect::Request(_)
+            ));
+        }
+        let framed = format!("\x1b[200~{pasted}\x1b[201~");
+        let mut input = FragmentedReader::new(framed.into_bytes(), chunk_size);
+        while input.position < input.bytes.len() {
+            for key in reader.read_keys(&mut input).unwrap() {
+                assert!(!matches!(
+                    controller.handle_key(&snapshot, key),
+                    DashboardControllerEffect::Request(_)
+                ));
+            }
+            assert!(
+                controller.launch_options.is_some(),
+                "paste submitted before Enter"
+            );
+        }
+        assert_eq!(
+            controller.launch_options.as_ref().unwrap().args.text,
+            normalized
+        );
+        let keys = reader.read_keys(&mut b"\r".as_slice()).unwrap();
+        assert_eq!(keys.len(), 1);
+        let DashboardControllerEffect::Request(request) =
+            controller.handle_key(&snapshot, keys[0].clone())
+        else {
+            panic!("explicit Enter must restart");
+        };
+        assert_eq!(request.body["sessionId"], session.id);
+        assert_eq!(
+            request.body["restartArgs"],
+            json!(aimux::dashboard_launch_options::parse_shell_args(&normalized).unwrap())
+        );
     }
 }
 

@@ -98,7 +98,7 @@ pub(super) fn route_agent_migrate(
                 backend_session_id.as_deref().unwrap_or_default(),
             );
             (
-                compose_tool_args(tool_config, &resume, &original_args),
+                compose_tool_launch(tool_config, &resume, &original_args).0,
                 Some(format!(
                     "You have been moved from {source_cwd} to {target_worktree_path}. Work in the new path from now on; paths in your earlier messages point at the old one."
                 )),
@@ -975,8 +975,18 @@ fn resume_agent_session_with_args(
         return json_error(404, format!("Session \"{session_id}\" not found"));
     };
     if restart_args.is_some()
-        && let Err(error) = LiveWindows::for_context(context, operation)
-            .verify_offline_for_restart(&topology_session, &topology)
+        && let Err(error) = LiveWindows::for_context(context, operation).verify_offline_for_restart(
+            &topology_session,
+            &topology,
+            |window_id, sessions| {
+                runtime.legacy_window_matches_agent_owner(
+                    window_id,
+                    sessions,
+                    &session_id,
+                    context.project_root(),
+                )
+            },
+        )
     {
         return json_error(409, error);
     }
@@ -1130,13 +1140,12 @@ fn resume_agent_session_with_args(
     };
     let session_name = project_session(&project_root, "aimux").session_name;
     if restart_args.is_some() {
-        let bytes = crate::tmux::packed_argv_bytes(&crate::tmux::new_window_argv(
+        let bytes = crate::tmux::packed_argv_bytes(&crate::tmux::restart_window_argv(
             &session_name,
             &label,
             &launch_cwd,
             &launch_command,
             &final_args,
-            true,
         ));
         if bytes > 16_000 {
             return json_error(
@@ -1150,19 +1159,34 @@ fn resume_agent_session_with_args(
     if let Err(error) = runtime.ensure_project_session(context.project_root()) {
         return resume_launch_error(&error, restart_args.is_some());
     }
-    let target = match runtime.create_window(
-        &session_name,
-        &label,
-        &launch_cwd,
-        &launch_command,
-        &final_args,
-        true,
-    ) {
+    let created = if restart_args.is_some() {
+        runtime.create_restart_window(
+            &session_name,
+            &label,
+            &launch_cwd,
+            &launch_command,
+            &final_args,
+        )
+    } else {
+        runtime.create_window(
+            &session_name,
+            &label,
+            &launch_cwd,
+            &launch_command,
+            &final_args,
+            true,
+        )
+    };
+    let target = match created {
         Ok(target) => target,
         Err(error) => return resume_launch_error(&error, restart_args.is_some()),
     };
     if restart_args.is_some() {
-        let verification = runtime
+        for observation in 0..2 {
+            if observation > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            let verification = runtime
             .list_windows(&target.session_name)
             .map_err(|error| {
                 format!(
@@ -1184,18 +1208,22 @@ fn resume_agent_session_with_args(
                     )),
                 }
             });
-        if let Err(error) = verification {
-            let output = runtime
-                .capture_window(&target)
-                .filter(|text| !text.trim().is_empty());
-            let error = match output {
-                Some(output) => format!("{error}: {}", output.trim()),
-                None => error,
-            };
-            return resume_launch_error(
-                &cleanup_restart_window(runtime, &target, error),
-                restart_args.is_some(),
-            );
+            if let Err(error) = verification {
+                let error = match runtime.capture_restart_window(&target) {
+                    Ok(Some(output)) if !output.trim().is_empty() => {
+                        format!("{error}: {}", output.trim())
+                    }
+                    Ok(_) => error,
+                    Err(capture) => format!("{error}; could not read child output: {capture}"),
+                };
+                return resume_launch_error(
+                    &cleanup_restart_window(runtime, &target, error),
+                    restart_args.is_some(),
+                );
+            }
+        }
+        if let Err(error) = runtime.set_window_option(&target.window_id, "remain-on-exit", "off") {
+            return resume_launch_error(&cleanup_restart_window(runtime, &target, error), true);
         }
     }
     let _ = runtime.clear_history(&target.window_id);

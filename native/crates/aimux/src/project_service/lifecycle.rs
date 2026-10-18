@@ -41,14 +41,13 @@ pub(crate) fn agent_restart_launch_options(
     tool_key: &str,
     tool_config: &Value,
 ) -> Value {
-    let base_args = string_array_field(tool_config.get("args"));
     let (_, saved_args) =
         compose_tool_launch(tool_config, &[], &string_array_field(session.get("args")));
     serde_json::json!({
         "key": tool_key,
         "command": trimmed_string(session.get("command")).unwrap_or_else(|| tool_key.to_owned()),
-        "args": base_args,
-        "defaultArgs": saved_args[base_args.len()..],
+        "args": [],
+        "defaultArgs": saved_args,
         "defaultEnv": {},
     })
 }
