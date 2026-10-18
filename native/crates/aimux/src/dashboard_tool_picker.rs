@@ -9,7 +9,8 @@ use crate::tui_render::theme::{Tone, keycap_hint, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
 use serde_json::{Map, Value};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DashboardToolEntry {
     pub key: String,
     pub command: String,

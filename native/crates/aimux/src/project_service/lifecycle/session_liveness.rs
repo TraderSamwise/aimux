@@ -12,6 +12,7 @@
 
 use crate::tmux::LiveWindowIndex;
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 use crate::project_service::agents::{
     session_is_backed_by_live_window, try_live_window_ids_for_session_projection,
@@ -29,6 +30,51 @@ use super::json_helpers::string_field;
 pub(super) struct LiveWindows(Result<LiveWindowIndex, String>);
 
 impl LiveWindows {
+    pub(super) fn verify_offline_for_restart(
+        &self,
+        session: &Value,
+        topology: &Value,
+        mut legacy_window_is_owned: impl FnMut(&str, &BTreeSet<String>) -> Result<bool, String>,
+    ) -> Result<(), String> {
+        let windows = self.0.as_ref().map_err(|error| {
+            format!("Cannot restart with changed args: could not verify tmux liveness: {error}")
+        })?;
+        let status = string_field(session, "status");
+        // The display projection hides bindings for offline records.
+        for binding in topology
+            .get("bindings")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|binding| binding.get("nodeId") == session.get("nodeId"))
+        {
+            let Some(window_id) = binding.get("tmuxWindowId").and_then(Value::as_str) else {
+                continue;
+            };
+            let has_live_binding = match binding.get("tmuxSession").and_then(Value::as_str) {
+                Some(name) => windows.window_is_in_session(window_id, name),
+                None => match windows.sessions_for_window(window_id) {
+                    Some(sessions) => legacy_window_is_owned(window_id, sessions).map_err(|error| {
+                        format!("Cannot restart with changed args: could not verify ownership of legacy tmux window {window_id}: {error}")
+                    })?,
+                    None => false,
+                },
+            };
+            if has_live_binding {
+                return Err(format!(
+                    "Cannot restart session \"{}\" with changed args: its tmux window is running; this action is offline only",
+                    string_field(session, "id")
+                ));
+            }
+        }
+        if status != "offline" && !LIVE_STATUSES.contains(&status.as_str()) {
+            return Err(format!(
+                "Cannot restart with changed args: session status is {status}; expected offline"
+            ));
+        }
+        Ok(())
+    }
+
     /// Prefers the inventory the request already carries, so one request does
     /// not ask tmux the same question twice and gets one consistent answer.
     pub(super) fn for_context(context: &ProjectServiceRequestContext, surface: &str) -> Self {
@@ -118,5 +164,70 @@ mod tests {
             live_windows.session_is_restorable(&session, &topology),
             "a running row with a verified-missing window can be restored"
         );
+    }
+
+    #[test]
+    fn legacy_binding_refuses_own_live_window_but_allows_reused_foreign_id() {
+        for status in ["offline", "running"] {
+            for owned in [true, false] {
+                let (mut session, mut topology) = topology_with_running_session("@1");
+                session["status"] = json!(status);
+                topology["bindings"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("tmuxSession");
+                let live_windows =
+                    LiveWindows(Ok(LiveWindowIndex::from_pairs([("@1", "actual-session")])));
+                let result = live_windows.verify_offline_for_restart(
+                    &session,
+                    &topology,
+                    |window_id, sessions| {
+                        assert_eq!(window_id, "@1");
+                        assert_eq!(sessions, &BTreeSet::from(["actual-session".to_owned()]));
+                        Ok(owned)
+                    },
+                );
+                if owned {
+                    assert!(result.unwrap_err().contains("offline only"));
+                } else {
+                    result.expect("foreign window does not own the offline agent");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_binding_unavailable_ownership_refuses_with_cause() {
+        let (session, mut topology) = topology_with_running_session("@1");
+        topology["bindings"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("tmuxSession");
+        let live_windows = LiveWindows(Ok(LiveWindowIndex::from_pairs([("@1", "actual-session")])));
+        for cause in [
+            "query failed",
+            "parse @aimux-meta failed",
+            "ownership metadata missing",
+        ] {
+            let error = live_windows
+                .verify_offline_for_restart(&session, &topology, |_, _| Err(cause.to_owned()))
+                .expect_err("unknown ownership cannot authorize a restart");
+            assert!(error.contains(cause), "{error}");
+            assert!(error.contains("could not verify ownership"), "{error}");
+        }
+    }
+
+    #[test]
+    fn missing_legacy_window_does_not_require_ownership_metadata() {
+        let (session, mut topology) = topology_with_running_session("@1");
+        topology["bindings"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("tmuxSession");
+        LiveWindows(Ok(LiveWindowIndex::default()))
+            .verify_offline_for_restart(&session, &topology, |_, _| {
+                panic!("verified-absent windows need no ownership lookup")
+            })
+            .expect("missing window allows a restart");
     }
 }

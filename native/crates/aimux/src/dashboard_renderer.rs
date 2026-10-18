@@ -2991,7 +2991,7 @@ fn render_help_content() -> Vec<String> {
         String::new(),
         format!("  {}", style("Actions", Tone::Strong)),
         "    [n] agent  [v] service  [f] fork  [S] switch tool".into(),
-        "    [a] hide/show offline agents  [x] stop/kill".into(),
+        "    [a] hide/show offline agents  [A] edit offline restart args  [x] stop/kill".into(),
         "    [O] overseer menu  [O then p] pause/resume loop alerts".into(),
     ]
 }
