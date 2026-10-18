@@ -3090,23 +3090,29 @@ pub fn delete_buffer_argv(buffer_name: &str) -> Vec<String> {
 pub fn prompt_buffer_name(window_id: &str) -> String {
     static PASTE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = PASTE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_nanos())
-        .unwrap_or(0);
-    prompt_buffer_name_from(window_id, std::process::id(), sequence, nanos)
+    prompt_buffer_name_with_clock(
+        window_id,
+        std::process::id(),
+        sequence,
+        std::time::SystemTime::now,
+    )
 }
 
-/// The name itself, with every varying part passed in so the collision this
-/// exists to prevent can be written as a test.
-///
-/// The sequence alone made the name unique only WITHIN a process: it starts at
-/// zero every time, so a recycled pid delivering to the same window produced a
-/// name an earlier process had already used. Paired with a staging file that
-/// could outlive its process, that meant `create_new` failed EEXIST on the new
-/// process's first delivery and kept failing. The clock reading is what makes
-/// the name unique across lifetimes; the sequence still carries uniqueness
-/// within one, where two deliveries can share a nanosecond.
+fn prompt_buffer_name_with_clock(
+    window_id: &str,
+    pid: u32,
+    sequence: u64,
+    now: impl FnOnce() -> std::time::SystemTime,
+) -> String {
+    let nanos = now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_nanos())
+        .unwrap_or_else(|error| error.duration().as_nanos());
+    prompt_buffer_name_from(window_id, pid, sequence, nanos)
+}
+
+/// The clock separates recycled pids across lifetimes; the sequence separates
+/// deliveries sharing a clock reading. Staging retries any remaining collision.
 fn prompt_buffer_name_from(window_id: &str, pid: u32, sequence: u64, nanos: u128) -> String {
     let sanitized: String = window_id
         .chars()
@@ -4613,25 +4619,6 @@ mod staged_prompt_tests {
         assert!(staged.ends_with("be a real one"), "the tail must survive");
     }
 
-    /// Gone as soon as tmux has READ it, which is before the paste runs.
-    ///
-    /// Asserted at paste time rather than after delivery, because `Drop` also
-    /// removes the file: a check made after `deliver_staged_prompt` returns
-    /// would pass with the early `discard_file` deleted, and this gate would
-    /// be measuring the destructor instead of the thing it is here for.
-    #[test]
-    fn the_staged_file_is_gone_once_tmux_has_read_it() {
-        let (recorder, outcome) = deliver("hello", None);
-
-        outcome.expect("delivered");
-        assert_eq!(
-            recorder.file_existed_at_paste,
-            Some(false),
-            "the staging file must be discarded before the paste, not after"
-        );
-        assert_staged_file_gone(&recorder);
-    }
-
     /// The paths the early discard cannot reach: a panic, or an early return.
     #[test]
     fn a_dropped_staged_prompt_takes_its_file_with_it() {
@@ -4653,17 +4640,28 @@ mod staged_prompt_tests {
     /// A recycled pid used to produce a name an earlier process had used.
     #[test]
     fn a_buffer_name_cannot_repeat_across_process_lifetimes() {
-        // Same window, same pid, and the sequence back at zero, which is what
-        // a fresh process does -- only the clock differs.
-        let earlier = super::prompt_buffer_name_from("@1", 4242, 0, 1_000);
-        let later = super::prompt_buffer_name_from("@1", 4242, 0, 2_000);
+        use std::time::{Duration, UNIX_EPOCH};
 
-        assert_ne!(earlier, later, "the name must not repeat for a reused pid");
-        // And within one process the sequence still separates two deliveries
-        // that land in the same nanosecond.
+        for before_epoch in [false, true] {
+            let clock = |nanos| {
+                let offset = Duration::from_nanos(nanos);
+                if before_epoch {
+                    UNIX_EPOCH - offset
+                } else {
+                    UNIX_EPOCH + offset
+                }
+            };
+            let earlier = super::prompt_buffer_name_with_clock("@1", 4242, 0, || clock(1_000));
+            let later = super::prompt_buffer_name_with_clock("@1", 4242, 0, || clock(2_000));
+
+            assert_ne!(
+                earlier, later,
+                "clock readings must separate reused pids, before_epoch={before_epoch}"
+            );
+        }
         assert_ne!(
-            super::prompt_buffer_name_from("@1", 4242, 0, 1_000),
-            super::prompt_buffer_name_from("@1", 4242, 1, 1_000)
+            super::prompt_buffer_name_with_clock("@1", 4242, 0, || UNIX_EPOCH),
+            super::prompt_buffer_name_with_clock("@1", 4242, 1, || UNIX_EPOCH)
         );
     }
 
@@ -4889,10 +4887,8 @@ mod staged_prompt_tests {
         (recorder.into_inner(), outcome)
     }
 
-    /// Two executors, one order. A change to one that is not made to the
-    /// other fails here rather than drifting apart silently -- and it is run
-    /// at every point the delivery can fail, because an executor that keeps
-    /// going after a failed load only shows up on that case.
+    /// Both executors share command order, staged bytes, and paste-time privacy
+    /// on success and failure. Checking after return alone only measures Drop.
     #[tokio::test]
     async fn the_sync_and_async_executors_emit_the_same_argv() {
         let prompt = long_numbered_list();
@@ -4915,6 +4911,17 @@ mod staged_prompt_tests {
                 sync_recorder.loaded_bytes, async_recorder.loaded_bytes,
                 "{fail_on:?}: both executors stage the same bytes"
             );
+            let expected_at_paste = (fail_on != Some("load-buffer")).then_some(false);
+            assert_eq!(
+                sync_recorder.file_existed_at_paste, async_recorder.file_existed_at_paste,
+                "{fail_on:?}: the executors disagree on paste-time staging cleanup"
+            );
+            for (executor, recorder) in [("sync", &sync_recorder), ("async", &async_recorder)] {
+                assert_eq!(
+                    recorder.file_existed_at_paste, expected_at_paste,
+                    "{fail_on:?}: {executor} must discard the staging file before paste"
+                );
+            }
             assert_staged_file_gone(&sync_recorder);
             assert_staged_file_gone(&async_recorder);
             // Only the buffer name differs, because it is unique per paste.
