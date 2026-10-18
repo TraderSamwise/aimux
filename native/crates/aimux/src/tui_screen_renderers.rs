@@ -713,11 +713,14 @@ fn split_help_hint(text: &str) -> Option<(&str, &str)> {
 fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> String {
     let overseers = dashboard_overseer_sessions(ctx);
     let live_overseer = overseers.iter().find(|session| is_live_session(session));
-    // The menu described the project as having no overseer whenever the one it
-    // has is down -- which is exactly when you open it. `d` was hidden on the
-    // same test while `unset_overseer_from_overlay` has always worked on an
-    // offline overseer, so it was a key that did something and said nothing.
-    let any_overseer = live_overseer.or_else(|| overseers.first());
+    let target = overseers
+        .iter()
+        .find(|session| {
+            session.get("id").and_then(Value::as_str)
+                == ctx.get("overseerTargetId").and_then(Value::as_str)
+        })
+        .or(live_overseer)
+        .or_else(|| overseers.first());
     let watched = watched_dashboard_sessions(ctx);
     let selected = watched.first();
     let max_watched_rows = rows.saturating_sub(15).max(2);
@@ -771,19 +774,6 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
             )
         },
     );
-    let overseer_line = any_overseer.map_or_else(
-        || style("none configured", Tone::Muted),
-        |entry| {
-            format!(
-                "{} {}",
-                style(&session_label(entry), Tone::Strong),
-                style(
-                    &string_field(entry, "status").unwrap_or_else(|| "active".to_owned()),
-                    Tone::Done
-                )
-            )
-        },
-    );
     let loop_alert_state = loop_alert_overlay_line(ctx);
     let mut body = vec![
         format!(
@@ -791,14 +781,28 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
             style("Status:", Tone::Muted),
             if live_overseer.is_some() {
                 style("Active", Tone::Done)
-            } else if any_overseer.is_some() {
+            } else if !overseers.is_empty() {
                 style("Off", Tone::Muted)
             } else {
                 style("None", Tone::Muted)
             }
         ),
-        format!("  {} {overseer_line}", style("Overseer:", Tone::Muted)),
+        format!("  {} {}", style("Overseers:", Tone::Muted), overseers.len()),
     ];
+    if overseers.is_empty() {
+        body.push(format!("  {}", style("none configured", Tone::Muted)));
+    }
+    for entry in &overseers {
+        body.push(format!(
+            "  {} {} {}",
+            if target == Some(entry) { "›" } else { " " },
+            style(&session_label(entry), Tone::Strong),
+            style(
+                &string_field(entry, "status").unwrap_or_else(|| "active".into()),
+                Tone::Muted
+            ),
+        ));
+    }
     if let Some(line) = loop_alert_state {
         body.push(format!("  {} {line}", style("Loop alerts:", Tone::Muted)));
     }
@@ -828,21 +832,22 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
     let mut hints = vec![
         (
             "Enter",
-            if live_overseer.is_some() {
+            if target.is_some_and(|session| is_live_session(session)) {
                 "focus"
             } else {
                 "start"
             },
         ),
+        ("n", "add overseer"),
         ("w", "watch selected"),
         ("u", "unwatch selected"),
         ("p", "pause alerts"),
     ];
-    if live_overseer.is_some() {
+    if target.is_some_and(|session| is_live_session(session)) {
         hints.push(("x", "stop overseer"));
     }
     // Shown whenever there is one to unset, because that is when the key works.
-    if any_overseer.is_some() {
+    if !overseers.is_empty() {
         hints.push(("d", "unset overseer"));
     }
     hints.push(("Esc", "back"));

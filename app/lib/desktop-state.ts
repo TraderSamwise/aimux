@@ -188,6 +188,7 @@ export interface DesktopWorktreeGroup {
 export interface DesktopState {
   ok: boolean;
   sessions: DesktopSession[];
+  overseerSessionIds?: string[];
   agentCreation?: AgentCreationPolicy;
   supervisorLane?: {
     sessions: DesktopSession[];

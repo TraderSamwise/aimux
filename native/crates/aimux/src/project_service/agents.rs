@@ -1,10 +1,10 @@
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::config::default_config;
-use crate::daemon_state::load_metadata_state;
+use crate::daemon_state::try_load_metadata_state;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{
@@ -23,6 +23,68 @@ use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 
 const ACTIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle", "offline"];
+
+pub fn overseer_session_ids(sessions: &[Value]) -> Vec<String> {
+    let mut overseers = sessions
+        .iter()
+        .filter(|session| is_project_overseer(session))
+        .collect::<Vec<_>>();
+    overseers
+        .sort_by(|left, right| crate::team_contract::compare_agent_canonical_order(left, right));
+    let mut seen = BTreeSet::new();
+    overseers
+        .into_iter()
+        .filter_map(|session| session.get("id").and_then(Value::as_str))
+        .filter(|id| !id.is_empty() && seen.insert((*id).to_owned()))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn is_project_overseer(session: &Value) -> bool {
+    crate::team_contract::is_project_control_session(Some(session))
+        && crate::team_contract::is_overseer_session(Some(session))
+}
+
+pub fn publish_project_control_flags(session: &mut Map<String, Value>) {
+    let probe = Value::Object(session.clone());
+    session.insert("overseer".into(), Value::Bool(is_project_overseer(&probe)));
+    session.insert(
+        "scribe".into(),
+        Value::Bool(
+            crate::team_contract::is_project_control_session(Some(&probe))
+                && crate::team_contract::is_scribe_session(Some(&probe)),
+        ),
+    );
+}
+
+pub fn overseer_session_ids_for_state(sessions: &[Value], metadata: &Value) -> Vec<String> {
+    let stored = metadata.get("sessions").and_then(Value::as_object);
+    let mut seen = BTreeSet::new();
+    let mut classified = sessions
+        .iter()
+        .filter_map(|session| {
+            let id = session.get("id").and_then(Value::as_str)?;
+            seen.insert(id.to_owned());
+            Some(session_with_stored_control_flags(
+                session,
+                stored.and_then(|sessions| sessions.get(id)),
+            ))
+        })
+        .collect::<Vec<_>>();
+    if let Some(stored) = stored {
+        for (id, session) in stored {
+            if seen.contains(id) {
+                continue;
+            }
+            let Some(mut session) = session.as_object().cloned() else {
+                continue;
+            };
+            session.insert("id".into(), Value::String(id.clone()));
+            classified.push(Value::Object(session));
+        }
+    }
+    overseer_session_ids(&classified)
+}
 
 /// Statuses that claim the session is backed by a live tmux window.
 /// The dashboard's "needs input" label is derived from metadata rather than
@@ -289,7 +351,10 @@ pub fn route_agent_read_request(
         return None;
     }
     let project_state_dir = context.project_state_dir();
-    let metadata_state = load_metadata_state(&project_state_dir);
+    let metadata_state = match try_load_metadata_state(&project_state_dir) {
+        Ok(metadata) => metadata,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    };
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
         Ok(topology) => topology,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
@@ -321,15 +386,12 @@ pub fn route_agent_read_request(
     }
     Some(json_response(
         200,
-        json!({
-            "ok": true,
-            "agents": build_agent_list(
-                &projection.sessions,
-                &metadata_state.sessions,
-                array_field(&exchange, "tasks"),
-                Some(&role_registry),
-            ),
-        }),
+        agent_list_response(
+            &projection.sessions,
+            &metadata_state.sessions,
+            array_field(&exchange, "tasks"),
+            &role_registry,
+        ),
     ))
 }
 
@@ -352,7 +414,10 @@ pub async fn route_agent_read_request_async(
         return None;
     }
     let project_state_dir = context.project_state_dir();
-    let metadata_state = load_metadata_state(&project_state_dir);
+    let metadata_state = match try_load_metadata_state(&project_state_dir) {
+        Ok(metadata) => metadata,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    };
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
         Ok(topology) => topology,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
@@ -385,16 +450,23 @@ pub async fn route_agent_read_request_async(
     }
     Some(json_response(
         200,
-        json!({
-            "ok": true,
-            "agents": build_agent_list(
-                &projection.sessions,
-                &metadata_state.sessions,
-                array_field(&exchange, "tasks"),
-                Some(&role_registry),
-            ),
-        }),
+        agent_list_response(
+            &projection.sessions,
+            &metadata_state.sessions,
+            array_field(&exchange, "tasks"),
+            &role_registry,
+        ),
     ))
+}
+
+fn agent_list_response(
+    sessions: &[Value],
+    metadata: &BTreeMap<String, Value>,
+    tasks: &[Value],
+    registry: &Value,
+) -> Value {
+    let agents = build_agent_list(sessions, metadata, tasks, Some(registry));
+    json!({"ok":true, "overseerSessionIds":overseer_session_ids(&agents), "agents":agents})
 }
 
 pub struct TopologyDesktopSessionProjection {
@@ -788,6 +860,9 @@ pub fn build_agent_list(
                 "restoreBlockedReason",
                 "worktreePath",
                 "label",
+                "createdAt",
+                "tmuxTarget",
+                "tmuxWindowIndex",
                 // A kill in flight is the answer, not the turn it interrupted.
                 // Without this the one answer could not see a transient here.
                 "pendingAction",
@@ -833,6 +908,7 @@ pub fn build_agent_list(
                 );
             }
             overlay_agent_role_registry(&mut agent, role_registry);
+            publish_project_control_flags(&mut agent);
             if let Some(task) = task {
                 agent.insert(
                     "task".into(),

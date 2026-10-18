@@ -88,3 +88,18 @@ fn a_live_overseer_wins_over_a_stale_one_in_the_header() {
         "and the live one is the one named: {rendered}"
     );
 }
+
+#[test]
+fn every_overseer_is_rendered_in_published_order_and_add_is_always_available() {
+    let rendered = overlay(json!([
+        overseer("second-identity", "offline"),
+        overseer("third-identity", "running"),
+        overseer("first-identity", "running"),
+    ]));
+    assert!(rendered.contains("Overseers: 3"), "{rendered}");
+    let positions = ["second-identity", "third-identity", "first-identity"]
+        .map(|id| rendered.find(id).expect("every overseer is visible"));
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(rendered.contains("add overseer"), "{rendered}");
+    assert!(overlay(json!([])).contains("add overseer"));
+}

@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::config::default_config;
 use crate::daemon::process_inventory::read_daemon_process_control_plane_warning;
-use crate::daemon_state::{load_daemon_info, load_daemon_info_async, load_metadata_state};
+use crate::daemon_state::{load_daemon_info, load_daemon_info_async, try_load_metadata_state};
 use crate::debug_logging::{LogLevel, log_at};
 use crate::loop_watcher::loop_alert_state_summary;
 use crate::paths::PathResolver;
@@ -222,7 +222,7 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
     }
     let project_state_dir = context.project_state_dir();
     let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
-    let metadata = load_metadata_state(&project_state_dir);
+    let metadata = try_load_metadata_state(&project_state_dir)?;
     let exchange = try_read_runtime_exchange(runtime_exchange_path(&project_state_dir))?;
     let live_window_ids_owned;
     let mut live_window_query_error = None;
@@ -287,7 +287,7 @@ pub async fn desktop_state_for_context_async(
     }
     let project_state_dir = context.project_state_dir();
     let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
-    let metadata = load_metadata_state(&project_state_dir);
+    let metadata = try_load_metadata_state(&project_state_dir)?;
     let exchange = try_read_runtime_exchange(runtime_exchange_path(&project_state_dir))?;
     let live_window_ids_owned;
     let mut live_window_query_error = None;
@@ -478,6 +478,10 @@ pub fn build_desktop_state_with_live_window_projection(
     state.insert("ok".into(), Value::Bool(true));
     state.insert("serviceInfo".into(), service_info());
     state.insert("pendingInteractions".into(), Value::Array(Vec::new()));
+    state.insert(
+        "overseerSessionIds".into(),
+        json!(super::agents::overseer_session_ids(&sessions)),
+    );
     state.insert("sessions".into(), Value::Array(sessions));
     state.insert("supervisorLane".into(), supervisor_lane);
     state.insert("agentCreation".into(), agent_creation_policy());
@@ -593,6 +597,10 @@ async fn build_desktop_state_with_live_window_projection_async(
     state.insert("ok".into(), Value::Bool(true));
     state.insert("serviceInfo".into(), service_info());
     state.insert("pendingInteractions".into(), Value::Array(Vec::new()));
+    state.insert(
+        "overseerSessionIds".into(),
+        json!(super::agents::overseer_session_ids(&sessions)),
+    );
     state.insert("sessions".into(), Value::Array(sessions));
     state.insert("supervisorLane".into(), supervisor_lane);
     state.insert("agentCreation".into(), agent_creation_policy());
@@ -958,6 +966,8 @@ fn dashboard_session(
 ) -> Value {
     let id = string_field(session, "id").unwrap_or("");
     let metadata = metadata_sessions.get(id);
+    let session = crate::team_contract::session_with_stored_control_flags(session, metadata);
+    let session = &session;
     let pending_action = string_field(session, "pendingAction").map(str::to_owned);
     let raw_status = normalized_session_status(string_field(session, "status"));
     let mut item = Map::new();
@@ -992,6 +1002,9 @@ fn dashboard_session(
         "restoreBlockedReason",
         "freshRelaunchAllowed",
         "team",
+        "overseer",
+        "scribe",
+        "projectControl",
         "label",
         "worktreePath",
         "lastUsedAt",
@@ -1195,12 +1208,7 @@ fn dashboard_session(
         ),
     );
     item.insert("semantic".into(), semantic);
-    if !item.contains_key("overseer") {
-        item.insert("overseer".into(), Value::Bool(false));
-    }
-    if !item.contains_key("scribe") {
-        item.insert("scribe".into(), Value::Bool(false));
-    }
+    super::agents::publish_project_control_flags(&mut item);
     Value::Object(item)
 }
 

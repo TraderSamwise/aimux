@@ -22,7 +22,7 @@ use crate::dashboard_focus::DashboardFocusState;
 use crate::dashboard_launch_options::render_launch_options_overlay;
 use crate::dashboard_model::{
     DashboardKept, DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus,
-    filter_dashboard_visible_model, is_dashboard_overseer_session, is_dashboard_scribe_session,
+    dashboard_overseer_sessions, filter_dashboard_visible_model, is_dashboard_scribe_session,
 };
 use crate::dashboard_navigation::{
     CarriedSelection, DashboardEntryRef, DashboardNavigationGroupKind, dashboard_navigation_groups,
@@ -2439,12 +2439,7 @@ fn render_dashboard_snapshot(
     let runtime_version = dashboard_runtime_version();
     let scribe_preview_entries =
         scribe_preview_entries_for_render(options, snapshot, selected_session_id, controller);
-    let overseer_sessions = snapshot
-        .sessions
-        .iter()
-        .filter(|session| is_dashboard_overseer_session(session))
-        .cloned()
-        .collect::<Vec<_>>();
+    let overseer_sessions = dashboard_overseer_sessions(snapshot);
     let scribe_sessions = snapshot
         .sessions
         .iter()
@@ -2509,6 +2504,7 @@ fn render_dashboard_snapshot(
     if controller.overseer_overlay_open {
         let ctx = serde_json::json!({
             "dashboardOverseerSessionsCache": &overseer_sessions,
+            "overseerTargetId": controller.overseer_overlay_target(snapshot).map(|session| &session.id),
             "dashboardSessionsCache": &snapshot.sessions,
             "dashboardTeammatesCache": &snapshot.teammates,
             "loopAlertState": snapshot.extra.get("loopAlertState"),

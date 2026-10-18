@@ -2185,17 +2185,17 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
         .expect("register project")
         .expect("entry");
     let server = ScriptedHttpServer::spawn(vec![
-        json!({ "agents": [
+        json!({ "overseerSessionIds": [], "agents": [
             { "id": "codex-1", "tool": "codex", "status": "running" }
         ]}),
         json!({ "sessionId": "claude-overseer" }),
-        json!({ "agents": [
+        json!({ "overseerSessionIds": ["claude-overseer"], "agents": [
             { "id": "codex-1", "tool": "codex", "status": "running" },
             { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
         ]}),
         json!({ "ok": true }),
         json!({ "ok": true, "active": true, "overseerSessionId": "claude-overseer", "watchedSessionId": "codex-1", "watchedSessionIds": ["codex-1"] }),
-        json!({ "agents": [
+        json!({ "overseerSessionIds": ["claude-overseer"], "agents": [
             { "id": "codex-1", "tool": "codex", "status": "running", "loop": { "active": true, "goal": "keep going" } },
             { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
         ]}),
@@ -2287,7 +2287,7 @@ fn overseer_watch_refuses_missing_agent_before_mutation() {
         .register_project(&project)
         .expect("register project")
         .expect("entry");
-    let server = ScriptedHttpServer::spawn(vec![json!({ "agents": [] })]);
+    let server = ScriptedHttpServer::spawn(vec![json!({ "overseerSessionIds": [], "agents": [] })]);
     persist_service(
         &resolver,
         &entry.id,
@@ -2335,7 +2335,7 @@ fn overseer_watch_refuses_project_control_agent_before_mutation() {
         .register_project(&project)
         .expect("register project")
         .expect("entry");
-    let server = ScriptedHttpServer::spawn(vec![json!({ "agents": [
+    let server = ScriptedHttpServer::spawn(vec![json!({ "overseerSessionIds": [], "agents": [
         { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
     ]})]);
     persist_service(
@@ -3666,5 +3666,187 @@ fn request_json_body(request: &str) -> Value {
         json!({})
     } else {
         serde_json::from_str(body).expect("request JSON body")
+    }
+}
+
+#[test]
+fn overseer_watch_chooses_the_first_ready_published_owner_without_replacing_siblings() {
+    for (count, first_ready) in [(2, true), (3, true), (3, false)] {
+        let fixture = RuntimeFixture::new(&format!("watch-published-{count}-{first_ready}"));
+        let project = fixture.project("repo");
+        let mut resolver = fixture.resolver();
+        let entry = resolver
+            .register_project(&project)
+            .expect("register project")
+            .expect("entry");
+        let names = ["control-a", "control-b", "control-c"];
+        let mut agents = vec![json!({ "id": "worker", "tool": "codex", "status": "running" })];
+        for name in names.iter().take(count) {
+            agents
+                .push(json!({ "id": name, "tool": "claude", "status": "idle", "overseer": true }));
+        }
+        if !first_ready {
+            agents[count]["status"] = json!("offline");
+        }
+        let published = names[..count].iter().rev().copied().collect::<Vec<_>>();
+        let chosen = if first_ready {
+            names[count - 1]
+        } else {
+            names[count - 2]
+        };
+        let inventory = json!({ "agents": agents, "overseerSessionIds": published });
+        let mut updated = inventory.clone();
+        updated["agents"][0]["loop"] = json!({ "active": true, "goal": "keep going" });
+        let server = ScriptedHttpServer::spawn(vec![
+            inventory.clone(),
+            inventory.clone(),
+            json!({ "ok": true }),
+            json!({ "ok": true }),
+            updated,
+            json!({ "ok": true }),
+        ]);
+        persist_service(
+            &resolver,
+            &entry.id,
+            &project,
+            std::process::id() as i32,
+            ProjectServiceStatus::Running,
+        );
+        save_metadata_endpoint(
+            resolver.project_state_dir_for(&project),
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".into(),
+                port: server.port,
+                pid: std::process::id() as i32,
+                updated_at: "now".into(),
+            },
+        )
+        .expect("endpoint");
+        let launcher = Arc::new(FakeLauncher::new(87_665));
+        let mut runtime =
+            fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
+        let result = runtime
+            .overseer_watch(
+                project.to_str().expect("path"),
+                "worker",
+                Some("keep going"),
+                None,
+            )
+            .expect("multiple overseers allow one per-worker owner");
+        assert_eq!(result["overseerSessionId"], chosen);
+        assert!(launcher.calls().is_empty());
+        let requests = server.join();
+        assert_eq!(requests.len(), 6);
+        assert_request_path(&requests[0], "GET", "/agents");
+        assert_request_path(&requests[1], "GET", "/agents");
+        assert_request_path(&requests[2], "POST", "/agents/loop");
+        assert_request_path(&requests[3], "POST", "/agents/watch");
+        assert_eq!(
+            request_json_body(&requests[3]),
+            json!({
+                "overseerSessionId": chosen, "watchedSessionId": "worker", "active": true,
+            })
+        );
+        assert_request_path(&requests[4], "GET", "/agents");
+        assert_request_path(&requests[5], "POST", "/agents/input");
+        assert_eq!(request_json_body(&requests[5])["sessionId"], chosen);
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.starts_with("POST /agents/spawn")
+                    && !request.starts_with("POST /agents/overseer")),
+            "selecting one assignment owner cannot mutate sibling roles or spawn replacements"
+        );
+        fixture.cleanup();
+    }
+}
+
+#[test]
+fn overseer_watch_rejects_invalid_published_inventory_before_spawning_or_assigning() {
+    let worker = json!({ "id": "worker", "tool": "codex", "status": "running" });
+    let overseer =
+        json!({ "id": "controller", "tool": "claude", "status": "idle", "overseer": true });
+    for (name, inventory, expected, reason) in [
+        (
+            "missing",
+            json!({ "agents": [worker.clone(), overseer.clone()] }),
+            502,
+            "overseerSessionIds",
+        ),
+        (
+            "wrong-type",
+            json!({ "agents": [worker.clone(), overseer.clone()], "overseerSessionIds": "controller" }),
+            502,
+            "overseerSessionIds",
+        ),
+        (
+            "invalid-id",
+            json!({ "agents": [worker.clone(), overseer.clone()], "overseerSessionIds": [null] }),
+            502,
+            "overseer identity",
+        ),
+        (
+            "empty-id",
+            json!({ "agents": [worker.clone(), overseer.clone()], "overseerSessionIds": [""] }),
+            502,
+            "overseer identity",
+        ),
+        (
+            "duplicate",
+            json!({ "agents": [worker.clone(), overseer.clone()], "overseerSessionIds": ["controller", "controller"] }),
+            502,
+            "duplicate",
+        ),
+        (
+            "missing-reference",
+            json!({ "agents": [worker.clone()], "overseerSessionIds": ["controller"] }),
+            502,
+            "controller is missing",
+        ),
+        (
+            "unverified",
+            json!({ "agents": [worker.clone(), overseer.clone()], "overseerSessionIds": ["controller"], "tmuxLiveWindowQuery": { "ok": false, "error": "socket unavailable" } }),
+            503,
+            "socket unavailable",
+        ),
+    ] {
+        let fixture = RuntimeFixture::new(&format!("watch-invalid-inventory-{name}"));
+        let project = fixture.project("repo");
+        let mut resolver = fixture.resolver();
+        let entry = resolver
+            .register_project(&project)
+            .expect("register")
+            .expect("entry");
+        let server = ScriptedHttpServer::spawn(vec![inventory]);
+        persist_service(
+            &resolver,
+            &entry.id,
+            &project,
+            std::process::id() as i32,
+            ProjectServiceStatus::Running,
+        );
+        save_metadata_endpoint(
+            resolver.project_state_dir_for(&project),
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".into(),
+                port: server.port,
+                pid: std::process::id() as i32,
+                updated_at: "now".into(),
+            },
+        )
+        .expect("endpoint");
+        let launcher = Arc::new(FakeLauncher::new(87_666));
+        let mut runtime =
+            fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
+        let error = runtime
+            .overseer_watch(project.to_str().expect("path"), "worker", None, None)
+            .expect_err("invalid inventory must never become an empty overseer set");
+        assert_eq!(error.status, expected);
+        assert!(error.error.contains(reason), "{name}: {}", error.error);
+        assert!(launcher.calls().is_empty());
+        let requests = server.join();
+        assert_eq!(requests.len(), 1);
+        assert_request_path(&requests[0], "GET", "/agents");
+        fixture.cleanup();
     }
 }

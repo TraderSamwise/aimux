@@ -18,8 +18,8 @@ use crate::backend_session_ids::claude_transcript_path;
 use crate::daemon_state::{MetadataState, metadata_state_path};
 use crate::debug_logging::{LogLevel, log_at};
 use crate::loop_watcher::{
-    LoopDeliveryOutcome, LoopScanIndeterminate, load_loop_watcher_state, loop_watcher_state_path,
-    save_loop_watcher_state,
+    LoopDeliveryOutcome, LoopScanIndeterminate, LoopSend, LoopWatcher, load_loop_watcher_state,
+    loop_watcher_state_path, save_loop_watcher_state,
 };
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
@@ -260,9 +260,7 @@ impl PeriodicTask for LoopWatcherTask {
                 return Ok(());
             }
 
-            let mut delivery_queue = watcher.buffered_sends_to_deliver(MAX_SENDS_PER_SCAN);
-            let remaining = MAX_SENDS_PER_SCAN.saturating_sub(delivery_queue.len());
-            delivery_queue.extend(sends.into_iter().take(remaining));
+            let delivery_queue = loop_delivery_queue(&watcher, sends, MAX_SENDS_PER_SCAN);
             for send in delivery_queue {
                 if budget.spent() {
                     break;
@@ -298,6 +296,35 @@ impl PeriodicTask for LoopWatcherTask {
             Ok(())
         })
     }
+}
+
+/// Prefer buffered content while delivering a recipient/signature only once.
+/// A buffered reminder can become due again before its earlier attempt lands;
+/// deduplicate before applying the scan cap so duplicates cannot spend slots.
+pub fn loop_delivery_queue(
+    watcher: &LoopWatcher,
+    sends: Vec<LoopSend>,
+    limit: usize,
+) -> Vec<LoopSend> {
+    let mut queue = Vec::<LoopSend>::new();
+    for send in watcher
+        .buffered_sends_to_deliver(limit)
+        .into_iter()
+        .chain(sends)
+    {
+        if queue.len() >= limit {
+            break;
+        }
+        if queue.iter().any(|queued| {
+            queued.session_id == send.session_id
+                && queued.kind == send.kind
+                && queued.signature == send.signature
+        }) {
+            continue;
+        }
+        queue.push(send);
+    }
+    queue
 }
 
 /// Assemble what the watcher is allowed to see.
