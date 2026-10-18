@@ -5,7 +5,7 @@
 //! CR is swallowed and the text sits in the composer forever. Node polled the
 //! pane until the pasted draft had actually rendered AND held the same
 //! signature across two consecutive looks, waited, sent the CR, then checked.
-//! This is that sequence, with the pane I/O behind [`PromptSubmitRuntime`].
+//! This is that sequence, with pane I/O supplied by the delivery runtimes.
 
 /// tmux capture window for the draft check, matching Node's `startLine: -60`.
 pub const DRAFT_CAPTURE_START_LINE: i64 = -60;

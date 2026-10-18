@@ -11,6 +11,7 @@ import type {
   AgentRestartLaunchOptions,
   PreviewCaptureMarker,
   ProjectOperationFailure,
+  UsageSnapshot,
 } from "../../src/project-api-contract";
 
 export type DesktopSessionStatus = "running" | "idle" | "waiting" | "exited" | "offline";
@@ -189,6 +190,7 @@ export interface DesktopWorktreeGroup {
 
 export interface DesktopState {
   ok: boolean;
+  usage?: UsageSnapshot;
   sessions: DesktopSession[];
   overseerSessionIds?: string[];
   agentCreation?: AgentCreationPolicy;

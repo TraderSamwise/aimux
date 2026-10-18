@@ -7,6 +7,11 @@ use super::{
 
 pub const ROUTES: &[Spec] = &[
     Spec::exact(Method::Post, routes::runtime::USAGE_MARK, Group::Runtime),
+    Spec::exact(
+        Method::Post,
+        routes::USAGE_CLAUDE_STATUSLINE,
+        Group::Runtime,
+    ),
     Spec::exact(Method::Post, routes::runtime::SET_STATUS, Group::Runtime),
     Spec::exact(Method::Post, routes::runtime::SET_PROGRESS, Group::Runtime),
     Spec::exact(Method::Post, routes::runtime::SET_CONTEXT, Group::Runtime),

@@ -192,7 +192,7 @@ impl ProjectHotSnapshotCoordinator {
         })
     }
 
-    fn schedule_project_refresh(&self, project_root: &Path) {
+    pub fn schedule_project_refresh(&self, project_root: &Path) {
         if !self.background_refresh_enabled || !project_hot_snapshots_enabled(project_root) {
             return;
         }

@@ -1855,6 +1855,7 @@ pub fn project_service_periodic_tasks_for_context(
     periodic_tasks.push(agent_input_delivery_task(context));
     periodic_tasks.push(project_expose_hot_snapshot_refresh_task(context));
     periodic_tasks.push(runtime_health_recorder_task());
+    periodic_tasks.push(super::usage_monitor::usage_monitor_task(context));
     periodic_tasks.push(loop_watcher_task(context));
     periodic_tasks.push(scribe_watcher_task(context));
     periodic_tasks.push(window_reconciliation_task());

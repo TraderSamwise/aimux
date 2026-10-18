@@ -91,6 +91,14 @@ const AUDITED_LOCAL_ROOT_DEPENDENCY_EDGES = [
 
 const AUDITED_PROCESS_SPAWN_SITES = [
   {
+    path: "native/crates/aimux/src/claude_usage_statusline.rs",
+    marker: 'Command::new("/bin/sh");',
+    command: "/bin/sh, fixed absolute path",
+    argv: "literal -c plus the effective user-configured Claude statusLine command",
+    input:
+      "config-derived command only; original runtime JSON is forwarded through a private unlinked stdin file, and quota fields never become shell arguments",
+  },
+  {
     path: "native/crates/aimux/src/async_subprocess.rs",
     marker: "Command::new(&self.program);",
     command: "AsyncCommand.program",

@@ -465,7 +465,7 @@ fn build_dashboard_footer_hints(
             tone: None,
         },
     ];
-    let system = [
+    let mut system = vec![
         FooterHint {
             key: "?",
             label: "help",
@@ -477,6 +477,16 @@ fn build_dashboard_footer_hints(
             tone: None,
         },
     ];
+    if input.snapshot.extra.contains_key("usage") {
+        system.insert(
+            0,
+            FooterHint {
+                key: "U",
+                label: "usage",
+                tone: None,
+            },
+        );
+    }
     let mut visibility = vec![FooterHint {
         key: "a",
         label: if input.hide_offline_agents {
@@ -2912,7 +2922,9 @@ pub fn render_dashboard_subscreen_frame(
     input: &DashboardSubscreenRenderInput<'_>,
 ) -> ScreenFrameResult {
     let content_width = screen_content_width(input.cols);
-    let two_pane = input.cols >= 110 && input.details_sidebar_visible;
+    let two_pane = input.screen != DashboardScreen::Usage
+        && input.cols >= 110
+        && input.details_sidebar_visible;
     let card_width = if two_pane {
         screen_left_width(input.cols)
     } else {
@@ -2933,6 +2945,13 @@ pub fn render_dashboard_subscreen_frame(
         }
         DashboardScreen::Project => render_project_content(input.resource, input.selected_index),
         DashboardScreen::Library => render_library_content(input.resource, input.selected_index),
+        DashboardScreen::Usage => usage_screen_rows(input.resource, input.cols)
+            .iter()
+            .enumerate()
+            .map(|(index, line)| {
+                format!("{}{line}", selected_marker(index == input.selected_index))
+            })
+            .collect(),
         DashboardScreen::Topology => render_topology_content(input.resource, input.selected_index),
         DashboardScreen::Graveyard => {
             render_graveyard_content(input.resource, input.selected_index, card_width)
@@ -3026,7 +3045,7 @@ fn render_help_content() -> Vec<String> {
         format!("  {}", style("Screens", Tone::Strong)),
         "    [c] coordination".into(),
         "    [p] project".into(),
-        "    [L] library".into(),
+        "    [L] library  [U] usage".into(),
         "    [t] topology  [g] graveyard".into(),
         String::new(),
         format!("  {}", style("Actions", Tone::Strong)),
@@ -3056,6 +3075,44 @@ fn selected_marker(selected: bool) -> String {
     } else {
         "  ".into()
     }
+}
+
+pub fn usage_screen_rows(resource: Option<&Value>, cols: usize) -> Vec<String> {
+    let Some(resource) = resource else {
+        return loading_lines("usage");
+    };
+    let lines = resource
+        .get("displayLines")
+        .and_then(Value::as_array)
+        .and_then(|lines| lines.iter().map(Value::as_str).collect::<Option<Vec<_>>>());
+    match lines {
+        Some(lines) if !lines.is_empty() => lines
+            .into_iter()
+            .flat_map(|line| wrap_usage_line(line, cols.saturating_sub(2).max(1)))
+            .collect(),
+        _ => vec!["Usage response invalid: displayLines must contain text".into()],
+    }
+}
+
+fn wrap_usage_line(line: &str, width: usize) -> Vec<String> {
+    // Preserve every character, including long paths and whitespace in source
+    // errors. The general word wrapper truncates words wider than the viewport.
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    let mut row_width = 0;
+    for character in line.chars() {
+        let character_width = character.len_utf16();
+        if row_width + character_width > width && !row.is_empty() {
+            rows.push(std::mem::take(&mut row));
+            row_width = 0;
+        }
+        row.push(character);
+        row_width += character_width;
+    }
+    if !row.is_empty() || rows.is_empty() {
+        rows.push(row);
+    }
+    rows
 }
 
 fn trailing_mark(selected: bool) -> String {
@@ -3100,6 +3157,9 @@ fn subscreen_footer(
         }
         DashboardScreen::Library => {
             "[↑↓] select  [Tab] details  [d/c/p/L/t/g] screens  [Enter] show path  [r] refresh  [Esc] dashboard  [q] quit"
+        }
+        DashboardScreen::Usage => {
+            "[↑↓/jk] scroll usage  [r] refresh snapshot  [Esc/d] dashboard  [q] quit"
         }
         DashboardScreen::Topology => {
             "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/c/p/L/t/g] screens  [Esc] dashboard  [q] quit"
@@ -3856,7 +3916,9 @@ fn render_subscreen_details(
         DashboardScreen::Graveyard => {
             render_graveyard_details(resource, selected_index, width, height)
         }
-        DashboardScreen::Dashboard | DashboardScreen::Help => vec![String::new(); height],
+        DashboardScreen::Dashboard | DashboardScreen::Help | DashboardScreen::Usage => {
+            vec![String::new(); height]
+        }
     }
 }
 

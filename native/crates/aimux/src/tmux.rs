@@ -3092,23 +3092,29 @@ pub fn delete_buffer_argv(buffer_name: &str) -> Vec<String> {
 pub fn prompt_buffer_name(window_id: &str) -> String {
     static PASTE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = PASTE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_nanos())
-        .unwrap_or(0);
-    prompt_buffer_name_from(window_id, std::process::id(), sequence, nanos)
+    prompt_buffer_name_with_clock(
+        window_id,
+        std::process::id(),
+        sequence,
+        std::time::SystemTime::now,
+    )
 }
 
-/// The name itself, with every varying part passed in so the collision this
-/// exists to prevent can be written as a test.
-///
-/// The sequence alone made the name unique only WITHIN a process: it starts at
-/// zero every time, so a recycled pid delivering to the same window produced a
-/// name an earlier process had already used. Paired with a staging file that
-/// could outlive its process, that meant `create_new` failed EEXIST on the new
-/// process's first delivery and kept failing. The clock reading is what makes
-/// the name unique across lifetimes; the sequence still carries uniqueness
-/// within one, where two deliveries can share a nanosecond.
+fn prompt_buffer_name_with_clock(
+    window_id: &str,
+    pid: u32,
+    sequence: u64,
+    now: impl FnOnce() -> std::time::SystemTime,
+) -> String {
+    let nanos = now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_nanos())
+        .unwrap_or_else(|error| error.duration().as_nanos());
+    prompt_buffer_name_from(window_id, pid, sequence, nanos)
+}
+
+/// The clock separates recycled pids across lifetimes; the sequence separates
+/// deliveries sharing a clock reading. Staging retries any remaining collision.
 fn prompt_buffer_name_from(window_id: &str, pid: u32, sequence: u64, nanos: u128) -> String {
     let sanitized: String = window_id
         .chars()
@@ -4501,6 +4507,40 @@ mod staged_prompt_tests {
         prompt
     }
 
+    fn delivery_prompts() -> [(&'static str, String); 3] {
+        let candidates = (1..=80)
+            .map(|index| {
+                serde_json::json!({
+                    "id": format!("worker-{index}"),
+                    "tool": "codex",
+                    "condition": "dead",
+                    "loopSince": "2026-10-14T00:00:00.000Z",
+                    "goal": format!("Inspect item {index} and preserve its full briefing — including the head")
+                })
+            })
+            .collect::<Vec<_>>();
+        let briefing = crate::loop_watcher::build_overseer_briefing(&candidates, None);
+        assert!(briefing.starts_with("[aimux loop check]"));
+        assert!(briefing.contains('\n'));
+        let contextualized = crate::project_service::prompt_context::compose_with_prompt_context(
+            &briefing,
+            Some("Check all agents before assigning work."),
+        );
+        let normalized = crate::agent_prompt_delivery::normalize_submitted_prompt(&contextualized);
+        assert!(!normalized.contains('\n'));
+        for prompt in [&briefing, &normalized] {
+            assert!(prompt.len() > super::TMUX_SEND_TEXT_CHUNK_BYTES);
+            assert!(prompt.contains("worker-1 "));
+            assert!(prompt.contains("worker-80 "));
+            assert!(prompt.ends_with("and report back."));
+        }
+        [
+            ("numbered list", long_numbered_list()),
+            ("multiline loop briefing", briefing),
+            ("contextualized normalized loop briefing", normalized),
+        ]
+    }
+
     #[derive(Default)]
     struct Recorder {
         calls: Vec<Vec<String>>,
@@ -4613,25 +4653,6 @@ mod staged_prompt_tests {
         assert!(staged.ends_with("be a real one"), "the tail must survive");
     }
 
-    /// Gone as soon as tmux has READ it, which is before the paste runs.
-    ///
-    /// Asserted at paste time rather than after delivery, because `Drop` also
-    /// removes the file: a check made after `deliver_staged_prompt` returns
-    /// would pass with the early `discard_file` deleted, and this gate would
-    /// be measuring the destructor instead of the thing it is here for.
-    #[test]
-    fn the_staged_file_is_gone_once_tmux_has_read_it() {
-        let (recorder, outcome) = deliver("hello", None);
-
-        outcome.expect("delivered");
-        assert_eq!(
-            recorder.file_existed_at_paste,
-            Some(false),
-            "the staging file must be discarded before the paste, not after"
-        );
-        assert_staged_file_gone(&recorder);
-    }
-
     /// The paths the early discard cannot reach: a panic, or an early return.
     #[test]
     fn a_dropped_staged_prompt_takes_its_file_with_it() {
@@ -4653,17 +4674,28 @@ mod staged_prompt_tests {
     /// A recycled pid used to produce a name an earlier process had used.
     #[test]
     fn a_buffer_name_cannot_repeat_across_process_lifetimes() {
-        // Same window, same pid, and the sequence back at zero, which is what
-        // a fresh process does -- only the clock differs.
-        let earlier = super::prompt_buffer_name_from("@1", 4242, 0, 1_000);
-        let later = super::prompt_buffer_name_from("@1", 4242, 0, 2_000);
+        use std::time::{Duration, UNIX_EPOCH};
 
-        assert_ne!(earlier, later, "the name must not repeat for a reused pid");
-        // And within one process the sequence still separates two deliveries
-        // that land in the same nanosecond.
+        for before_epoch in [false, true] {
+            let clock = |nanos| {
+                let offset = Duration::from_nanos(nanos);
+                if before_epoch {
+                    UNIX_EPOCH - offset
+                } else {
+                    UNIX_EPOCH + offset
+                }
+            };
+            let earlier = super::prompt_buffer_name_with_clock("@1", 4242, 0, || clock(1_000));
+            let later = super::prompt_buffer_name_with_clock("@1", 4242, 0, || clock(2_000));
+
+            assert_ne!(
+                earlier, later,
+                "clock readings must separate reused pids, before_epoch={before_epoch}"
+            );
+        }
         assert_ne!(
-            super::prompt_buffer_name_from("@1", 4242, 0, 1_000),
-            super::prompt_buffer_name_from("@1", 4242, 1, 1_000)
+            super::prompt_buffer_name_with_clock("@1", 4242, 0, || UNIX_EPOCH),
+            super::prompt_buffer_name_with_clock("@1", 4242, 1, || UNIX_EPOCH)
         );
     }
 
@@ -4889,51 +4921,76 @@ mod staged_prompt_tests {
         (recorder.into_inner(), outcome)
     }
 
-    /// Two executors, one order. A change to one that is not made to the
-    /// other fails here rather than drifting apart silently -- and it is run
-    /// at every point the delivery can fail, because an executor that keeps
-    /// going after a failed load only shows up on that case.
+    /// Both executors share command order, staged bytes, and paste-time privacy
+    /// on success and failure. Checking after return alone only measures Drop.
     #[tokio::test]
     async fn the_sync_and_async_executors_emit_the_same_argv() {
-        let prompt = long_numbered_list();
-        for fail_on in [None, Some("load-buffer"), Some("paste-buffer")] {
-            let (sync_recorder, sync_outcome) = deliver(&prompt, fail_on);
-            let (async_recorder, async_outcome) = deliver_async(&prompt, fail_on).await;
+        for (case, prompt) in delivery_prompts() {
+            for fail_on in [None, Some("load-buffer"), Some("paste-buffer")] {
+                let (sync_recorder, sync_outcome) = deliver(&prompt, fail_on);
+                let (async_recorder, async_outcome) = deliver_async(&prompt, fail_on).await;
 
-            assert_eq!(
-                sync_outcome.is_err(),
-                async_outcome.is_err(),
-                "{fail_on:?}: one executor delivered and the other did not"
-            );
-            assert_eq!(
-                sync_recorder.verbs(),
-                async_recorder.verbs(),
-                "{fail_on:?}: the executors ran different tmux commands"
-            );
-            assert_eq!(sync_recorder.steps, async_recorder.steps, "{fail_on:?}");
-            assert_eq!(
-                sync_recorder.loaded_bytes, async_recorder.loaded_bytes,
-                "{fail_on:?}: both executors stage the same bytes"
-            );
-            assert_staged_file_gone(&sync_recorder);
-            assert_staged_file_gone(&async_recorder);
-            // Only the buffer name differs, because it is unique per paste.
-            let strip = |calls: &[Vec<String>]| -> Vec<Vec<String>> {
-                calls
-                    .iter()
-                    .map(|argv| {
-                        argv.iter()
-                            .filter(|part| !part.contains("aimux-prompt-"))
-                            .cloned()
-                            .collect()
-                    })
-                    .collect()
-            };
-            assert_eq!(
-                strip(&sync_recorder.calls),
-                strip(&async_recorder.calls),
-                "{fail_on:?}"
-            );
+                for (executor, recorder) in [("sync", &sync_recorder), ("async", &async_recorder)] {
+                    assert_eq!(
+                        recorder.loaded_bytes.as_deref(),
+                        Some(prompt.as_bytes()),
+                        "{case}/{executor}/{fail_on:?}: staged bytes must equal the composed prompt"
+                    );
+                }
+                if fail_on.is_none() {
+                    assert_eq!(
+                        sync_recorder.verbs(),
+                        vec!["load-buffer", "paste-buffer"],
+                        "{case}"
+                    );
+                }
+
+                assert_eq!(
+                    sync_outcome.is_err(),
+                    async_outcome.is_err(),
+                    "{fail_on:?}: one executor delivered and the other did not"
+                );
+                assert_eq!(
+                    sync_recorder.verbs(),
+                    async_recorder.verbs(),
+                    "{fail_on:?}: the executors ran different tmux commands"
+                );
+                assert_eq!(sync_recorder.steps, async_recorder.steps, "{fail_on:?}");
+                assert_eq!(
+                    sync_recorder.loaded_bytes, async_recorder.loaded_bytes,
+                    "{fail_on:?}: both executors stage the same bytes"
+                );
+                let expected_at_paste = (fail_on != Some("load-buffer")).then_some(false);
+                assert_eq!(
+                    sync_recorder.file_existed_at_paste, async_recorder.file_existed_at_paste,
+                    "{fail_on:?}: the executors disagree on paste-time staging cleanup"
+                );
+                for (executor, recorder) in [("sync", &sync_recorder), ("async", &async_recorder)] {
+                    assert_eq!(
+                        recorder.file_existed_at_paste, expected_at_paste,
+                        "{fail_on:?}: {executor} must discard the staging file before paste"
+                    );
+                }
+                assert_staged_file_gone(&sync_recorder);
+                assert_staged_file_gone(&async_recorder);
+                // Only the buffer name differs, because it is unique per paste.
+                let strip = |calls: &[Vec<String>]| -> Vec<Vec<String>> {
+                    calls
+                        .iter()
+                        .map(|argv| {
+                            argv.iter()
+                                .filter(|part| !part.contains("aimux-prompt-"))
+                                .cloned()
+                                .collect()
+                        })
+                        .collect()
+                };
+                assert_eq!(
+                    strip(&sync_recorder.calls),
+                    strip(&async_recorder.calls),
+                    "{case}/{fail_on:?}"
+                );
+            }
         }
     }
 }
