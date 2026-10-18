@@ -801,6 +801,10 @@ pub fn lifecycle_transition_for_route(
         routes::agents::RESURRECT_TEAMMATE | routes::graveyard_actions::RESURRECT_AGENT => Some(
             LifecycleTransitionInput::new("agent.resurrect", "agent").with_target_id(session_id),
         ),
+        routes::graveyard_actions::OFFLINE_AGENTS => Some(LifecycleTransitionInput::new(
+            "graveyard.agent.bulkOffline",
+            "agent",
+        )),
         routes::graveyard_actions::REAP_DEAD_AGENTS => Some(
             LifecycleTransitionInput::new("graveyard.agent.reapDead", "agent")
                 .with_target_id(session_id),

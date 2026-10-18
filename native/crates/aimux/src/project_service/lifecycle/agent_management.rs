@@ -233,6 +233,15 @@ pub(super) fn route_agent_kill(
     body: &Value,
     runtime: &mut impl ProjectLifecycleRuntime,
 ) -> ProjectServiceDispatchResponse {
+    route_agent_kill_checked(context, body, runtime, None)
+}
+
+pub(super) fn route_agent_kill_checked(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+    confirmed_topology: Option<&Value>,
+) -> ProjectServiceDispatchResponse {
     let Some(session_id) = trimmed_string(body.get("sessionId")) else {
         return json_error(400, "sessionId is required");
     };
@@ -245,12 +254,54 @@ pub(super) fn route_agent_kill(
     let Some(session) = find_by_id(&topology, "sessions", &session_id) else {
         return json_error(404, format!("Unknown session \"{session_id}\""));
     };
-    let previous_status = if LIVE_STATUSES.contains(&string_field(&session, "status").as_str()) {
+    if let Some(confirmed_topology) = confirmed_topology {
+        let expected = graveyard_candidate_identity(confirmed_topology, &session_id);
+        let found = graveyard_candidate_identity(&topology, &session_id);
+        if !expected.is_object() || expected != found {
+            return json_error(
+                409,
+                format!(
+                    "Session {session_id} changed while checking offline state: expected {expected}, found {found}"
+                ),
+            );
+        }
+        let node_id = string_field(&session, "nodeId");
+        if let Some(binding) = array_field(confirmed_topology, "bindings")
+            .into_iter()
+            .find(|binding| string_field(binding, "nodeId") == node_id)
+        {
+            let (Some(tmux_session), Some(window_id)) = (
+                trimmed_string(binding.get("tmuxSession")),
+                trimmed_string(binding.get("tmuxWindowId")),
+            ) else {
+                return json_error(409, "Cannot verify incomplete tmux binding");
+            };
+            match runtime.live_windows() {
+                Ok(windows) if windows.window_is_in_session(&window_id, &tmux_session) => {
+                    return json_error(
+                        409,
+                        format!("Session {session_id} still has live window {window_id}"),
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    return json_error(503, format!("Cannot verify {session_id}: {error}"));
+                }
+            }
+        }
+    }
+    let previous_status = if confirmed_topology.is_none()
+        && LIVE_STATUSES.contains(&string_field(&session, "status").as_str())
+    {
         "running"
     } else {
         "offline"
     };
-    let window_id = live_window_id_for_session(&topology, &session);
+    let window_id = if confirmed_topology.is_some() {
+        None
+    } else {
+        live_window_id_for_session(&topology, &session)
+    };
     if let Some(window_id) = &window_id
         && let Err(error) = runtime.kill_window(window_id)
     {
@@ -260,10 +311,28 @@ pub(super) fn route_agent_kill(
             record_agent_kill_operation_failure(&project_state_dir, &session_id, &message),
         );
     }
-    clear_prompt_context(&project_state_dir, &session_id);
+    let mut offline_guard_error = None;
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
+        if let Some(confirmed_topology) = confirmed_topology {
+            let expected = graveyard_candidate_identity(confirmed_topology, &session_id);
+            let found = graveyard_candidate_identity(&topology, &session_id);
+            if !expected.is_object() || expected != found {
+                offline_guard_error = Some(format!(
+                    "Session {session_id} changed while checking offline state: expected {expected}, found {found}"
+                ));
+                return topology;
+            }
+        }
         let now = now_iso();
-        map_topology_array(topology, "sessions", |mut current| {
+        let retained_bindings = confirmed_topology.map(|_| {
+            array_field(&topology, "bindings")
+                .into_iter()
+                .filter(|binding| {
+                    string_field(binding, "nodeId") != string_field(&session, "nodeId")
+                })
+                .collect::<Vec<_>>()
+        });
+        let mut topology = map_topology_array(topology, "sessions", |mut current| {
             if string_field(&current, "id") == session_id {
                 object_insert_mut(&mut current, "status", Value::String("graveyard".into()));
                 object_insert_mut(&mut current, "updatedAt", Value::String(now.clone()));
@@ -276,11 +345,19 @@ pub(super) fn route_agent_kill(
                 }
             }
             current
-        })
+        });
+        if let Some(bindings) = retained_bindings {
+            object_insert_mut(&mut topology, "bindings", Value::Array(bindings));
+        }
+        topology
     });
     if let Err(error) = result {
         return json_error(500, error);
     }
+    if let Some(error) = offline_guard_error {
+        return json_error(409, error);
+    }
+    clear_prompt_context(&project_state_dir, &session_id);
     prune_restore_eligibility(&project_state_dir, &session_id);
     clear_agent_destructive_operation_failures(&project_state_dir, &session_id);
     lifecycle_response(
@@ -289,6 +366,17 @@ pub(super) fn route_agent_kill(
         "agent",
         Some(&session_id),
     )
+}
+
+fn graveyard_candidate_identity(topology: &Value, session_id: &str) -> Value {
+    let Some(session) = find_by_id(topology, "sessions", session_id) else {
+        return Value::Null;
+    };
+    let node_id = string_field(&session, "nodeId");
+    let binding = array_field(topology, "bindings").into_iter()
+        .find(|binding| string_field(binding, "nodeId") == node_id)
+        .map(|binding| json!({"session": binding.get("tmuxSession"), "window": binding.get("tmuxWindowId")}));
+    json!({"status": session.get("status"), "nodeId": node_id, "binding": binding})
 }
 
 pub(super) async fn route_agent_kill_async(

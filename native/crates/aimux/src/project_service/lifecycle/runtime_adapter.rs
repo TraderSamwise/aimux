@@ -5,8 +5,8 @@ use crate::backend_session_ids::{
 use crate::claude_background_sessions::{BackgroundSessionIds, parse_background_sessions};
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::tmux::{
-    CapturePaneOptions, TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo, clear_history_argv,
-    kill_window_argv, list_windows_argv, new_window_argv, rename_window_argv,
+    CapturePaneOptions, LiveWindowIndex, TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo,
+    clear_history_argv, kill_window_argv, list_windows_argv, new_window_argv, rename_window_argv,
     set_window_option_argv, tmux_command_from_env,
 };
 use serde_json::Value;
@@ -379,6 +379,10 @@ pub trait ProjectLifecycleRuntime {
     fn set_window_option(&mut self, window_id: &str, key: &str, value: &str) -> Result<(), String>;
     fn clear_history(&mut self, window_id: &str) -> Result<(), String>;
     fn has_window(&mut self, target: &TmuxTarget) -> bool;
+    fn live_windows(&mut self) -> Result<LiveWindowIndex, String> {
+        Err("tmux runtime does not support verified global window listing".into())
+    }
+
     fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
         let _ = session_name;
         Err("tmux runtime does not support verified window listing".into())
@@ -650,6 +654,10 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
 
     fn has_window(&mut self, target: &TmuxTarget) -> bool {
         TmuxRuntimeManager::new().has_window(target)
+    }
+
+    fn live_windows(&mut self) -> Result<LiveWindowIndex, String> {
+        TmuxRuntimeManager::new().try_live_windows_with_timeout(Duration::from_secs(5))
     }
 
     fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {

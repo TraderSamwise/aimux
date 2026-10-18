@@ -23,7 +23,7 @@ use aimux::runtime_topology::{
 };
 use aimux::tmux::{TmuxTarget, TmuxWindowInfo};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1343,6 +1343,9 @@ struct FakeLifecycleRuntime {
     window_visible_after_launch: bool,
     capture: Option<String>,
     window_lists: BTreeMap<String, Result<Vec<TmuxWindowInfo>, String>>,
+    window_inventory: Result<aimux::tmux::LiveWindowIndex, String>,
+    inventory_sequence: VecDeque<Result<aimux::tmux::LiveWindowIndex, String>>,
+    topology_update_during_query: Option<(PathBuf, Value)>,
 }
 
 impl Default for FakeLifecycleRuntime {
@@ -1353,6 +1356,9 @@ impl Default for FakeLifecycleRuntime {
             window_visible_after_launch: true,
             capture: None,
             window_lists: BTreeMap::new(),
+            window_inventory: Ok(aimux::tmux::LiveWindowIndex::default()),
+            inventory_sequence: VecDeque::new(),
+            topology_update_during_query: None,
         }
     }
 }
@@ -1461,6 +1467,16 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
         self.window_visible_after_launch
     }
 
+    fn live_windows(&mut self) -> Result<aimux::tmux::LiveWindowIndex, String> {
+        self.calls.push(json!({"method": "live_windows"}));
+        if let Some((path, topology)) = self.topology_update_during_query.take() {
+            write_runtime_topology(path, &topology).unwrap();
+        }
+        self.inventory_sequence
+            .pop_front()
+            .unwrap_or_else(|| self.window_inventory.clone())
+    }
+
     fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
         self.calls.push(json!({
             "method": "list_windows",
@@ -1517,4 +1533,662 @@ fn temp_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+#[test]
+fn bulk_offline_graveyard_moves_exactly_offline_agents_and_reports_partial_failure() {
+    let isolation = support::TestIsolation::new("bulk-offline");
+    let project = temp_project("bulk-offline");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let topology = reap_dead_topology_fixture(&[
+        ("a-error", "node-error", "broken", "@error", "offline"),
+        ("b-offline", "node-offline", "good", "@gone", "offline"),
+        ("c-running", "node-running", "good", "@live", "running"),
+        ("d-stale-offline", "node-stale", "good", "@live", "offline"),
+        ("e-idle", "node-idle", "good", "@idle", "idle"),
+        ("f-starting", "node-start", "good", "@starting", "starting"),
+    ]);
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_live_windows(aimux::tmux::LiveWindowIndex::from_pairs([
+            ("@live", "good"),
+            ("@idle", "good"),
+            ("@starting", "good"),
+        ]));
+    let mut runtime = FakeLifecycleRuntime {
+        inventory_sequence: VecDeque::from([
+            Err("permission denied".into()),
+            Ok(aimux::tmux::LiveWindowIndex::from_pairs([(
+                "@live", "good",
+            )])),
+            Ok(aimux::tmux::LiveWindowIndex::from_pairs([(
+                "@live", "good",
+            )])),
+        ]),
+        ..Default::default()
+    };
+    let preview = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "project", "dryRun": true})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(
+        preview.body["sessionIds"],
+        json!(["a-error", "b-offline", "d-stale-offline"])
+    );
+    assert_eq!(
+        read_runtime_topology(runtime_topology_path(&state_dir)).unwrap()["sessions"],
+        topology["sessions"]
+    );
+    let result = route_lifecycle_request_with_runtime(&context, "POST", routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "project", "confirmed": true, "sessionIds": preview.body["sessionIds"]})), &mut runtime).unwrap();
+    assert_eq!(result.status, 200);
+    assert_eq!(result.body["moved"], json!([{"sessionId": "b-offline"}]));
+    assert_eq!(result.body["failed"].as_array().unwrap().len(), 2);
+    assert!(
+        result.body["failed"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("permission denied")
+    );
+    assert!(
+        result.body["summary"]
+            .as_str()
+            .unwrap()
+            .contains("a-error: Cannot verify a-error: permission denied")
+    );
+    assert!(
+        result.body["summary"]
+            .as_str()
+            .unwrap()
+            .contains("d-stale-offline")
+    );
+    assert_eq!(result.body["partialFailure"], true);
+    assert_eq!(result.body["transition"]["phase"], "failed");
+    let after = read_runtime_topology(runtime_topology_path(&state_dir)).unwrap();
+    for item in after["sessions"].as_array().unwrap() {
+        let id = item["id"].as_str().unwrap();
+        let before = topology["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == id)
+            .unwrap();
+        assert_eq!(
+            item["status"],
+            if id == "b-offline" {
+                json!("graveyard")
+            } else {
+                before["status"].clone()
+            }
+        );
+    }
+    assert!(!runtime.calls.iter().any(|c| c["method"] == "kill_window"));
+    let telemetry = context.lifecycle_mutations.diagnostics("/repo");
+    assert_eq!(telemetry["telemetry"]["failed"], 1);
+    runtime.inventory_sequence = VecDeque::from([
+        Err("permission denied".into()),
+        Ok(aimux::tmux::LiveWindowIndex::from_pairs([(
+            "@live", "good",
+        )])),
+    ]);
+    let retry = route_lifecycle_request_with_runtime(&context, "POST", routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "project", "confirmed": true, "sessionIds": ["a-error", "d-stale-offline"]})), &mut runtime).unwrap();
+    assert_eq!(retry.body["moved"], json!([]));
+    assert_eq!(retry.body["failed"].as_array().unwrap().len(), 2);
+    cleanup(project);
+}
+
+#[test]
+fn bulk_offline_graveyard_requires_confirmation_and_never_expands_confirmed_set() {
+    let isolation = support::TestIsolation::new("bulk-confirm");
+    let project = temp_project("bulk-confirm");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let mut topology = reap_dead_topology_fixture(&[
+        ("resumed", "node-resumed", "good", "@r", "offline"),
+        ("new-offline", "node-new", "good", "@n", "running"),
+    ]);
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_live_windows(aimux::tmux::LiveWindowIndex::from_pairs([("@n", "good")]));
+    let mut runtime = FakeLifecycleRuntime::default();
+    let unconfirmed = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "project", "sessionIds": ["resumed"]})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(unconfirmed.status, 400);
+    let preview = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "project", "dryRun": true})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(preview.body["sessionIds"], json!(["resumed"]));
+    topology["sessions"][0]["status"] = json!("running");
+    topology["sessions"][1]["status"] = json!("offline");
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let context =
+        context.with_live_windows(aimux::tmux::LiveWindowIndex::from_pairs([("@r", "good")]));
+    let result = route_lifecycle_request_with_runtime(&context, "POST", routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "project", "confirmed": true, "sessionIds": preview.body["sessionIds"]})), &mut runtime).unwrap();
+    assert_eq!(result.body["moved"], json!([]));
+    assert_eq!(result.body["failed"][0]["sessionId"], "resumed");
+    assert_eq!(
+        read_runtime_topology(runtime_topology_path(&state_dir)).unwrap()["sessions"],
+        topology["sessions"]
+    );
+    cleanup(project);
+}
+
+#[test]
+fn bulk_offline_worktree_scope_matches_published_dashboard_lane() {
+    use aimux::project_service::desktop_state::{
+        DesktopStateInput, build_desktop_state_with_live_window_ids,
+    };
+    let isolation = support::TestIsolation::new("bulk-lane");
+    let project = temp_project("bulk-lane");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let lane = project.join("other");
+    create_dir_all(&lane).unwrap();
+    let mut topology = reap_dead_topology_fixture(&[
+        ("in-lane", "node-in", "good", "@in", "offline"),
+        ("out-lane", "node-out", "good", "@out", "offline"),
+        ("node-cwd", "node-cwd", "good", "@cwd", "offline"),
+    ]);
+    topology["sessions"][0]["worktreePath"] = json!(project);
+    topology["sessions"][0]["lane"] = json!({"kind": "worktree", "worktreePath": lane});
+    topology["sessions"][1]["worktreePath"] = json!(lane);
+    topology["sessions"][1]["lane"] = json!({"kind": "worktree", "worktreePath": project});
+    topology["nodes"][2]["cwd"] = json!(lane);
+    topology["bindings"] = json!([]);
+    topology["worktrees"] = json!([{"id": "wt-lane", "rigId": "rig-1", "path": lane, "name": "other", "status": "active", "branch": "test", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z"}]);
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let metadata_sessions = BTreeMap::from([
+        (
+            "in-lane".to_owned(),
+            json!({"lane": {"kind": "worktree", "worktreePath": lane}}),
+        ),
+        (
+            "out-lane".to_owned(),
+            json!({"lane": {"kind": "worktree", "worktreePath": project}}),
+        ),
+    ]);
+    let mut metadata = MetadataState::empty();
+    metadata.sessions = metadata_sessions.clone();
+    save_metadata_state(&state_dir, &metadata).unwrap();
+    topology["sessions"][0]["lane"] = json!({"kind": "worktree", "worktreePath": project});
+    topology["sessions"][1]["lane"] = json!({"kind": "worktree", "worktreePath": lane});
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: project.to_string_lossy().into_owned(),
+            topology: &topology,
+            metadata_sessions: &metadata_sessions,
+            exchange: &json!({}),
+        },
+        Some(&aimux::tmux::LiveWindowIndex::default()),
+    );
+    let group = state["worktreeGroups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|group| group["path"] == json!(lane))
+        .unwrap();
+    let mut published_ids = group["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    published_ids.sort();
+    assert_eq!(published_ids, vec!["in-lane", "node-cwd"]);
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_live_windows(aimux::tmux::LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+    let preview = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "worktree", "path": lane, "dryRun": true})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(preview.body["sessionIds"], json!(published_ids));
+    let result = route_lifecycle_request_with_runtime(&context, "POST", routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "worktree", "path": lane, "confirmed": true, "sessionIds": preview.body["sessionIds"]})), &mut runtime).unwrap();
+    assert_eq!(result.body["moved"].as_array().unwrap().len(), 2);
+    let after = read_runtime_topology(runtime_topology_path(&state_dir)).unwrap();
+    assert_eq!(after["sessions"][1]["status"], "offline");
+    cleanup(project);
+}
+
+#[test]
+fn bulk_offline_worktree_scope_matches_dashboard_after_control_metadata_changes() {
+    use aimux::project_service::desktop_state::{
+        DesktopStateInput, build_desktop_state_with_live_window_ids,
+    };
+    let isolation = support::TestIsolation::new("bulk-control-metadata");
+    let project = temp_project("bulk-control-metadata");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let mut topology = reap_dead_topology_fixture(&[
+        ("promoted", "node-promoted", "good", "@promoted", "offline"),
+        ("demoted", "node-demoted", "good", "@demoted", "offline"),
+    ]);
+    topology["bindings"] = json!([]);
+    topology["sessions"][0]["worktreePath"] = json!(project);
+    topology["sessions"][0]["projectControl"] = json!(false);
+    topology["sessions"][0]["role"] = json!("overseer");
+    topology["sessions"][1]["worktreePath"] = json!(project);
+    topology["sessions"][1]["projectControl"] = json!(true);
+    topology["sessions"][1]["overseer"] = json!(true);
+    topology["sessions"][1]["role"] = json!("overseer");
+    topology["sessions"][1]["team"] = json!({"role": "overseer", "teamId": "overseer"});
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let metadata_sessions = BTreeMap::from([
+        ("promoted".to_owned(), json!({"overseer": true})),
+        ("demoted".to_owned(), json!({"overseer": false})),
+    ]);
+    let mut metadata = MetadataState::empty();
+    metadata.sessions = metadata_sessions.clone();
+    save_metadata_state(&state_dir, &metadata).unwrap();
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: project.to_string_lossy().into_owned(),
+            topology: &topology,
+            metadata_sessions: &metadata_sessions,
+            exchange: &json!({}),
+        },
+        Some(&aimux::tmux::LiveWindowIndex::default()),
+    );
+    let worktree_ids = state["worktreeGroups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group["sessions"].as_array().unwrap())
+        .map(|session| session["id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(worktree_ids, vec!["demoted"]);
+    assert_eq!(state["supervisorLane"]["sessions"][0]["id"], "promoted");
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_live_windows(aimux::tmux::LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+    let preview = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "worktree", "path": project, "dryRun": true})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(preview.body["sessionIds"], json!(worktree_ids));
+    let result = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "worktree", "path": project, "confirmed": true, "sessionIds": preview.body["sessionIds"]})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(result.body["moved"], json!([{"sessionId": "demoted"}]));
+    assert_eq!(result.body["failed"], json!([]));
+    let after = read_runtime_topology(runtime_topology_path(&state_dir)).unwrap();
+    assert_eq!(after["sessions"][0]["status"], "offline");
+    assert_eq!(after["sessions"][1]["status"], "graveyard");
+    assert!(
+        !runtime
+            .calls
+            .iter()
+            .any(|call| call["method"] == "kill_window")
+    );
+    cleanup(project);
+}
+
+#[test]
+fn bulk_offline_graveyard_metadata_failure_is_not_an_empty_scope() {
+    let isolation = support::TestIsolation::new("bulk-metadata");
+    let project = temp_project("bulk-metadata");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let mut topology =
+        reap_dead_topology_fixture(&[("offline", "node", "good", "@gone", "offline")]);
+    topology["bindings"] = json!([]);
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_live_windows(aimux::tmux::LiveWindowIndex::default());
+    let mut runtime = FakeLifecycleRuntime::default();
+    let path = aimux::daemon_state::metadata_state_path(&state_dir);
+    write(&path, "{").unwrap();
+    let failed = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "project", "confirmed": true, "sessionIds": ["offline"]})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(failed.status, 500);
+    assert!(
+        failed.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("parse metadata state")
+    );
+    assert_eq!(
+        read_runtime_topology(runtime_topology_path(&state_dir)).unwrap()["sessions"],
+        topology["sessions"]
+    );
+    std::fs::remove_file(&path).unwrap();
+    let absent = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "project", "confirmed": true, "sessionIds": ["offline"]})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(absent.body["moved"], json!([{"sessionId": "offline"}]));
+    cleanup(project);
+}
+
+#[test]
+fn bulk_offline_graveyard_rechecks_status_under_the_topology_write_lock() {
+    let isolation = support::TestIsolation::new("bulk-race");
+    let project = temp_project("bulk-race");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let topology = reap_dead_topology_fixture(&[("resumed", "node", "good", "@r", "offline")]);
+    let path = runtime_topology_path(&state_dir);
+    write_runtime_topology(&path, &topology).unwrap();
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_live_windows(aimux::tmux::LiveWindowIndex::default());
+    let mut resumed = topology.clone();
+    resumed["sessions"][0]["status"] = json!("running");
+    let mut runtime = FakeLifecycleRuntime {
+        topology_update_during_query: Some((path.clone(), resumed)),
+        ..Default::default()
+    };
+    let result = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "project", "confirmed": true, "sessionIds": ["resumed"]})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(result.body["moved"], json!([]));
+    assert!(
+        result.body["failed"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("changed while checking")
+    );
+    assert_eq!(
+        read_runtime_topology(path).unwrap()["sessions"][0]["status"],
+        "running"
+    );
+    assert!(!runtime.calls.iter().any(|c| c["method"] == "kill_window"));
+    cleanup(project);
+}
+
+#[test]
+fn bulk_offline_preview_and_dashboard_agree_when_running_inventory_has_lost_its_window() {
+    use aimux::project_service::desktop_state::{
+        DesktopStateInput, build_desktop_state_with_live_window_ids,
+    };
+    use aimux::tmux::LiveWindowIndex;
+    let isolation = support::TestIsolation::new("bulk-projection");
+    let project = temp_project("bulk-projection");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let topology = reap_dead_topology_fixture(&[
+        ("ghost", "node-ghost", "vanished", "@gone", "running"),
+        ("live", "node-live", "good", "@live", "running"),
+        ("offline", "node-offline", "good", "@offline", "offline"),
+    ]);
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let live = LiveWindowIndex::from_pairs([("@live", "good")]);
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: project.to_string_lossy().into_owned(),
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &json!({}),
+        },
+        Some(&live),
+    );
+    let mut displayed_offline = state["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|session| session["status"] == "offline")
+        .map(|session| session["id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    displayed_offline.sort();
+    assert_eq!(displayed_offline, vec!["ghost", "offline"]);
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_live_windows(live);
+    let mut runtime = FakeLifecycleRuntime {
+        window_inventory: Ok(aimux::tmux::LiveWindowIndex::from_pairs([
+            ("@live", "good"),
+            ("@foreign", "another-project"),
+        ])),
+        ..Default::default()
+    };
+    let preview = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "project", "dryRun": true})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(preview.body["sessionIds"], json!(displayed_offline));
+    let result = route_lifecycle_request_with_runtime(&context, "POST", routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "project", "confirmed": true, "sessionIds": preview.body["sessionIds"]})), &mut runtime).unwrap();
+    assert_eq!(
+        result.body["moved"],
+        json!([{"sessionId": "ghost"}, {"sessionId": "offline"}])
+    );
+    assert_eq!(result.body["failed"], json!([]));
+    let after = read_runtime_topology(runtime_topology_path(&state_dir)).unwrap();
+    assert_eq!(after["sessions"][1]["status"], "running");
+    assert!(
+        !runtime
+            .calls
+            .iter()
+            .any(|call| call["method"] == "kill_window")
+    );
+    cleanup(project);
+}
+
+#[test]
+fn bulk_offline_projected_candidates_survive_reappearing_windows_and_query_failures() {
+    let isolation = support::TestIsolation::new("bulk-reappeared");
+    for windows in [
+        Ok(vec![tmux_window("@r", 1, "resumed")]),
+        Err("runtime unavailable".into()),
+    ] {
+        let project = temp_project("bulk-reappeared");
+        let state_dir = project.join("state");
+        create_dir_all(&state_dir).unwrap();
+        let topology = reap_dead_topology_fixture(&[("resumed", "node", "good", "@r", "running")]);
+        write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+        let context = isolation
+            .project_context(&project, &state_dir)
+            .with_live_windows(aimux::tmux::LiveWindowIndex::default());
+        let mut runtime = FakeLifecycleRuntime::default();
+        let preview = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::graveyard_actions::OFFLINE_AGENTS,
+            Some(&json!({"scope": "project", "dryRun": true})),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(preview.body["sessionIds"], json!(["resumed"]));
+        runtime.window_inventory = windows.map(|windows| {
+            aimux::tmux::LiveWindowIndex::from_pairs(
+                windows.into_iter().map(|window| (window.id, "good")),
+            )
+        });
+        let result = route_lifecycle_request_with_runtime(&context, "POST", routes::graveyard_actions::OFFLINE_AGENTS,
+            Some(&json!({"scope": "project", "confirmed": true, "sessionIds": preview.body["sessionIds"]})), &mut runtime).unwrap();
+        assert_eq!(result.body["moved"], json!([]));
+        assert_eq!(result.body["failed"][0]["sessionId"], "resumed");
+        assert_eq!(
+            read_runtime_topology(runtime_topology_path(&state_dir)).unwrap()["sessions"],
+            topology["sessions"]
+        );
+        let unqueryable = context.with_live_window_ids_error("inventory unavailable");
+        let result = route_lifecycle_request_with_runtime(
+            &unqueryable,
+            "POST",
+            routes::graveyard_actions::OFFLINE_AGENTS,
+            Some(&json!({"scope": "project", "confirmed": true, "sessionIds": ["resumed"]})),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(result.status, 503);
+        assert!(
+            result.body["error"]
+                .as_str()
+                .unwrap()
+                .contains("inventory unavailable")
+        );
+        cleanup(project);
+    }
+}
+
+#[test]
+fn bulk_offline_graveyard_rechecks_node_and_binding_identity_under_the_write_lock() {
+    let isolation = support::TestIsolation::new("bulk-binding-race");
+    for change_node in [false, true] {
+        let project = temp_project("bulk-binding-race");
+        let state_dir = project.join("state");
+        create_dir_all(&state_dir).unwrap();
+        let topology = reap_dead_topology_fixture(&[("resumed", "node", "good", "@r", "offline")]);
+        let path = runtime_topology_path(&state_dir);
+        write_runtime_topology(&path, &topology).unwrap();
+        let context = isolation
+            .project_context(&project, &state_dir)
+            .with_live_windows(aimux::tmux::LiveWindowIndex::default());
+        let mut changed = topology.clone();
+        if change_node {
+            let mut node = changed["nodes"][0].clone();
+            node["id"] = json!("new-node");
+            changed["nodes"].as_array_mut().unwrap().push(node);
+            changed["sessions"][0]["nodeId"] = json!("new-node");
+        } else {
+            changed["bindings"][0]["tmuxWindowId"] = json!("@new");
+        }
+        let mut runtime = FakeLifecycleRuntime {
+            topology_update_during_query: Some((path.clone(), changed)),
+            ..Default::default()
+        };
+        let result = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::graveyard_actions::OFFLINE_AGENTS,
+            Some(&json!({"scope": "project", "confirmed": true, "sessionIds": ["resumed"]})),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(result.body["moved"], json!([]));
+        assert!(
+            result.body["failed"][0]["error"]
+                .as_str()
+                .unwrap()
+                .contains("changed while checking")
+        );
+        assert_eq!(
+            read_runtime_topology(path).unwrap()["sessions"][0]["status"],
+            "offline"
+        );
+        cleanup(project);
+    }
+}
+
+#[test]
+fn bulk_offline_system_route_handles_a_missing_tmux_session_while_another_survives() {
+    use aimux::project_service::lifecycle::SystemProjectLifecycleRuntime;
+    use aimux::tmux::{TmuxRuntimeManager, tmux_command_from_env};
+    let isolation = support::TestIsolation::new("bulk-real-missing-session");
+    struct TestTmuxServer;
+    impl Drop for TestTmuxServer {
+        fn drop(&mut self) {
+            match tmux_command_from_env().arg("kill-server").output() {
+                Ok(output) if output.status.success() => {}
+                Ok(output) => eprintln!(
+                    "isolated tmux cleanup failed: {} {}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+                Err(error) => eprintln!("isolated tmux cleanup failed: {error}"),
+            }
+        }
+    }
+    let _server = TestTmuxServer;
+    let started = tmux_command_from_env()
+        .args(["new-session", "-d", "-s", "surviving", "sleep", "30"])
+        .output()
+        .unwrap();
+    assert!(
+        started.status.success(),
+        "{}",
+        String::from_utf8_lossy(&started.stderr)
+    );
+    let mut tmux = TmuxRuntimeManager::new();
+    assert!(tmux.list_windows("vanished").is_err());
+    let live = tmux.try_live_windows().unwrap();
+    let surviving_window = live
+        .window_ids()
+        .next()
+        .expect("surviving session has a window")
+        .to_owned();
+    assert!(live.window_is_in_session(&surviving_window, "surviving"));
+    let project = temp_project("bulk-real-missing-session");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let topology =
+        reap_dead_topology_fixture(&[("ghost", "node", "vanished", "@999999", "running")]);
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_live_windows(live);
+    let result = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Some(&json!({"scope": "project", "confirmed": true, "sessionIds": ["ghost"]})),
+        &mut SystemProjectLifecycleRuntime,
+    )
+    .unwrap();
+    assert_eq!(result.body["moved"], json!([{"sessionId": "ghost"}]));
+    assert_eq!(result.body["failed"], json!([]));
+    assert!(
+        tmux.try_live_windows()
+            .unwrap()
+            .window_is_in_session(&surviving_window, "surviving")
+    );
+    cleanup(project);
 }

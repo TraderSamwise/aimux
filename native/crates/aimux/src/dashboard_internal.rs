@@ -699,6 +699,7 @@ pub fn run_native_dashboard_with_seams(
                 continue;
             };
             let controller = controller.get_or_insert_with(|| DashboardController::new(snapshot));
+            controller.bulk_graveyard_report_width = viewport.cols.saturating_sub(12).max(1);
             let keys = std::mem::take(&mut pending_keys)
                 .into_iter()
                 .filter(|key| !key.is_focus_in())
@@ -712,11 +713,14 @@ pub fn run_native_dashboard_with_seams(
                 if controller.hide_offline_agents != before_hide_offline {
                     cacheable_input = false;
                 }
+                let discard_confirmation_tail =
+                    matches!(effect, DashboardControllerEffect::BulkGraveyardPreview(_));
                 let stop_after_key = is_coalesced_input
                     && controller.should_stop_coalesced_input(before_surface, &effect);
                 match effect {
                     DashboardControllerEffect::Quit => return Ok(()),
-                    DashboardControllerEffect::Request(request) => {
+                    DashboardControllerEffect::Request(request)
+                    | DashboardControllerEffect::BulkGraveyardPreview(request) => {
                         let recorded = record_dashboard_request(
                             controller,
                             &mut pending_actions,
@@ -921,7 +925,10 @@ pub fn run_native_dashboard_with_seams(
                     // and abandoning the tail was a third way to lose a
                     // keypress, and holding keys made the batches long enough
                     // to reach it.
-                    pending_keys.extend(keys);
+                    // Confirmation needs a fresh key after the preview opens.
+                    if !discard_confirmation_tail {
+                        pending_keys.extend(keys);
+                    }
                     break;
                 }
             }
@@ -2420,6 +2427,7 @@ fn render_dashboard_snapshot(
     context: DashboardSnapshotRenderContext<'_>,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
     let viewport = context.viewport;
+    controller.promote_bulk_graveyard_preview();
     if controller.screen != DashboardScreen::Dashboard {
         return render_dashboard_subscreen_snapshot(
             viewport,
@@ -2636,6 +2644,25 @@ fn render_dashboard_snapshot(
             &frame,
             render_agent_restore_confirm_overlay(offer, viewport.cols, viewport.rows),
         );
+    }
+    if let Some(report) = controller.bulk_graveyard_report.as_deref() {
+        let overlay = crate::dashboard_service_input::render_bulk_graveyard_report_overlay(
+            report,
+            controller.bulk_graveyard_report_offset,
+            viewport.cols,
+            viewport.rows,
+        );
+        controller.bulk_graveyard_report_visible = true;
+        return dashboard_overlay_frame(&frame, overlay);
+    }
+    if let Some(preview) = controller.bulk_graveyard_confirm.as_ref() {
+        let overlay = crate::dashboard_service_input::render_bulk_graveyard_confirm_overlay(
+            preview,
+            viewport.cols,
+            viewport.rows,
+        );
+        controller.bulk_graveyard_confirm_visible = true;
+        return dashboard_overlay_frame(&frame, overlay);
     }
     if let Some(preview) = controller.worktree_cache_cleanup_confirm.as_ref() {
         return dashboard_overlay_frame(
@@ -2864,6 +2891,25 @@ fn render_dashboard_subscreen_snapshot(
         runtime_label: Some("tmux"),
         version: Some(&dashboard_runtime_version()),
     });
+    if let Some(preview) = controller.bulk_graveyard_confirm.as_ref() {
+        let overlay = crate::dashboard_service_input::render_bulk_graveyard_confirm_overlay(
+            preview,
+            viewport.cols,
+            viewport.rows,
+        );
+        controller.bulk_graveyard_confirm_visible = true;
+        return compose_overlay_frame(&frame, overlay, OverlayBackground::AsDrawn);
+    }
+    if let Some(report) = controller.bulk_graveyard_report.as_deref() {
+        let overlay = crate::dashboard_service_input::render_bulk_graveyard_report_overlay(
+            report,
+            controller.bulk_graveyard_report_offset,
+            viewport.cols,
+            viewport.rows,
+        );
+        controller.bulk_graveyard_report_visible = true;
+        return compose_overlay_frame(&frame, overlay, OverlayBackground::AsDrawn);
+    }
     if let Some(reply) = controller.thread_reply.as_ref() {
         // Inside the synchronized update, and over the screen AS DRAWN. This
         // site appended the reply box straight onto the frame, after the
@@ -3597,16 +3643,50 @@ fn created_worktree_path_from_response(path: &str, body: &Value) -> Option<Strin
 struct DashboardActionNotice {
     message: String,
     failed: bool,
+    report: Option<String>,
+    preview: Option<Value>,
 }
 
 /// The sentence a finished mutation leaves in the footer. Only routes whose
 /// success is otherwise invisible have one.
 fn dashboard_action_notice(path: &str, body: &Value) -> Option<DashboardActionNotice> {
+    if path == crate::project_api_contract::routes::graveyard_actions::OFFLINE_AGENTS {
+        if body.get("dryRun").and_then(Value::as_bool) == Some(true) {
+            return Some(DashboardActionNotice {
+                message: String::new(),
+                failed: false,
+                report: None,
+                preview: Some(body.clone()),
+            });
+        }
+        return Some(
+            match (
+                body.get("summary").and_then(Value::as_str),
+                body.get("partialFailure").and_then(Value::as_bool),
+            ) {
+                (Some(message), Some(failed)) => DashboardActionNotice {
+                    message: message.into(),
+                    failed,
+                    report: failed.then(|| message.to_owned()),
+                    preview: None,
+                },
+                _ => DashboardActionNotice {
+                    message: "Invalid bulk graveyard result; refresh graveyard to inspect outcome"
+                        .into(),
+                    failed: true,
+                    report: None,
+                    preview: None,
+                },
+            },
+        );
+    }
     if path == crate::project_api_contract::routes::agents::RESTORE_PREVIOUS {
         return crate::agent_restore_outcome::restore_outcome_message(body).map(|message| {
             DashboardActionNotice {
                 message,
                 failed: crate::agent_restore_outcome::restore_outcome_failed(body),
+                report: None,
+                preview: None,
             }
         });
     }
@@ -3670,6 +3750,15 @@ fn drain_dashboard_request_outcomes(
                 // an unrelated faster request cannot end this one's report.
                 controller.clear_progress_for(outcome.action.as_ref());
                 if let Some(notice) = outcome.notice {
+                    if let Some(preview) = notice.preview {
+                        if let Err(error) = controller.receive_bulk_graveyard_preview(preview) {
+                            controller.footer_alert = Some(DashboardFailureAlert::local(error));
+                        }
+                        continue;
+                    }
+                    if let Some(report) = notice.report {
+                        controller.receive_bulk_graveyard_report(report);
+                    }
                     if notice.failed {
                         // A 200 that names what did not work is a failure
                         // report, and the note channel erases it on the next
@@ -4096,6 +4185,8 @@ mod tests {
             }),
             failure: None,
             notice: Some(DashboardActionNotice {
+                report: None,
+                preview: None,
                 message: "Worktree other-tree moved to the graveyard".into(),
                 failed: false,
             }),
@@ -4606,6 +4697,8 @@ mod tests {
             action: Some(restore_previous()),
             failure: None,
             notice: Some(DashboardActionNotice {
+                report: None,
+                preview: None,
                 message: "Restored 2 of 36; 34 could not be restored: claude-7".into(),
                 failed: true,
             }),
@@ -4642,6 +4735,8 @@ mod tests {
             action: Some(restore_previous()),
             failure: None,
             notice: Some(DashboardActionNotice {
+                report: None,
+                preview: None,
                 message: "Restored 36 agents".into(),
                 failed: false,
             }),
@@ -6039,5 +6134,224 @@ mod tests {
             overseer_at < closed_at,
             "the dialog has to be drawn inside the update, not after it"
         );
+    }
+}
+
+#[cfg(test)]
+mod bulk_graveyard_tests {
+    use super::*;
+    use crate::dashboard_controller::DashboardKey;
+    use crate::project_api_contract::routes;
+    use crate::tui_render::text::strip_ansi;
+    use serde_json::json;
+
+    #[test]
+    fn bulk_graveyard_wide_unicode_errors_remain_visible_in_terminal_cells_when_scrolled() {
+        let snapshot = serde_json::from_str::<crate::dashboard_model::DesktopStateGoldenFixture>(
+            include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json"),
+        )
+        .unwrap()
+        .runtime_light;
+        let mut controller = DashboardController::new(&snapshot);
+        controller.agent_restore_prompt_dismissed = true;
+        controller.bulk_graveyard_report_width = 68;
+        controller.receive_bulk_graveyard_report(format!(
+            "{}WIDE_REASON{} {}LAST_REASON",
+            "界".repeat(42),
+            "界".repeat(14),
+            "界 ".repeat(300)
+        ));
+        let options = NativeDashboardOptions {
+            project_root: PathBuf::from("/repo"),
+            desktop_state_file: None,
+            cols: 80,
+            rows: 16,
+            once: true,
+        };
+        let mut seen = String::new();
+        for _ in 0..40 {
+            let frame = render_dashboard_snapshot(
+                &options,
+                &mut controller,
+                &snapshot,
+                &mut DashboardPendingActions::new(),
+                DashboardSnapshotRenderContext {
+                    viewport: DashboardViewport { cols: 80, rows: 16 },
+                    endpoint: None,
+                    hidden_offline_agent_count: 0,
+                    scroll_offset: 0,
+                    runtime_guard: None,
+                    refresh_error: None,
+                    stream_error: None,
+                    pending_now_ms: 0,
+                },
+            )
+            .frame;
+            let mut terminal = vt100::Parser::new(16, 80, 0);
+            terminal.process(frame.as_bytes());
+            for row in terminal.screen().rows(0, 80) {
+                seen.push_str(&row);
+                seen.push('\n');
+            }
+            controller.handle_key(&snapshot, DashboardKey::Down);
+        }
+        assert!(
+            seen.contains(&"界".repeat(34)),
+            "a 68-cell CJK prefix must remain on one visible terminal row"
+        );
+        assert!(
+            seen.contains("WIDE_REASON"),
+            "wide text hid the first reason"
+        );
+        assert!(
+            seen.contains("LAST_REASON"),
+            "scrolling lost the final reason"
+        );
+    }
+
+    #[test]
+    fn bulk_graveyard_cell_overlay_aligns_unicode_header_and_body_borders() {
+        use crate::tui_render::box_render::render_overlay_box_cells;
+        use crate::tui_render::{OverlayBoxSpec, OverlayVariant};
+
+        let title = format!("{}TITLE_END", "界".repeat(16));
+        let body = vec![format!("{}BODY_END", "界".repeat(20))];
+        let frame = render_overlay_box_cells(&OverlayBoxSpec {
+            title: &title,
+            body: &body,
+            cols: 80,
+            rows: 16,
+            variant: OverlayVariant::Red,
+            icon: None,
+        });
+        let mut terminal = vt100::Parser::new(16, 80, 0);
+        terminal.process(frame.as_bytes());
+        let screen = terminal.screen();
+        let (top, left) = (0..16)
+            .flat_map(|row| (0..80).map(move |col| (row, col)))
+            .find(|&(row, col)| screen.cell(row, col).unwrap().contents() == "╭")
+            .expect("top-left border is painted");
+        let right = (left + 1..80)
+            .find(|&col| screen.cell(top, col).unwrap().contents() == "╮")
+            .expect("top-right border is painted");
+        let bottom = (top + 1..16)
+            .find(|&row| screen.cell(row, left).unwrap().contents() == "╰")
+            .expect("bottom-left border is painted");
+        for row in [top + 1, bottom - 1] {
+            assert_eq!(screen.cell(row, left).unwrap().contents(), "│");
+            assert_eq!(screen.cell(row, right).unwrap().contents(), "│");
+        }
+        let visible = screen.contents();
+        assert!(visible.contains("TITLE_END"));
+        assert!(visible.contains("BODY_END"));
+    }
+
+    #[test]
+    fn bulk_graveyard_partial_outcome_opens_scrollable_report_with_every_error() {
+        let snapshot = serde_json::from_str::<crate::dashboard_model::DesktopStateGoldenFixture>(
+            include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json"),
+        )
+        .unwrap()
+        .runtime_light;
+        let mut controller = DashboardController::new(&snapshot);
+        controller.agent_restore_prompt_dismissed = true;
+        let first = format!(
+            "alpha-agent: {} final-first-reason",
+            "permission-denied ".repeat(15)
+        );
+        let second = format!(
+            "omega-agent: {} final-second-reason",
+            "socket-unavailable ".repeat(15)
+        );
+        let summary = format!("Graveyarded 7 offline agents; 2 failed; {first}; {second}");
+        let notice = dashboard_action_notice(
+            routes::graveyard_actions::OFFLINE_AGENTS,
+            &json!({"summary": summary, "partialFailure": true}),
+        )
+        .unwrap();
+        assert!(notice.failed);
+        let (tx, rx) = mpsc::channel();
+        tx.send(DashboardRequestOutcome {
+            pending: None,
+            action: Some(DashboardActionIdentity {
+                path: routes::graveyard_actions::OFFLINE_AGENTS,
+                body: json!({}),
+            }),
+            failure: None,
+            created_worktree_path: None,
+            notice: Some(notice),
+        })
+        .unwrap();
+        drain_dashboard_request_outcomes(
+            &rx,
+            &mut DashboardPendingActions::new(),
+            Some(&mut controller),
+            &mut Vec::new(),
+        );
+        assert_eq!(
+            controller.bulk_graveyard_report.as_deref(),
+            Some(summary.as_str())
+        );
+        let options = NativeDashboardOptions {
+            project_root: PathBuf::from("/repo"),
+            desktop_state_file: None,
+            cols: 80,
+            rows: 16,
+            once: true,
+        };
+        controller.bulk_graveyard_report_width = 68;
+        for key in [
+            DashboardKey::Enter,
+            DashboardKey::Back,
+            DashboardKey::Printable('q'),
+        ] {
+            assert_eq!(
+                controller.handle_key(&snapshot, key),
+                DashboardControllerEffect::Ignored
+            );
+            assert!(controller.bulk_graveyard_report.is_some());
+        }
+        let mut seen = String::new();
+        for _ in 0..40 {
+            let frame = render_dashboard_snapshot(
+                &options,
+                &mut controller,
+                &snapshot,
+                &mut DashboardPendingActions::new(),
+                DashboardSnapshotRenderContext {
+                    viewport: DashboardViewport { cols: 80, rows: 16 },
+                    endpoint: None,
+                    hidden_offline_agent_count: 0,
+                    scroll_offset: 0,
+                    runtime_guard: None,
+                    refresh_error: None,
+                    stream_error: None,
+                    pending_now_ms: 0,
+                },
+            )
+            .frame;
+            seen.push_str(&strip_ansi(&frame));
+            controller.handle_key(&snapshot, DashboardKey::Down);
+        }
+        for expected in [
+            "BULK GRAVEYARD RESULT",
+            "Graveyarded 7",
+            "alpha-agent",
+            "omega-agent",
+            "final-first-reason",
+            "final-second-reason",
+        ] {
+            assert!(seen.contains(expected), "missing {expected}");
+        }
+        assert!(controller.bulk_graveyard_report.is_some());
+        controller.handle_key(&snapshot, DashboardKey::Back);
+        assert!(controller.bulk_graveyard_report.is_none());
+        let success = dashboard_action_notice(
+            routes::graveyard_actions::OFFLINE_AGENTS,
+            &json!({"summary": "Graveyarded 7 offline agents; 0 failed", "partialFailure": false}),
+        )
+        .unwrap();
+        assert!(!success.failed);
+        assert!(success.report.is_none());
     }
 }
