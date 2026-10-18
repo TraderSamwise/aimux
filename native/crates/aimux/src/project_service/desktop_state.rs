@@ -16,7 +16,7 @@ use crate::runtime_topology::{
     list_topology_service_states, list_topology_session_states, list_topology_worktree_states,
     read_runtime_topology, runtime_topology_path,
 };
-use crate::team_contract::{agent_lane, agent_role, agent_role_state};
+use crate::team_contract::agent_lane;
 use crate::tmux::TmuxTarget;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
@@ -1002,6 +1002,7 @@ fn dashboard_session(
         "restoreBlockedReason",
         "freshRelaunchAllowed",
         "team",
+        "role",
         "overseer",
         "scribe",
         "projectControl",
@@ -1099,11 +1100,9 @@ fn dashboard_session(
             unseen_count = integer_field(derived, "unseenCount");
         }
     }
+    super::agents::publish_project_control_flags(&mut item);
     let role_probe = Value::Object(item.clone());
-    let role = agent_role(Some(&role_probe));
-    insert_string(&mut item, "role", role.as_str());
     item.insert("lane".into(), agent_lane(Some(&role_probe)));
-    item.insert("roleState".into(), agent_role_state(Some(&role_probe)));
     let thread = thread_stats.get(id).cloned().unwrap_or_default();
     let workflow = workflow_stats.get(id).cloned().unwrap_or_default();
     let notifications = notification_stats.get(id).cloned().unwrap_or_default();
@@ -1208,7 +1207,6 @@ fn dashboard_session(
         ),
     );
     item.insert("semantic".into(), semantic);
-    super::agents::publish_project_control_flags(&mut item);
     Value::Object(item)
 }
 
@@ -2708,4 +2706,36 @@ fn insert_operation_failure_value(map: &mut Map<String, Value>, value: Option<Va
             &value,
         ),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dashboard_roles_follow_normalized_flags_without_erasing_worker_teams() {
+        for role in ["overseer", "scribe"] {
+            let mut source = json!({
+                "id": "former", "status": "running", "projectControl": true,
+                "role": role, "team": { "role": "reviewer" },
+            });
+            source[role] = json!(true);
+            let metadata = BTreeMap::from([("former".into(), json!({ "projectControl": false }))]);
+            let row = dashboard_session(
+                &source,
+                &metadata,
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                &BTreeSet::new(),
+            );
+            assert_eq!(row[role], false);
+            assert_eq!(row["role"], "coder");
+            assert_eq!(row["roleState"]["role"], "coder");
+            assert_eq!(row["roleState"]["projectControl"], false);
+            assert_eq!(row["roleState"]["showRoleSuffix"], false);
+            assert_eq!(row["team"]["role"], "reviewer");
+        }
+    }
 }

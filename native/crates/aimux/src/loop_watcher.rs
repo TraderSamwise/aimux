@@ -93,6 +93,8 @@ pub struct BufferedLoopSend {
     pub text: String,
     pub signature: String,
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_failed_at_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub candidate_keys: Vec<BufferedLoopCandidateKey>,
 }
@@ -138,6 +140,7 @@ pub struct LoopWatcher {
     // recipient engine owns its delivery cadence; engines only call the
     // internal planner and never create children.
     recipient_watchers: BTreeMap<String, LoopWatcher>,
+    last_delivery_recipient: Option<String>,
     last_nudge_at: BTreeMap<String, i64>,
     last_overseer_wake_at: i64,
     stopped_since: BTreeMap<LoopDwellKey, LoopStoppedState>,
@@ -551,7 +554,11 @@ impl LoopWatcher {
         now_ms: i64,
         outcome: LoopDeliveryOutcome,
     ) {
+        if !matches!(outcome, LoopDeliveryOutcome::Buffered) {
+            self.last_delivery_recipient = Some(send.session_id.clone());
+        }
         if !self.owns_token_goal_announcement(send)
+            && !self.owns_buffered_send(send)
             && let Some(watcher) = self.recipient_watchers.get_mut(&send.session_id)
         {
             watcher.commit_send_result(send, now_ms, outcome.clone());
@@ -582,6 +589,17 @@ impl LoopWatcher {
             }
         }
         let delivered = matches!(outcome, LoopDeliveryOutcome::Delivered);
+        if let Some(buffered) = self
+            .buffered_sends
+            .get_mut(&buffered_send_key(send))
+            .filter(|buffered| buffered.session_id == send.session_id)
+        {
+            match &outcome {
+                LoopDeliveryOutcome::Failed { .. } => buffered.last_failed_at_ms = Some(now_ms),
+                LoopDeliveryOutcome::Delivered => buffered.last_failed_at_ms = None,
+                LoopDeliveryOutcome::Buffered => {}
+            }
+        }
         if send.kind == LoopSendKind::LoopExit {
             if let Some(keys) = self.pending_loop_exits.get(&send.signature) {
                 for key in keys {
@@ -746,6 +764,12 @@ impl LoopWatcher {
             .is_some_and(|pause| pause.expires_at_ms > now_ms)
     }
 
+    fn owns_buffered_send(&self, send: &LoopSend) -> bool {
+        self.buffered_sends
+            .get(&buffered_send_key(send))
+            .is_some_and(|buffered| buffered.session_id == send.session_id)
+    }
+
     fn owns_token_goal_announcement(&self, send: &LoopSend) -> bool {
         send.kind == LoopSendKind::DirectNudge
             && self
@@ -755,6 +779,7 @@ impl LoopWatcher {
 
     pub fn buffer_send(&mut self, send: &LoopSend, now_ms: i64) {
         if !self.owns_token_goal_announcement(send)
+            && !self.owns_buffered_send(send)
             && let Some(watcher) = self.recipient_watchers.get_mut(&send.session_id)
         {
             watcher.buffer_send(send, now_ms);
@@ -782,6 +807,7 @@ impl LoopWatcher {
                 text: send.text.clone(),
                 signature: send.signature.clone(),
                 kind: loop_send_kind_name(send.kind).to_owned(),
+                last_failed_at_ms: None,
                 candidate_keys: Vec::new(),
             });
         entry.last_seen_at_ms = now_ms;
@@ -796,6 +822,25 @@ impl LoopWatcher {
                 .map(BufferedLoopCandidateKey::from_dwell_key)
                 .collect();
         }
+    }
+
+    pub fn last_delivery_recipient(&self) -> Option<&str> {
+        self.last_delivery_recipient.as_deref()
+    }
+
+    pub fn buffered_send_retry_due(&self, send: &LoopSend, now_ms: i64, cooldown_ms: i64) -> bool {
+        if let Some(buffered) = self
+            .buffered_sends
+            .get(&buffered_send_key(send))
+            .filter(|buffered| buffered.session_id == send.session_id)
+        {
+            return buffered
+                .last_failed_at_ms
+                .is_none_or(|failed_at| now_ms.saturating_sub(failed_at) >= cooldown_ms);
+        }
+        self.recipient_watchers
+            .get(&send.session_id)
+            .is_none_or(|watcher| watcher.buffered_send_retry_due(send, now_ms, cooldown_ms))
     }
 
     pub fn buffered_sends_to_deliver(&self, limit: usize) -> Vec<LoopSend> {
@@ -813,7 +858,9 @@ impl LoopWatcher {
     }
 
     pub fn remove_buffered_send(&mut self, send: &LoopSend) {
-        self.buffered_sends.remove(&buffered_send_key(send));
+        if self.owns_buffered_send(send) {
+            self.buffered_sends.remove(&buffered_send_key(send));
+        }
         if let Some(watcher) = self.recipient_watchers.get_mut(&send.session_id) {
             watcher.remove_buffered_send(send);
         }
@@ -1238,6 +1285,8 @@ struct PersistentLoopWatcherState {
     version: u32,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     recipient_watchers: BTreeMap<String, PersistentLoopWatcherState>,
+    #[serde(default)]
+    last_delivery_recipient: Option<String>,
     last_nudge_at: BTreeMap<String, i64>,
     last_overseer_wake_at: i64,
     stopped_since: Vec<PersistentStoppedSince>,
@@ -1330,6 +1379,7 @@ impl PersistentLoopWatcherState {
                 .iter()
                 .map(|(id, recipient)| (id.clone(), Self::from_watcher(recipient)))
                 .collect(),
+            last_delivery_recipient: watcher.last_delivery_recipient.clone(),
             last_nudge_at: watcher.last_nudge_at.clone(),
             last_overseer_wake_at: watcher.last_overseer_wake_at,
             stopped_since: watcher
@@ -1409,6 +1459,7 @@ impl PersistentLoopWatcherState {
                 .into_iter()
                 .map(|(id, state)| state.into_watcher().map(|watcher| (id, watcher)))
                 .collect::<Result<_, _>>()?,
+            last_delivery_recipient: self.last_delivery_recipient,
             last_nudge_at: self.last_nudge_at,
             last_overseer_wake_at: self.last_overseer_wake_at,
             stopped_since: self

@@ -2407,7 +2407,19 @@
           ],
           "operationFailures": [],
           "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
-          "mainCheckoutPath": "<REPO>"
+          "mainCheckoutPath": "<REPO>",
+          "supervisorLane": {
+            "sessions": [
+              {
+                "index": 4,
+                "id": "scribe-1",
+                "command": "codex",
+                "status": "running",
+                "active": false,
+                "scribe": true
+              }
+            ]
+          }
         },
         "state": {
           "selectedSessionId": null,
@@ -2436,7 +2448,7 @@
         ["?", "help"],
         ["q", "quit"]
       ],
-      "inputSha256": "1df91cc987bf1e223adc375f2a5a1f2a54aced4bb5d60682e06f0f228c26fcdd"
+      "inputSha256": "bf90d193ca5edad1b0f77960797f881afbb364b4d22abd98989c397dae2a8fba"
     }
   ]
 }

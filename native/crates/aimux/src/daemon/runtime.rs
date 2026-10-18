@@ -4095,34 +4095,71 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             });
         }
 
-        let overseer_session_id = overseer_ids
-            .iter()
-            .find(|id| find_agent(&initial_agents, id).is_some_and(is_agent_input_ready))
-            .cloned()
-            .map(Ok)
-            .unwrap_or_else(|| {
-                let (_, spawned) = self.project_service_json(
-                    &project_root,
-                    project_routes::agents::SPAWN,
-                    Some(json!({
-                        "tool": load_config_for_project(&project_root)
-                            .get("defaultTool")
-                            .and_then(Value::as_str)
-                            .unwrap_or("claude"),
-                        "open": false,
-                        "overseer": true,
-                    })),
-                    None,
-                )?;
-                let Some(session_id) = trimmed_value_string(spawned.get("sessionId")) else {
-                    return Err(CoreCommandFailure {
-                        status: 502,
-                        error: "project service returned invalid overseer spawn response"
-                            .to_owned(),
-                    });
-                };
-                Ok(session_id.to_owned())
+        let bound_owner = match target.get("watchedBy") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(id)) if !id.trim().is_empty() => Some(id.as_str()),
+            _ => {
+                return Err(CoreCommandFailure {
+                    status: 502,
+                    error: format!(
+                        "invalid watch owner for {session_id}: expected a non-empty session identity"
+                    ),
+                });
+            }
+        };
+        let overseer_session_id = if let Some(owner_id) = bound_owner {
+            if !overseer_ids.iter().any(|id| id == owner_id) {
+                return Err(CoreCommandFailure {
+                    status: 409,
+                    error: format!(
+                        "cannot update watch for {session_id}: existing overseer {owner_id} is not a published project overseer"
+                    ),
+                });
+            }
+            let owner = find_agent(&initial_agents, owner_id).ok_or_else(|| CoreCommandFailure {
+                status: 409,
+                error: format!("cannot update watch for {session_id}: existing overseer {owner_id} is missing"),
             })?;
+            if !is_agent_input_ready(owner) {
+                return Err(CoreCommandFailure {
+                    status: 409,
+                    error: format!(
+                        "cannot update watch for {session_id}: existing overseer {owner_id} is not ready for input (status: {})",
+                        agent_status(owner).unwrap_or("unknown")
+                    ),
+                });
+            }
+            owner_id.to_owned()
+        } else {
+            overseer_ids
+                .iter()
+                .find(|id| find_agent(&initial_agents, id).is_some_and(is_agent_input_ready))
+                .cloned()
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    let (_, spawned) = self.project_service_json(
+                        &project_root,
+                        project_routes::agents::SPAWN,
+                        Some(json!({
+                            "tool": load_config_for_project(&project_root)
+                                .get("defaultTool")
+                                .and_then(Value::as_str)
+                                .unwrap_or("claude"),
+                            "open": false,
+                            "overseer": true,
+                        })),
+                        None,
+                    )?;
+                    let Some(session_id) = trimmed_value_string(spawned.get("sessionId")) else {
+                        return Err(CoreCommandFailure {
+                            status: 502,
+                            error: "project service returned invalid overseer spawn response"
+                                .to_owned(),
+                        });
+                    };
+                    Ok(session_id.to_owned())
+                })?
+        };
 
         self.wait_for_project_agent_input(&project_root, &overseer_session_id)?;
         let mut loop_body = Map::new();

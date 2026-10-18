@@ -8,8 +8,8 @@ use crate::tui_render::{
     screen_frame::{ScreenFrameInput, compose_screen_frame, screen_left_width},
     text::truncate_plain,
     theme::{
-        CardSpec, StatusKind, Tone, card, footer_hints, keycap_hint, pad_visible, status_dot,
-        style, visible_width,
+        CardSpec, StatusKind, Tone, card, footer_hints, keycap_hint, keycap_hint_lines,
+        pad_visible, status_dot, style, visible_width,
     },
 };
 
@@ -723,38 +723,6 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
         .or_else(|| overseers.first());
     let watched = watched_dashboard_sessions(ctx);
     let selected = watched.first();
-    let max_watched_rows = rows.saturating_sub(15).max(2);
-    let mut watched_rows = watched
-        .iter()
-        .take(max_watched_rows)
-        .map(|entry| {
-            let goal = entry
-                .get("loop")
-                .and_then(|loop_state| string_field(loop_state, "goal"));
-            let goal = goal.map_or_else(String::new, |goal| {
-                style(&format!(" - {goal}"), Tone::Muted)
-            });
-            format!(
-                "  {} {} {}{}",
-                style("•", Tone::Accent),
-                style(&session_label(entry), Tone::Strong),
-                style(
-                    &string_field(entry, "status").unwrap_or_default(),
-                    Tone::Muted
-                ),
-                goal
-            )
-        })
-        .collect::<Vec<_>>();
-    if watched.len() > watched_rows.len() {
-        watched_rows.push(format!(
-            "  {}",
-            style(
-                &format!("{} more watched agents", watched.len() - watched_rows.len()),
-                Tone::Muted
-            )
-        ));
-    }
     let selected_line = selected.map_or_else(
         || style("none", Tone::Muted),
         |entry| {
@@ -789,6 +757,13 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
         ),
         format!("  {} {}", style("Overseers:", Tone::Muted), overseers.len()),
     ];
+    if let Some(entry) = target {
+        body.push(format!(
+            "  {} {}",
+            style("Target:", Tone::Muted),
+            style(&session_label(entry), Tone::Strong),
+        ));
+    }
     if overseers.is_empty() {
         body.push(format!("  {}", style("none configured", Tone::Muted)));
     }
@@ -820,15 +795,6 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
         format!("  {} {selected_line}", style("Selected:", Tone::Muted)),
         String::new(),
     ]);
-    if watched_rows.is_empty() {
-        body.push(format!(
-            "  {}",
-            style("No watched agents yet.", Tone::Muted)
-        ));
-    } else {
-        body.extend(watched_rows);
-    }
-    body.push(String::new());
     let mut hints = vec![
         (
             "Enter",
@@ -851,7 +817,71 @@ fn build_overseer_overlay_output(ctx: &Value, cols: usize, rows: usize) -> Strin
         hints.push(("d", "unset overseer"));
     }
     hints.push(("Esc", "back"));
-    body.push(build_service_hints(&hints));
+    let hint_text = hints
+        .iter()
+        .map(|(key, label)| format!("[{key}] {label}"))
+        .collect::<Vec<_>>()
+        .join("  ");
+    let hint_rows = keycap_hint_lines(&hint_text, cols.saturating_sub(10).max(18))
+        .into_iter()
+        .map(|line| format!("  {line}"))
+        .collect::<Vec<_>>();
+    let content_capacity = rows.saturating_sub(6).saturating_sub(hint_rows.len() + 1);
+    let available_rows = content_capacity.saturating_sub(body.len());
+    let max_watched_rows =
+        available_rows.saturating_sub(usize::from(watched.len() > available_rows));
+    let mut watched_rows = watched
+        .iter()
+        .take(max_watched_rows)
+        .map(|entry| {
+            let goal = entry
+                .get("loop")
+                .and_then(|loop_state| string_field(loop_state, "goal"));
+            let goal = goal.map_or_else(String::new, |goal| {
+                style(&format!(" - {goal}"), Tone::Muted)
+            });
+            format!(
+                "  {} {} {}{}",
+                style("•", Tone::Accent),
+                style(&session_label(entry), Tone::Strong),
+                style(
+                    &string_field(entry, "status").unwrap_or_default(),
+                    Tone::Muted
+                ),
+                goal
+            )
+        })
+        .collect::<Vec<_>>();
+    if available_rows > 0 {
+        if watched.is_empty() {
+            watched_rows.push(format!(
+                "  {}",
+                style("No watched agents yet.", Tone::Muted)
+            ));
+        } else if watched.len() > watched_rows.len() {
+            watched_rows.push(format!(
+                "  {}",
+                style(
+                    &format!("{} more watched agents", watched.len() - watched_rows.len()),
+                    Tone::Muted
+                )
+            ));
+        }
+    }
+    body.extend(watched_rows);
+    if body.len() > content_capacity {
+        let visible_rows = content_capacity.saturating_sub(1);
+        let hidden_rows = body.len() - visible_rows;
+        body.truncate(visible_rows);
+        if content_capacity > 0 {
+            body.push(format!(
+                "  {}",
+                style(&format!("{hidden_rows} more rows"), Tone::Muted)
+            ));
+        }
+    }
+    body.push(String::new());
+    body.extend(hint_rows);
     overlay_box("Overseer", body, cols, rows, OverlayVariant::Blue)
 }
 

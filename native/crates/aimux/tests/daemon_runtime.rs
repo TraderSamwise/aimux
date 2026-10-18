@@ -3762,6 +3762,209 @@ fn overseer_watch_chooses_the_first_ready_published_owner_without_replacing_sibl
 }
 
 #[test]
+fn overseer_watch_repeated_updates_keep_the_existing_second_published_owner() {
+    let fixture = RuntimeFixture::new("watch-bound-second-owner");
+    let project = fixture.project("repo");
+    let inventory = json!({ "agents": [
+        { "id": "worker", "tool": "codex", "status": "running", "watchedBy": "control-b", "loop": { "active": true, "goal": "old goal" } },
+        { "id": "control-a", "tool": "claude", "status": "idle", "overseer": true },
+        { "id": "control-b", "tool": "claude", "status": "idle", "overseer": true },
+    ], "overseerSessionIds": ["control-a", "control-b"] });
+    let mut responses = Vec::new();
+    for goal in ["updated goal", "updated again"] {
+        let mut updated = inventory.clone();
+        updated["agents"][0]["loop"]["goal"] = json!(goal);
+        responses.extend([
+            inventory.clone(),
+            inventory.clone(),
+            json!({ "ok": true }),
+            json!({ "ok": true }),
+            updated,
+            json!({ "ok": true }),
+        ]);
+    }
+    let server = ScriptedHttpServer::spawn(responses);
+    let mut runtime = watch_runtime_for_server(&fixture, &project, &server);
+    for goal in ["updated goal", "updated again"] {
+        let result = runtime
+            .overseer_watch(
+                project.to_str().expect("path"),
+                "worker",
+                Some(goal),
+                Some("check CI"),
+            )
+            .expect("update bound watch");
+        assert_eq!(result["overseerSessionId"], "control-b");
+    }
+    let requests = server.join();
+    assert_eq!(requests.len(), 12);
+    for (requests, goal) in requests
+        .chunks_exact(6)
+        .zip(["updated goal", "updated again"])
+    {
+        assert_request_path(&requests[0], "GET", "/agents");
+        assert_request_path(&requests[1], "GET", "/agents");
+        assert_request_path(&requests[2], "POST", "/agents/loop");
+        assert_eq!(request_json_body(&requests[2])["goal"], goal);
+        assert_request_path(&requests[3], "POST", "/agents/watch");
+        assert_eq!(
+            request_json_body(&requests[3])["overseerSessionId"],
+            "control-b"
+        );
+        assert_request_path(&requests[4], "GET", "/agents");
+        assert_request_path(&requests[5], "POST", "/agents/input");
+        let input = request_json_body(&requests[5]);
+        assert_eq!(input["sessionId"], "control-b");
+        assert!(input["text"].as_str().expect("prompt").contains(goal));
+    }
+    fixture.cleanup();
+}
+
+#[test]
+fn overseer_watch_refuses_invalid_or_unavailable_bound_owners_before_any_mutation() {
+    let ready = json!({ "id": "control-b", "tool": "claude", "status": "idle", "overseer": true });
+    let mut offline = ready.clone();
+    offline["status"] = json!("offline");
+    let mut denied = ready.clone();
+    denied["semantic"] = json!({ "runtime": { "canReceiveInput": false } });
+    let mut pending = ready.clone();
+    pending["pendingAction"] = json!("stopping");
+    let mut demoted = ready.clone();
+    demoted["overseer"] = json!(false);
+    demoted["projectControl"] = json!(false);
+    for (name, binding, owner, published, status, reason) in [
+        (
+            "offline",
+            json!("control-b"),
+            Some(offline),
+            true,
+            409,
+            "not ready for input",
+        ),
+        (
+            "input-denied",
+            json!("control-b"),
+            Some(denied),
+            true,
+            409,
+            "not ready for input",
+        ),
+        (
+            "stopping",
+            json!("control-b"),
+            Some(pending),
+            true,
+            409,
+            "not ready for input",
+        ),
+        (
+            "demoted",
+            json!("control-b"),
+            Some(demoted),
+            false,
+            409,
+            "not a published project overseer",
+        ),
+        (
+            "missing",
+            json!("control-b"),
+            None,
+            false,
+            409,
+            "not a published project overseer",
+        ),
+        (
+            "invalid-binding",
+            json!(false),
+            Some(ready.clone()),
+            true,
+            502,
+            "invalid watch owner for worker",
+        ),
+        (
+            "empty-binding",
+            json!(""),
+            Some(ready),
+            true,
+            502,
+            "invalid watch owner for worker",
+        ),
+    ] {
+        let fixture = RuntimeFixture::new(&format!("watch-bound-refusal-{name}"));
+        let project = fixture.project("repo");
+        let mut agents = vec![
+            json!({ "id": "worker", "status": "running", "watchedBy": binding, "loop": { "active": true, "goal": "old goal" } }),
+            json!({ "id": "control-a", "status": "idle", "overseer": true }),
+        ];
+        if let Some(owner) = owner {
+            agents.push(owner);
+        }
+        let ids = if published {
+            vec!["control-a", "control-b"]
+        } else {
+            vec!["control-a"]
+        };
+        let server =
+            ScriptedHttpServer::spawn(vec![json!({ "agents": agents, "overseerSessionIds": ids })]);
+        let mut runtime = watch_runtime_for_server(&fixture, &project, &server);
+        let error = runtime
+            .overseer_watch(
+                project.to_str().expect("path"),
+                "worker",
+                Some("new goal"),
+                Some("new instructions"),
+            )
+            .expect_err("bound ownership must not be silently reassigned");
+        assert_eq!(error.status, status, "{name}: {}", error.error);
+        assert!(error.error.contains(reason), "{name}: {}", error.error);
+        if status == 409 {
+            assert!(error.error.contains("control-b"), "{}", error.error);
+        }
+        let requests = server.join();
+        assert_eq!(
+            requests.len(),
+            1,
+            "{name}: no loop, assignment, spawn, or input mutation"
+        );
+        assert_request_path(&requests[0], "GET", "/agents");
+        fixture.cleanup();
+    }
+}
+
+fn watch_runtime_for_server(
+    fixture: &RuntimeFixture,
+    project: &Path,
+    server: &ScriptedHttpServer,
+) -> RealDaemonRuntime {
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(project)
+        .expect("register project")
+        .expect("entry");
+    persist_service(
+        &resolver,
+        &entry.id,
+        project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    fixture.runtime_with_launcher(
+        Arc::new(FakeLauncher::new(87_667)),
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    )
+}
+
+#[test]
 fn overseer_watch_rejects_invalid_published_inventory_before_spawning_or_assigning() {
     let worker = json!({ "id": "worker", "tool": "codex", "status": "running" });
     let overseer =

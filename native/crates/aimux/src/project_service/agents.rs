@@ -55,6 +55,9 @@ pub fn publish_project_control_flags(session: &mut Map<String, Value>) {
                 && crate::team_contract::is_scribe_session(Some(&probe)),
         ),
     );
+    let normalized = Value::Object(session.clone());
+    session.insert("role".into(), Value::String(agent_role(Some(&normalized))));
+    session.insert("roleState".into(), agent_role_state(Some(&normalized)));
 }
 
 pub fn overseer_session_ids_for_state(sessions: &[Value], metadata: &Value) -> Vec<String> {
@@ -1206,7 +1209,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_team_role_remains_a_display_fallback_without_explicit_flags() {
+    fn legacy_team_role_publishes_normalized_scribe_flags() {
         let agents = build_agent_list(
             &[json!({
                 "id": "legacy-scribe",
@@ -1221,7 +1224,59 @@ mod tests {
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0]["role"], "scribe");
         assert_eq!(agents[0]["lane"], json!({ "kind": "supervisor" }));
-        assert_eq!(agents[0].get("scribe"), None);
+        assert_eq!(agents[0]["scribe"], true);
+        assert_eq!(agents[0]["overseer"], false);
+    }
+
+    #[test]
+    fn normalized_control_flags_determine_role_even_with_stale_registry_roles() {
+        for role in ["overseer", "scribe"] {
+            let mut source = json!({
+                "id": "former", "status": "running", "projectControl": true,
+                "role": role, "team": { "role": role },
+            });
+            source[role] = json!(true);
+            let metadata = BTreeMap::from([("former".into(), json!({ "projectControl": false }))]);
+            let registry = json!({ "sessions": { "former": { "role": role } } });
+            let agents = build_agent_list(&[source], &metadata, &[], Some(&registry));
+            let agent = &agents[0];
+            assert_eq!(agent[role], false);
+            assert_eq!(agent["projectControl"], false);
+            assert_eq!(agent["role"], "coder");
+            assert_eq!(agent["roleState"]["role"], "coder");
+            assert_eq!(agent["roleState"]["projectControl"], false);
+            assert_eq!(agent["roleState"]["showRoleSuffix"], false);
+        }
+    }
+
+    #[test]
+    fn role_publication_preserves_worker_teams_and_effective_relaunch_state() {
+        let mut worker = json!({
+            "projectControl": false, "overseer": true, "role": "overseer",
+            "team": { "role": "reviewer", "parentSessionId": "parent" },
+            "pendingRelaunchForRole": true,
+            "effectiveRole": "overseer", "effectiveLane": { "kind": "supervisor" },
+            "runtimeWorkingDirectory": "/repo",
+        })
+        .as_object()
+        .expect("worker record")
+        .clone();
+        publish_project_control_flags(&mut worker);
+        assert_eq!(worker["role"], "coder");
+        assert_eq!(worker["team"]["role"], "reviewer");
+        assert_eq!(worker["team"]["parentSessionId"], "parent");
+        assert_eq!(worker["roleState"]["status"], "pending-relaunch");
+        assert_eq!(worker["roleState"]["declaredRole"], "coder");
+        assert_eq!(worker["roleState"]["effectiveRole"], "overseer");
+        assert_eq!(worker["roleState"]["effectiveLane"]["kind"], "supervisor");
+        assert_eq!(worker["roleState"]["runtimeWorkingDirectory"], "/repo");
+        let mut control = json!({ "projectControl": true, "role": "reviewer" })
+            .as_object()
+            .expect("control record")
+            .clone();
+        publish_project_control_flags(&mut control);
+        assert_eq!(control["role"], "reviewer");
+        assert_eq!(control["roleState"]["role"], "reviewer");
     }
 
     #[test]

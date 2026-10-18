@@ -97,9 +97,97 @@ fn every_overseer_is_rendered_in_published_order_and_add_is_always_available() {
         overseer("first-identity", "running"),
     ]));
     assert!(rendered.contains("Overseers: 3"), "{rendered}");
-    let positions = ["second-identity", "third-identity", "first-identity"]
-        .map(|id| rendered.find(id).expect("every overseer is visible"));
-    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    let mut after = rendered
+        .find("second-identity")
+        .expect("published first overseer");
+    for id in ["second-identity", "third-identity", "first-identity"] {
+        after += rendered[after..]
+            .find(id)
+            .expect("every overseer stays in service order")
+            + id.len();
+    }
     assert!(rendered.contains("add overseer"), "{rendered}");
     assert!(overlay(json!([])).contains("add overseer"));
+}
+
+#[test]
+fn a_compact_fleet_overlay_reserves_visible_action_hints_and_watched_overflow() {
+    let watched = (1..=8)
+        .map(|index| {
+            json!({
+                "id": format!("worker-{index}"), "label": format!("worker-{index}"),
+                "status": "idle", "loop": { "active": true, "goal": "finish work" },
+            })
+        })
+        .collect::<Vec<_>>();
+    let context = json!({
+        "dashboardOverseerSessionsCache": [
+            overseer("control-a", "running"), overseer("control-b", "running"), overseer("control-c", "running"),
+        ],
+        "dashboardSessionsCache": watched,
+        "loopAlertState": { "ok": true, "globalPause": {
+            "enabled": true, "bufferedCount": 3, "remainingMs": 60_000,
+        } },
+    });
+    for cols in [80, 170] {
+        let rendered = strip_ansi(&render_overseer_overlay_output(&context, cols, 24));
+        let visible_workers = rendered.matches("• worker-").count();
+        assert!(visible_workers > 0 && visible_workers < 8, "{rendered}");
+        assert!(
+            rendered.contains(&format!("{} more watched agents", 8 - visible_workers)),
+            "{rendered}"
+        );
+        for text in [
+            "Overseers: 3",
+            "control-a",
+            "control-b",
+            "control-c",
+            "Loop alerts: paused",
+            "Watching: 8 agents",
+            "more watched agents",
+            "n  add overseer",
+            "d  unset overseer",
+            "x  stop overseer",
+            "Esc  back",
+        ] {
+            assert!(
+                rendered.contains(text),
+                "{cols} columns must retain {text}: {rendered}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_large_overseer_set_keeps_its_action_target_and_hints_visible() {
+    let overseers = (1..=10)
+        .map(|index| overseer(&format!("control-{index:02}"), "running"))
+        .collect::<Vec<_>>();
+    let context = json!({
+        "dashboardOverseerSessionsCache": overseers,
+        "overseerTargetId": "control-10",
+    });
+    let rendered = strip_ansi(&render_overseer_overlay_output(&context, 80, 24));
+    for text in [
+        "Overseers: 10",
+        "Target: control-10",
+        "more rows",
+        "n  add overseer",
+        "d  unset overseer",
+        "x  stop overseer",
+        "Esc  back",
+    ] {
+        assert!(
+            rendered.contains(text),
+            "compact overlay must retain {text}: {rendered}"
+        );
+    }
+    let target = rendered.find("Target: control-10").expect("action target");
+    let first = rendered
+        .find("control-01")
+        .expect("published first overseer");
+    let second = rendered
+        .find("control-02")
+        .expect("published second overseer");
+    assert!(target < first && first < second, "{rendered}");
 }

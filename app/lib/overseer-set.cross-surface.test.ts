@@ -53,6 +53,7 @@ interface Observation {
   state: DesktopState;
   tuiGroups: { supervisor: boolean; ids: string[] }[];
   tuiOverseerIds: string[];
+  tuiRoleLabels: Record<string, string>;
 }
 
 interface HostNode {
@@ -62,13 +63,9 @@ interface HostNode {
 }
 
 function render(node: ReactNode): HostNode[] {
-  if (
-    node == null ||
-    typeof node === "boolean" ||
-    typeof node === "string" ||
-    typeof node === "number"
-  )
-    return [];
+  if (node == null || typeof node === "boolean") return [];
+  if (typeof node === "string" || typeof node === "number")
+    return [{ type: "#text", props: { value: String(node) }, children: [] }];
   if (Array.isArray(node)) return node.flatMap(render);
   if (!React.isValidElement(node)) throw new Error("unsupported rendered node");
   const props = node.props as { children?: ReactNode } & Record<string, unknown>;
@@ -104,7 +101,7 @@ function standaloneObservation(count: number, demote: boolean): Observation {
       overseer: !demote,
     }),
     row("scribe", 5, true, { scribe: true, projectControl: true, role: "scribe" }),
-    row("contradictory", 7, true, { overseer: false, projectControl: false, role: "overseer" }),
+    row("contradictory", 7, true, { overseer: false, projectControl: false, role: "coder" }),
     row("alpha", 9, true, { overseer: true, projectControl: true, role: "overseer" }),
   ];
   const workers = [
@@ -158,6 +155,13 @@ function standaloneObservation(count: number, demote: boolean): Observation {
       { supervisor: false, ids: workers.map((session) => session.id) },
     ],
     tuiOverseerIds: overseerIds,
+    tuiRoleLabels: {
+      control: "control",
+      beta: demote ? "control" : "overseer",
+      scribe: "scribe",
+      contradictory: "control",
+      alpha: "overseer",
+    },
   };
 }
 
@@ -178,7 +182,7 @@ describe("overseer identity set and actual dashboard rendering", () => {
 
   for (const observation of observations) {
     it(`keeps every identity and row order from TUI: ${observation.name}`, () => {
-      const { state, tuiGroups, tuiOverseerIds } = observation;
+      const { state, tuiGroups, tuiOverseerIds, tuiRoleLabels } = observation;
       expect(state.overseerSessionIds).toEqual(tuiOverseerIds);
       expect(tuiOverseerIds).not.toContain("overseer-worker");
       expect(tuiOverseerIds).not.toContain("worker");
@@ -210,10 +214,23 @@ describe("overseer identity set and actual dashboard rendering", () => {
             onKillSession: vi.fn(),
           }),
         );
+        const renderedRoleLabels: Record<string, string> = {};
         for (const node of nodes(tree)) {
-          if (node.type === "Pressable" && typeof node.props.onPress === "function")
-            node.props.onPress();
+          if (node.type !== "Pressable" || typeof node.props.onPress !== "function") continue;
+          const before = pick.mock.calls.length;
+          node.props.onPress();
+          const id: string | undefined = pick.mock.calls[before]?.[0];
+          if (!id || !(id in tuiRoleLabels)) continue;
+          const roleCells = nodes(node.children).filter(
+            (child) => child.type === "Text" && String(child.props.className).includes("uppercase"),
+          );
+          expect(roleCells).toHaveLength(1);
+          renderedRoleLabels[id] = nodes(roleCells[0].children)
+            .filter((child) => child.type === "#text")
+            .map((child) => child.props.value)
+            .join("");
         }
+        expect(renderedRoleLabels).toEqual(tuiRoleLabels);
         const renderedIds = pick.mock.calls.map(([id]) => id);
         expect(renderedIds).toEqual(tuiGroups.flatMap((group) => group.ids));
         for (const id of tuiOverseerIds)

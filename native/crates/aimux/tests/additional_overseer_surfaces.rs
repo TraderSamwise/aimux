@@ -116,6 +116,8 @@ fn observe(project: &Project, count: usize, demote: bool) -> Value {
             for (key, value) in flags.as_object().expect("topology-only control flags") {
                 session[key] = value.clone();
             }
+            session.as_object_mut().expect("topology session").remove("overseer");
+            session["role"] = json!("overseer");
         }
         if *id == "gamma" {
             session["overseer"] = json!(true);
@@ -217,6 +219,16 @@ fn observe(project: &Project, count: usize, demote: bool) -> Value {
         assert_eq!(worker["projectControl"], false);
         assert_eq!(worker["overseer"], false);
         assert_eq!(worker["lane"]["kind"], "worktree");
+        for id in ["contradictory", "former", "worker"] {
+            let demoted = rows
+                .as_array()
+                .expect("published sessions")
+                .iter()
+                .find(|session| session["id"] == id)
+                .expect("explicitly demoted session");
+            assert_eq!(demoted["role"], "coder", "effective role for {id}");
+            assert_eq!(demoted["roleState"]["role"], "coder", "role state for {id}");
+        }
     }
     let snapshot: DesktopStateSnapshot = serde_json::from_value(state.clone()).expect("snapshot");
     let overseers = dashboard_overseer_sessions(&snapshot);
@@ -291,8 +303,30 @@ fn observe(project: &Project, count: usize, demote: bool) -> Value {
         positions.windows(2).all(|pair| pair[0] < pair[1]),
         "TUI render must preserve navigation identity order:\n{text}"
     );
+    let tui_role_labels = groups[0]
+        .sessions
+        .iter()
+        .map(|session| {
+            let label = session.label.as_deref().expect("supervisor label");
+            let line = text
+                .lines()
+                .find(|line| line.contains(label))
+                .expect("rendered supervisor row");
+            let role = line
+                .split_whitespace()
+                .find(|word| matches!(*word, "overseer" | "scribe" | "control"))
+                .expect("visible supervisor role cell");
+            (session.id.clone(), role.to_owned())
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(tui_role_labels["contradictory"], "control");
+    assert_eq!(
+        tui_role_labels["beta"],
+        if demote { "control" } else { "overseer" }
+    );
     json!({ "name": format!("{count}-overseers-demoted-{demote}"), "state": state,
-        "tuiGroups": tui_groups, "tuiOverseerIds": overseers.iter().map(|session| session.id.clone()).collect::<Vec<_>>() })
+        "tuiGroups": tui_groups, "tuiRoleLabels": tui_role_labels,
+        "tuiOverseerIds": overseers.iter().map(|session| session.id.clone()).collect::<Vec<_>>() })
 }
 
 #[test]
