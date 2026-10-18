@@ -526,7 +526,7 @@ export function MonitorCapturePanel({
               <Text className="text-xs text-muted-foreground">{frameCount} frames</Text>
             </View>
             <View className="rounded-lg border border-border px-3 py-2">
-              <Text className="text-xs text-muted-foreground">{deliveryCount} delivered</Text>
+              <Text className="text-xs text-muted-foreground">{deliveryCount} accepted</Text>
             </View>
             <View className="rounded-lg border border-border px-3 py-2">
               <Text className="text-xs text-muted-foreground">

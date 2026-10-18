@@ -1149,6 +1149,10 @@ fn dashboard_session(
     if let Some(text) = notifications.latest_text.clone() {
         item.insert("latestNotificationText".into(), Value::String(text));
     }
+    let input_delivery = super::input_delivery_receipt::projected_input_delivery(session, metadata);
+    if let Some(delivery) = &input_delivery {
+        item.insert("inputDelivery".into(), delivery.clone());
+    }
     let semantic = derive_session_semantics(SessionSemanticsInput {
         status: raw_status.to_owned(),
         pending_action,
@@ -1169,6 +1173,7 @@ fn dashboard_session(
         // Read off the item the periodic task published to, so the row's chip
         // and the chat header's sentence come from one summary.
         subagent_label: crate::subagent_activity::subagent_label(item.get("subagents")),
+        input_delivery,
     });
     let live_label = semantic
         .get("user")

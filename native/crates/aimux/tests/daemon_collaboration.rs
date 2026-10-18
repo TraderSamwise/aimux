@@ -25,6 +25,7 @@ struct FakeCollaborationRuntime {
     invalid_message_thread_id: bool,
     invalid_message_id: bool,
     message_delivery_error: bool,
+    message_delivery_unverified: bool,
 }
 
 impl DaemonCollaborationTextRuntime for FakeCollaborationRuntime {
@@ -122,7 +123,7 @@ impl DaemonCollaborationTextRuntime for FakeCollaborationRuntime {
             body: Some(body.clone()),
             timeout_ms,
         });
-        let response = match route_path {
+        let mut response = match route_path {
             project_routes::threads::OPEN => {
                 json!({ "thread": { "id": "thread-2", "status": "open" } })
             }
@@ -178,6 +179,22 @@ impl DaemonCollaborationTextRuntime for FakeCollaborationRuntime {
                 ));
             }
         };
+        if route_path == project_routes::threads::SEND && self.message_delivery_unverified {
+            let fixture: Value = serde_json::from_str(include_str!(
+                "../../../../testdata/contracts/v1/input-delivery-verification/surfaces.json"
+            ))
+            .unwrap();
+            let delivery = fixture["cases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|case| case["expectedOutcome"] == "unverified")
+                .unwrap()["delivery"]
+                .clone();
+            response["deliveries"] = json!({"claude-1": delivery});
+            response["queuedTo"] = json!(["codex-2"]);
+            response["deliveryErrors"] = json!(["codex-3: original child cause"]);
+        }
         ProjectServiceJsonResult::ok("/repo", response)
     }
 }
@@ -191,6 +208,56 @@ fn text_body(response: DaemonRouteResponse) -> String {
 
 fn json_text(response: DaemonRouteResponse) -> Value {
     serde_json::from_str(&text_body(response)).expect("json text")
+}
+
+#[test]
+fn message_and_thread_cli_callers_preserve_unverified_receipts_in_json_and_text() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../testdata/contracts/v1/input-delivery-verification/surfaces.json"
+    ))
+    .unwrap();
+    let case = fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["expectedOutcome"] == "unverified")
+        .unwrap();
+    for route in [
+        CORE_API_ROUTES.message_send_text,
+        CORE_API_ROUTES.thread_send_text,
+    ] {
+        let body = if route == CORE_API_ROUTES.message_send_text {
+            json!({"project":"/repo", "to":"claude-1", "body":fixture["prompt"]})
+        } else {
+            json!({"project":"/repo", "threadId":"thread-1", "from":"sam", "body":fixture["prompt"]})
+        };
+        let mut runtime = FakeCollaborationRuntime {
+            message_delivery_unverified: true,
+            ..Default::default()
+        };
+        let response = route_collaboration_text_request(
+            &mut runtime,
+            "POST",
+            &format!("{route}?json=1"),
+            Some(&body),
+        )
+        .unwrap();
+        let json = json_text(response);
+        assert_eq!(json["deliveries"]["claude-1"], case["delivery"]);
+        assert_eq!(json["queuedTo"], json!(["codex-2"]));
+        assert_eq!(
+            json["deliveryErrors"],
+            json!(["codex-3: original child cause"])
+        );
+        let text = text_body(
+            route_collaboration_text_request(&mut runtime, "POST", route, Some(&body)).unwrap(),
+        );
+        assert!(
+            text.contains(case["expectedNotice"].as_str().unwrap()),
+            "{route}: {text}"
+        );
+        assert!(text.contains("codex-2") && text.contains("original child cause"));
+    }
 }
 
 #[test]

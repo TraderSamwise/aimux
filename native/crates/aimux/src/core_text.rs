@@ -599,6 +599,7 @@ pub fn render_core_agent_ps_lines(payload: &Value) -> Vec<String> {
         if let Some(path) = field(agent, "worktreePath").and_then(Value::as_str) {
             output.push(format!("    worktree: {path}"));
         }
+        output.extend(input_delivery_notice_line(agent));
         if let Some(task) = task
             && let (Some(description), Some(status)) = (
                 task.get("description").and_then(Value::as_str),
@@ -650,6 +651,7 @@ pub fn render_core_agent_list_lines(payload: &Value) -> Vec<String> {
         });
         for agent in group_agents {
             output.push(render_agent_list_summary(agent));
+            output.extend(input_delivery_notice_line(agent));
             if let Some(task) = object(agent, "task")
                 && let (Some(description), Some(status)) = (
                     task.get("description").and_then(Value::as_str),
@@ -691,6 +693,13 @@ fn agent_worktree_sort_key(path: Option<&str>, project_root: &str) -> String {
         Some(path) if !project_root.is_empty() && path == project_root => String::new(),
         Some(path) => path.to_owned(),
     }
+}
+
+fn input_delivery_notice_line(agent: &Value) -> Option<String> {
+    agent
+        .pointer("/inputDelivery/notice")
+        .and_then(Value::as_str)
+        .map(|notice| format!("    {notice}"))
 }
 
 fn render_agent_list_summary(agent: &Value) -> String {
@@ -756,6 +765,10 @@ pub fn render_core_agent_input_lines(payload: &Value) -> Vec<String> {
         .and_then(Value::as_bool)
         == Some(true);
     let mut lines = Vec::new();
+    let notice = payload.pointer("/delivery/notice").and_then(Value::as_str);
+    let verified = payload
+        .pointer("/delivery/verified")
+        .and_then(Value::as_bool);
     if payload
         .get("delivery")
         .and_then(|delivery| delivery.get("state"))
@@ -778,11 +791,17 @@ pub fn render_core_agent_input_lines(payload: &Value) -> Vec<String> {
         "delivered to {}",
         js_string(field(payload, "sessionId"))
     ));
+    if let Some(notice) = notice {
+        lines.push(notice.to_owned());
+    }
     if consumes_turn {
-        lines.push(
+        lines.push(if verified == Some(false) {
+            "turn: agent turn requested; submission unverified (in-flight work is not preserved)"
+                .to_owned()
+        } else {
             "turn: consumes agent turn (submitted prompt; in-flight work is not preserved)"
-                .to_owned(),
-        );
+                .to_owned()
+        });
     }
     lines.extend(loop_watch_line(payload));
     lines

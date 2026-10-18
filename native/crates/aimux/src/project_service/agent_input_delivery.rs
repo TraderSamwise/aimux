@@ -400,13 +400,35 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
             }
             AgentInputDeliveryDecision::DeliverNow { reason } => {
                 delivery_attempts += 1;
+                let attempt = match super::input_delivery_receipt::begin_input_delivery(
+                    context,
+                    &pending.session_id,
+                    &target.window_id,
+                ) {
+                    Ok(attempt) => attempt,
+                    Err(error) => {
+                        record_agent_input_delivery_failure(
+                            context,
+                            Some(&pending.session_id),
+                            "Agent input delivery receipt failed before send",
+                            error,
+                        );
+                        remaining.push(pending);
+                        continue;
+                    }
+                };
                 match deliver_prompt_to_tmux_for_tool(
                     runtime,
                     &target.window_id,
                     &pending.prompt,
                     target.tool.as_deref(),
                 ) {
-                    Ok(()) => {
+                    Ok(verification) => {
+                        let receipt = super::input_delivery_receipt::finish_input_delivery(
+                            context,
+                            &attempt,
+                            Ok(verification),
+                        );
                         clear_agent_input_delivery_failure(context, &pending.session_id);
                         log_at(
                             LogLevel::Info,
@@ -416,10 +438,16 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
                                 "sessionId": pending.session_id,
                                 "windowId": target.window_id,
                                 "reason": reason,
+                                "delivery": receipt,
                             })),
                         );
                     }
                     Err(error) => {
+                        super::input_delivery_receipt::finish_input_delivery(
+                            context,
+                            &attempt,
+                            Err(error.as_str()),
+                        );
                         record_agent_input_delivery_failure(
                             context,
                             Some(&pending.session_id),
@@ -557,6 +585,24 @@ pub async fn run_pending_agent_input_deliveries_async(
             }
             AgentInputDeliveryDecision::DeliverNow { reason } => {
                 delivery_attempts += 1;
+                let attempt = match super::input_delivery_receipt::begin_input_delivery(
+                    context,
+                    &pending.session_id,
+                    &target.window_id,
+                ) {
+                    Ok(attempt) => attempt,
+                    Err(error) => {
+                        failures.push(error.clone());
+                        record_agent_input_delivery_failure(
+                            context,
+                            Some(&pending.session_id),
+                            "Agent input delivery receipt failed before send",
+                            error,
+                        );
+                        remaining.push(pending);
+                        continue;
+                    }
+                };
                 match deliver_prompt_to_tmux_async_for_tool(
                     &target.window_id,
                     &pending.prompt,
@@ -565,7 +611,12 @@ pub async fn run_pending_agent_input_deliveries_async(
                 )
                 .await
                 {
-                    Ok(()) => {
+                    Ok(verification) => {
+                        let receipt = super::input_delivery_receipt::finish_input_delivery(
+                            context,
+                            &attempt,
+                            Ok(verification),
+                        );
                         clear_agent_input_delivery_failure(context, &pending.session_id);
                         log_at(
                             LogLevel::Info,
@@ -575,10 +626,16 @@ pub async fn run_pending_agent_input_deliveries_async(
                                 "sessionId": pending.session_id,
                                 "windowId": target.window_id,
                                 "reason": reason,
+                                "delivery": receipt,
                             })),
                         );
                     }
                     Err(error) => {
+                        super::input_delivery_receipt::finish_input_delivery(
+                            context,
+                            &attempt,
+                            Err(error.as_str()),
+                        );
                         record_agent_input_delivery_failure(
                             context,
                             Some(&pending.session_id),

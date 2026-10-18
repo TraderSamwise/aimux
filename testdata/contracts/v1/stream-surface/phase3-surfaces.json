@@ -143,7 +143,18 @@
         "status": 500,
         "body": {
           "ok": false,
-          "error": "agent input submit did not land: carriage return dropped"
+          "error": "Input delivery failed: agent input submit did not land: carriage return dropped. Inspect the terminal before retrying.",
+          "delivery": {
+            "operationId": "<operationId>",
+            "windowId": "@1",
+            "state": "failed",
+            "verified": false,
+            "notice": "Input delivery failed: agent input submit did not land: carriage return dropped. Inspect the terminal before retrying.",
+            "displayLabel": "last submit failed",
+            "startedAt": "<startedAt>",
+            "finishedAt": "<finishedAt>",
+            "error": "agent input submit did not land: carriage return dropped"
+          }
         },
         "actions": [
           {

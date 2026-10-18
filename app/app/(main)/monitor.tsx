@@ -12,6 +12,10 @@ import { Text } from "@/components/ui/text";
 import { sendLivePaneInput, uploadImageAttachment } from "@/lib/api";
 import { useAuth, useUser } from "@/lib/auth";
 import {
+  formatLivePaneInputResponseRefusal,
+  sendDeliveryStateAfterResponse,
+} from "@/lib/input-delivery";
+import {
   formatMonitorSampleText,
   type MonitorCapturePanelProps,
   type MonitorSample,
@@ -70,6 +74,8 @@ export default function MonitorScreen() {
   const { getToken, userId } = useAuth();
   const { user } = useUser();
   const [lastDelivery, setLastDelivery] = useState<string | null>(null);
+  const [deliveryNotice, setDeliveryNotice] = useState<string | null>(null);
+  const [deliveryTargetId, setDeliveryTargetId] = useState<string | null>(null);
   const targetDetail = monitorTargetLabel(selectedTarget);
   const filteredTargets = useMemo(
     () => targets.filter((target) => target.kind === settings.targetKind),
@@ -100,7 +106,11 @@ export default function MonitorScreen() {
           ? "Shared chat delivery sends speech text with your signed-in identity; camera frames stay local for now."
           : null;
   const panelDeliveryHint =
-    deliveryEnabled && lastDelivery ? `Last delivered at ${lastDelivery}.` : deliveryHint;
+    deliveryEnabled && selectedTarget?.id === deliveryTargetId && deliveryNotice
+      ? deliveryNotice
+      : deliveryEnabled && selectedTarget?.id === deliveryTargetId && lastDelivery
+        ? `Last delivered at ${lastDelivery}.`
+        : deliveryHint;
 
   const selectTarget = useCallback(
     (target: MonitorTarget) => {
@@ -152,28 +162,42 @@ export default function MonitorScreen() {
         audioSampleRate: settings.audioSampleRate,
       });
 
-      if (selectedTarget.kind === "shared-chat") {
-        await sendLivePaneInput(selectedTarget.endpoint, selectedTarget.sessionId, text, {
-          token,
-          sharedChatActor: resolveSharedChatActor({
-            displayName:
-              user?.fullName ??
-              user?.username ??
-              user?.primaryEmailAddress?.emailAddress ??
-              undefined,
-            email: user?.primaryEmailAddress?.emailAddress ?? undefined,
-            isCanonicalSharedRoute: true,
-            isSharedConversation: true,
-            routeOwnerUserId: selectedTarget.ownerUserId,
-            userId: userId ?? undefined,
-          }),
-        });
-      } else {
-        await sendLivePaneInput(selectedTarget.endpoint, selectedTarget.sessionId, text, {
+      const sendResponse = await sendLivePaneInput(
+        selectedTarget.endpoint,
+        selectedTarget.sessionId,
+        text,
+        {
           token,
           attachmentIds,
-        });
+          ...(selectedTarget.kind === "shared-chat"
+            ? {
+                sharedChatActor: resolveSharedChatActor({
+                  displayName:
+                    user?.fullName ??
+                    user?.username ??
+                    user?.primaryEmailAddress?.emailAddress ??
+                    undefined,
+                  email: user?.primaryEmailAddress?.emailAddress ?? undefined,
+                  isCanonicalSharedRoute: true,
+                  isSharedConversation: true,
+                  routeOwnerUserId: selectedTarget.ownerUserId,
+                  userId: userId ?? undefined,
+                }),
+              }
+            : {}),
+        },
+      );
+      const refusalNotice = formatLivePaneInputResponseRefusal(sendResponse);
+      if (refusalNotice) throw new Error(refusalNotice);
+      const deliveryState = sendDeliveryStateAfterResponse(sendResponse);
+      if (deliveryState.kind === "error") throw new Error(deliveryState.text);
+      setDeliveryTargetId(selectedTarget.id);
+      if (deliveryState.kind !== "none") {
+        setDeliveryNotice(deliveryState.notice);
+        setLastDelivery(null);
+        return;
       }
+      setDeliveryNotice(null);
       setLastDelivery(new Date().toLocaleTimeString());
     },
     [getToken, selectedTarget, settings.audioSampleRate, settings.captureMode, user, userId],

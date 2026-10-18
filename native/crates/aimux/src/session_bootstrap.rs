@@ -800,6 +800,7 @@ fn build_overseer_preamble() -> String {
         "  activity/attention state, loop membership, and active task.",
         "- `aimux host agent-read <id>` - read an agent's recent terminal output.",
         "- `aimux input <id> \"...\"` - send an instruction into an agent as a new turn.",
+        "- Ready describes readiness, not an answer. Check inputDelivery and its notice; inspect the terminal before retrying an unverified submission.",
         "- `aimux loop add <id> [--goal ...]` / `aimux loop remove <id>` - manage loop membership.",
         "- `aimux loop pause <id> --reason \"...\"` / `aimux loop unpause <id>` - stop the",
         "  loop checks for one agent WITHOUT unwatching it. Use this when an agent has",

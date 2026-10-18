@@ -22,6 +22,45 @@ pub const VERIFY_AFTER_SUBMIT_MS: u64 = 700;
 /// Node sliced the signature to its last 240 characters.
 const SIGNATURE_CHARS: usize = 240;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptDeliveryVerification {
+    Verified,
+    Unverified,
+}
+
+impl PromptDeliveryVerification {
+    pub fn is_verified(self) -> bool {
+        self == Self::Verified
+    }
+}
+
+pub fn composer_shows_complete_prompt_draft(pane: &str, draft: &str) -> bool {
+    let normalized_draft = normalize_words(draft);
+    !normalized_draft.is_empty()
+        && current_composer_text(pane)
+            .is_some_and(|composer| normalize_words(&composer) == normalized_draft)
+}
+
+pub fn prompt_submit_verification(
+    complete_draft_observed: bool,
+    pane: &str,
+    draft: &str,
+) -> Result<PromptDeliveryVerification, String> {
+    if composer_still_holds_prompt_text(pane, draft) {
+        return Err(
+            "agent input submit verification failed: prompt draft remained visible after submit"
+                .to_owned(),
+        );
+    }
+    if complete_draft_observed
+        && current_composer_text(pane).is_some_and(|composer| composer.trim().is_empty())
+    {
+        Ok(PromptDeliveryVerification::Verified)
+    } else {
+        Ok(PromptDeliveryVerification::Unverified)
+    }
+}
+
 /// Whether the composer shows the draft we just pasted.
 ///
 /// `before` is the composer as it looked BEFORE this paste, and it is what

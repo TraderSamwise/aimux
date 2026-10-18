@@ -21,6 +21,7 @@ pub struct SessionSemanticsInput {
     /// The sub-agent summary's own label, so the row's chip for it is the same
     /// string the chat header and the details pane render.
     pub subagent_label: Option<String>,
+    pub input_delivery: Option<Value>,
 }
 
 pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
@@ -62,7 +63,7 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
         "assignedTask": input.has_active_task,
         "canBeAssignedWork": can_receive_input && !input.has_active_task,
     });
-    let compact_hint = compact_hint(CompactHintInput {
+    let default_compact_hint = compact_hint(CompactHintInput {
         user: &user,
         notifications: &notifications,
         thread_unread_count,
@@ -73,9 +74,21 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
         blocked_count,
         has_active_task: input.has_active_task,
     });
+    let urgent_attention = matches!(
+        user.get("attention").and_then(Value::as_str),
+        Some("error" | "blocked" | "needs_input" | "needs_response")
+    );
+    let actionable_pressure = matches!(pressure, "blocked" | "waiting_on_user");
+    let compact_hint = if urgent_attention || actionable_pressure {
+        default_compact_hint
+    } else {
+        super::input_delivery_receipt::delivery_display_label(input.input_delivery.as_ref())
+            .map(|label| Value::String(label.to_owned()))
+            .unwrap_or(default_compact_hint)
+    };
     // The row's chips, decided here so the dashboard row and the app row stop
     // answering "what is going on with this agent" differently.
-    let row_chips =
+    let mut row_chips =
         crate::agent_row_chips::agent_row_chips(&crate::agent_row_chips::RowChipsInput {
             offline: row_chips_offline(&input, &user),
             waiting_on_me_count,
@@ -87,6 +100,22 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
             waiting_on_them_count,
             family_count,
         });
+    if let Some(label) =
+        super::input_delivery_receipt::delivery_display_label(input.input_delivery.as_ref())
+    {
+        row_chips.insert(
+            0,
+            crate::agent_row_chips::RowChip {
+                kind: "input-delivery".into(),
+                label: label.to_owned(),
+                tone: if row_chips_offline(&input, &user) {
+                    crate::agent_row_chips::RowChipTone::Muted
+                } else {
+                    crate::agent_row_chips::RowChipTone::Attention
+                },
+            },
+        );
+    }
     let presentation = json!({
         // The action itself, not the bucket `user.label` coarsens it into:
         // `creating`, `forking` and `migrating` all become `starting` there,
@@ -105,6 +134,9 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
         "rowChips": row_chips,
     });
     let mut semantic = Map::new();
+    if let Some(delivery) = input.input_delivery {
+        semantic.insert("inputDelivery".into(), delivery);
+    }
     semantic.insert("runtime".into(), runtime);
     semantic.insert("user".into(), user);
     semantic.insert("notifications".into(), notifications);

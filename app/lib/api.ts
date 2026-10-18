@@ -224,7 +224,17 @@ const DEFAULT_API_TIMEOUT_MS = 10_000;
 function apiErrorMessageFromBody(body: unknown, fallback: string): string {
   if (!body || typeof body !== "object") return fallback;
   const record = body as Record<string, unknown>;
-  const base = typeof record.error === "string" ? record.error : fallback;
+  const originalError = typeof record.error === "string" ? record.error : null;
+  const deliveryNotice =
+    record.delivery && typeof record.delivery === "object"
+      ? (record.delivery as Record<string, unknown>).notice
+      : null;
+  const base =
+    typeof deliveryNotice === "string" && deliveryNotice.trim()
+      ? originalError && !deliveryNotice.includes(originalError)
+        ? `${deliveryNotice} (${originalError})`
+        : deliveryNotice
+      : (originalError ?? fallback);
   const withMachines = appendMachineNames(base, record.machines);
   const tmuxQuery = record.tmuxLiveWindowQuery;
   if (!tmuxQuery || typeof tmuxQuery !== "object") return withMachines;

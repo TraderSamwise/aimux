@@ -14,6 +14,52 @@ describe("formatLivePaneInputDeliveryNotice", () => {
     expect(formatLivePaneInputDeliveryNotice({ state: "delivered" })).toBeNull();
   });
 
+  it("preserves the service notice for an accepted unverified submission", () => {
+    const notice = "Service wording: submission could not be verified.";
+    const delivery = { state: "delivered", verified: false, notice };
+    expect(livePaneInputDeliveryOutcome(delivery)).toBe("unverified");
+    expect(formatLivePaneInputDeliveryNotice(delivery)).toBe(notice);
+    expect(sendDeliveryStateAfterResponse({ delivery })).toEqual({ kind: "warning", notice });
+  });
+
+  it("does not turn a verified submission into a warning", () => {
+    const delivery = { state: "delivered", verified: true };
+    expect(livePaneInputDeliveryOutcome(delivery)).toBe("delivered");
+    expect(sendDeliveryStateAfterResponse({ delivery })).toEqual({ kind: "none" });
+  });
+
+  it("surfaces receipt persistence failure without claiming the send failed", () => {
+    const delivery = {
+      state: "delivered",
+      verified: true,
+      notice: "Service wording: sent, but receipt storage failed.",
+      receiptError: "disk full",
+    };
+    expect(sendDeliveryStateAfterResponse({ delivery })).toEqual({
+      kind: "warning",
+      notice: delivery.notice,
+    });
+  });
+
+  it("makes a malformed warning receipt visible", () => {
+    expect(
+      sendDeliveryStateAfterResponse({ delivery: { state: "delivered", verified: false } }),
+    ).toEqual({ kind: "warning", notice: "Input delivery notice missing from service response." });
+  });
+
+  it("preserves a post-submit failure notice without claiming the prompt was never delivered", () => {
+    const notice =
+      "Input delivery failed: capture after Enter failed. Inspect the terminal before retrying.";
+    const delivery = {
+      state: "failed",
+      verified: false,
+      error: "capture after Enter failed",
+      notice,
+    };
+    expect(formatLivePaneInputDeliveryNotice(delivery)).toBe(notice);
+    expect(sendDeliveryStateAfterResponse({ delivery })).toEqual({ kind: "error", text: notice });
+  });
+
   it("reports held input as not delivered yet", () => {
     expect(
       formatLivePaneInputDeliveryNotice({
