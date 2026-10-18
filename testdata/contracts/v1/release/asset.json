@@ -2,7 +2,7 @@
   "version": 1,
   "source": "src/release-asset-contract.test.ts",
   "generatedBy": "scripts/capture-release-asset-contract.mjs",
-  "description": "Release asset native-runtime packaging and Node exclusion contract captured by evaluating the TypeScript release-asset Vitest assertions against scripts/build-release-asset.sh.",
+  "description": "Release asset native-runtime packaging and Node exclusion contract captured by evaluating the TypeScript release-asset Vitest assertions against scripts/build-release-asset.sh. Linux packaging intentionally selects musl and uses Cargo artifact records; produced ELF compatibility is enforced separately.",
   "cases": [
     {
       "id": "release-asset-001",
@@ -13,7 +13,7 @@
       "input": {
         "sourcePath": "scripts/build-release-asset.sh",
         "contains": [
-          "cargo build --manifest-path native/Cargo.toml -p aimux --release",
+          "CARGO_ARGS=(build --manifest-path native/Cargo.toml -p aimux --release --message-format=json-render-diagnostics)",
           "mkdir -p \"$PKG_DIR/native/$PLATFORM-$ARCH\"",
           "cp \"$NATIVE_BUILD_ARTIFACT\" \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"",
           "chmod +x \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\""
@@ -22,14 +22,26 @@
       },
       "output": {
         "contains": [
-          { "needle": "cargo build --manifest-path native/Cargo.toml -p aimux --release", "present": true },
-          { "needle": "mkdir -p \"$PKG_DIR/native/$PLATFORM-$ARCH\"", "present": true },
-          { "needle": "cp \"$NATIVE_BUILD_ARTIFACT\" \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"", "present": true },
-          { "needle": "chmod +x \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"", "present": true }
+          {
+            "needle": "CARGO_ARGS=(build --manifest-path native/Cargo.toml -p aimux --release --message-format=json-render-diagnostics)",
+            "present": true
+          },
+          {
+            "needle": "mkdir -p \"$PKG_DIR/native/$PLATFORM-$ARCH\"",
+            "present": true
+          },
+          {
+            "needle": "cp \"$NATIVE_BUILD_ARTIFACT\" \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"",
+            "present": true
+          },
+          {
+            "needle": "chmod +x \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"",
+            "present": true
+          }
         ],
         "notContains": []
       },
-      "inputSha256": "b1904ae72d9bd20b2b7b65bab4db37804448175bfe34f72a8e1e2e72d92a4b21"
+      "inputSha256": "3538dc58f49411f18433ef4992450b5143e55b19549849a6136af8526dcf0951"
     },
     {
       "id": "release-asset-002",
@@ -45,18 +57,39 @@
           "NATIVE_ARTIFACT=\"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"",
           "bash \"$ROOT_DIR/scripts/verify-release-asset.sh\" \"$OUT_DIR/$ASSET\" \"$PLATFORM-$ARCH\""
         ],
-        "notContains": ["PKG_DIR/dist/launcher-bin.js", "MAIN_ARTIFACT_NAME=\"main.js\""]
+        "notContains": [
+          "PKG_DIR/dist/launcher-bin.js",
+          "MAIN_ARTIFACT_NAME=\"main.js\""
+        ]
       },
       "output": {
         "contains": [
-          { "needle": "BUILD_STAMP=\"$(release_build_stamp)\"", "present": true },
-          { "needle": "export AIMUX_RELEASE_BUILD_STAMP=\"$BUILD_STAMP\"", "present": true },
-          { "needle": "NATIVE_ARTIFACT=\"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"", "present": true },
-          { "needle": "bash \"$ROOT_DIR/scripts/verify-release-asset.sh\" \"$OUT_DIR/$ASSET\" \"$PLATFORM-$ARCH\"", "present": true }
+          {
+            "needle": "BUILD_STAMP=\"$(release_build_stamp)\"",
+            "present": true
+          },
+          {
+            "needle": "export AIMUX_RELEASE_BUILD_STAMP=\"$BUILD_STAMP\"",
+            "present": true
+          },
+          {
+            "needle": "NATIVE_ARTIFACT=\"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"",
+            "present": true
+          },
+          {
+            "needle": "bash \"$ROOT_DIR/scripts/verify-release-asset.sh\" \"$OUT_DIR/$ASSET\" \"$PLATFORM-$ARCH\"",
+            "present": true
+          }
         ],
         "notContains": [
-          { "needle": "PKG_DIR/dist/launcher-bin.js", "present": false },
-          { "needle": "MAIN_ARTIFACT_NAME=\"main.js\"", "present": false }
+          {
+            "needle": "PKG_DIR/dist/launcher-bin.js",
+            "present": false
+          },
+          {
+            "needle": "MAIN_ARTIFACT_NAME=\"main.js\"",
+            "present": false
+          }
         ]
       },
       "inputSha256": "359dfb99e753a32790a6477434da02a226e3e6cdf7a8300a8dc1831da17328a3"
@@ -82,12 +115,30 @@
       "output": {
         "contains": [],
         "notContains": [
-          { "needle": "tsconfig.local.json", "present": false },
-          { "needle": "check-local-build-boundary.mjs", "present": false },
-          { "needle": "yarn install --production", "present": false },
-          { "needle": "node_modules/node-pty", "present": false },
-          { "needle": "cp -R bin dist", "present": false },
-          { "needle": "scripts/installed-aimux-shim.sh", "present": false }
+          {
+            "needle": "tsconfig.local.json",
+            "present": false
+          },
+          {
+            "needle": "check-local-build-boundary.mjs",
+            "present": false
+          },
+          {
+            "needle": "yarn install --production",
+            "present": false
+          },
+          {
+            "needle": "node_modules/node-pty",
+            "present": false
+          },
+          {
+            "needle": "cp -R bin dist",
+            "present": false
+          },
+          {
+            "needle": "scripts/installed-aimux-shim.sh",
+            "present": false
+          }
         ]
       },
       "inputSha256": "4d662e125251dc277e61663c8c4d75092473efe419b2ea2d6b1a04d274c87ab5"

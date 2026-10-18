@@ -190,7 +190,7 @@ fn release_asset_compiles_native_binary_with_selected_package_profile() {
         .find("export AIMUX_BUILD_VARIANT=\"$BUILD_VARIANT\"")
         .expect("variant export");
     let cargo_build = script
-        .find("cargo build --manifest-path native/Cargo.toml -p aimux --release")
+        .find("cargo \"${CARGO_ARGS[@]}\"")
         .expect("cargo build");
     assert!(
         export_profile < cargo_build && export_variant < cargo_build,
@@ -209,12 +209,12 @@ fn release_asset_compiles_native_binary_with_selected_package_profile() {
         "Cargo must rebuild aimux when AIMUX_BUILD_VARIANT changes"
     );
     assert!(
-        script.contains("CARGO_TARGET_ROOT=\"${CARGO_TARGET_DIR:-\"$ROOT_DIR/native/target\"}\""),
-        "release asset must copy from the selected Cargo target directory"
+        script.contains("--message-format=json-render-diagnostics"),
+        "release asset must request the build's actual Cargo artifact records"
     );
     assert!(
-        script.contains("NATIVE_BUILD_ARTIFACT=\"$CARGO_TARGET_ROOT/release/aimux\""),
-        "release asset must name the freshly built native artifact"
+        script.contains("artifacts.add(message[\"executable\"])"),
+        "release asset must use the executable reported by this Cargo invocation"
     );
     assert!(
         script.contains("cp \"$NATIVE_BUILD_ARTIFACT\" \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\""),

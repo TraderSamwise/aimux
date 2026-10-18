@@ -1784,6 +1784,99 @@ fn reads_display_and_return_session_helpers() {
     );
 }
 
+#[test]
+fn compatibility_mouse_bindings_resolve_relocated_and_checkout_scripts() {
+    const EXPECTED_ENV: &str = "AIMUX_TEST_EXPECTED_HYPERLINK_SCRIPT";
+    if let Some(expected) = std::env::var_os(EXPECTED_ENV) {
+        let configs = Rc::new(RefCell::new(Vec::new()));
+        let configs_for_exec = configs.clone();
+        let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
+            if args.first().map(String::as_str) == Some("source-file")
+                && args
+                    .get(1)
+                    .is_some_and(|path| path.ends_with("mouse-bindings.conf"))
+            {
+                configs_for_exec
+                    .borrow_mut()
+                    .push(std::fs::read_to_string(&args[1]).expect("read sourced mouse bindings"));
+            }
+            Ok(String::new())
+        });
+        manager
+            .configure_managed_session(
+                "aimux-mobile-078d0ecd20ec",
+                "/repo/mobile",
+                test_runtime_config(),
+            )
+            .expect("configure compatibility session");
+        let configs = configs.borrow();
+        assert_eq!(configs.len(), 1, "expected one sourced mouse config");
+        assert!(
+            configs[0].contains(&expected.to_string_lossy().into_owned()),
+            "hyperlink command must use {}: {}",
+            std::path::Path::new(&expected).display(),
+            configs[0],
+        );
+        return;
+    }
+
+    let root = std::env::temp_dir().join(format!(
+        "aimux-relocated-scripts-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos(),
+    ));
+    let relocated = root.join("installed package");
+    std::fs::create_dir_all(relocated.join("scripts")).expect("create relocated package");
+    let script = relocated.join("scripts/tmux-open-hyperlink.sh");
+    std::fs::write(&script, "#!/bin/sh\nexit 0\n").expect("write packaged script");
+    let checkout_script = std::fs::canonicalize(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .join("scripts/tmux-open-hyperlink.sh"),
+    )
+    .expect("checkout helper");
+    for (label, package_root, expected) in [
+        (
+            "relocated",
+            Some(relocated.as_os_str()),
+            std::fs::canonicalize(&script).unwrap(),
+        ),
+        ("checkout", None, checkout_script.clone()),
+        (
+            "empty-root",
+            Some(std::ffi::OsStr::new("")),
+            checkout_script,
+        ),
+    ] {
+        let mut command = std::process::Command::new(std::env::current_exe().expect("test binary"));
+        command
+            .args([
+                "--exact",
+                "compatibility_mouse_bindings_resolve_relocated_and_checkout_scripts",
+                "--nocapture",
+            ])
+            .env(EXPECTED_ENV, expected)
+            .env("AIMUX_TMUX_BIN", "/bin/sh")
+            .env_remove("AIMUX_ROOT");
+        if let Some(package_root) = package_root {
+            command.env("AIMUX_ROOT", package_root);
+        }
+        let output = command
+            .output()
+            .expect("run isolated runtime configuration");
+        assert!(
+            output.status.success(),
+            "{label} runtime configuration failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+    std::fs::remove_dir_all(root).expect("remove relocated package");
+}
+
 fn test_runtime_config() -> TmuxRuntimeConfig {
     TmuxRuntimeConfig {
         project_state_dir: "/state/mobile".to_owned(),

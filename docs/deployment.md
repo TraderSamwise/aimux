@@ -211,11 +211,18 @@ a broken release.
    artifact digest, or if any artifact is not a readable archive with the
    expected `BUILD_VARIANT` and native binary path. The release verification job
    also verifies the published attestations before npm or Homebrew jobs run.
+   Linux builds use the matching `*-unknown-linux-musl` target with `musl-gcc`.
+   The binary gate rejects external ELF loaders, shared libraries, and GLIBC
+   imports. CI builds and inspects both Linux architectures and variants, then
+   runs each extracted binary's `--version` on its matching Linux runner.
 3. **npm** — publishes `aimux-cli` with `--provenance` through npm trusted
    publishing (OIDC, no stored token). It fails fast if `package.json`'s version
    does not match the tag, and stages the native CLI binaries plus macOS
-   notifier helpers from the full release assets so the npm package carries
-   them. There is no local npm package.
+   notifier helpers from every full release asset, including both Linux
+   architectures. Packing requires the complete staged native set; it does not
+   compile a host binary. The workflow validates runtime resources, executable
+   permissions, and file hashes in the actual npm tarball, then publishes that
+   exact tarball. There is no local npm package.
 4. **Homebrew tap** — rewrites `Formula/aimux.rb` and `Formula/aimux-local.rb`
    in `TraderSamwise/homebrew-aimux` with the new version, URLs, and SHA256
    values, using the `HOMEBREW_TAP_TOKEN` secret. The local formula downloads
