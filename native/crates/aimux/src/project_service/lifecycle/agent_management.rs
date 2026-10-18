@@ -233,6 +233,15 @@ pub(super) fn route_agent_kill(
     body: &Value,
     runtime: &mut impl ProjectLifecycleRuntime,
 ) -> ProjectServiceDispatchResponse {
+    route_agent_kill_checked(context, body, runtime, None)
+}
+
+pub(super) fn route_agent_kill_checked(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+    confirmed_topology: Option<&Value>,
+) -> ProjectServiceDispatchResponse {
     let Some(session_id) = trimmed_string(body.get("sessionId")) else {
         return json_error(400, "sessionId is required");
     };
@@ -245,6 +254,40 @@ pub(super) fn route_agent_kill(
     let Some(session) = find_by_id(&topology, "sessions", &session_id) else {
         return json_error(404, format!("Unknown session \"{session_id}\""));
     };
+    if let Some(confirmed_topology) = confirmed_topology {
+        if string_field(&session, "status") != "offline" {
+            return json_error(
+                409,
+                format!("Session \"{session_id}\" is no longer offline"),
+            );
+        }
+        let node_id = string_field(&session, "nodeId");
+        // A preceding graveyard removes all offline bindings during topology cleanup.
+        // Keep the batch's evidence so later candidates still get verified.
+        if let Some(binding) = array_field(confirmed_topology, "bindings")
+            .into_iter()
+            .find(|binding| string_field(binding, "nodeId") == node_id)
+        {
+            let (Some(tmux_session), Some(window_id)) = (
+                trimmed_string(binding.get("tmuxSession")),
+                trimmed_string(binding.get("tmuxWindowId")),
+            ) else {
+                return json_error(409, "Cannot verify incomplete tmux binding");
+            };
+            match runtime.list_windows(&tmux_session) {
+                Ok(windows) if windows.iter().any(|window| window.id == window_id) => {
+                    return json_error(
+                        409,
+                        format!("Session {session_id} still has live window {window_id}"),
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    return json_error(503, format!("Cannot verify {session_id}: {error}"));
+                }
+            }
+        }
+    }
     let previous_status = if LIVE_STATUSES.contains(&string_field(&session, "status").as_str()) {
         "running"
     } else {
@@ -263,7 +306,15 @@ pub(super) fn route_agent_kill(
     clear_prompt_context(&project_state_dir, &session_id);
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
         let now = now_iso();
-        map_topology_array(topology, "sessions", |mut current| {
+        let retained_bindings = confirmed_topology.map(|_| {
+            array_field(&topology, "bindings")
+                .into_iter()
+                .filter(|binding| {
+                    string_field(binding, "nodeId") != string_field(&session, "nodeId")
+                })
+                .collect::<Vec<_>>()
+        });
+        let mut topology = map_topology_array(topology, "sessions", |mut current| {
             if string_field(&current, "id") == session_id {
                 object_insert_mut(&mut current, "status", Value::String("graveyard".into()));
                 object_insert_mut(&mut current, "updatedAt", Value::String(now.clone()));
@@ -276,7 +327,11 @@ pub(super) fn route_agent_kill(
                 }
             }
             current
-        })
+        });
+        if let Some(bindings) = retained_bindings {
+            object_insert_mut(&mut topology, "bindings", Value::Array(bindings));
+        }
+        topology
     });
     if let Err(error) = result {
         return json_error(500, error);

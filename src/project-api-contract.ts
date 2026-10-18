@@ -102,6 +102,7 @@ export const PROJECT_API_ROUTES = {
   graveyardActions: {
     resurrectAgent: "/graveyard/resurrect",
     reapDeadAgents: "/graveyard/reap-dead-agents",
+    offlineAgents: "/graveyard/offline-agents",
     resurrectWorktree: "/graveyard/worktrees/resurrect",
     deleteWorktree: "/graveyard/worktrees/delete",
     cleanup: "/graveyard/cleanup",
@@ -202,6 +203,7 @@ export const PROJECT_API_QUEUED_LIFECYCLE_TIMEOUTS: Readonly<Record<string, numb
   [PROJECT_API_ROUTES.services.remove]: QUEUED_LIFECYCLE_TIMEOUT_MS,
   [PROJECT_API_ROUTES.graveyardActions.resurrectAgent]: QUEUED_LIFECYCLE_TIMEOUT_MS,
   [PROJECT_API_ROUTES.graveyardActions.reapDeadAgents]: QUEUED_LIFECYCLE_TIMEOUT_MS,
+  [PROJECT_API_ROUTES.graveyardActions.offlineAgents]: QUEUED_LIFECYCLE_TIMEOUT_MS,
   [PROJECT_API_ROUTES.graveyardActions.resurrectWorktree]: QUEUED_LIFECYCLE_TIMEOUT_MS,
   [PROJECT_API_ROUTES.graveyardActions.deleteWorktree]: QUEUED_LIFECYCLE_TIMEOUT_MS,
   [PROJECT_API_ROUTES.graveyardActions.cleanup]: QUEUED_LIFECYCLE_TIMEOUT_MS,
@@ -391,6 +393,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
     case PROJECT_API_ROUTES.agents.resurrectTeammate:
     case PROJECT_API_ROUTES.graveyardActions.resurrectAgent:
     case PROJECT_API_ROUTES.graveyardActions.reapDeadAgents:
+    case PROJECT_API_ROUTES.graveyardActions.offlineAgents:
       return [...PROJECT_API_VIEW_INVALIDATIONS.agentLifecycle];
 
     case PROJECT_API_ROUTES.services.create:
@@ -1230,6 +1233,7 @@ export type ProjectLifecycleTransitionOperation =
   | "worktree.graveyard"
   | "graveyard.agent.resurrect"
   | "graveyard.agent.reapDead"
+  | "graveyard.agent.bulkOffline"
   | "graveyard.worktree.resurrect"
   | "graveyard.worktree.delete"
   | "graveyard.cleanup";
@@ -1396,6 +1400,22 @@ export interface ReapDeadAgentRecord {
   found: string;
   reason: string;
   previousStatus?: string;
+}
+
+export type BulkOfflineAgentsInput = {
+  scope: "project" | "worktree";
+  path?: string;
+} & ({ dryRun: true } | { confirmed: true; sessionIds: string[] });
+
+export interface BulkOfflineAgentsResponse extends ProjectLifecycleTransitionResponse {
+  scope: "project" | "worktree";
+  path?: string;
+  dryRun: boolean;
+  sessionIds: string[];
+  moved: Array<{ sessionId: string }>;
+  failed: Array<{ sessionId: string; error: string }>;
+  summary: string;
+  partialFailure: boolean;
 }
 
 export interface ReapDeadAgentsInput {
