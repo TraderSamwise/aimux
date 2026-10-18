@@ -6,6 +6,11 @@ use super::{
 };
 
 pub const ROUTES: &[Spec] = &[
+    Spec::exact(
+        Method::Post,
+        routes::graveyard_actions::OFFLINE_AGENTS,
+        Group::Lifecycle,
+    ),
     Spec::exact(Method::Post, routes::agents::SPAWN, Group::Lifecycle),
     Spec::exact(Method::Post, routes::agents::FORK, Group::Lifecycle),
     Spec::exact(Method::Post, routes::agents::SWITCH_TOOL, Group::Lifecycle),

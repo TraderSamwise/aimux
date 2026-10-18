@@ -17,6 +17,7 @@ mod agent_launch_routes;
 mod agent_management;
 mod agent_session_launch;
 mod agent_topology;
+mod bulk_graveyard;
 mod default_scribe;
 mod ids;
 mod json_helpers;
@@ -310,7 +311,12 @@ fn finish_lifecycle_permit(
         return;
     };
     if let Some(response) = response
-        && response.status >= 400
+        && (response.status >= 400
+            || response
+                .body
+                .pointer("/transition/phase")
+                .and_then(Value::as_str)
+                == Some("failed"))
     {
         permit.fail(started_at, lifecycle_response_error(response));
         return;
@@ -334,6 +340,7 @@ fn lifecycle_response_error(response: &ProjectServiceDispatchResponse) -> String
     response
         .body
         .get("error")
+        .or_else(|| response.body.pointer("/transition/error"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|error| !error.is_empty())
@@ -376,6 +383,9 @@ fn route_lifecycle_request_unqueued(
         routes::services::REMOVE => Some(route_service_remove(context, body, runtime)),
         routes::graveyard_actions::RESURRECT_AGENT => {
             Some(route_graveyard_agent_resurrect(context, body))
+        }
+        routes::graveyard_actions::OFFLINE_AGENTS => {
+            Some(bulk_graveyard::route_offline_agents(context, body, runtime))
         }
         routes::graveyard_actions::REAP_DEAD_AGENTS => {
             Some(route_graveyard_reap_dead_agents(context, body, runtime))

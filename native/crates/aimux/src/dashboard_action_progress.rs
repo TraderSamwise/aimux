@@ -30,6 +30,13 @@ pub fn progress_for_request(path: &str, body: &Value) -> Option<String> {
     let creating = transient_state_label("creating");
     let forking = transient_state_label("forking");
     let sentence = match path {
+        routes::graveyard_actions::OFFLINE_AGENTS => {
+            if body.get("dryRun").and_then(Value::as_bool) == Some(true) {
+                "Checking offline agents".into()
+            } else {
+                "Graveyarding confirmed offline agents".into()
+            }
+        }
         routes::worktree_actions::CREATE => match field("name").or_else(|| field("source")) {
             Some(name) => format!("{creating} worktree {name}"),
             None => format!("{creating} worktree"),

@@ -1065,18 +1065,10 @@ fn dashboard_session(
                 insert_value(&mut item, "prUrl", pr.get("url").cloned());
             }
         }
-        for key in [
-            "loop",
-            "tokenSpend",
-            "subagents",
-            "loopLastAction",
-            "lane",
-            "overseer",
-            "scribe",
-            "projectControl",
-        ] {
+        for key in ["loop", "tokenSpend", "subagents", "loopLastAction"] {
             insert_value(&mut item, key, metadata.get(key).cloned());
         }
+        apply_stored_display_control_metadata(&mut item, Some(metadata));
         if let Some(derived) = metadata.get("derived") {
             for key in [
                 "activity",
@@ -2455,6 +2447,17 @@ fn worktree_lookup_by_identity(worktrees: &[Value]) -> BTreeMap<String, Value> {
             .or_insert_with(|| worktree.clone());
     }
     lookup
+}
+
+pub(crate) fn apply_stored_display_control_metadata(
+    item: &mut Map<String, Value>,
+    metadata: Option<&Value>,
+) {
+    if let Some(metadata) = metadata {
+        for key in ["lane", "overseer", "scribe", "projectControl"] {
+            insert_value(item, key, metadata.get(key).cloned());
+        }
+    }
 }
 
 /// Which worktree group an item belongs to is its PLANE, and the plane falls

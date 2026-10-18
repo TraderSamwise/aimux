@@ -559,3 +559,412 @@ fn a_burst_longer_than_the_buffer_is_dropped_whole() {
          apply whatever suffix it kept"
     );
 }
+
+/// Enter already buffered behind the destructive key is not consent to the
+/// preview that key has not shown yet. Exercise the real HTTP/loop boundary,
+/// then prove that a later, fresh Enter still performs the confirmed action.
+#[test]
+fn bulk_graveyard_discards_buffered_confirmation_but_accepts_a_fresh_enter() {
+    drive_bulk_graveyard_confirmation(false, false);
+}
+
+#[test]
+fn bulk_graveyard_preview_waits_for_an_overlapping_tool_picker_to_close() {
+    drive_bulk_graveyard_confirmation(true, false);
+}
+
+#[test]
+fn bulk_graveyard_partial_report_survives_enter_during_arrival_and_scrolls_every_error() {
+    drive_bulk_graveyard_confirmation(false, true);
+}
+
+fn drive_bulk_graveyard_confirmation(overlapping_picker: bool, partial_result: bool) {
+    use std::io::{BufRead, BufReader, Read};
+    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::sync::atomic::AtomicBool;
+    use std::time::Instant;
+
+    use aimux::dashboard_client::ProjectServiceEndpoint;
+    use aimux::project_api_contract::routes;
+    use serde_json::{Value, json};
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind preview server");
+    listener
+        .set_nonblocking(true)
+        .expect("nonblocking listener");
+    let endpoint = ProjectServiceEndpoint {
+        host: "127.0.0.1".into(),
+        port: listener.local_addr().expect("preview address").port(),
+    };
+    let finished = Arc::new(AtomicBool::new(false));
+    let server_finished = Arc::clone(&finished);
+    let release_preview = Arc::new(AtomicBool::new(false));
+    let server_release_preview = Arc::clone(&release_preview);
+    let release_result = Arc::new(AtomicBool::new(false));
+    let server_release_result = Arc::clone(&release_result);
+    let preview_answered = Arc::new(AtomicBool::new(false));
+    let server_preview_answered = Arc::clone(&preview_answered);
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let server_requests = Arc::clone(&requests);
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(7);
+        // A transport can connect before its sending thread is scheduled.
+        // Do not let that idle connection block an unrelated request behind it.
+        // Once even one byte arrives, the HTTP parser below remains strict.
+        let mut waiting = Vec::<(TcpStream, SocketAddr, Instant)>::new();
+        while !server_finished.load(Ordering::Relaxed) && Instant::now() < deadline {
+            match listener.accept() {
+                Ok((stream, peer)) => {
+                    stream
+                        .set_nonblocking(true)
+                        .expect("nonblocking accepted socket");
+                    waiting.push((stream, peer, Instant::now()));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => panic!("accept preview request: {error}"),
+            }
+            let mut ready = None;
+            let mut index = 0;
+            while index < waiting.len() {
+                match waiting[index].0.peek(&mut [0_u8; 1]) {
+                    Ok(0) => {
+                        let (_, peer, accepted) = waiting.swap_remove(index);
+                        eprintln!(
+                            "preview server: {peer} closed before sending any HTTP bytes after {:?}",
+                            accepted.elapsed()
+                        );
+                    }
+                    Ok(_) => {
+                        ready = Some(waiting.swap_remove(index));
+                        break;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => index += 1,
+                    Err(error) => panic!(
+                        "inspect pre-request connection from {} after {:?}: {error}",
+                        waiting[index].1,
+                        waiting[index].2.elapsed()
+                    ),
+                }
+            }
+            let Some((mut stream, peer, _)) = ready else {
+                std::thread::sleep(Duration::from_millis(2));
+                continue;
+            };
+            stream.set_nonblocking(false).expect("blocking HTTP read");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .expect("bounded request read");
+            stream
+                .set_write_timeout(Some(Duration::from_secs(1)))
+                .expect("bounded response write");
+            let mut reader = BufReader::new(&mut stream);
+            let mut first_line = String::new();
+            reader.read_line(&mut first_line).unwrap_or_else(|error| {
+                panic!("read HTTP request line from {peer} after first byte; partial={first_line:?}: {error}")
+            });
+            assert!(
+                first_line.ends_with("\r\n") && first_line.split_whitespace().count() == 3,
+                "incomplete or malformed HTTP request line from {peer}: {first_line:?}"
+            );
+            let mut content_length = 0;
+            loop {
+                let mut header = String::new();
+                reader.read_line(&mut header).unwrap_or_else(|error| {
+                    panic!("read HTTP header from {peer} for {first_line:?}; partial={header:?}: {error}")
+                });
+                assert!(
+                    header.ends_with("\r\n"),
+                    "incomplete HTTP header from {peer} for {first_line:?}: {header:?}"
+                );
+                if header == "\r\n" {
+                    break;
+                }
+                assert!(header.contains(':'), "malformed HTTP header: {header:?}");
+                if let Some((name, value)) = header.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    content_length = value.trim().parse::<usize>().expect("content length");
+                }
+            }
+            let mut bytes = vec![0; content_length];
+            reader.read_exact(&mut bytes).expect("request body");
+            drop(reader);
+            let mut is_preview = false;
+            let response = if first_line.split_whitespace().nth(1)
+                == Some(routes::graveyard_actions::OFFLINE_AGENTS)
+            {
+                let body: Value = serde_json::from_slice(&bytes).expect("JSON action body");
+                server_requests.lock().expect("requests").push(body.clone());
+                if body["dryRun"] == true {
+                    is_preview = true;
+                    while !server_release_preview.load(Ordering::Relaxed)
+                        && !server_finished.load(Ordering::Relaxed)
+                        && Instant::now() < deadline
+                    {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                    json!({"scope": "worktree", "path": "/preview-worktree",
+                        "dryRun": true, "sessionIds": ["offline-confirmed"],
+                        "summary": "Graveyard 1 offline agents?"})
+                } else if partial_result {
+                    while !server_release_result.load(Ordering::Relaxed)
+                        && !server_finished.load(Ordering::Relaxed)
+                        && Instant::now() < deadline
+                    {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                    let first_reason = format!("{} final-first-reason", "permission denied ".repeat(40));
+                    let second_reason = format!("{} final-second-reason", "socket unavailable ".repeat(40));
+                    json!({
+                        "summary": format!("Graveyarded 7 offline agents; 2 failed; failure-agent-one: {first_reason}; failure-agent-two: {second_reason}"),
+                        "partialFailure": true,
+                        "failed": [
+                            {"sessionId": "failure-agent-one", "error": first_reason},
+                            {"sessionId": "failure-agent-two", "error": second_reason}
+                        ]
+                    })
+                } else {
+                    json!({"summary": "Graveyarded 1 offline agents; 0 failed",
+                        "partialFailure": false, "moved": [{"sessionId": "offline-confirmed"}],
+                        "failed": []})
+                }
+            } else {
+                json!({"ok": true})
+            }
+            .to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            )
+            .expect("preview response");
+            if is_preview {
+                server_preview_answered.store(true, Ordering::Relaxed);
+            }
+        }
+        for (_, peer, accepted) in waiting {
+            eprintln!(
+                "preview server: closing idle pre-request connection from {peer} after {:?}; helper_finished={}, deadline_expired={}",
+                accepted.elapsed(),
+                server_finished.load(Ordering::Relaxed),
+                Instant::now() >= deadline
+            );
+        }
+    });
+
+    let painted = Captured::default();
+    let before_fresh_enter = Arc::new(Mutex::new(None));
+    let before_fresh_output = Arc::clone(&before_fresh_enter);
+    let before_fresh_requests = Arc::clone(&requests);
+    let output_for_keys = Arc::clone(&painted.0);
+    let final_output = Arc::clone(&painted.0);
+    let first_report = Arc::new(Mutex::new(None));
+    let first_report_output = Arc::clone(&first_report);
+    let report_complete = Arc::new(AtomicBool::new(false));
+    let stop_after_report = Arc::clone(&report_complete);
+    let picker_observation = Arc::new(Mutex::new(None));
+    let picker_output = Arc::clone(&picker_observation);
+    let stopped_requests = Arc::clone(&requests);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut stage = 0;
+    let mut answered_picker_polls = 0;
+    let root = std::env::temp_dir().join(format!(
+        "aimux-render-loop-bulk-confirm-{}-{}",
+        std::process::id(),
+        endpoint.port
+    ));
+    std::fs::create_dir_all(&root).expect("project root");
+    let mut fixture = snapshot();
+    fixture.agent_restore_offer = None;
+    fixture.extra.insert(
+        "agentCreation".into(),
+        json!({"defaultTarget": "supervisor", "defaultRole": "control", "worktreeRole": "coder"}),
+    );
+    fixture.main_checkout_path = Some("/preview-worktree".into());
+    fixture.sessions.clear();
+    fixture.teammates.clear();
+    fixture.services.clear();
+    let mut group = fixture.worktree_groups[0].clone();
+    group.path = Some("/preview-worktree".into());
+    group.sessions.clear();
+    group.services.clear();
+    fixture.worktree_groups = vec![group];
+    let seams = DashboardLoopSeams {
+        keys: Box::new(move || {
+            let output = output_for_keys.lock().expect("painted preview").clone();
+            match stage {
+                0 => {
+                    stage = 1;
+                    Vec::new()
+                }
+                1 => {
+                    stage = 2;
+                    vec![DashboardKey::Printable('K'), DashboardKey::Enter]
+                }
+                2 if overlapping_picker => {
+                    stage = 3;
+                    vec![DashboardKey::Printable('n')]
+                }
+                3 if !output.contains("SELECT TOOL") => Vec::new(),
+                3 => {
+                    release_preview.store(true, Ordering::Relaxed);
+                    stage = 4;
+                    vec![DashboardKey::Printable('y')]
+                }
+                4 => {
+                    if preview_answered.load(Ordering::Relaxed) {
+                        answered_picker_polls += 1;
+                    }
+                    if answered_picker_polls >= 2 {
+                        *picker_output.lock().expect("picker observation") = Some(output);
+                        stage = 5;
+                        vec![DashboardKey::Back]
+                    } else {
+                        vec![DashboardKey::Printable('y')]
+                    }
+                }
+                2 | 5 => {
+                    release_preview.store(true, Ordering::Relaxed);
+                    stage = 5;
+                    if output.contains("GRAVEYARD OFFLINE AGENTS") {
+                        *before_fresh_output.lock().expect("before fresh Enter") = Some((
+                            output,
+                            before_fresh_requests
+                                .lock()
+                                .expect("preview requests")
+                                .clone(),
+                        ));
+                        stage = 6;
+                    }
+                    // Independent Enter reads before paint must not confirm
+                    // a preview that arrived during this loop iteration.
+                    vec![DashboardKey::Enter]
+                }
+                6 if partial_result => {
+                    release_result.store(true, Ordering::Relaxed);
+                    if output.contains("BULK GRAVEYARD RESULT") {
+                        *first_report_output.lock().expect("first report frame") = Some(output);
+                        stage = 7;
+                        vec![DashboardKey::Down]
+                    } else {
+                        // This is independent input while the confirmed action
+                        // completes. Its arrival pass must not dismiss a report
+                        // that has never reached the terminal.
+                        vec![DashboardKey::Enter]
+                    }
+                }
+                7 => {
+                    if [
+                        "failure-agent-one",
+                        "final-first-reason",
+                        "failure-agent-two",
+                        "final-second-reason",
+                    ]
+                    .iter()
+                    .all(|expected| output.contains(expected))
+                    {
+                        report_complete.store(true, Ordering::Relaxed);
+                        Vec::new()
+                    } else {
+                        vec![DashboardKey::Down]
+                    }
+                }
+                _ => Vec::new(),
+            }
+        }),
+        snapshot: Box::new(move || {
+            Ok(DashboardSnapshotLoad {
+                snapshot: fixture.clone(),
+                endpoint: Some(endpoint.clone()),
+            })
+        }),
+        stop: Box::new(move || {
+            (if partial_result {
+                stop_after_report.load(Ordering::Relaxed)
+            } else {
+                stopped_requests.lock().expect("completed requests").len() >= 2
+            }) || Instant::now() > deadline
+        }),
+        output: Box::new(painted),
+        frame: Box::new(|_| {}),
+        deferral: DashboardRefreshDeferral::PRODUCTION,
+    };
+    let outcome = run_native_dashboard_with_seams(
+        NativeDashboardOptions {
+            project_root: root.clone(),
+            desktop_state_file: Some(root.join("desktop-state.json")),
+            cols: if partial_result { 80 } else { 120 },
+            rows: if partial_result { 16 } else { 40 },
+            once: false,
+        },
+        Some(seams),
+    );
+    finished.store(true, Ordering::Relaxed);
+    server.join().expect("preview server returns");
+    let _ = std::fs::remove_dir_all(root);
+    outcome.expect("driven bulk-confirmation loop returns");
+
+    if overlapping_picker {
+        let picker = picker_observation
+            .lock()
+            .expect("picker observation")
+            .take()
+            .expect("the preview response arrived while the picker was visible");
+        assert!(picker.contains("SELECT TOOL"));
+        assert!(!picker.contains("GRAVEYARD OFFLINE AGENTS"));
+        assert!(!picker.contains("Graveyarding confirmed offline agents"));
+    }
+
+    let (preview_frame, earlier_requests) = before_fresh_enter
+        .lock()
+        .expect("before fresh Enter")
+        .take()
+        .expect("the fresh confirmation poll was reached");
+    assert!(preview_frame.contains("GRAVEYARD OFFLINE AGENTS"));
+    assert!(preview_frame.contains("Graveyard 1 offline agents?"));
+    assert_eq!(
+        earlier_requests.len(),
+        1,
+        "buffered Enter performed a mutation"
+    );
+    assert_eq!(earlier_requests[0]["dryRun"], true);
+    assert!(
+        !preview_frame.contains("Graveyarding confirmed offline agents"),
+        "buffered Enter dismissed the confirmation before fresh input"
+    );
+    let requests = requests.lock().expect("all requests");
+    assert_eq!(
+        requests.len(),
+        2,
+        "fresh Enter must perform exactly one mutation"
+    );
+    assert_eq!(requests[1]["confirmed"], true);
+    assert_eq!(requests[1]["sessionIds"], json!(["offline-confirmed"]));
+    if partial_result {
+        let first = first_report
+            .lock()
+            .expect("first report frame")
+            .take()
+            .expect("Enter on arrival must leave the report available for its first paint");
+        assert!(first.contains("BULK GRAVEYARD RESULT"));
+        assert!(first.contains("Graveyarded 7 offline agents; 2 failed"));
+        assert!(first.contains("failure-agent-one"));
+        assert!(
+            !first.contains("final-second-reason"),
+            "the second error must require scrolling at 80x16"
+        );
+        let painted = final_output.lock().expect("scrolled report frames");
+        for expected in [
+            "failure-agent-one",
+            "final-first-reason",
+            "failure-agent-two",
+            "final-second-reason",
+        ] {
+            assert!(
+                painted.contains(expected),
+                "report scrolling lost {expected}"
+            );
+        }
+    }
+}
