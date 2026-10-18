@@ -565,15 +565,20 @@ fn a_burst_longer_than_the_buffer_is_dropped_whole() {
 /// then prove that a later, fresh Enter still performs the confirmed action.
 #[test]
 fn bulk_graveyard_discards_buffered_confirmation_but_accepts_a_fresh_enter() {
-    drive_bulk_graveyard_confirmation(false);
+    drive_bulk_graveyard_confirmation(false, false);
 }
 
 #[test]
 fn bulk_graveyard_preview_waits_for_an_overlapping_tool_picker_to_close() {
-    drive_bulk_graveyard_confirmation(true);
+    drive_bulk_graveyard_confirmation(true, false);
 }
 
-fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
+#[test]
+fn bulk_graveyard_partial_report_survives_enter_during_arrival_and_scrolls_every_error() {
+    drive_bulk_graveyard_confirmation(false, true);
+}
+
+fn drive_bulk_graveyard_confirmation(overlapping_picker: bool, partial_result: bool) {
     use std::io::{BufRead, BufReader, Read};
     use std::net::{SocketAddr, TcpListener, TcpStream};
     use std::sync::atomic::AtomicBool;
@@ -595,6 +600,8 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
     let server_finished = Arc::clone(&finished);
     let release_preview = Arc::new(AtomicBool::new(false));
     let server_release_preview = Arc::clone(&release_preview);
+    let release_result = Arc::new(AtomicBool::new(false));
+    let server_release_result = Arc::clone(&release_result);
     let preview_answered = Arc::new(AtomicBool::new(false));
     let server_preview_answered = Arc::clone(&preview_answered);
     let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
@@ -699,6 +706,23 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
                     json!({"scope": "worktree", "path": "/preview-worktree",
                         "dryRun": true, "sessionIds": ["offline-confirmed"],
                         "summary": "Graveyard 1 offline agents?"})
+                } else if partial_result {
+                    while !server_release_result.load(Ordering::Relaxed)
+                        && !server_finished.load(Ordering::Relaxed)
+                        && Instant::now() < deadline
+                    {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                    let first_reason = format!("{} final-first-reason", "permission denied ".repeat(40));
+                    let second_reason = format!("{} final-second-reason", "socket unavailable ".repeat(40));
+                    json!({
+                        "summary": format!("Graveyarded 7 offline agents; 2 failed; failure-agent-one: {first_reason}; failure-agent-two: {second_reason}"),
+                        "partialFailure": true,
+                        "failed": [
+                            {"sessionId": "failure-agent-one", "error": first_reason},
+                            {"sessionId": "failure-agent-two", "error": second_reason}
+                        ]
+                    })
                 } else {
                     json!({"summary": "Graveyarded 1 offline agents; 0 failed",
                         "partialFailure": false, "moved": [{"sessionId": "offline-confirmed"}],
@@ -734,6 +758,11 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
     let before_fresh_output = Arc::clone(&before_fresh_enter);
     let before_fresh_requests = Arc::clone(&requests);
     let output_for_keys = Arc::clone(&painted.0);
+    let final_output = Arc::clone(&painted.0);
+    let first_report = Arc::new(Mutex::new(None));
+    let first_report_output = Arc::clone(&first_report);
+    let report_complete = Arc::new(AtomicBool::new(false));
+    let stop_after_report = Arc::clone(&report_complete);
     let picker_observation = Arc::new(Mutex::new(None));
     let picker_output = Arc::clone(&picker_observation);
     let stopped_requests = Arc::clone(&requests);
@@ -812,6 +841,35 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
                     // a preview that arrived during this loop iteration.
                     vec![DashboardKey::Enter]
                 }
+                6 if partial_result => {
+                    release_result.store(true, Ordering::Relaxed);
+                    if output.contains("BULK GRAVEYARD RESULT") {
+                        *first_report_output.lock().expect("first report frame") = Some(output);
+                        stage = 7;
+                        vec![DashboardKey::Down]
+                    } else {
+                        // This is independent input while the confirmed action
+                        // completes. Its arrival pass must not dismiss a report
+                        // that has never reached the terminal.
+                        vec![DashboardKey::Enter]
+                    }
+                }
+                7 => {
+                    if [
+                        "failure-agent-one",
+                        "final-first-reason",
+                        "failure-agent-two",
+                        "final-second-reason",
+                    ]
+                    .iter()
+                    .all(|expected| output.contains(expected))
+                    {
+                        report_complete.store(true, Ordering::Relaxed);
+                        Vec::new()
+                    } else {
+                        vec![DashboardKey::Down]
+                    }
+                }
                 _ => Vec::new(),
             }
         }),
@@ -822,8 +880,11 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
             })
         }),
         stop: Box::new(move || {
-            stopped_requests.lock().expect("completed requests").len() >= 2
-                || Instant::now() > deadline
+            (if partial_result {
+                stop_after_report.load(Ordering::Relaxed)
+            } else {
+                stopped_requests.lock().expect("completed requests").len() >= 2
+            }) || Instant::now() > deadline
         }),
         output: Box::new(painted),
         frame: Box::new(|_| {}),
@@ -833,8 +894,8 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
         NativeDashboardOptions {
             project_root: root.clone(),
             desktop_state_file: Some(root.join("desktop-state.json")),
-            cols: 120,
-            rows: 40,
+            cols: if partial_result { 80 } else { 120 },
+            rows: if partial_result { 16 } else { 40 },
             once: false,
         },
         Some(seams),
@@ -880,4 +941,30 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
     );
     assert_eq!(requests[1]["confirmed"], true);
     assert_eq!(requests[1]["sessionIds"], json!(["offline-confirmed"]));
+    if partial_result {
+        let first = first_report
+            .lock()
+            .expect("first report frame")
+            .take()
+            .expect("Enter on arrival must leave the report available for its first paint");
+        assert!(first.contains("BULK GRAVEYARD RESULT"));
+        assert!(first.contains("Graveyarded 7 offline agents; 2 failed"));
+        assert!(first.contains("failure-agent-one"));
+        assert!(
+            !first.contains("final-second-reason"),
+            "the second error must require scrolling at 80x16"
+        );
+        let painted = final_output.lock().expect("scrolled report frames");
+        for expected in [
+            "failure-agent-one",
+            "final-first-reason",
+            "failure-agent-two",
+            "final-second-reason",
+        ] {
+            assert!(
+                painted.contains(expected),
+                "report scrolling lost {expected}"
+            );
+        }
+    }
 }

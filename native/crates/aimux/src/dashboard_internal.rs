@@ -2646,15 +2646,14 @@ fn render_dashboard_snapshot(
         );
     }
     if let Some(report) = controller.bulk_graveyard_report.as_deref() {
-        return dashboard_overlay_frame(
-            &frame,
-            crate::dashboard_service_input::render_bulk_graveyard_report_overlay(
-                report,
-                controller.bulk_graveyard_report_offset,
-                viewport.cols,
-                viewport.rows,
-            ),
+        let overlay = crate::dashboard_service_input::render_bulk_graveyard_report_overlay(
+            report,
+            controller.bulk_graveyard_report_offset,
+            viewport.cols,
+            viewport.rows,
         );
+        controller.bulk_graveyard_report_visible = true;
+        return dashboard_overlay_frame(&frame, overlay);
     }
     if let Some(preview) = controller.bulk_graveyard_confirm.as_ref() {
         let overlay = crate::dashboard_service_input::render_bulk_graveyard_confirm_overlay(
@@ -2902,16 +2901,14 @@ fn render_dashboard_subscreen_snapshot(
         return compose_overlay_frame(&frame, overlay, OverlayBackground::AsDrawn);
     }
     if let Some(report) = controller.bulk_graveyard_report.as_deref() {
-        return compose_overlay_frame(
-            &frame,
-            crate::dashboard_service_input::render_bulk_graveyard_report_overlay(
-                report,
-                controller.bulk_graveyard_report_offset,
-                viewport.cols,
-                viewport.rows,
-            ),
-            OverlayBackground::AsDrawn,
+        let overlay = crate::dashboard_service_input::render_bulk_graveyard_report_overlay(
+            report,
+            controller.bulk_graveyard_report_offset,
+            viewport.cols,
+            viewport.rows,
         );
+        controller.bulk_graveyard_report_visible = true;
+        return compose_overlay_frame(&frame, overlay, OverlayBackground::AsDrawn);
     }
     if let Some(reply) = controller.thread_reply.as_ref() {
         // Inside the synchronized update, and over the screen AS DRAWN. This
@@ -6202,6 +6199,17 @@ mod bulk_graveyard_tests {
             once: true,
         };
         controller.bulk_graveyard_report_width = 68;
+        for key in [
+            DashboardKey::Enter,
+            DashboardKey::Back,
+            DashboardKey::Printable('q'),
+        ] {
+            assert_eq!(
+                controller.handle_key(&snapshot, key),
+                DashboardControllerEffect::Ignored
+            );
+            assert!(controller.bulk_graveyard_report.is_some());
+        }
         let mut seen = String::new();
         for _ in 0..40 {
             let frame = render_dashboard_snapshot(

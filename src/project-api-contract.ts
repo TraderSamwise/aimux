@@ -1415,7 +1415,7 @@ export type BulkOfflineAgentsInput = {
 
 export interface BulkOfflineAgentsResponse extends ProjectLifecycleTransitionResponse {
   scope: "project" | "worktree";
-  path?: string;
+  path: string | null;
   dryRun: boolean;
   sessionIds: string[];
   moved: Array<{ sessionId: string }>;

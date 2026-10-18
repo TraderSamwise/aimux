@@ -80,6 +80,7 @@ pub struct DashboardController {
     bulk_graveyard_waiting_preview: Option<Value>,
     bulk_graveyard_waiting_report: Option<String>,
     pub bulk_graveyard_report: Option<String>,
+    pub bulk_graveyard_report_visible: bool,
     pub bulk_graveyard_report_offset: usize,
     pub bulk_graveyard_report_width: usize,
     pub agent_restore_prompt_dismissed: bool,
@@ -604,6 +605,7 @@ impl DashboardController {
             bulk_graveyard_waiting_preview: None,
             bulk_graveyard_waiting_report: None,
             bulk_graveyard_report: None,
+            bulk_graveyard_report_visible: false,
             bulk_graveyard_report_offset: 0,
             bulk_graveyard_report_width: 68,
             agent_restore_prompt_dismissed: false,
@@ -1785,9 +1787,13 @@ impl DashboardController {
     }
 
     fn handle_bulk_graveyard_report_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+        if !self.bulk_graveyard_report_visible {
+            return DashboardControllerEffect::Ignored;
+        }
         match key {
             DashboardKey::Enter | DashboardKey::Back | DashboardKey::Printable('q') => {
                 self.bulk_graveyard_report = None;
+                self.bulk_graveyard_report_visible = false;
                 self.bulk_graveyard_report_offset = 0;
             }
             DashboardKey::Down | DashboardKey::Printable('j') => {
@@ -1863,6 +1869,7 @@ impl DashboardController {
         }
         if let Some(report) = self.bulk_graveyard_waiting_report.take() {
             self.bulk_graveyard_report = Some(report);
+            self.bulk_graveyard_report_visible = false;
             self.bulk_graveyard_report_offset = 0;
         } else if let Some(preview) = self.bulk_graveyard_waiting_preview.take() {
             self.bulk_graveyard_confirm = Some(preview);
