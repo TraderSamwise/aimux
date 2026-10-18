@@ -441,8 +441,8 @@ fn usage_task_is_shared_periodic_and_reports_source_failure_to_scheduler() {
     assert!(task.run_immediately());
     fs::write(metadata_state_path(context.project_state_dir()), "{ broken").unwrap();
     aimux::async_runtime::init_process_runtime().unwrap();
-    // aimux-async-seam: test - exercise scheduled collector with its blocking worker.
     let failure =
+        // aimux-async-seam: test - sync test drives async handler
         aimux::async_runtime::block_on_named("usage-monitor-test:run", task.run(&context))
             .unwrap_err();
     assert!(failure.contains("metadata.json"));
