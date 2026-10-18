@@ -4821,6 +4821,40 @@ mod staged_prompt_tests {
         prompt
     }
 
+    fn delivery_prompts() -> [(&'static str, String); 3] {
+        let candidates = (1..=80)
+            .map(|index| {
+                serde_json::json!({
+                    "id": format!("worker-{index}"),
+                    "tool": "codex",
+                    "condition": "dead",
+                    "loopSince": "2026-10-14T00:00:00.000Z",
+                    "goal": format!("Inspect item {index} and preserve its full briefing — including the head")
+                })
+            })
+            .collect::<Vec<_>>();
+        let briefing = crate::loop_watcher::build_overseer_briefing(&candidates, None);
+        assert!(briefing.starts_with("[aimux loop check]"));
+        assert!(briefing.contains('\n'));
+        let contextualized = crate::project_service::prompt_context::compose_with_prompt_context(
+            &briefing,
+            Some("Check all agents before assigning work."),
+        );
+        let normalized = crate::agent_prompt_delivery::normalize_submitted_prompt(&contextualized);
+        assert!(!normalized.contains('\n'));
+        for prompt in [&briefing, &normalized] {
+            assert!(prompt.len() > super::TMUX_SEND_TEXT_CHUNK_BYTES);
+            assert!(prompt.contains("worker-1 "));
+            assert!(prompt.contains("worker-80 "));
+            assert!(prompt.ends_with("and report back."));
+        }
+        [
+            ("numbered list", long_numbered_list()),
+            ("multiline loop briefing", briefing),
+            ("contextualized normalized loop briefing", normalized),
+        ]
+    }
+
     #[derive(Default)]
     struct Recorder {
         calls: Vec<Vec<String>>,
@@ -5205,56 +5239,72 @@ mod staged_prompt_tests {
     /// on success and failure. Checking after return alone only measures Drop.
     #[tokio::test]
     async fn the_sync_and_async_executors_emit_the_same_argv() {
-        let prompt = long_numbered_list();
-        for fail_on in [None, Some("load-buffer"), Some("paste-buffer")] {
-            let (sync_recorder, sync_outcome) = deliver(&prompt, fail_on);
-            let (async_recorder, async_outcome) = deliver_async(&prompt, fail_on).await;
+        for (case, prompt) in delivery_prompts() {
+            for fail_on in [None, Some("load-buffer"), Some("paste-buffer")] {
+                let (sync_recorder, sync_outcome) = deliver(&prompt, fail_on);
+                let (async_recorder, async_outcome) = deliver_async(&prompt, fail_on).await;
 
-            assert_eq!(
-                sync_outcome.is_err(),
-                async_outcome.is_err(),
-                "{fail_on:?}: one executor delivered and the other did not"
-            );
-            assert_eq!(
-                sync_recorder.verbs(),
-                async_recorder.verbs(),
-                "{fail_on:?}: the executors ran different tmux commands"
-            );
-            assert_eq!(sync_recorder.steps, async_recorder.steps, "{fail_on:?}");
-            assert_eq!(
-                sync_recorder.loaded_bytes, async_recorder.loaded_bytes,
-                "{fail_on:?}: both executors stage the same bytes"
-            );
-            let expected_at_paste = (fail_on != Some("load-buffer")).then_some(false);
-            assert_eq!(
-                sync_recorder.file_existed_at_paste, async_recorder.file_existed_at_paste,
-                "{fail_on:?}: the executors disagree on paste-time staging cleanup"
-            );
-            for (executor, recorder) in [("sync", &sync_recorder), ("async", &async_recorder)] {
+                for (executor, recorder) in [("sync", &sync_recorder), ("async", &async_recorder)] {
+                    assert_eq!(
+                        recorder.loaded_bytes.as_deref(),
+                        Some(prompt.as_bytes()),
+                        "{case}/{executor}/{fail_on:?}: staged bytes must equal the composed prompt"
+                    );
+                }
+                if fail_on.is_none() {
+                    assert_eq!(
+                        sync_recorder.verbs(),
+                        vec!["load-buffer", "paste-buffer"],
+                        "{case}"
+                    );
+                }
+
                 assert_eq!(
-                    recorder.file_existed_at_paste, expected_at_paste,
-                    "{fail_on:?}: {executor} must discard the staging file before paste"
+                    sync_outcome.is_err(),
+                    async_outcome.is_err(),
+                    "{fail_on:?}: one executor delivered and the other did not"
+                );
+                assert_eq!(
+                    sync_recorder.verbs(),
+                    async_recorder.verbs(),
+                    "{fail_on:?}: the executors ran different tmux commands"
+                );
+                assert_eq!(sync_recorder.steps, async_recorder.steps, "{fail_on:?}");
+                assert_eq!(
+                    sync_recorder.loaded_bytes, async_recorder.loaded_bytes,
+                    "{fail_on:?}: both executors stage the same bytes"
+                );
+                let expected_at_paste = (fail_on != Some("load-buffer")).then_some(false);
+                assert_eq!(
+                    sync_recorder.file_existed_at_paste, async_recorder.file_existed_at_paste,
+                    "{fail_on:?}: the executors disagree on paste-time staging cleanup"
+                );
+                for (executor, recorder) in [("sync", &sync_recorder), ("async", &async_recorder)] {
+                    assert_eq!(
+                        recorder.file_existed_at_paste, expected_at_paste,
+                        "{fail_on:?}: {executor} must discard the staging file before paste"
+                    );
+                }
+                assert_staged_file_gone(&sync_recorder);
+                assert_staged_file_gone(&async_recorder);
+                // Only the buffer name differs, because it is unique per paste.
+                let strip = |calls: &[Vec<String>]| -> Vec<Vec<String>> {
+                    calls
+                        .iter()
+                        .map(|argv| {
+                            argv.iter()
+                                .filter(|part| !part.contains("aimux-prompt-"))
+                                .cloned()
+                                .collect()
+                        })
+                        .collect()
+                };
+                assert_eq!(
+                    strip(&sync_recorder.calls),
+                    strip(&async_recorder.calls),
+                    "{case}/{fail_on:?}"
                 );
             }
-            assert_staged_file_gone(&sync_recorder);
-            assert_staged_file_gone(&async_recorder);
-            // Only the buffer name differs, because it is unique per paste.
-            let strip = |calls: &[Vec<String>]| -> Vec<Vec<String>> {
-                calls
-                    .iter()
-                    .map(|argv| {
-                        argv.iter()
-                            .filter(|part| !part.contains("aimux-prompt-"))
-                            .cloned()
-                            .collect()
-                    })
-                    .collect()
-            };
-            assert_eq!(
-                strip(&sync_recorder.calls),
-                strip(&async_recorder.calls),
-                "{fail_on:?}"
-            );
         }
     }
 }
