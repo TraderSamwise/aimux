@@ -1367,7 +1367,13 @@ fn agent_input_executes_native_text_route_without_core_command_fallback() {
     let mut runtime = FakeRuntime::default();
 
     let input = run_core_cli_with(
-        &args(&["input", "claude-1", "hello", "--project", "/repo"]),
+        &args(&[
+            "input",
+            "claude-1",
+            "1. fix the header\n\n  2. then the footer\n3. push",
+            "--project",
+            "/repo",
+        ]),
         &mut runtime,
     );
 
@@ -1380,7 +1386,7 @@ fn agent_input_executes_native_text_route_without_core_command_fallback() {
             Some(json!({
                 "project": "/repo",
                 "sessionId": "claude-1",
-                "text": "hello",
+                "text": "1. fix the header\n\n  2. then the footer\n3. push",
                 "force": false,
             })),
         )]

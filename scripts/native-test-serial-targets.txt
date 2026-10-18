@@ -49,6 +49,7 @@ project_service_event_streams	SSE/event-stream timing
 project_service_gui_contract	GUI route contract covers live service/runtime state
 project_service_interactions	interaction route mutation state
 project_service_lifecycle	session lifecycle mutation state
+project_service_multiline_prompt	private foreground tmux server, raw composer peers, process-global isolated runtime environment
 project_service_metadata	metadata route state and filesystem mutation
 project_service_process	project-service process bootstrap and environment boundaries
 project_service_router	router auth/isolation and local socket behavior

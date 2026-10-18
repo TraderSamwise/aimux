@@ -59,6 +59,18 @@ impl AgentOutputCaptureRuntime for FakeDeliveryRuntime {
     /// A prompt is delivered as a buffer paste, so the injected failure is
     /// one the paste path can actually produce. The previous wording named
     /// `send-keys`, which no prompt has gone through since the paste landed.
+    fn paste_text_with_mode(
+        &mut self,
+        window_id: &str,
+        text: &str,
+        mode: aimux::agent_prompt_delivery::PromptPasteMode,
+    ) -> Result<(), String> {
+        if mode == aimux::agent_prompt_delivery::PromptPasteMode::Guarded {
+            return Err("test receiver has not advertised bracketed paste".into());
+        }
+        self.paste_text(window_id, text)
+    }
+
     fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
         if self.fail_text_for_window.as_deref() == Some(window_id) {
             return Err(format!(

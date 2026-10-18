@@ -1603,6 +1603,18 @@ impl AgentOutputCaptureRuntime for FixtureAgentInputRuntime {
         Ok(String::new())
     }
 
+    fn paste_text_with_mode(
+        &mut self,
+        window_id: &str,
+        text: &str,
+        mode: aimux::agent_prompt_delivery::PromptPasteMode,
+    ) -> Result<(), String> {
+        if mode == aimux::agent_prompt_delivery::PromptPasteMode::Guarded {
+            return Err("test receiver has not advertised bracketed paste".into());
+        }
+        self.paste_text(window_id, text)
+    }
+
     fn paste_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
         self.actions.push(FixtureInputAction::Text {
             window_id: window_id.to_owned(),

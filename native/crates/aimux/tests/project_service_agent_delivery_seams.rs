@@ -317,13 +317,23 @@ fn run_child(case: &str) {
         .map(str::to_owned)
         .collect::<Vec<_>>();
     let expected_steps: &[&str] = match outcome {
-        "ok" if kind == "route" => &["load-buffer", "paste-buffer", "send-keys"],
+        "ok" if kind == "route" => &["load-buffer", "if-shell", "send-keys"],
         "ok" => &["load-buffer", "paste-buffer"],
         "load-fail" | "cancel-after-load" | "deadline-load" => &["load-buffer", "delete-buffer"],
         "paste-fail" => &["load-buffer", "paste-buffer", "delete-buffer"],
         "expired" | "cancelled" => &["delete-buffer"],
         _ => panic!("unknown outcome {outcome}"),
     };
+    let expected_steps = expected_steps
+        .iter()
+        .map(|step| {
+            if kind == "route" && *step == "paste-buffer" {
+                "if-shell"
+            } else {
+                *step
+            }
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
         steps, expected_steps,
         "{case}: no carriage return after failure"
@@ -438,8 +448,8 @@ fn route_fixture(project: &Path) -> (ProjectServiceRequestContext, Value, String
         "sharedChatActor":{"role":"owner", "displayName":"Sam Reviewer"}
     });
     let expected = format!(
-        "[aimux context] page=/delivery mode=review [/aimux context] [Sam Reviewer] {} Attached files: - notes.md (text/markdown, 4 bytes): {}",
-        text.replace('\n', " "),
+        "[aimux context] page=/delivery mode=review [/aimux context] [Sam Reviewer] {}\n\nAttached files:\n- notes.md (text/markdown, 4 bytes): {}",
+        text,
         content.display()
     );
     (
@@ -477,14 +487,21 @@ load-buffer)
       ;;
   esac
   ;;
-paste-buffer)
+paste-buffer|if-shell)
+  if [ "$1" = if-shell ]; then
+    [ "$#" -eq 7 ] && [ "$2" = -F ] && [ "$3" = -t ] && [ "$4" = @1 ] && [ "$5" = '#{==:#{bracket_paste_flag},1}' ] || fail "atomic paste guard argv"
+    case "$6" in *"'paste-buffer' '-d' '-p' '-r' '-b'"*"; display-message -p AIMUX_GUARDED_PASTE_OK") ;; *) fail "guarded paste command" ;; esac
+    [ "$7" = 'display-message -p AIMUX_GUARDED_PASTE_REFUSED' ] || fail "guard refusal marker"
+  else
   [ "$#" -eq 8 ] && [ "$2" = -d ] && [ "$3" = -p ] && [ "$4" = -r ] && [ "$5" = -b ] && [ "$7" = -t ] && [ "$8" = @1 ] || fail "paste argv"
   [ "$6" = "$(/bin/cat "$dir/buffer-name")" ] || fail "wrong paste buffer"
+  fi
   staged=$(/bin/cat "$dir/staged-path")
   if [ -e "$staged" ]; then printf '%s' true; else printf '%s' false; fi > "$dir/file-existed-at-paste"
   [ -f "$dir/buffer-bytes" ] || fail "paste without loaded buffer"
   if [ "$outcome" = paste-fail ]; then printf '%s\n' 'injected paste-buffer child failure' >&2; exit 74; fi
   /bin/rm "$dir/buffer-bytes"
+  if [ "$1" = if-shell ]; then printf 'AIMUX_GUARDED_PASTE_OK\n'; fi
   ;;
 delete-buffer)
   [ "$#" -eq 3 ] && [ "$2" = -b ] || fail "cleanup argv"

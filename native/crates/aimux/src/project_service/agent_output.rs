@@ -1,8 +1,9 @@
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{
-    DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS, SETTLE_BEFORE_SUBMIT_MS,
-    SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS, composer_shows_pasted_draft,
-    composer_still_holds_prompt_text, prompt_draft_signature,
+    DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS, PromptPasteMode,
+    SETTLE_BEFORE_SUBMIT_MS, SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS,
+    composer_shows_pasted_draft, composer_still_holds_prompt_text, prompt_draft_signature,
+    prompt_paste_mode,
 };
 #[cfg(test)]
 use crate::async_subprocess::AsyncCommand;
@@ -20,9 +21,10 @@ use crate::runtime_topology::{
 use crate::tmux::TmuxRuntimeManager;
 use crate::tmux::{
     CapturePaneOptions, StagedPromptStep, TMUX_RUNTIME_OWNER_OPTION, TmuxTarget,
-    WINDOW_TARGET_FORMAT, capture_pane_argv, deliver_staged_prompt, deliver_staged_prompt_async,
+    WINDOW_TARGET_FORMAT, capture_pane_argv, close_paste_frame_argv, deliver_staged_prompt,
+    deliver_staged_prompt_async, framed_paste_buffer_argv, guarded_paste_buffer_argv,
     resize_window_argv, send_carriage_return_argv, send_escape_argv, send_key_argv,
-    try_tmux_command_from_env,
+    try_tmux_command_from_env, validate_framed_paste_output, validate_guarded_paste_output,
 };
 use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
 use serde_json::{Map, Value, json};
@@ -123,6 +125,19 @@ pub trait AgentOutputCaptureRuntime {
     /// Deliver a whole prompt in one paste. See `paste_prompt_with`.
     fn paste_text(&mut self, _window_id: &str, _text: &str) -> Result<(), String> {
         Err("agent input not supported by this service".into())
+    }
+
+    fn paste_text_with_mode(
+        &mut self,
+        window_id: &str,
+        text: &str,
+        mode: PromptPasteMode,
+    ) -> Result<(), String> {
+        if mode != PromptPasteMode::Raw {
+            Err(format!("receiver {mode:?} paste is unavailable"))
+        } else {
+            self.paste_text(window_id, text)
+        }
     }
 
     fn send_key(&mut self, _window_id: &str, _key: &str) -> Result<(), String> {
@@ -325,6 +340,21 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
         })
     }
 
+    fn paste_text_with_mode(
+        &mut self,
+        window_id: &str,
+        text: &str,
+        mode: PromptPasteMode,
+    ) -> Result<(), String> {
+        deliver_staged_prompt_with_mode(
+            window_id,
+            text,
+            mode,
+            || Ok(TMUX_COMMAND_TIMEOUT),
+            run_tmux_argv_with_timeout,
+        )
+    }
+
     fn submit_prompt(
         &mut self,
         window_id: &str,
@@ -490,6 +520,21 @@ impl AgentOutputCaptureRuntime for BoundedAgentOutputCaptureRuntime {
             let timeout = staged_paste_timeout(step, self.remaining())?;
             run_tmux_argv_with_timeout(argv, message, timeout).map(|_| ())
         })
+    }
+
+    fn paste_text_with_mode(
+        &mut self,
+        window_id: &str,
+        text: &str,
+        mode: PromptPasteMode,
+    ) -> Result<(), String> {
+        deliver_staged_prompt_with_mode(
+            window_id,
+            text,
+            mode,
+            || self.remaining(),
+            run_tmux_argv_with_timeout,
+        )
     }
 
     fn submit_prompt(
@@ -1727,17 +1772,7 @@ struct PromptForDelivery<'a> {
     text: String,
 }
 
-/// The text a prompt actually arrives as, derived once.
-///
-/// Both input routes -- the sync one and the async one the HTTP server uses
-/// -- had their own copy of these four steps. A copy is how a change lands on
-/// one route and not the other, and only one of the two is reachable from a
-/// test, so a defect on the async side could not be caught at all.
-///
-/// Note the last step: `normalize_submitted_prompt` collapses any whitespace
-/// run containing a line break to a single space, so a user's newlines do not
-/// survive this. `a_users_multiline_message_is_flattened_but_never_shortened`
-/// pins that, and pins that flattening never turns into dropping.
+/// Compose context, attribution and attachments before the shared delivery boundary.
 fn compose_prompt_for_delivery(input: PromptForDelivery<'_>) -> String {
     let input_text = match input
         .remote_actor
@@ -1750,9 +1785,7 @@ fn compose_prompt_for_delivery(input: PromptForDelivery<'_>) -> String {
     };
     let formatted_text = format_agent_input_with_attachments(&input_text, input.attachments);
     let prompt_context = get_prompt_context_text(input.project_state_dir, input.session_id);
-    let contextualized_text =
-        compose_with_prompt_context(&formatted_text, prompt_context.as_deref());
-    normalize_submitted_prompt(&contextualized_text)
+    compose_with_prompt_context(&formatted_text, prompt_context.as_deref())
 }
 
 fn agent_input_turn_semantics() -> Value {
@@ -2118,7 +2151,7 @@ pub(super) fn resolve_live_session_target(
     Ok(
         resolve_session_window_id(&topology, session_id).map(|window_id| LiveSessionTarget {
             window_id,
-            tool: resolve_session_tool(&topology, session_id),
+            tool: resolve_prompt_receiver_tool(&topology, session_id),
         }),
     )
 }
@@ -2166,6 +2199,25 @@ fn resolve_session_target(topology: &Value, session_id: &str) -> Option<TmuxTarg
         })
 }
 
+fn resolve_prompt_receiver_tool(topology: &Value, session_id: &str) -> Option<String> {
+    let session = topology
+        .get("sessions")?
+        .as_array()?
+        .iter()
+        .find(|session| string_field(session, "id") == Some(session_id))?;
+    let command = string_field(session, "command");
+    let executable = command
+        .and_then(|command| Path::new(command).file_name())
+        .and_then(|name| name.to_str());
+    match executable {
+        Some("claude" | "codex") => executable.map(str::to_owned),
+        _ if resolve_session_tool(topology, session_id).as_deref() == Some("shell") => {
+            Some("shell".to_owned())
+        }
+        _ => command.map(str::to_owned),
+    }
+}
+
 fn resolve_session_tool(topology: &Value, session_id: &str) -> Option<String> {
     list_topology_session_states(topology, Some(ACTIVE_OUTPUT_SESSION_STATUSES))
         .into_iter()
@@ -2191,8 +2243,9 @@ pub(super) fn send_prompt_to_tmux(
     runtime: &mut impl AgentOutputCaptureRuntime,
     window_id: &str,
     text: &str,
+    mode: PromptPasteMode,
 ) -> Result<(), String> {
-    runtime.paste_text(window_id, text)
+    runtime.paste_text_with_mode(window_id, text, mode)
 }
 
 pub(super) fn deliver_prompt_to_tmux_for_tool(
@@ -2201,9 +2254,12 @@ pub(super) fn deliver_prompt_to_tmux_for_tool(
     prompt: &str,
     tool: Option<&str>,
 ) -> Result<(), String> {
+    let prompt = normalize_submitted_prompt(prompt);
+    let prompt = prompt.as_str();
+    let mode = prompt_paste_mode(prompt, tool);
     match prompt_submit_mode_for_tool(tool) {
         PromptSubmitMode::DirectShell => {
-            send_prompt_to_tmux(runtime, window_id, prompt)?;
+            send_prompt_to_tmux(runtime, window_id, prompt, mode)?;
             runtime.send_carriage_return(window_id)
         }
         PromptSubmitMode::AgentComposer => {
@@ -2211,11 +2267,114 @@ pub(super) fn deliver_prompt_to_tmux_for_tool(
             // there is not evidence that THIS paste landed. Only the composer
             // path can use a baseline, so only it pays for one.
             let before = runtime.composer_snapshot(window_id);
-            send_prompt_to_tmux(runtime, window_id, prompt)?;
+            send_prompt_to_tmux(runtime, window_id, prompt, mode)?;
             runtime.submit_prompt(window_id, prompt, before.as_deref())
         }
     }
 }
+fn prompt_paste_step_argv(
+    step: StagedPromptStep,
+    argv: Vec<String>,
+    window_id: &str,
+    mode: PromptPasteMode,
+    frame_id: Option<&str>,
+) -> Vec<String> {
+    if step != StagedPromptStep::Paste {
+        return argv;
+    }
+    match mode {
+        PromptPasteMode::Raw => argv,
+        PromptPasteMode::Framed => {
+            framed_paste_buffer_argv(&argv, window_id, frame_id.expect("framed paste token"))
+        }
+        PromptPasteMode::Guarded => guarded_paste_buffer_argv(&argv, window_id),
+    }
+}
+
+fn validate_prompt_paste_step_output(
+    step: StagedPromptStep,
+    mode: PromptPasteMode,
+    window_id: &str,
+    stdout: &[u8],
+) -> Result<(), String> {
+    if step != StagedPromptStep::Paste {
+        return Ok(());
+    }
+    match mode {
+        PromptPasteMode::Raw => Ok(()),
+        PromptPasteMode::Framed => validate_framed_paste_output(window_id, stdout),
+        PromptPasteMode::Guarded => validate_guarded_paste_output(window_id, stdout),
+    }
+}
+
+fn append_paste_cleanup_error(
+    error: String,
+    operation: &str,
+    cleanup: Result<(), String>,
+) -> String {
+    match cleanup {
+        Ok(()) => error,
+        Err(cause) => format!("{error}; {operation} also failed: {cause}"),
+    }
+}
+
+fn prompt_frame_id(window_id: &str, mode: PromptPasteMode) -> Option<String> {
+    (mode == PromptPasteMode::Framed).then(|| crate::tmux::prompt_buffer_name(window_id))
+}
+
+fn deliver_staged_prompt_with_mode(
+    window_id: &str,
+    text: &str,
+    mode: PromptPasteMode,
+    mut remaining: impl FnMut() -> Result<Duration, String>,
+    mut run: impl FnMut(Vec<String>, String, Duration) -> Result<Output, String>,
+) -> Result<(), String> {
+    let frame_id = prompt_frame_id(window_id, mode);
+    let mut cleanup_error = None;
+    let result = deliver_staged_prompt(window_id, text, |step, argv, message| {
+        // Fail a preflight deadline before opening any frame. Cleanup gets its own budget.
+        let timeout = staged_paste_timeout(step, remaining())?;
+        let argv = prompt_paste_step_argv(step, argv, window_id, mode, frame_id.as_deref());
+        let command = run(argv, message, timeout);
+        let needs_close =
+            command.is_err() && step == StagedPromptStep::Paste && mode == PromptPasteMode::Framed;
+        let outcome = command.and_then(|output| {
+            validate_prompt_paste_step_output(step, mode, window_id, &output.stdout)
+        });
+        if step == StagedPromptStep::Cleanup
+            && let Err(error) = &outcome
+        {
+            cleanup_error = Some(error.clone());
+        }
+        match outcome {
+            Err(error) if needs_close => {
+                let close = run(
+                    close_paste_frame_argv(
+                        window_id,
+                        frame_id.as_deref().expect("framed paste token"),
+                    ),
+                    format!("tmux closing paste frame failed for {window_id}"),
+                    PASTE_CLEANUP_TIMEOUT,
+                )
+                .map(|_| ());
+                Err(append_paste_cleanup_error(
+                    error,
+                    "closing paste frame",
+                    close,
+                ))
+            }
+            other => other,
+        }
+    });
+    result.map_err(|error| {
+        append_paste_cleanup_error(
+            error,
+            "deleting prompt buffer",
+            cleanup_error.map_or(Ok(()), Err),
+        )
+    })
+}
+
 fn remote_actor_from_headers(
     headers: &std::collections::BTreeMap<String, String>,
 ) -> Option<RemoteActor> {
@@ -2566,14 +2725,6 @@ async fn send_escape_async(window_id: &str, timeout: Duration) -> Result<(), Str
     .map(|_| ())
 }
 
-pub(super) async fn deliver_prompt_to_tmux_async(
-    window_id: &str,
-    prompt: &str,
-    timeout: Duration,
-) -> Result<(), String> {
-    deliver_prompt_to_tmux_async_for_tool(window_id, prompt, timeout, None).await
-}
-
 pub(super) async fn deliver_prompt_to_tmux_async_for_tool(
     window_id: &str,
     prompt: &str,
@@ -2581,9 +2732,12 @@ pub(super) async fn deliver_prompt_to_tmux_async_for_tool(
     tool: Option<&str>,
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
+    let prompt = normalize_submitted_prompt(prompt);
+    let prompt = prompt.as_str();
+    let mode = prompt_paste_mode(prompt, tool);
     match prompt_submit_mode_for_tool(tool) {
         PromptSubmitMode::DirectShell => {
-            send_prompt_to_tmux_async(window_id, prompt, deadline).await?;
+            send_prompt_to_tmux_async(window_id, prompt, deadline, mode).await?;
             run_tmux_argv_with_timeout_async(
                 send_carriage_return_argv(window_id),
                 format!("tmux send carriage return failed for {window_id}"),
@@ -2598,7 +2752,7 @@ pub(super) async fn deliver_prompt_to_tmux_async_for_tool(
             // `capture-pane` that stalls would eat the deadline the paste
             // still needs. A failed read is `None`.
             let before = composer_before_paste_async(window_id, deadline).await;
-            send_prompt_to_tmux_async(window_id, prompt, deadline).await?;
+            send_prompt_to_tmux_async(window_id, prompt, deadline, mode).await?;
             wait_for_prompt_submit_async(window_id, prompt, deadline, before.as_deref()).await
         }
     }
@@ -2635,14 +2789,55 @@ async fn send_prompt_to_tmux_async(
     window_id: &str,
     text: &str,
     deadline: Instant,
+    mode: PromptPasteMode,
 ) -> Result<(), String> {
-    deliver_staged_prompt_async(window_id, text, |step, argv, message| async move {
+    let frame_id = prompt_frame_id(window_id, mode);
+    let frame_id = frame_id.as_deref();
+    let cleanup_error = std::sync::Mutex::new(None);
+    let cleanup_error_ref = &cleanup_error;
+    let result = deliver_staged_prompt_async(window_id, text, |step, argv, message| async move {
         let timeout = staged_paste_timeout(step, remaining_until(deadline))?;
-        run_tmux_argv_with_timeout_async(argv, message, timeout)
-            .await
-            .map(|_| ())
+        let argv = prompt_paste_step_argv(step, argv, window_id, mode, frame_id);
+        let command = run_tmux_argv_with_timeout_async(argv, message, timeout).await;
+        let needs_close =
+            command.is_err() && step == StagedPromptStep::Paste && mode == PromptPasteMode::Framed;
+        let outcome = command.and_then(|output| {
+            validate_prompt_paste_step_output(step, mode, window_id, &output.stdout)
+        });
+        if step == StagedPromptStep::Cleanup
+            && let Err(error) = &outcome
+        {
+            *cleanup_error_ref.lock().expect("paste cleanup error lock") = Some(error.clone());
+        }
+        match outcome {
+            Err(error) if needs_close => {
+                let close = run_tmux_argv_with_timeout_async(
+                    close_paste_frame_argv(window_id, frame_id.expect("framed paste token")),
+                    format!("tmux closing paste frame failed for {window_id}"),
+                    PASTE_CLEANUP_TIMEOUT,
+                )
+                .await
+                .map(|_| ());
+                Err(append_paste_cleanup_error(
+                    error,
+                    "closing paste frame",
+                    close,
+                ))
+            }
+            other => other,
+        }
     })
-    .await
+    .await;
+    result.map_err(|error| {
+        append_paste_cleanup_error(
+            error,
+            "deleting prompt buffer",
+            cleanup_error
+                .into_inner()
+                .expect("paste cleanup error lock")
+                .map_or(Ok(()), Err),
+        )
+    })
 }
 
 async fn wait_for_prompt_submit_async(
@@ -3138,6 +3333,9 @@ mod tests {
         composer: Option<String>,
         asked_for_composer_before_sending: Option<bool>,
         submitted_baseline: Option<Option<String>>,
+        guarded_paste_result: Option<Result<(), String>>,
+        guarded_pastes: usize,
+        framed_pastes: usize,
     }
 
     impl AgentOutputCaptureRuntime for FakeAgentInputRuntime {
@@ -3147,6 +3345,23 @@ mod tests {
             _options: CapturePaneOptions,
         ) -> Result<String, String> {
             Ok(String::new())
+        }
+
+        fn paste_text_with_mode(
+            &mut self,
+            window_id: &str,
+            text: &str,
+            mode: PromptPasteMode,
+        ) -> Result<(), String> {
+            if mode == PromptPasteMode::Guarded {
+                self.guarded_pastes += 1;
+                self.guarded_paste_result
+                    .clone()
+                    .expect("test must provide guarded paste outcome")?;
+            } else if mode == PromptPasteMode::Framed {
+                self.framed_pastes += 1;
+            }
+            self.paste_text(window_id, text)
         }
 
         fn paste_text(&mut self, _window_id: &str, text: &str) -> Result<(), String> {
@@ -3289,6 +3504,16 @@ mod tests {
             runtime.text_sends[0].starts_with("1. item number 1"),
             "the head must survive"
         );
+        assert_eq!(
+            runtime.text_sends[0].lines().count(),
+            12,
+            "the numbered list keeps every line"
+        );
+        assert_eq!(
+            runtime.submit_prompts,
+            vec![prompt],
+            "one submit follows the whole body"
+        );
         // Newlines travel inside the paste. Sending them as keypresses is what
         // turned one message into dozens of execs.
         assert!(
@@ -3296,6 +3521,209 @@ mod tests {
             "no per-newline keypresses, got {:?}",
             runtime.key_sends
         );
+    }
+
+    #[test]
+    fn unknown_multiline_receivers_require_live_paste_capability() {
+        for tool in [None, Some("shell"), Some("aider"), Some("custom")] {
+            let refused =
+                validate_guarded_paste_output("@1", crate::tmux::GUARDED_PASTE_REFUSED.as_bytes())
+                    .expect_err("mode-off refusal");
+            for cause in [refused, "original tmux paste failure".to_owned()] {
+                let mut runtime = FakeAgentInputRuntime {
+                    guarded_paste_result: Some(Err(cause.clone())),
+                    ..Default::default()
+                };
+                let error = deliver_prompt_to_tmux_for_tool(&mut runtime, "@1", "one\ntwo", tool)
+                    .expect_err("refused or failed paste must not submit");
+                assert_eq!(error, cause);
+                assert_eq!(runtime.guarded_pastes, 1);
+                assert!(runtime.text_sends.is_empty());
+                assert!(runtime.submit_prompts.is_empty());
+                assert_eq!(runtime.carriage_returns, 0);
+            }
+            let mut runtime = FakeAgentInputRuntime {
+                guarded_paste_result: Some(Ok(())),
+                ..Default::default()
+            };
+            deliver_prompt_to_tmux_for_tool(&mut runtime, "@1", "one\rtwo\r\n", tool)
+                .expect("supported receiver");
+            assert_eq!(runtime.text_sends, vec!["one\ntwo"]);
+            assert_eq!(runtime.guarded_pastes, 1);
+            assert_eq!(runtime.carriage_returns + runtime.submit_prompts.len(), 1);
+        }
+        for (prompt, tool) in [
+            ("one\ntwo", Some("claude")),
+            ("one\ntwo", Some("codex")),
+            ("one", None),
+            ("one", Some("shell")),
+        ] {
+            let mut runtime = FakeAgentInputRuntime::default();
+            deliver_prompt_to_tmux_for_tool(&mut runtime, "@1", prompt, tool)
+                .expect("no guarded paste required");
+            assert_eq!(runtime.guarded_pastes, 0);
+            assert_eq!(runtime.framed_pastes, usize::from(prompt.contains('\n')));
+            assert_eq!(runtime.text_sends, vec![prompt]);
+        }
+    }
+
+    #[test]
+    fn atomic_guard_only_changes_the_paste_step() {
+        let paste = crate::tmux::paste_buffer_argv("aimux-prompt-test", "@1");
+        for step in [StagedPromptStep::Load, StagedPromptStep::Cleanup] {
+            assert_eq!(
+                prompt_paste_step_argv(step, paste.clone(), "@1", PromptPasteMode::Guarded, None),
+                paste
+            );
+            assert_eq!(
+                validate_prompt_paste_step_output(step, PromptPasteMode::Guarded, "@1", b""),
+                Ok(())
+            );
+        }
+        assert_eq!(
+            prompt_paste_step_argv(
+                StagedPromptStep::Paste,
+                paste.clone(),
+                "@1",
+                PromptPasteMode::Raw,
+                None
+            ),
+            paste
+        );
+        assert_eq!(
+            prompt_paste_step_argv(
+                StagedPromptStep::Paste,
+                paste.clone(),
+                "@1",
+                PromptPasteMode::Guarded,
+                None
+            ),
+            guarded_paste_buffer_argv(&paste, "@1")
+        );
+        assert!(
+            validate_prompt_paste_step_output(
+                StagedPromptStep::Paste,
+                PromptPasteMode::Guarded,
+                "@1",
+                b""
+            )
+            .is_err()
+        );
+        assert_eq!(
+            validate_prompt_paste_step_output(
+                StagedPromptStep::Paste,
+                PromptPasteMode::Guarded,
+                "@1",
+                crate::tmux::GUARDED_PASTE_SUCCESS.as_bytes()
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn frame_tokens_are_unique_and_only_allocated_for_framed_pastes() {
+        assert_eq!(prompt_frame_id("@1", PromptPasteMode::Raw), None);
+        assert_eq!(prompt_frame_id("@1", PromptPasteMode::Guarded), None);
+        assert_ne!(
+            prompt_frame_id("@1", PromptPasteMode::Framed),
+            prompt_frame_id("@1", PromptPasteMode::Framed)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_framed_pastes_close_before_deleting_with_independent_budgets() {
+        use std::os::unix::process::ExitStatusExt;
+        for failure in ["load", "paste", "ack", "expired"] {
+            let mut calls = Vec::new();
+            let mut attempted_frame = None;
+            let mut remaining_calls = 0;
+            let error = deliver_staged_prompt_with_mode(
+                "@1",
+                "one\ntwo",
+                PromptPasteMode::Framed,
+                || {
+                    remaining_calls += 1;
+                    if failure == "expired" && remaining_calls > 1 {
+                        Err("original deadline failure".to_owned())
+                    } else {
+                        Ok(Duration::from_millis(17))
+                    }
+                },
+                |argv, _, timeout| {
+                    let operation = if argv[0] == "load-buffer" {
+                        "load"
+                    } else if argv[0] == "delete-buffer" {
+                        "delete"
+                    } else if argv[0] == "set-option" {
+                        "paste"
+                    } else {
+                        "close"
+                    };
+                    if operation == "paste" {
+                        attempted_frame = Some(argv[5].clone());
+                    } else if operation == "close" {
+                        assert_eq!(argv[0], "if-shell");
+                        assert_eq!(
+                            argv[4],
+                            format!(
+                                "#{{==:#{{@aimux-input-paste-frame}},{}}}",
+                                attempted_frame.as_deref().expect("opened frame token")
+                            )
+                        );
+                    }
+                    calls.push(operation);
+                    if matches!(operation, "close" | "delete") {
+                        assert_eq!(timeout, PASTE_CLEANUP_TIMEOUT);
+                        assert!(!argv.iter().any(|argument| argument == "0d"));
+                    } else {
+                        assert_eq!(timeout, Duration::from_millis(17));
+                    }
+                    if operation == failure || matches!(operation, "close" | "delete") {
+                        return Err(format!("original {operation} failure"));
+                    }
+                    Ok(Output {
+                        status: std::process::ExitStatus::from_raw(0),
+                        stdout: if operation == "paste" && failure != "ack" {
+                            crate::tmux::FRAMED_PASTE_SUCCESS.as_bytes().to_vec()
+                        } else {
+                            Vec::new()
+                        },
+                        stderr: Vec::new(),
+                    })
+                },
+            )
+            .expect_err("injected failure");
+            assert!(
+                error.contains("original delete failure"),
+                "{failure}: {error}"
+            );
+            if failure == "paste" {
+                assert_eq!(calls, ["load", "paste", "close", "delete"]);
+                assert!(error.contains("original close failure"), "{error}");
+            } else if failure == "ack" {
+                assert_eq!(
+                    calls,
+                    ["load", "paste", "delete"],
+                    "a successful command already closed its frame"
+                );
+            } else {
+                assert_eq!(
+                    calls,
+                    ["load", "delete"],
+                    "do not close a frame that was never attempted"
+                );
+            }
+            assert!(
+                error.contains(match failure {
+                    "load" => "original load failure",
+                    "paste" => "original paste failure",
+                    "ack" => "invalid tmux framed-paste response",
+                    _ => "original deadline failure",
+                }),
+                "{error}"
+            );
+        }
     }
 
     #[test]

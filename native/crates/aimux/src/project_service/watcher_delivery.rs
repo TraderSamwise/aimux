@@ -1,9 +1,7 @@
 //! Sending text to an agent from a scheduled task.
 //!
-//! One send is roughly a tmux spawn per line, so watcher turns use a bounded
-//! runtime and run inside the Tokio scheduler's per-task timeout. A held
-//! delivery is a successful handoff to the queued input task, not a failed send;
-//! the watcher is not responsible for owning a human-input dwell window.
+//! Watcher turns use one staged paste within the scheduler's task timeout.
+//! Held delivery hands work to the input queue, which owns human-input dwell.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -18,9 +16,9 @@ use super::agent_input_delivery::{
     record_agent_input_delivery_probe_failure,
 };
 use super::agent_output::{
-    AgentOutputResponseMode, BoundedAgentOutputCaptureRuntime, deliver_prompt_to_tmux_async,
-    read_agent_output_payload_async, resolve_live_window_id,
-    route_agent_output_request_with_runtime,
+    AgentOutputResponseMode, BoundedAgentOutputCaptureRuntime,
+    deliver_prompt_to_tmux_async_for_tool, read_agent_output_payload_async,
+    resolve_live_session_target, route_agent_output_request_with_runtime,
 };
 use super::prompt_context::{compose_with_prompt_context, get_prompt_context_text};
 use super::router::ProjectServiceRequestContext;
@@ -97,18 +95,18 @@ async fn deliver_agent_input_direct_async(
     session_id: &str,
     text: &str,
 ) -> WatcherDeliveryResult {
-    let window_id = match resolve_live_window_id(context, session_id) {
-        Ok(Some(window_id)) => window_id,
+    let target = match resolve_live_session_target(context, session_id) {
+        Ok(Some(target)) => target,
         Ok(None) => return WatcherDeliveryResult::Failed,
         Err(error) => {
             record_agent_input_delivery_probe_failure(context, session_id, &error);
             return WatcherDeliveryResult::Failed;
         }
     };
+    let window_id = target.window_id;
     let project_state_dir = context.project_state_dir();
     let prompt_context = get_prompt_context_text(&project_state_dir, session_id);
-    let contextualized_text = compose_with_prompt_context(text, prompt_context.as_deref());
-    let prompt = crate::agent_prompt_delivery::normalize_submitted_prompt(&contextualized_text);
+    let prompt = compose_with_prompt_context(text, prompt_context.as_deref());
     let now_ms = super::scheduler::scheduler_now_ms();
     let activity =
         super::agent_output::tmux_agent_input_window_activity_async(&window_id, DELIVERY_TIMEOUT)
@@ -133,9 +131,19 @@ async fn deliver_agent_input_direct_async(
             .force_task_next_tick(super::agent_input_delivery::AGENT_INPUT_DELIVERY_TASK_NAME);
         return WatcherDeliveryResult::Queued;
     }
-    match deliver_prompt_to_tmux_async(&window_id, &prompt, DELIVERY_TIMEOUT).await {
+    match deliver_prompt_to_tmux_async_for_tool(
+        &window_id,
+        &prompt,
+        DELIVERY_TIMEOUT,
+        target.tool.as_deref(),
+    )
+    .await
+    {
         Ok(()) => WatcherDeliveryResult::Delivered,
-        Err(_) => WatcherDeliveryResult::Failed,
+        Err(error) => {
+            record_agent_input_delivery_probe_failure(context, session_id, &error);
+            WatcherDeliveryResult::Failed
+        }
     }
 }
 

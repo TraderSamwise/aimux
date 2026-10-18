@@ -2995,12 +2995,13 @@ fn orchestration_route_picker_opens_input_and_cancels() {
 #[test]
 fn orchestration_input_submits_message_handoff_and_task_requests() {
     let snapshot = snapshot();
+    let prompt = "1. fix the header\n\n  2. then the footer\n3. push";
 
     let message = submit_orchestration_text(
         &snapshot,
         DashboardOrchestrationMode::Message,
         orchestration_target("Reviewer"),
-        "hello",
+        prompt,
     );
     assert_eq!(message.method, "POST");
     assert_eq!(message.path, routes::threads::SEND);
@@ -3013,7 +3014,7 @@ fn orchestration_input_submits_message_handoff_and_task_requests() {
             "assignee": "sam",
             "tool": "claude",
             "worktreePath": "/repo",
-            "body": "hello",
+            "body": prompt,
         })
     );
 
@@ -3021,7 +3022,7 @@ fn orchestration_input_submits_message_handoff_and_task_requests() {
         &snapshot,
         DashboardOrchestrationMode::Handoff,
         orchestration_target("Reviewer"),
-        "take over",
+        prompt,
     );
     assert_eq!(handoff.path, routes::handoff::SEND);
     assert_eq!(
@@ -3032,7 +3033,7 @@ fn orchestration_input_submits_message_handoff_and_task_requests() {
             "assignee": "sam",
             "tool": "claude",
             "worktreePath": "/repo",
-            "body": "take over",
+            "body": prompt,
         })
     );
 
@@ -3040,7 +3041,7 @@ fn orchestration_input_submits_message_handoff_and_task_requests() {
         &snapshot,
         DashboardOrchestrationMode::Task,
         orchestration_target("Reviewer"),
-        "write tests",
+        prompt,
     );
     assert_eq!(task.path, routes::tasks::ASSIGN);
     assert_eq!(
@@ -3051,7 +3052,7 @@ fn orchestration_input_submits_message_handoff_and_task_requests() {
             "assignee": "sam",
             "tool": "claude",
             "worktreePath": "/repo",
-            "description": "write tests",
+            "description": prompt,
         })
     );
 }
@@ -3589,12 +3590,14 @@ fn submit_orchestration_text(
         controller.handle_key(snapshot, DashboardKey::Printable('1')),
         DashboardControllerEffect::Render
     );
-    for key in text
-        .bytes()
-        .map(|byte| DashboardKey::Printable(byte as char))
-    {
-        controller.handle_key(snapshot, key);
-    }
+    assert_eq!(
+        controller.handle_key(snapshot, DashboardKey::Paste(text.to_owned())),
+        DashboardControllerEffect::Render
+    );
+    assert!(
+        controller.orchestration_input.is_some(),
+        "embedded LF must not submit the overlay"
+    );
     let DashboardControllerEffect::Request(request) =
         controller.handle_key(snapshot, DashboardKey::Enter)
     else {
