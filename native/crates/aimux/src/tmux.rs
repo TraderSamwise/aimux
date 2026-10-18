@@ -4841,7 +4841,8 @@ mod staged_prompt_tests {
             Some("Check all agents before assigning work."),
         );
         let normalized = crate::agent_prompt_delivery::normalize_submitted_prompt(&contextualized);
-        assert!(!normalized.contains('\n'));
+        assert_eq!(normalized, contextualized);
+        assert!(normalized.contains('\n'));
         for prompt in [&briefing, &normalized] {
             assert!(prompt.len() > super::TMUX_SEND_TEXT_CHUNK_BYTES);
             assert!(prompt.contains("worker-1 "));
