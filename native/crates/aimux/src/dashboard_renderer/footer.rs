@@ -108,6 +108,10 @@ fn build_dashboard_footer_hints<'a>(
         },
     ];
     let mut hints = Vec::new();
+    let restart_available = selected_session.is_some_and(|session| {
+        session.status == crate::dashboard_model::SessionStatus::Offline
+            && session.extra.contains_key("restartLaunchOptions")
+    });
     if has_worktrees && input.nav_level == DashboardNavLevel::Worktrees {
         hints.push(FooterHint {
             key: "\u{2191}\u{2193}/jk",
@@ -241,6 +245,13 @@ fn build_dashboard_footer_hints<'a>(
                 danger: false,
             },
         ]);
+        if restart_available {
+            hints.push(FooterHint {
+                key: "A",
+                label: "restart args",
+                danger: false,
+            });
+        }
         if !has_worktrees {
             hints.push(FooterHint {
                 key: "w",

@@ -26,7 +26,7 @@ impl DashboardTerminalGuard {
         guard.enable_raw_mode()?;
         guard.enable_nonblocking_stdin()?;
         install_resize_signal_handler();
-        write!(output, "\x1b[?1049h\x1b[?25l")?;
+        write!(output, "\x1b[?1049h\x1b[?25l\x1b[?2004h")?;
         output.flush()?;
         Ok(guard)
     }
@@ -95,18 +95,92 @@ pub fn run_terminal_host_contract_case(input: &Value) -> Value {
     })
 }
 
-pub fn read_dashboard_key(input: &mut impl Read) -> io::Result<Option<DashboardKey>> {
-    Ok(read_dashboard_keys(input)?.into_iter().next())
+#[derive(Default)]
+pub struct DashboardKeyReader {
+    pending: Vec<u8>,
+    escape_since: Option<Instant>,
 }
 
-pub fn read_dashboard_keys(input: &mut impl Read) -> io::Result<Vec<DashboardKey>> {
-    let mut buffer = [0_u8; 32];
-    match input.read(&mut buffer) {
-        Ok(0) => Ok(Vec::new()),
-        Ok(count) => Ok(parse_dashboard_keys(&buffer[..count])),
-        Err(error) if is_nonblocking_empty_read(&error) => Ok(Vec::new()),
-        Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(Vec::new()),
-        Err(error) => Err(error),
+impl DashboardKeyReader {
+    pub fn read_keys(&mut self, input: &mut impl Read) -> io::Result<Vec<DashboardKey>> {
+        let mut buffer = [0_u8; 4096];
+        let eof = match input.read(&mut buffer) {
+            Ok(0) => true,
+            Ok(count) => {
+                self.pending.extend_from_slice(&buffer[..count]);
+                false
+            }
+            Err(error) if is_nonblocking_empty_read(&error) => false,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => false,
+            Err(error) => return Err(error),
+        };
+        let now = Instant::now();
+        let mut keys = Vec::new();
+        while !self.pending.is_empty() {
+            let flush_escape = eof
+                || self
+                    .escape_since
+                    .is_some_and(|since| now.duration_since(since) >= Duration::from_millis(25));
+            let Some(length) = dashboard_input_frame_length(&self.pending, flush_escape) else {
+                break;
+            };
+            keys.extend(parse_dashboard_keys(&self.pending[..length]));
+            self.pending.drain(..length);
+            self.escape_since = None;
+        }
+        if self.pending == b"\x1b" {
+            self.escape_since.get_or_insert(now);
+        } else {
+            self.escape_since = None;
+        }
+        Ok(keys)
+    }
+}
+
+fn dashboard_input_frame_length(bytes: &[u8], flush_escape: bool) -> Option<usize> {
+    if bytes[0] != 0x1b {
+        let end = bytes
+            .iter()
+            .position(|byte| *byte == 0x1b)
+            .unwrap_or(bytes.len());
+        return match std::str::from_utf8(&bytes[..end]) {
+            Ok(_) => Some(end),
+            Err(error) => match error.error_len() {
+                Some(length) => Some(error.valid_up_to() + length),
+                None => (error.valid_up_to() > 0).then_some(error.valid_up_to()),
+            },
+        };
+    }
+    if bytes.len() == 1 {
+        return flush_escape.then_some(1);
+    }
+    let paste_start = b"\x1b[200~";
+    let paste_end = b"\x1b[201~";
+    if bytes.starts_with(paste_start) {
+        return bytes[paste_start.len()..]
+            .windows(paste_end.len())
+            .position(|window| window == paste_end)
+            .map(|offset| paste_start.len() + offset + paste_end.len());
+    }
+    if paste_start.starts_with(bytes) {
+        return None;
+    }
+    match bytes[1] {
+        b'[' => bytes[2..]
+            .iter()
+            .position(|byte| (0x40..=0x7e).contains(byte))
+            .map(|index| index + 3),
+        b'O' => (bytes.len() >= 3).then_some(3),
+        0x1b => Some(1),
+        _ => {
+            let length = match bytes[1] {
+                0xc2..=0xdf => 2,
+                0xe0..=0xef => 3,
+                0xf0..=0xf4 => 4,
+                _ => 1,
+            };
+            (bytes.len() > length).then_some(length + 1)
+        }
     }
 }
 
@@ -259,6 +333,9 @@ mod tests {
     fn raw_eagain_from_nonblocking_stdin_is_empty_input() {
         let mut input = NonblockingEmptyRead;
 
-        assert_eq!(read_dashboard_keys(&mut input).unwrap(), Vec::new());
+        assert_eq!(
+            DashboardKeyReader::default().read_keys(&mut input).unwrap(),
+            Vec::new()
+        );
     }
 }

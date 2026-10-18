@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use crate::config::default_config;
+use crate::config::load_config_for_known_project_root;
 use crate::daemon::process_inventory::read_daemon_process_control_plane_warning;
 use crate::daemon_state::{load_daemon_info, load_daemon_info_async, try_load_metadata_state};
 use crate::debug_logging::{LogLevel, log_at};
@@ -382,7 +382,7 @@ pub fn build_desktop_state_with_live_window_projection(
     input: DesktopStateInput<'_>,
     live_window_ids: LiveWindowIdsProjection<'_>,
 ) -> Value {
-    let tools = default_config()
+    let tools = load_config_for_known_project_root(Path::new(&input.project_root))
         .get("tools")
         .and_then(Value::as_object)
         .cloned()
@@ -513,7 +513,7 @@ async fn build_desktop_state_with_live_window_projection_async(
     input: DesktopStateInput<'_>,
     live_window_ids: LiveWindowIdsProjection<'_>,
 ) -> Value {
-    let tools = default_config()
+    let tools = load_config_for_known_project_root(Path::new(&input.project_root))
         .get("tools")
         .and_then(Value::as_object)
         .cloned()
@@ -1000,6 +1000,7 @@ fn dashboard_session(
         "lane",
         "restoreState",
         "restoreBlockedReason",
+        "restartLaunchOptions",
         "freshRelaunchAllowed",
         "team",
         "role",

@@ -254,7 +254,7 @@
         "errorMessage": "Command failed: tmux new-window env -i OPENAI_API_KEY=sk-real SECRET_TOKEN=abc"
       },
       "output": {
-        "thrown": "tmux failed to create window \"claude\" in session aimux-proj (140-byte command)",
+        "thrown": "tmux failed to create window \"claude\" in session aimux-proj (140-byte command): Command failed: tmux new-window env -i OPENAI_API_KEY=<redacted> SECRET_TOKEN=<redacted>",
         "result": null,
         "execCalls": [
           {

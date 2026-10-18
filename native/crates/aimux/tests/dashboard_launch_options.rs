@@ -116,3 +116,66 @@ fn tool_with_defaults() -> DashboardToolEntry {
         default_env: Map::from_iter([("CODEX_MODE".into(), json!("fast"))]),
     }
 }
+
+#[test]
+fn restart_dialog_reuses_prefill_and_hides_environment_editor() {
+    let tool = tool_with_defaults();
+    let mut state = DashboardLaunchOptionsState::for_restart("codex-offline".into(), tool);
+    assert_eq!(state.args.text, "--danger");
+    state.toggle_field();
+    assert_eq!(state.active_field, LaunchOptionsField::Args);
+    let rendered = render_launch_options_overlay(&state, state.restart_tool.as_ref(), 120, 30);
+    assert!(rendered.contains("RESTART WITH ARGS"));
+    assert!(rendered.contains("saved for future restarts"));
+    assert!(!rendered.contains("Env vars:"));
+}
+
+#[test]
+fn line_editor_handles_unicode_movement_delete_and_multiline_paste() {
+    let mut state = LineState::new("a界🙂z".into());
+    state.apply_key(DashboardKey::Left);
+    state.apply_key(DashboardKey::Backspace);
+    assert_eq!(state.text, "a界z");
+    state.apply_key(DashboardKey::Left);
+    assert_eq!(state.cursor, 1);
+    state.apply_key(DashboardKey::Delete);
+    assert_eq!(state.text, "az");
+    state.apply_key(DashboardKey::Paste("界\n🙂".into()));
+    assert_eq!(state.text, "a界 🙂z");
+    state.apply_key(DashboardKey::Home);
+    state.apply_key(DashboardKey::Right);
+    state.apply_key(DashboardKey::Right);
+    assert_eq!(state.cursor, 4);
+    assert!(render_line_window(&state, 6).contains("\x1b[7m \x1b[27m"));
+}
+
+#[test]
+fn quoted_saved_restart_args_roundtrip_empty_quotes_and_unicode() {
+    let args = vec![
+        "".to_string(),
+        "a='b'".into(),
+        "界 🙂".into(),
+        "a\\b".into(),
+    ];
+    let mut tool = tool_with_defaults();
+    tool.default_args = args.clone();
+    let state = DashboardLaunchOptionsState::for_restart("codex-offline".into(), tool);
+    assert_eq!(parse_shell_args(&state.args.text).unwrap(), args);
+}
+
+#[test]
+fn restart_line_viewport_keeps_wide_character_cursor_visible() {
+    for text in ["界".repeat(20), "🙂".repeat(20)] {
+        let state = LineState::new(text);
+        let rendered = render_line_window(&state, 10);
+        assert!(rendered.contains("\x1b[7m \x1b[27m"), "{rendered}");
+        let visible = aimux::tui_render::text::strip_ansi(&rendered);
+        assert!(
+            visible
+                .chars()
+                .map(|ch| if ch == ' ' { 1 } else { 2 })
+                .sum::<usize>()
+                <= 10
+        );
+    }
+}

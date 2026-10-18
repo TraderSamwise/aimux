@@ -12,6 +12,8 @@ pub struct DashboardLaunchOptionsState {
     pub env: LineState,
     pub active_field: LaunchOptionsField,
     pub error: Option<String>,
+    pub restart_session_id: Option<String>,
+    pub restart_tool: Option<DashboardToolEntry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,10 +49,22 @@ impl DashboardLaunchOptionsState {
             env: LineState::new(format_env_defaults(&tool.default_env)),
             active_field: LaunchOptionsField::Args,
             error: None,
+            restart_session_id: None,
+            restart_tool: None,
         }
     }
 
+    pub fn for_restart(session_id: String, tool: DashboardToolEntry) -> Self {
+        let mut state = Self::new(&tool);
+        state.restart_session_id = Some(session_id);
+        state.restart_tool = Some(tool);
+        state
+    }
+
     pub fn toggle_field(&mut self) {
+        if self.restart_session_id.is_some() {
+            return;
+        }
         self.active_field = match self.active_field {
             LaunchOptionsField::Args => LaunchOptionsField::Env,
             LaunchOptionsField::Env => LaunchOptionsField::Args,
@@ -112,11 +126,11 @@ impl LineState {
                 true
             }
             DashboardKey::Left => {
-                self.cursor = self.cursor.saturating_sub(1);
+                self.cursor = self.previous_boundary();
                 true
             }
             DashboardKey::Right => {
-                self.cursor = self.cursor.saturating_add(1).min(self.text.len());
+                self.cursor = self.next_boundary();
                 true
             }
             DashboardKey::Home => {
@@ -129,13 +143,13 @@ impl LineState {
             }
             DashboardKey::Backspace => {
                 if self.cursor > 0 {
-                    self.delete_range(self.cursor - 1, self.cursor);
+                    self.delete_range(self.previous_boundary(), self.cursor);
                 }
                 true
             }
             DashboardKey::Delete => {
                 if self.cursor < self.text.len() {
-                    self.delete_range(self.cursor, self.cursor + 1);
+                    self.delete_range(self.cursor, self.next_boundary());
                 }
                 true
             }
@@ -149,6 +163,12 @@ impl LineState {
                 self.cursor += insert.len_utf8();
                 true
             }
+            DashboardKey::Paste(text) => {
+                let text = text.replace(['\r', '\n'], " ");
+                self.text.insert_str(self.cursor, &text);
+                self.cursor += text.len();
+                true
+            }
             _ => false,
         }
     }
@@ -158,6 +178,20 @@ impl LineState {
         while !self.text.is_char_boundary(self.cursor) {
             self.cursor = self.cursor.saturating_sub(1);
         }
+    }
+
+    fn previous_boundary(&self) -> usize {
+        self.text[..self.cursor]
+            .char_indices()
+            .next_back()
+            .map_or(0, |(index, _)| index)
+    }
+
+    fn next_boundary(&self) -> usize {
+        self.text[self.cursor..]
+            .chars()
+            .next()
+            .map_or(self.cursor, |ch| self.cursor + ch.len_utf8())
     }
 
     fn delete_range(&mut self, start: usize, end: usize) {
@@ -215,6 +249,7 @@ pub fn render_launch_options_overlay(
             Err(error) => parse_error = Some(error),
         }
     }
+    let restarting = state.restart_session_id.is_some();
     let mut body = vec![
         format!(
             "  {} {}",
@@ -225,15 +260,30 @@ pub fn render_launch_options_overlay(
         format!(
             "{} {} {}",
             field_marker(state.active_field == LaunchOptionsField::Args),
-            style(&format!("{:<11}", "Extra args:"), Tone::Muted),
+            style(
+                &format!("{:<11}", if restarting { "Args:" } else { "Extra args:" }),
+                Tone::Muted
+            ),
             args
         ),
-        format!(
+    ];
+    if !restarting {
+        body.push(format!(
             "{} {} {}",
             field_marker(state.active_field == LaunchOptionsField::Env),
             style(&format!("{:<11}", "Env vars:"), Tone::Muted),
             env
-        ),
+        ));
+    } else {
+        body.push(format!(
+            "  {}",
+            style(
+                "Args are saved for future restarts. Tool stays the same.",
+                Tone::Muted
+            )
+        ));
+    }
+    body.extend([
         String::new(),
         format!(
             "  {} {}{}",
@@ -245,7 +295,7 @@ pub fn render_launch_options_overlay(
             },
             command_preview_with_args(tool, &extra_args)
         ),
-    ];
+    ]);
     if let Some(error) = parse_error.as_ref() {
         body.push(String::new());
         body.push(format!(
@@ -255,13 +305,21 @@ pub fn render_launch_options_overlay(
         ));
     }
     body.push(String::new());
-    body.push(overlay_hints(&[
-        ("Tab", "switch field"),
-        ("Enter", "start"),
-        ("Esc", "back"),
-    ]));
+    body.push(if restarting {
+        overlay_hints(&[("Enter", "restart"), ("Esc", "cancel")])
+    } else {
+        overlay_hints(&[("Tab", "switch field"), ("Enter", "start"), ("Esc", "back")])
+    });
     render_overlay_box(&OverlayBoxSpec {
-        title: &format!("{}: launch options", state.tool_key),
+        title: &format!(
+            "{}: {}",
+            state.tool_key,
+            if restarting {
+                "restart with args"
+            } else {
+                "launch options"
+            }
+        ),
         body: &body,
         cols,
         rows,
@@ -287,24 +345,38 @@ fn overlay_hints(pairs: &[(&str, &str)]) -> String {
 
 pub fn render_line_window(state: &LineState, max_width: usize) -> String {
     let width = max_width.max(1);
-    let cursor = state.cursor.min(state.text.len());
-    let base = if cursor >= state.text.len() {
+    let mut byte_cursor = state.cursor.min(state.text.len());
+    while !state.text.is_char_boundary(byte_cursor) {
+        byte_cursor = byte_cursor.saturating_sub(1);
+    }
+    let cursor = state.text[..byte_cursor].chars().count();
+    let base = if byte_cursor >= state.text.len() {
         format!("{} ", state.text)
     } else {
         state.text.clone()
     };
     let chars = base.chars().collect::<Vec<_>>();
-    let mut start = 0;
-    if cursor >= width {
-        start = cursor - width + 1;
+    // UTF-8 byte lengths conservatively bound terminal cells, including wide glyphs.
+    let mut start = cursor;
+    let mut used = chars[cursor].len_utf8().min(width);
+    while start > 0 && used + chars[start - 1].len_utf8() <= width {
+        start -= 1;
+        used += chars[start].len_utf8();
     }
-    let end = chars.len().min(start + width);
-    start = end.saturating_sub(width);
+    let mut end = cursor + 1;
+    while end < chars.len() && used + chars[end].len_utf8() <= width {
+        used += chars[end].len_utf8();
+        end += 1;
+    }
     let mut output = String::new();
     for (index, character) in chars.iter().enumerate().take(end).skip(start) {
         if index == cursor {
             output.push_str("\x1b[7m");
-            output.push(*character);
+            output.push(if character.len_utf8() > width {
+                ' '
+            } else {
+                *character
+            });
             output.push_str("\x1b[27m");
         } else {
             output.push(*character);

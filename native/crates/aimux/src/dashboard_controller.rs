@@ -28,6 +28,31 @@ use crate::dashboard_tool_picker::{
     DashboardToolPickerState,
 };
 use crate::project_api_contract::routes;
+
+fn restart_options_for_session(session: &DashboardSession) -> Result<DashboardToolEntry, String> {
+    if session.pending {
+        return Err(crate::agent_enter_decision::busy_message(
+            "Session",
+            &session.id,
+            session.pending_action.as_deref(),
+        ));
+    }
+    if session.status != SessionStatus::Offline {
+        return Err(format!(
+            "Session {} is running; restart with changed args is offline only",
+            session.id
+        ));
+    }
+    if let Some(reason) = crate::dashboard_model::dashboard_restore_block(session) {
+        return Err(reason);
+    }
+    let options = session.extra.get("restartLaunchOptions").ok_or_else(|| {
+        "Restart launch options are unavailable from the project service; refresh the dashboard"
+            .to_string()
+    })?;
+    serde_json::from_value(options.clone())
+        .map_err(|error| format!("Invalid restart launch options: {error}"))
+}
 use crate::project_service::session_semantics;
 use crate::project_service::work_outline::WorkOutlineEntry;
 use crate::terminal_key_parser::{KeyEvent, command_key, is_shifted_letter_command, parse_keys};
@@ -715,6 +740,9 @@ impl DashboardController {
             }
             DashboardKey::ForkAgent => self.open_fork_tool_picker(snapshot),
             DashboardKey::SwitchTool => self.open_switch_tool_picker(snapshot),
+            DashboardKey::LaunchOptions | DashboardKey::Printable('A') => {
+                self.open_restart_options(snapshot)
+            }
             DashboardKey::ShiftUp => self.move_selected_entry(snapshot, DashboardMoveDirection::Up),
             DashboardKey::ShiftDown => {
                 self.move_selected_entry(snapshot, DashboardMoveDirection::Down)
@@ -826,8 +854,7 @@ impl DashboardController {
                 self.navigation.clear_quick_jump();
                 DashboardControllerEffect::Ignored
             }
-            DashboardKey::LaunchOptions
-            | DashboardKey::Left
+            DashboardKey::Left
             | DashboardKey::Right
             | DashboardKey::ShiftLeft
             | DashboardKey::ShiftRight
@@ -2803,6 +2830,13 @@ impl DashboardController {
             return DashboardControllerEffect::Render;
         }
         if matches!(key, DashboardKey::Enter) {
+            if self
+                .launch_options
+                .as_ref()
+                .is_some_and(|state| state.restart_session_id.is_some())
+            {
+                return self.submit_restart_options(snapshot);
+            }
             let worktree_path = self.navigation.focused_worktree_path(snapshot);
             let Some(tool_picker) = self.tool_picker.as_ref() else {
                 self.launch_options = None;
@@ -2841,6 +2875,65 @@ impl DashboardController {
             }
         } else {
             DashboardControllerEffect::Ignored
+        }
+    }
+
+    fn open_restart_options(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(DashboardEntryRef::Session(session)) = self.navigation.selected_entry(snapshot)
+        else {
+            return DashboardControllerEffect::Ignored;
+        };
+        match restart_options_for_session(session) {
+            Ok(tool) => {
+                self.launch_options = Some(DashboardLaunchOptionsState::for_restart(
+                    session.id.clone(),
+                    tool,
+                ))
+            }
+            Err(error) => self.footer_alert = Some(error.into()),
+        }
+        DashboardControllerEffect::Render
+    }
+
+    fn submit_restart_options(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let state = self.launch_options.as_mut().expect("open launch options");
+        let session_id = state.restart_session_id.as_deref().expect("restart dialog");
+        let result = snapshot
+            .sessions
+            .iter()
+            .chain(snapshot.teammates.iter())
+            .find(|session| session.id == session_id)
+            .ok_or_else(|| format!("Session {session_id} is no longer available"))
+            .and_then(restart_options_for_session)
+            .and_then(|tool| {
+                if tool.key != state.tool_key {
+                    return Err(format!(
+                        "Agent tool changed from {} to {}; reopen launch options",
+                        state.tool_key, tool.key
+                    ));
+                }
+                crate::dashboard_launch_options::parse_shell_args(&state.args.text)
+            });
+        match result {
+            Ok(args) => {
+                let request = DashboardActionRequest {
+                    method: "POST",
+                    path: routes::agents::RESUME,
+                    body: json!({ "sessionId": session_id, "restartArgs": args }),
+                };
+                self.launch_options = None;
+                DashboardControllerEffect::Request(request)
+            }
+            Err(error) => {
+                state.error = Some(error);
+                DashboardControllerEffect::Render
+            }
         }
     }
 
@@ -3511,7 +3604,7 @@ fn dashboard_keys_from_event(event: KeyEvent) -> Vec<DashboardKey> {
 }
 
 fn shifted_dashboard_command_key(event: &KeyEvent, lower_key: &str) -> Option<DashboardKey> {
-    for letter in ["h", "t", "l", "w", "d", "o", "p", "v", "x", "r", "s"] {
+    for letter in ["a", "h", "t", "l", "w", "d", "o", "p", "v", "x", "r", "s"] {
         if is_shifted_letter_command(event, lower_key, letter) {
             return letter
                 .chars()
