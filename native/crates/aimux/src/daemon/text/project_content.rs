@@ -5,7 +5,8 @@ use crate::attachment_hosting::{
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_text::render_core_work_outline_entries_lines;
 use crate::daemon::routing::{
-    DaemonRouteResponse, DaemonRouteUrl, required_param, string_param, text_or_json_lines,
+    DaemonRouteResponse, DaemonRouteUrl, required_param, string_param, text_error,
+    text_or_json_lines,
 };
 use crate::daemon::text::params::{
     ProjectServiceJsonResult, required_project_service_array, required_project_service_object,
@@ -45,6 +46,9 @@ pub fn route_project_content_text_request(
     let route_url = DaemonRouteUrl::parse(path);
     let pathname = route_url.pathname();
 
+    if method == "GET" && pathname == CORE_API_ROUTES.usage_text {
+        return Some(usage_text_route(runtime, &route_url, body));
+    }
     if method == "GET" && pathname == CORE_API_ROUTES.outline_list_text {
         return Some(outline_list_text_route(runtime, &route_url, body));
     }
@@ -56,6 +60,56 @@ pub fn route_project_content_text_request(
     }
 
     None
+}
+
+fn usage_text_route(
+    runtime: &mut impl DaemonProjectContentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project = match required_param(route_url, body, "project") {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    let mut route_path = project_routes::USAGE.to_owned();
+    if route_url.search_param("refresh") == Some("1") {
+        route_path.push_str("?refresh=1");
+    }
+    let (json, _) =
+        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
+            Ok(result) => result,
+            Err(response) => return response,
+        };
+    if json.get("ok").and_then(Value::as_bool) == Some(false) {
+        let mut response = if route_url.search_param("json") == Some("1") {
+            text_or_json_lines(route_url, json, &[])
+        } else {
+            text_error(
+                502,
+                json.get("error")
+                    .and_then(Value::as_str)
+                    .filter(|error| !error.trim().is_empty())
+                    .unwrap_or("Error: project service usage collection failed"),
+            )
+        };
+        response.status = 502;
+        return response;
+    }
+    let values = match required_project_service_array(&json, "usage", "displayLines") {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    let lines = values.iter().map(Value::as_str).collect::<Option<Vec<_>>>();
+    let Some(lines) =
+        lines.filter(|lines| !lines.is_empty() && lines.iter().any(|line| !line.trim().is_empty()))
+    else {
+        return text_error(
+            502,
+            "Error: project service returned invalid usage response: displayLines must contain text",
+        );
+    };
+    let lines = lines.into_iter().map(str::to_owned).collect::<Vec<_>>();
+    text_or_json_lines(route_url, json, &lines)
 }
 
 fn outline_list_text_route(

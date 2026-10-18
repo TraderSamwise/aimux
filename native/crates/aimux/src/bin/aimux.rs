@@ -57,6 +57,17 @@ struct Cli {
 
 #[derive(Debug, Clone, Subcommand)]
 enum Command {
+    #[command(name = "claude-usage-statusline", hide = true)]
+    ClaudeUsageStatusline {
+        #[arg(long)]
+        endpoint_file: PathBuf,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        forward_command: Option<String>,
+        #[arg(long)]
+        settings_source: Option<PathBuf>,
+    },
     BuildInfo {
         #[arg(long)]
         json: bool,
@@ -207,9 +218,32 @@ fn install_fatal_logging_panic_hook() {
 }
 
 fn run() -> Result<ExitCode> {
+    let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
+    if raw_args
+        .first()
+        .is_some_and(|arg| arg == "claude-usage-statusline")
+    {
+        let cli =
+            Cli::parse_from(std::iter::once("aimux".to_owned()).chain(raw_args.iter().cloned()));
+        if let Command::ClaudeUsageStatusline {
+            endpoint_file,
+            session_id,
+            forward_command,
+            settings_source,
+        } = &cli.command
+        {
+            return aimux::claude_usage_statusline::run_statusline_with_source(
+                endpoint_file,
+                session_id,
+                forward_command.as_deref(),
+                settings_source.as_deref(),
+            )
+            .map(|code| ExitCode::from(code as u8))
+            .map_err(anyhow::Error::msg);
+        }
+    }
     prepare_stable_process_env();
     aimux::async_runtime::init_process_runtime()?;
-    let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
     let stripped_args = normalize_root_dispatch_args(&core_command_args(&raw_args));
     let logging_cli = parse_logging_cli_options(&raw_args);
     if is_root_version_request(&stripped_args) {
@@ -389,6 +423,9 @@ fn run() -> Result<ExitCode> {
             })?;
             Ok(())
         }
+        Command::ClaudeUsageStatusline { .. } => {
+            unreachable!("handled before native command match")
+        }
         Command::TmuxControlInternal { .. } => unreachable!("handled before native command match"),
         Command::TmuxStatuslineInternal { .. } => {
             unreachable!("handled before native command match")
@@ -409,6 +446,7 @@ fn is_native_main_command(args: &[String]) -> bool {
     match args {
         [] => true,
         [command, ..] if command == "build-info" => true,
+        [command, ..] if command == "claude-usage-statusline" => true,
         [command, subcommand, ..] if command == "daemon" && subcommand == "run" => true,
         [command, subcommand, ..] if command == "contracts" && subcommand == "list" => true,
         [command, subcommand, ..] if command == "rewrite" && subcommand == "status" => true,
@@ -451,7 +489,7 @@ fn print_root_help() {
     println!("{ROOT_HELP_SUFFIX}");
 }
 
-const ROOT_HELP_PREFIX: &str = "Usage: aimux [options] [command] [tool] [args...]\n\nNative CLI agent multiplexer\n\nArguments:\n  tool                         Tool to run (e.g. claude, codex, aider)\n  args                         Arguments to pass to the tool\n\nOptions:\n  --resume                     Resume previous sessions using native tool resume\n  --restore                    Start fresh sessions with injected history context\n  --debug                      Enable debug logging for this process\n  -V, --version                output the version number\n  -h, --help                   display help for command\n\nCommands:\n  init                         Initialize .aimux directory\n  restart                      Restart the Aimux control plane\n  dashboard-reload             Reload or open the dashboard\n  stop [sessionId]             Stop an agent or the current project service\n  restart-runtime              Restart the tmux runtime service\n  host                         Advanced project-service inspection commands\n  ui                           Run the first-party local web UI\n  serve                        Ensure the daemon-backed project control service is running\n  daemon                       Advanced: manage the global aimux control-plane daemon\n  projects                     Inspect known aimux projects\n  compact                      Compact session history using LLM summarization\n  worktree                     Manage git worktrees\n  thread                       Inspect and manage orchestration threads\n  threads                      List orchestration threads\n  input                        Send input to a running agent\n  attachment                   Manage session attachments\n  ps                           List running agent sessions\n  list                         List agents grouped by worktree\n  id <sessionId>               Resolve an Aimux agent id to its canonical tool and native backend id\n  loop                         Manage agents in an overseer-managed loop\n  message                      Send directed orchestration messages\n  handoff                      Send an explicit orchestration handoff\n  task                         Create and manage orchestrated tasks\n  review                       Manage review workflow tasks\n  spawn                        Spawn a new agent\n  run                          Run a transient job and stream output\n  job                          Inspect, tail, and cancel transient jobs\n  attach                       Attach to a transient job tmux window\n  overseer                     Manage the project overseer\n  scribe                       Manage the project scribe\n  fork                         Fork an agent session\n  graveyard                    Manage killed agents\n  rename <sessionId>           Rename an agent session\n  start <sessionId>            Start a stopped agent, or focus a running one\n  kill <sessionId>             Kill an agent session\n  migrate <sessionId>          Move an agent to another worktree\n  plane <sessionId>            Move an agent between planes\n  doctor                       Inspect aimux runtime state\n  notifications                Manage desktop notification delivery\n  repair                       Repair the current project runtime in place\n  migration                    Audit and migrate runtime state\n  logs                         Inspect aimux logs\n  metadata                     Inspect and mutate session metadata\n  outline                      Inspect and update work outlines\n  team                         Manage agent team roles\n";
+const ROOT_HELP_PREFIX: &str = "Usage: aimux [options] [command] [tool] [args...]\n\nNative CLI agent multiplexer\n\nArguments:\n  tool                         Tool to run (e.g. claude, codex, aider)\n  args                         Arguments to pass to the tool\n\nOptions:\n  --resume                     Resume previous sessions using native tool resume\n  --restore                    Start fresh sessions with injected history context\n  --debug                      Enable debug logging for this process\n  -V, --version                output the version number\n  -h, --help                   display help for command\n\nCommands:\n  init                         Initialize .aimux directory\n  restart                      Restart the Aimux control plane\n  dashboard-reload             Reload or open the dashboard\n  stop [sessionId]             Stop an agent or the current project service\n  restart-runtime              Restart the tmux runtime service\n  host                         Advanced project-service inspection commands\n  ui                           Run the first-party local web UI\n  serve                        Ensure the daemon-backed project control service is running\n  daemon                       Advanced: manage the global aimux control-plane daemon\n  projects                     Inspect known aimux projects\n  compact                      Compact session history using LLM summarization\n  worktree                     Manage git worktrees\n  thread                       Inspect and manage orchestration threads\n  threads                      List orchestration threads\n  input                        Send input to a running agent\n  attachment                   Manage session attachments\n  ps                           List running agent sessions\n  usage                        Read per-tool quota and token usage\n  list                         List agents grouped by worktree\n  id <sessionId>               Resolve an Aimux agent id to its canonical tool and native backend id\n  loop                         Manage agents in an overseer-managed loop\n  message                      Send directed orchestration messages\n  handoff                      Send an explicit orchestration handoff\n  task                         Create and manage orchestrated tasks\n  review                       Manage review workflow tasks\n  spawn                        Spawn a new agent\n  run                          Run a transient job and stream output\n  job                          Inspect, tail, and cancel transient jobs\n  attach                       Attach to a transient job tmux window\n  overseer                     Manage the project overseer\n  scribe                       Manage the project scribe\n  fork                         Fork an agent session\n  graveyard                    Manage killed agents\n  rename <sessionId>           Rename an agent session\n  start <sessionId>            Start a stopped agent, or focus a running one\n  kill <sessionId>             Kill an agent session\n  migrate <sessionId>          Move an agent to another worktree\n  plane <sessionId>            Move an agent between planes\n  doctor                       Inspect aimux runtime state\n  notifications                Manage desktop notification delivery\n  repair                       Repair the current project runtime in place\n  migration                    Audit and migrate runtime state\n  logs                         Inspect aimux logs\n  metadata                     Inspect and mutate session metadata\n  outline                      Inspect and update work outlines\n  team                         Manage agent team roles\n";
 const ROOT_HELP_SUFFIX: &str = "  debug-state                  Read a debug snapshot\n  notify                       Send a notification\n  list-notifications           List notifications\n  clear-notifications          Clear notifications\n  read-notifications           Mark notifications read";
 
 fn core_command_help(args: &[String]) -> Option<&'static str> {
@@ -478,6 +516,7 @@ fn core_command_help(args: &[String]) -> Option<&'static str> {
         return Some(help);
     }
     match (command, subcommand, help_requested) {
+        ("usage", _, true) => Some(USAGE_HELP),
         ("host", None, _) => Some(HOST_HELP),
         ("host", Some("status"), true) => Some(HOST_STATUS_HELP),
         ("host", Some("agent-read"), true) => Some(HOST_AGENT_READ_HELP),
@@ -1301,3 +1340,5 @@ where
     }
     Ok(())
 }
+
+const USAGE_HELP: &str = "Usage: aimux usage [--project <path>] [--json] [--refresh]\n\nRead the project service’s per-tool quota windows and billed-equivalent token spend.\n--refresh schedules collection on the next shared tick; the response is the current snapshot.\n";

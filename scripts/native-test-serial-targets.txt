@@ -37,6 +37,7 @@ notification_delivery_guard	mutates notification guard environment
 paths	path resolver tests mutate cwd and inspect home/env fallbacks
 project_catalog	mutates process cwd
 project_discovery_cli	real aimux subprocesses and isolated daemon/project-service activation
+project_service_agent_delivery_seams	isolated child test processes select executable tmux recorder and exercise production delivery runtime environment
 project_service_agent_restore	restore snapshot/offer task mutates temp runtime topology and tmux-shaped liveness state
 project_service_agents	runtime liveness projection and tmux-window inventory boundaries
 project_service_agents_liveness	tmux liveness failure/success projection boundaries

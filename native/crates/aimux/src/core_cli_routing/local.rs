@@ -1,4 +1,6 @@
-use super::args::{CoreLogsArgs, CoreLogsSubcommand, CoreMetadataArgs, CoreRepairArgs};
+use super::args::{
+    CoreLogsArgs, CoreLogsSubcommand, CoreMetadataArgs, CoreRepairArgs, CoreUsageArgs,
+};
 use super::common::{has_help, required_value};
 use super::{non_flag_inline_value, required_non_flag_value};
 
@@ -73,6 +75,42 @@ pub fn parse_core_metadata_args<S: AsRef<str>>(args: &[S]) -> Option<CoreMetadat
         }),
         _ => None,
     }
+}
+
+pub fn parse_core_usage_args_result<S: AsRef<str>>(args: &[S]) -> Result<CoreUsageArgs, String> {
+    if args.first().map(AsRef::as_ref) != Some("usage") {
+        return Err("expected usage command".into());
+    }
+    let mut parsed = CoreUsageArgs {
+        project: None,
+        json: false,
+        refresh: false,
+    };
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        match arg {
+            "--json" => parsed.json = true,
+            "--refresh" => parsed.refresh = true,
+            "--project" => {
+                let value = required_non_flag_value(args, index)
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| "--project requires a value".to_owned())?;
+                parsed.project = Some(value.to_owned());
+                index += 1;
+            }
+            _ if arg.starts_with("--project=") => {
+                let value = &arg["--project=".len()..];
+                if value.trim().is_empty() || value.starts_with('-') {
+                    return Err("--project requires a value".into());
+                }
+                parsed.project = Some(value.to_owned());
+            }
+            _ => return Err(format!("unknown usage option {arg}")),
+        }
+        index += 1;
+    }
+    Ok(parsed)
 }
 
 pub fn parse_core_repair_args<S: AsRef<str>>(args: &[S]) -> Option<CoreRepairArgs> {

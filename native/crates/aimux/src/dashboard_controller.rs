@@ -994,6 +994,7 @@ impl DashboardController {
             DashboardKey::Printable('c') => Some(self.switch_screen(DashboardScreen::Coordination)),
             DashboardKey::Printable('p') => Some(self.switch_screen(DashboardScreen::Project)),
             DashboardKey::Printable('L') => Some(self.switch_screen(DashboardScreen::Library)),
+            DashboardKey::Printable('U') => Some(self.switch_screen(DashboardScreen::Usage)),
             DashboardKey::Printable('t') => Some(self.switch_screen(DashboardScreen::Topology)),
             DashboardKey::Printable('g') => Some(self.switch_screen(DashboardScreen::Graveyard)),
             _ => None,
@@ -1103,6 +1104,9 @@ impl DashboardController {
             }
             DashboardKey::Printable('L') if self.screen != DashboardScreen::Library => {
                 self.switch_screen(DashboardScreen::Library)
+            }
+            DashboardKey::Printable('U') if self.screen != DashboardScreen::Usage => {
+                self.switch_screen(DashboardScreen::Usage)
             }
             DashboardKey::Printable('t') if self.screen != DashboardScreen::Topology => {
                 self.switch_screen(DashboardScreen::Topology)
@@ -3625,6 +3629,7 @@ pub enum DashboardScreen {
     Coordination,
     Project,
     Library,
+    Usage,
     Topology,
     Graveyard,
 }
@@ -3637,6 +3642,7 @@ impl DashboardScreen {
             Self::Coordination => "coordination",
             Self::Project => "project",
             Self::Library => "library",
+            Self::Usage => "usage",
             Self::Topology => "topology",
             Self::Graveyard => "graveyard",
         }
@@ -3649,6 +3655,7 @@ impl DashboardScreen {
             "coordination" => Some(Self::Coordination),
             "project" => Some(Self::Project),
             "library" => Some(Self::Library),
+            "usage" => Some(Self::Usage),
             "topology" => Some(Self::Topology),
             "graveyard" => Some(Self::Graveyard),
             _ => None,
@@ -3760,7 +3767,7 @@ fn dashboard_keys_from_event(event: KeyEvent) -> Vec<DashboardKey> {
 
 fn shifted_dashboard_command_key(event: &KeyEvent, lower_key: &str) -> Option<DashboardKey> {
     for letter in [
-        "a", "h", "t", "l", "w", "d", "o", "p", "v", "x", "r", "s", "k",
+        "a", "h", "t", "l", "w", "d", "o", "p", "v", "x", "r", "s", "k", "u",
     ] {
         if is_shifted_letter_command(event, lower_key, letter) {
             return letter

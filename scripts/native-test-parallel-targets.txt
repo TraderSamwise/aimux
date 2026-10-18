@@ -22,6 +22,7 @@ attachment_hosting
 attachment_hosting_url_safety
 backend_session_ids
 builtin_metadata_task
+claude_usage_statusline
 cli_launcher
 config
 context_compactor
@@ -47,6 +48,7 @@ daemon_state
 daemon_status
 daemon_team
 daemon_text_params
+daemon_usage
 daemon_worktrees
 dashboard_actions
 dashboard_alert_flash_contract
@@ -132,6 +134,8 @@ project_service_shell_state
 project_service_team
 project_service_topology
 project_service_usage
+project_service_usage_model
+project_service_usage_monitor
 project_service_window_reconciliation
 project_service_work_outline
 project_service_worktrees
@@ -162,6 +166,7 @@ transcript_reconciler_behavior
 transcript_reconciler_task
 transient_state_surfaces
 tui_render
+usage_monitor_surfaces
 watcher_tick_loop_budget
 websocket_client
 worktree_checkout_missing

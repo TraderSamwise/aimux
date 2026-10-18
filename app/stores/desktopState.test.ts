@@ -12,6 +12,7 @@ import {
   desktopStateErrorFamily,
   desktopStateFamily,
   desktopStateResourceFamily,
+  desktopStateUsageFamily,
   worktreeGroupsFamily,
 } from "./desktopState";
 
@@ -26,6 +27,32 @@ function desktopState(overrides: Partial<DesktopState> = {}): DesktopState {
 }
 
 describe("desktop state resource lifecycle", () => {
+  it("publishes service usage snapshots unchanged, including collection errors", () => {
+    const store = createStore();
+    const key = projectStateKey({ path: "/usage-monitor-project" });
+    expect(store.get(desktopStateUsageFamily(key))).toBeUndefined();
+    const usage = {
+      state: "error" as const,
+      observedAt: 1_000,
+      startedAt: 500,
+      collectionIntervalMs: 300_000,
+      tools: [],
+      displayLines: ["Codex: error: open rollout: permission denied"],
+      reason: "open rollout: permission denied",
+    };
+    store.set(applyDesktopStateSuccessAtom, {
+      projectStateKey: key,
+      state: desktopState({ usage }),
+    });
+    expect(store.get(desktopStateUsageFamily(key))).toBe(usage);
+    const updated = { ...usage, observedAt: 2_000, displayLines: ["Codex: Weekly: unknown"] };
+    store.set(applyDesktopStateSuccessAtom, {
+      projectStateKey: key,
+      state: desktopState({ usage: updated }),
+    });
+    expect(store.get(desktopStateUsageFamily(key))).toBe(updated);
+  });
+
   it("uses server-composed worktree groups instead of regrouping raw sessions", () => {
     const groups = groupByWorktree(
       desktopState({

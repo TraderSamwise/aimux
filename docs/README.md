@@ -12,6 +12,7 @@ These docs are the maintained product and operations references.
   experience.
 - [Security](security.md) - remote access, notifications, hosted mode, and
   egress controls.
+- [Usage monitoring](usage-monitoring.md) - per-tool quota windows and billed-equivalent token spend.
 - [Transient Jobs](transient-jobs-v1.md) - run, monitor, attach, and cancel local transient jobs.
 
 The production browser app is [aimux.app](https://aimux.app). iOS and Android
