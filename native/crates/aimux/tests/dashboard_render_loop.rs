@@ -575,7 +575,7 @@ fn bulk_graveyard_preview_waits_for_an_overlapping_tool_picker_to_close() {
 
 fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
     use std::io::{BufRead, BufReader, Read};
-    use std::net::TcpListener;
+    use std::net::{SocketAddr, TcpListener, TcpStream};
     use std::sync::atomic::AtomicBool;
     use std::time::Instant;
 
@@ -601,15 +601,49 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
     let server_requests = Arc::clone(&requests);
     let server = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(7);
+        // A transport can connect before its sending thread is scheduled.
+        // Do not let that idle connection block an unrelated request behind it.
+        // Once even one byte arrives, the HTTP parser below remains strict.
+        let mut waiting = Vec::<(TcpStream, SocketAddr, Instant)>::new();
         while !server_finished.load(Ordering::Relaxed) && Instant::now() < deadline {
-            let (mut stream, _) = match listener.accept() {
-                Ok(connection) => connection,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(2));
-                    continue;
+            match listener.accept() {
+                Ok((stream, peer)) => {
+                    stream
+                        .set_nonblocking(true)
+                        .expect("nonblocking accepted socket");
+                    waiting.push((stream, peer, Instant::now()));
                 }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(error) => panic!("accept preview request: {error}"),
+            }
+            let mut ready = None;
+            let mut index = 0;
+            while index < waiting.len() {
+                match waiting[index].0.peek(&mut [0_u8; 1]) {
+                    Ok(0) => {
+                        let (_, peer, accepted) = waiting.swap_remove(index);
+                        eprintln!(
+                            "preview server: {peer} closed before sending any HTTP bytes after {:?}",
+                            accepted.elapsed()
+                        );
+                    }
+                    Ok(_) => {
+                        ready = Some(waiting.swap_remove(index));
+                        break;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => index += 1,
+                    Err(error) => panic!(
+                        "inspect pre-request connection from {} after {:?}: {error}",
+                        waiting[index].1,
+                        waiting[index].2.elapsed()
+                    ),
+                }
+            }
+            let Some((mut stream, peer, _)) = ready else {
+                std::thread::sleep(Duration::from_millis(2));
+                continue;
             };
+            stream.set_nonblocking(false).expect("blocking HTTP read");
             stream
                 .set_read_timeout(Some(Duration::from_secs(1)))
                 .expect("bounded request read");
@@ -618,14 +652,27 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
                 .expect("bounded response write");
             let mut reader = BufReader::new(&mut stream);
             let mut first_line = String::new();
-            reader.read_line(&mut first_line).expect("request line");
+            reader.read_line(&mut first_line).unwrap_or_else(|error| {
+                panic!("read HTTP request line from {peer} after first byte; partial={first_line:?}: {error}")
+            });
+            assert!(
+                first_line.ends_with("\r\n") && first_line.split_whitespace().count() == 3,
+                "incomplete or malformed HTTP request line from {peer}: {first_line:?}"
+            );
             let mut content_length = 0;
             loop {
                 let mut header = String::new();
-                reader.read_line(&mut header).expect("request header");
-                if header == "\r\n" || header.is_empty() {
+                reader.read_line(&mut header).unwrap_or_else(|error| {
+                    panic!("read HTTP header from {peer} for {first_line:?}; partial={header:?}: {error}")
+                });
+                assert!(
+                    header.ends_with("\r\n"),
+                    "incomplete HTTP header from {peer} for {first_line:?}: {header:?}"
+                );
+                if header == "\r\n" {
                     break;
                 }
+                assert!(header.contains(':'), "malformed HTTP header: {header:?}");
                 if let Some((name, value)) = header.split_once(':')
                     && name.eq_ignore_ascii_case("content-length")
                 {
@@ -671,6 +718,14 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool) {
             if is_preview {
                 server_preview_answered.store(true, Ordering::Relaxed);
             }
+        }
+        for (_, peer, accepted) in waiting {
+            eprintln!(
+                "preview server: closing idle pre-request connection from {peer} after {:?}; helper_finished={}, deadline_expired={}",
+                accepted.elapsed(),
+                server_finished.load(Ordering::Relaxed),
+                Instant::now() >= deadline
+            );
         }
     });
 
