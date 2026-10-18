@@ -98,7 +98,7 @@ pub(super) fn route_agent_migrate(
                 backend_session_id.as_deref().unwrap_or_default(),
             );
             (
-                compose_tool_args(tool_config, &resume, &original_args),
+                compose_tool_launch(tool_config, &resume, &original_args).0,
                 Some(format!(
                     "You have been moved from {source_cwd} to {target_worktree_path}. Work in the new path from now on; paths in your earlier messages point at the old one."
                 )),
@@ -925,7 +925,26 @@ pub(super) fn route_agent_resume(
     } else {
         "agent.resume"
     };
-    resume_agent_session(context, &session_id, runtime, force_fresh, operation)
+    let restart_args = match body.get("restartArgs") {
+        None => None,
+        Some(value) => match serde_json::from_value::<Vec<String>>(value.clone()) {
+            Ok(args) if args.iter().all(|arg| !arg.contains('\0')) => Some(args),
+            _ => {
+                return json_error(
+                    400,
+                    "restartArgs must be an array of strings without NUL bytes",
+                );
+            }
+        },
+    };
+    resume_agent_session_with_args(
+        context,
+        &session_id,
+        runtime,
+        force_fresh,
+        operation,
+        restart_args.as_deref(),
+    )
 }
 
 pub(super) fn resume_agent_session(
@@ -934,6 +953,17 @@ pub(super) fn resume_agent_session(
     runtime: &mut impl ProjectLifecycleRuntime,
     force_fresh: bool,
     operation: &str,
+) -> ProjectServiceDispatchResponse {
+    resume_agent_session_with_args(context, session_id, runtime, force_fresh, operation, None)
+}
+
+fn resume_agent_session_with_args(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    runtime: &mut impl ProjectLifecycleRuntime,
+    force_fresh: bool,
+    operation: &str,
+    restart_args: Option<&[String]>,
 ) -> ProjectServiceDispatchResponse {
     let session_id = session_id.to_owned();
     let project_state_dir = context.project_state_dir();
@@ -944,6 +974,22 @@ pub(super) fn resume_agent_session(
     let Some(topology_session) = find_by_id(&topology, "sessions", &session_id) else {
         return json_error(404, format!("Session \"{session_id}\" not found"));
     };
+    if restart_args.is_some()
+        && let Err(error) = LiveWindows::for_context(context, operation).verify_offline_for_restart(
+            &topology_session,
+            &topology,
+            |window_id, sessions| {
+                runtime.legacy_window_matches_agent_owner(
+                    window_id,
+                    sessions,
+                    &session_id,
+                    context.project_root(),
+                )
+            },
+        )
+    {
+        return json_error(409, error);
+    }
     // A row still reading `running` after its window died is the whole reason
     // resume exists; answering "already running" there is a silent failure.
     let status = string_field(&topology_session, "status");
@@ -1060,13 +1106,10 @@ pub(super) fn resume_agent_session(
             ),
         );
     };
-    let saved_args = string_array_field(session.get("args"));
+    let saved_args = restart_args
+        .map(<[String]>::to_vec)
+        .unwrap_or_else(|| string_array_field(session.get("args")));
     let (launch_args, persist_args) = compose_tool_launch(tool_config, &action_args, &saved_args);
-    if relaunch_fresh {
-        clear_session_derived_metadata(&project_state_dir, &session_id);
-    } else if use_backend_resume {
-        settle_running_activity_to_idle(&project_state_dir, &session_id);
-    }
     let declared_supervisor = is_project_control_session(Some(&session));
     let worktree_path = if declared_supervisor {
         if let Some(session) = session.as_object_mut() {
@@ -1094,23 +1137,96 @@ pub(super) fn resume_agent_session(
         launch_env,
     }) {
         Ok(wrapped) => wrapped,
-        Err(error) => return json_user_facing_error(500, &error),
+        Err(error) => return resume_launch_error(&error, restart_args.is_some()),
     };
     let session_name = project_session(&project_root, "aimux").session_name;
-    if let Err(error) = runtime.ensure_project_session(context.project_root()) {
-        return json_user_facing_error(500, &error);
+    if restart_args.is_some() {
+        let bytes = crate::tmux::packed_argv_bytes(&crate::tmux::restart_window_argv(
+            &session_name,
+            &label,
+            &launch_cwd,
+            &launch_command,
+            &final_args,
+        ));
+        if bytes > 16_000 {
+            return json_error(
+                400,
+                format!(
+                    "Cannot restart: launch command is {bytes} bytes; tmux command limit is 16000 bytes. Shorten the launch args."
+                ),
+            );
+        }
     }
-    let target = match runtime.create_window(
-        &session_name,
-        &label,
-        &launch_cwd,
-        &launch_command,
-        &final_args,
-        true,
-    ) {
-        Ok(target) => target,
-        Err(error) => return json_user_facing_error(500, &error),
+    if let Err(error) = runtime.ensure_project_session(context.project_root()) {
+        return resume_launch_error(&error, restart_args.is_some());
+    }
+    let created = if restart_args.is_some() {
+        runtime.create_restart_window(
+            &session_name,
+            &label,
+            &launch_cwd,
+            &launch_command,
+            &final_args,
+        )
+    } else {
+        runtime.create_window(
+            &session_name,
+            &label,
+            &launch_cwd,
+            &launch_command,
+            &final_args,
+            true,
+        )
     };
+    let target = match created {
+        Ok(target) => target,
+        Err(error) => return resume_launch_error(&error, restart_args.is_some()),
+    };
+    if restart_args.is_some() {
+        for observation in 0..2 {
+            if observation > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            let verification = runtime
+            .list_windows(&target.session_name)
+            .map_err(|error| {
+                format!(
+                    "Restart could not verify launched window {}: {error}",
+                    target.window_id
+                )
+            })
+            .and_then(|windows| {
+                match windows.iter().find(|window| window.id == target.window_id) {
+                    Some(window) if window.pane_dead != Some(true) => Ok(()),
+                    window => Err(format!(
+                        "Restart failed: tmux window {} for session {session_id} {} during launch",
+                        target.window_id,
+                        if window.is_some() {
+                            "exited"
+                        } else {
+                            "disappeared"
+                        },
+                    )),
+                }
+            });
+            if let Err(error) = verification {
+                let error = match runtime.capture_restart_window(&target) {
+                    Ok(Some(output)) if !output.trim().is_empty() => {
+                        format!("{error}: {}", output.trim())
+                    }
+                    Ok(_) => error,
+                    Err(capture) => format!("{error}; could not read child output: {capture}"),
+                };
+                return resume_launch_error(
+                    &cleanup_restart_window(runtime, &target, error),
+                    restart_args.is_some(),
+                );
+            }
+        }
+        if let Err(error) = runtime.set_window_option(&target.window_id, "remain-on-exit", "off") {
+            return resume_launch_error(&cleanup_restart_window(runtime, &target, error), true);
+        }
+    }
     let _ = runtime.clear_history(&target.window_id);
     let metadata = agent_window_metadata(
         &session,
@@ -1123,11 +1239,12 @@ pub(super) fn resume_agent_session(
         backend_session_id.as_deref().filter(|_| !relaunch_fresh),
     );
     if let Err(error) = runtime.set_window_metadata(&target.window_id, &metadata) {
-        let _ = runtime.kill_window(&target.window_id);
-        return json_user_facing_error(500, &error);
+        let error = cleanup_restart_window(runtime, &target, error);
+        return resume_launch_error(&error, restart_args.is_some());
     }
     if let Err(error) = apply_agent_window_policy(runtime, &target.window_id, &tool_key) {
-        return json_user_facing_error(500, &error);
+        let error = cleanup_restart_window(runtime, &target, error);
+        return resume_launch_error(&error, restart_args.is_some());
     }
     if let Err(error) =
         update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
@@ -1141,7 +1258,15 @@ pub(super) fn resume_agent_session(
             )
         })
     {
-        return json_error(500, error);
+        return resume_launch_error(
+            &cleanup_restart_window(runtime, &target, error),
+            restart_args.is_some(),
+        );
+    }
+    if relaunch_fresh {
+        clear_session_derived_metadata(&project_state_dir, &session_id);
+    } else if use_backend_resume {
+        settle_running_activity_to_idle(&project_state_dir, &session_id);
     }
     settle_pending_role_relaunch(&project_state_dir, &session_id);
     let _ = sync_agent_role_registry_session_from_metadata(&project_state_dir, &session_id);
@@ -1151,6 +1276,25 @@ pub(super) fn resume_agent_session(
         "agent",
         Some(&session_id),
     )
+}
+
+fn resume_launch_error(error: &str, edited_args: bool) -> ProjectServiceDispatchResponse {
+    if edited_args {
+        json_error(500, crate::debug_logging::sanitize_log_string(error))
+    } else {
+        json_user_facing_error(500, error)
+    }
+}
+
+fn cleanup_restart_window(
+    runtime: &mut impl ProjectLifecycleRuntime,
+    target: &crate::tmux::TmuxTarget,
+    error: String,
+) -> String {
+    match runtime.kill_window(&target.window_id) {
+        Ok(()) => error,
+        Err(cleanup) => format!("{error}; cleanup of {} failed: {cleanup}", target.window_id),
+    }
 }
 
 async fn resume_agent_session_async(

@@ -8,6 +8,7 @@ import type {
   AgentLane,
   AgentRole,
   AgentRoleState,
+  AgentRestartLaunchOptions,
   PreviewCaptureMarker,
   ProjectOperationFailure,
   UsageSnapshot,
@@ -75,6 +76,7 @@ export interface DesktopSession {
   createdAt?: string;
   restoreState?: "ready" | "blocked";
   restoreBlockedReason?: string;
+  restartLaunchOptions?: AgentRestartLaunchOptions;
   role?: AgentRole;
   lane?: AgentLane;
   roleState?: AgentRoleState;

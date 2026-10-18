@@ -127,9 +127,19 @@ pub(super) fn compose_tool_launch(
     saved_args: &[String],
 ) -> (Vec<String>, Vec<String>) {
     let configured = strip_tool_action_args(tool_config, saved_args);
+    let base_args = string_array_field(tool_config.get("args"));
+    let (leading, trailing) = match configured.strip_prefix(base_args.as_slice()) {
+        Some(trailing) => (base_args.as_slice(), trailing),
+        None => (&[][..], configured.as_slice()),
+    };
     (
-        compose_tool_args(tool_config, action_args, &configured),
-        compose_tool_args(tool_config, &[], &configured),
+        leading
+            .iter()
+            .chain(action_args)
+            .chain(trailing)
+            .cloned()
+            .collect(),
+        configured,
     )
 }
 

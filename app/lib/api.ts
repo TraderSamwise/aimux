@@ -91,6 +91,7 @@ import {
   type RemoveServiceResponse,
   type RemoveWorktreeResponse,
   type ResumeAgentResponse,
+  type ResumeAgentInput,
   type RestorePreviousAgentsResponse,
   type ResumeServiceResponse,
   type ResurrectAgentResponse,
@@ -1064,8 +1065,12 @@ export async function resumeAgent(
   endpoint: ServiceEndpoint,
   sessionId: string,
   opts?: ApiOpts,
+  restartArgs?: string[],
 ): Promise<ResumeAgentResponse> {
-  const input: AgentSessionInput = { sessionId };
+  const input: ResumeAgentInput = {
+    sessionId,
+    ...(restartArgs === undefined ? {} : { restartArgs }),
+  };
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.resume, opts, input);
 }
 
