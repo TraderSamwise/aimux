@@ -20,6 +20,32 @@ pub fn runtime_exchange_path(project_state_dir: impl AsRef<Path>) -> PathBuf {
     project_state_dir.as_ref().join("runtime-exchange.yaml")
 }
 
+pub(crate) fn thread_is_terminal(thread: &Value) -> bool {
+    matches!(
+        thread.get("status").and_then(Value::as_str),
+        Some("closed" | "done" | "abandoned")
+    )
+}
+
+pub(crate) fn thread_responsible_participants(thread: &Value) -> Vec<&str> {
+    let waiting = thread
+        .get("waitingOn")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    if waiting.is_empty() {
+        thread
+            .get("owner")
+            .and_then(Value::as_str)
+            .into_iter()
+            .collect()
+    } else {
+        waiting
+    }
+}
+
 pub fn empty_runtime_exchange() -> Value {
     json!({
         "version": RUNTIME_EXCHANGE_VERSION,
@@ -189,6 +215,8 @@ pub fn normalize_runtime_exchange(value: Value) -> Result<Value, String> {
             unsupported_version_label(record.get("version"))
         ));
     }
+    validate_threads(record.get("threads"))?;
+    validate_tasks(record.get("tasks"))?;
     let mut normalized = Map::new();
     normalized.insert("version".into(), Value::from(RUNTIME_EXCHANGE_VERSION));
     normalized.insert(
@@ -210,6 +238,69 @@ pub fn normalize_runtime_exchange(value: Value) -> Result<Value, String> {
         normalized.insert(key.into(), array_value(record.get(key)));
     }
     Ok(Value::Object(normalized))
+}
+
+fn validate_threads(value: Option<&Value>) -> Result<(), String> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let threads = value
+        .as_array()
+        .ok_or_else(|| "invalid runtime exchange: threads must be an array".to_owned())?;
+    for (index, thread) in threads.iter().enumerate() {
+        let thread = thread.as_object().ok_or_else(|| {
+            format!("invalid runtime exchange: threads[{index}] must be an object")
+        })?;
+        required_string(thread.get("id"), &format!("threads[{index}].id"))?;
+        for field in ["status", "owner"] {
+            if let Some(value) = thread.get(field)
+                && !value.is_null()
+                && !value.is_string()
+            {
+                return Err(format!(
+                    "invalid runtime exchange: threads[{index}].{field} must be a string"
+                ));
+            }
+        }
+        for field in ["waitingOn", "participants", "unreadBy"] {
+            if let Some(value) = thread.get(field)
+                && !value
+                    .as_array()
+                    .is_some_and(|items| items.iter().all(Value::is_string))
+            {
+                return Err(format!(
+                    "invalid runtime exchange: threads[{index}].{field} must be an array of strings"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_tasks(value: Option<&Value>) -> Result<(), String> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let tasks = value
+        .as_array()
+        .ok_or_else(|| "invalid runtime exchange: tasks must be an array".to_owned())?;
+    for (index, task) in tasks.iter().enumerate() {
+        let task = task
+            .as_object()
+            .ok_or_else(|| format!("invalid runtime exchange: tasks[{index}] must be an object"))?;
+        required_string(task.get("id"), &format!("tasks[{index}].id"))?;
+        for field in ["status", "assignedTo"] {
+            if let Some(value) = task.get(field)
+                && !value.is_null()
+                && !value.is_string()
+            {
+                return Err(format!(
+                    "invalid runtime exchange: tasks[{index}].{field} must be a string"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn unsupported_version_label(value: Option<&Value>) -> String {

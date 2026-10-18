@@ -1,5 +1,6 @@
 use serde_json::{Map, Value, json};
 
+use super::super::runtime_exchange::thread_is_terminal;
 use super::{
     array_field, insert_optional_string, object_insert_mut, object_value, string_array_from_value,
     string_field, string_field_with_default, trimmed_string, unique,
@@ -80,8 +81,8 @@ fn handoff_from_thread(thread: &Value, messages: &[Value]) -> Option<Value> {
     let status = match action {
         Some("completed") => "completed",
         Some("accepted") => "accepted",
-        _ if string_field(thread, "status") == "done" => "completed",
         _ if string_field(thread, "status") == "abandoned" => "cancelled",
+        _ if thread_is_terminal(thread) => "completed",
         _ => "waiting",
     };
     let mut handoff = Map::new();
@@ -185,10 +186,7 @@ fn waits_from_thread(thread: &Value) -> Option<Value> {
     if waiting_on.is_empty() {
         return None;
     }
-    let resolved = matches!(
-        string_field(thread, "status").as_str(),
-        "done" | "abandoned"
-    );
+    let resolved = thread_is_terminal(thread);
     let mut wait = json!({
         "id": format!("wait:thread:{}", string_field(thread, "id")),
         "status": if resolved { "satisfied" } else { "waiting" },
@@ -254,7 +252,11 @@ fn waits_from_task(task: &Value) -> Option<Value> {
 
 fn inbox_from_thread(thread: &Value) -> Vec<Value> {
     let unread_by = string_array_from_value(thread.get("unreadBy"));
-    let waiting_on = string_array_from_value(thread.get("waitingOn"));
+    let waiting_on = if thread_is_terminal(thread) {
+        Vec::new()
+    } else {
+        string_array_from_value(thread.get("waitingOn"))
+    };
     unique(
         unread_by
             .iter()

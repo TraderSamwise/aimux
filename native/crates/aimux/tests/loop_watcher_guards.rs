@@ -1102,7 +1102,8 @@ fn reconciliation_surfaces_worklist_object_missing_needs_you() {
     let sends = watcher.plan_sends(&input, NOW);
     assert_eq!(sends.len(), 1);
     assert_eq!(sends[0].kind, LoopSendKind::Reconciliation);
-    assert!(sends[0].text.contains("worklist-contract"));
+    assert!(sends[0].text.contains("Work inventory unavailable"));
+    assert!(!sends[0].text.contains("Visible unowned work:"));
     assert!(
         sends[0]
             .text
@@ -1134,7 +1135,8 @@ fn reconciliation_alerts_for_worklist_needs_you_items() {
             "type": "task",
             "bucket": "awake",
             "title": "open handoff",
-            "actionable": true
+            "actionable": true,
+            "thread": {"thread": {"id": "thread-open", "status": "open"}}
         }],
         "tail": []
     });
@@ -1143,7 +1145,7 @@ fn reconciliation_alerts_for_worklist_needs_you_items() {
     let sends = watcher.plan_sends(&input, NOW);
     assert_eq!(sends.len(), 1);
     assert_eq!(sends[0].kind, LoopSendKind::Reconciliation);
-    assert!(sends[0].text.contains("thread t:thread-open"));
+    assert!(sends[0].text.contains("thread thread-open"));
 }
 
 #[test]

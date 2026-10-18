@@ -1080,7 +1080,7 @@ export interface ThreadMarkSeenResponse extends ProjectApiOk {
 }
 
 export type ProjectThreadKind = "conversation" | "task" | "review" | "handoff" | "user";
-export type ProjectThreadStatus = "open" | "waiting" | "blocked" | "done" | "abandoned";
+export type ProjectThreadStatus = "open" | "waiting" | "blocked" | "closed" | "done" | "abandoned";
 export type ProjectThreadMessageKind = "request" | "reply" | "status" | "decision" | "handoff" | "note";
 
 export interface ThreadOpenInput {
