@@ -87,3 +87,8 @@ Root `yarn verify` wall time was 73.83 s before adding the environment and
 times include cache and host-load variation and are not a claimed speedup;
 the root lane does not start jsdom. The scoped app run passed 48 tests, and
 changed-file lint passed. Full local suites are intentionally left to CI.
+
+After merging upstream `ab8f55f89` (Linux/npm packaging and Rust changes),
+all 49 scoped app tests passed on the integrated head and `yarn verify` passed
+in 93.17 s. That run includes new upstream code and is not a controlled
+render-environment timing comparison.
