@@ -133,61 +133,8 @@ describe("AgentChatScreen composer render contract", () => {
   // line is the second place it has to be kept in step.
 });
 
-/**
- * The footer's WIRING, which no test can actually execute.
- *
- * `app/` has no render environment -- no jsdom, no renderer, and
- * `vitest.config.ts` sets no `environment` -- so nothing can mount this screen
- * and read what the footer shows. Every decision behind it IS covered
- * (`composer-footer.test.ts`, `input-delivery.test.ts`,
- * `send-confirmation.cross-surface.test.ts`), but the half-dozen lines that
- * hand the screen's state to those decisions, and the one line that mounts the
- * result, are reachable only as text.
- *
- * So this is a belt, and it is worth naming what it is: it catches someone
- * accidentally hardwiring an argument or deleting the mount. An adversarial
- * edit that keeps these strings and changes the behaviour passes, which is
- * exactly what happened to the previous version of this file's assertions.
- * The real fix is a render environment; it is queued.
- */
-describe("the composer footer is wired to the derived state", () => {
-  it("mounts the rendered union", () => {
-    expect(agentChatScreenSource()).toContain(
-      "<ComposerFooterContentView content={composerFooterStateValue} />",
-    );
-  });
-
-  it("passes the screen's own values, not constants", () => {
-    const source = agentChatScreenSource();
-    const callStart = source.indexOf("const composerFooterStateValue = composerFooterState({");
-    expect(callStart).toBeGreaterThanOrEqual(0);
-    const callEnd = source.indexOf("});", callStart);
-    expect(callEnd).toBeGreaterThan(callStart);
-    const call = source.slice(callStart, callEnd);
-
-    // The mode and owner-controls flag are what decide whether a transcript
-    // pane is on screen. Hardwiring either is how the original bug read as
-    // fixed while terminal mode still showed nothing.
-    expect(call).toContain("mode: agentOutputViewMode");
-    expect(call).toContain("rawOutputAllowed: canUseOwnerControls");
-    expect(call).toContain("awaitingEcho: composerSendPendingEcho");
-    expect(call).toContain("heldNotice: heldDeliveryNotice");
-    expect(call).toContain("error: sendError");
-    // Omitted before, so a bare constant here survived.
-    expect(call).toContain("sending: sendBusy || composerAwaitingAck");
-  });
-});
-
-/**
- * The pre-send size check's WIRING, which no test can execute.
- *
- * Same limitation as the footer below: `app/` has no render environment, so
- * nothing can mount this screen and attempt a send. `attachment-limits.test.ts`
- * covers the decision and `attachment-limits.cross-surface.test.ts` pins the
- * number to the project service's own constant; this only catches the check
- * being removed or moved after the upload loop. An edit that keeps these
- * strings and changes the behaviour passes. Queued as 947602-129.
- */
+// Attachment upload ordering remains a source guard; mounted attachment
+// interactions are outside the composer-footer component tests.
 describe("attachments are checked before anything is uploaded", () => {
   it("runs the check before the send is marked busy", () => {
     const source = agentChatScreenSource();
