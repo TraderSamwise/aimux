@@ -676,23 +676,83 @@ pub(super) fn route_agent_fork(
         return json_error(400, format!("Session \"{source_session_id}\" is not live"));
     }
     let source_session = topology_session_to_session_state(&source_topology_session, &topology);
-    let tool_key = trimmed_string(body.get("tool"))
-        .or_else(|| tool_config_key_for_session(&source_session))
-        .unwrap_or_else(|| string_field(&source_session, "command"));
-    let config = load_config_for_project(context.project_root());
-    let Some(tool_config) = config
-        .get("tools")
-        .and_then(Value::as_object)
-        .and_then(|tools| tools.get(&tool_key))
-    else {
-        return json_error(500, format!("Unknown tool config: {tool_key}"));
+    let tool_key = match body.get("tool") {
+        None => tool_config_key_for_session(&source_session),
+        Some(Value::String(key)) if !key.trim().is_empty() => Some(key.trim().to_owned()),
+        Some(_) => return json_error(400, "tool must be a non-empty configured tool key"),
     };
-    let launch_override = launch_override(body.get("launchOverride"));
-    let command = launch_override
-        .as_ref()
-        .map(|launch| launch.command.clone())
-        .or_else(|| trimmed_string(tool_config.get("command")))
-        .unwrap_or_else(|| tool_key.clone());
+    let Some(tool_key) = tool_key else {
+        return json_error(400, "Source session has no configured tool identity");
+    };
+    let config = load_config_for_project(context.project_root());
+    let tools = config.get("tools").and_then(Value::as_object);
+    let available = tools
+        .into_iter()
+        .flat_map(|tools| tools.iter())
+        .filter(|(_, tool)| {
+            tool.get("enabled").and_then(Value::as_bool) != Some(false)
+                && trimmed_string(tool.get("command")).is_some()
+        })
+        .map(|(key, _)| key.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let Some(tool_config) = tools.and_then(|tools| tools.get(&tool_key)).filter(|tool| {
+        tool.is_object() && tool.get("enabled").and_then(Value::as_bool) != Some(false)
+    }) else {
+        return json_error(
+            400,
+            format!(
+                "Requested tool config \"{tool_key}\" is not available; available tools: {available}"
+            ),
+        );
+    };
+    if !valid_fork_launch_fields(tool_config) {
+        return json_error(
+            400,
+            format!("Tool config \"{tool_key}\" has invalid launch args or environment"),
+        );
+    }
+    let Some(command) =
+        trimmed_string(tool_config.get("command")).filter(|command| !command.contains('\0'))
+    else {
+        return json_error(
+            400,
+            format!(
+                "Tool config \"{tool_key}\" has no valid command; available tools: {available}"
+            ),
+        );
+    };
+    let configured_override = crate::dashboard_tool_picker::enabled_dashboard_tools(&config)
+        .iter()
+        .find(|entry| entry.key == tool_key)
+        .and_then(crate::dashboard_tool_picker::default_launch_override);
+    let launch_override = match body.get("launchOverride").or(configured_override.as_ref()) {
+        None => None,
+        Some(value) => {
+            let Some(launch) = launch_override(Some(value)) else {
+                return json_error(
+                    400,
+                    "launchOverride must contain a non-empty command and optional string args/env",
+                );
+            };
+            if launch.command != command {
+                return json_error(
+                    400,
+                    format!(
+                        "Tool config \"{tool_key}\" requires command \"{command}\"; requested launchOverride command was \"{}\"",
+                        launch.command
+                    ),
+                );
+            }
+            if !valid_fork_launch_fields(value) {
+                return json_error(
+                    400,
+                    "launchOverride args must be strings without NUL bytes and env must be a string map",
+                );
+            }
+            Some(launch)
+        }
+    };
     let target_session_id = trimmed_string(body.get("targetSessionId"))
         .unwrap_or_else(|| generated_session_id_for_launch(&topology, &command, None));
     if let Some(existing) = find_by_id(&topology, "sessions", &target_session_id)
@@ -802,6 +862,23 @@ pub(super) fn route_agent_fork(
         ),
         Err(error) => json_user_facing_error(500, &error),
     }
+}
+
+fn valid_fork_launch_fields(input: &Value) -> bool {
+    ["args", "defaultArgs"].iter().all(|key| {
+        input.get(key).is_none_or(|value| {
+            serde_json::from_value::<Vec<String>>(value.clone())
+                .is_ok_and(|args| args.iter().all(|arg| !arg.contains('\0')))
+        })
+    }) && ["env", "defaultEnv"].iter().all(|key| {
+        input.get(key).is_none_or(|value| {
+            serde_json::from_value::<std::collections::BTreeMap<String, String>>(value.clone())
+                .is_ok_and(|env| {
+                    env.iter()
+                        .all(|(key, value)| !key.contains('\0') && !value.contains('\0'))
+                })
+        })
+    })
 }
 
 pub(super) fn route_agent_switch_tool(

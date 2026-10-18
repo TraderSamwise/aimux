@@ -7792,3 +7792,215 @@ fn restart_args_legacy_binding_checks_ownership_without_refusing_foreign_windows
         cleanup(project);
     }
 }
+
+fn fork_class_fixture(label: &str) -> (PathBuf, PathBuf, ProjectServiceRequestContext) {
+    let project = temp_project(label);
+    write_project_tool_config(&project);
+    let config_path = project.join(".aimux/config.json");
+    let mut config: Value =
+        serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    config["tools"]["mock2"]["preambleFlag"] = json!(["--target-context"]);
+    config["tools"]["mock2"]["defaultArgs"] = json!(["--target-profile"]);
+    config["tools"]["mock2"]["defaultEnv"] = json!({"FORK_TARGET_PROFILE": "new-class"});
+    fs::write(config_path, serde_json::to_string(&config).unwrap()).unwrap();
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "claude-source", "nodeId": "agent:claude-source", "tool": "mock", "toolConfigKey": "mock",
+            "command": "/bin/mock", "status": "running", "args": ["--claude-only"],
+            "backendSessionId": "old-native", "label": "Codex misleading label", "worktreePath": "/repo/worktree",
+            "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    fs::create_dir_all(project.join(".aimux/context/claude-source")).unwrap();
+    fs::write(
+        project.join(".aimux/context/claude-source/live.md"),
+        "Carry the original conversation",
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_windows(LiveWindowIndex::default());
+    (project, state_dir, context)
+}
+
+#[test]
+fn fork_class_picker_defaults_reach_new_tool_without_touching_source() {
+    use aimux::dashboard_create::DashboardCreatePlan;
+    use aimux::dashboard_tool_picker::{
+        DashboardToolPickerEffect, DashboardToolPickerMode, DashboardToolPickerState,
+        enabled_dashboard_tools,
+    };
+    let (project, state_dir, context) = fork_class_fixture("fork-class-picker");
+    let original = session(&read_topology(&state_dir), "claude-source");
+    let config = aimux::config::load_config_for_known_project_root(&project);
+    let tools = enabled_dashboard_tools(&config);
+    let mut picker = DashboardToolPickerState::with_mode(
+        tools,
+        DashboardToolPickerMode::Fork {
+            source_session_id: "claude-source".into(),
+        },
+    );
+    picker.index = picker.tools.iter().position(|t| t.key == "mock2").unwrap();
+    let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(mut request)) =
+        picker.create_selected(Some("/repo/worktree"))
+    else {
+        panic!("fork request");
+    };
+    request.body["targetSessionId"] = json!("new-class-fork");
+    let mut runtime = FakeLifecycleRuntime::default();
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        request.method,
+        request.path,
+        Some(&request.body),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(response.status, 200, "{}", response.body);
+    let launched = runtime.created[0].args.join(" ");
+    assert!(launched.contains("/bin/mock2"), "{launched}");
+    assert!(launched.contains("--target-profile"), "{launched}");
+    assert!(launched.contains("FORK_TARGET_PROFILE"), "{launched}");
+    assert!(!launched.contains("--claude-only"), "{launched}");
+    assert_eq!(
+        runtime.metadata[0].1["args"],
+        json!(["--next", "--target-profile"])
+    );
+    assert_eq!(runtime.metadata[0].1["toolConfigKey"], "mock2");
+    assert_eq!(
+        session(&read_topology(&state_dir), "claude-source"),
+        original
+    );
+    assert!(runtime.killed.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn fork_class_mismatched_command_refuses_without_records_or_launch() {
+    let (project, state_dir, context) = fork_class_fixture("fork-class-mismatch");
+    let mut runtime = FakeLifecycleRuntime::default();
+    let response = route_lifecycle_request_with_runtime(&context, "POST", routes::agents::FORK,
+        Some(&json!({ "sourceSessionId": "claude-source", "targetSessionId": "new-class-fork", "tool": "mock2", "launchOverride": { "command": "/bin/mock", "args": ["--claude-only"] } })), &mut runtime).unwrap();
+    assert_eq!(response.status, 400, "{}", response.body);
+    let error = response.body["error"].as_str().unwrap();
+    assert!(
+        error.contains("mock2") && error.contains("/bin/mock2") && error.contains("/bin/mock"),
+        "{error}"
+    );
+    assert!(runtime.created.is_empty());
+    assert_eq!(
+        read_topology(&state_dir)["sessions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    cleanup(project);
+}
+
+#[test]
+fn fork_class_disabled_target_refuses_and_lists_available_keys() {
+    let (project, state_dir, context) = fork_class_fixture("fork-class-disabled");
+    let config_path = project.join(".aimux/config.json");
+    let mut config: Value =
+        serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    config["tools"]["mock2"]["enabled"] = json!(false);
+    fs::write(config_path, serde_json::to_string(&config).unwrap()).unwrap();
+    let mut runtime = FakeLifecycleRuntime::default();
+    let response = route_lifecycle_request_with_runtime(&context, "POST", routes::agents::FORK,
+        Some(&json!({ "sourceSessionId": "claude-source", "targetSessionId": "new-class-fork", "tool": "mock2" })), &mut runtime).unwrap();
+    assert_eq!(response.status, 400, "{}", response.body);
+    let error = response.body["error"].as_str().unwrap();
+    assert!(
+        error.contains("mock2") && error.contains("available") && error.contains("mockp"),
+        "{error}"
+    );
+    assert!(runtime.created.is_empty());
+    assert_eq!(
+        read_topology(&state_dir)["sessions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    cleanup(project);
+}
+
+#[test]
+fn fork_class_unknown_target_refuses_and_names_available_keys() {
+    let (project, state_dir, context) = fork_class_fixture("fork-class-unknown");
+    let original = read_topology(&state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::FORK,
+        Some(&json!({ "sourceSessionId": "claude-source", "tool": "missing-class" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(response.status, 400, "{}", response.body);
+    let error = response.body["error"].as_str().unwrap();
+    assert!(
+        error.contains("missing-class") && error.contains("available") && error.contains("mock2"),
+        "{error}"
+    );
+    assert!(runtime.created.is_empty());
+    assert_eq!(read_topology(&state_dir), original);
+    cleanup(project);
+}
+
+#[test]
+fn fork_class_direct_request_uses_same_configured_defaults_as_picker() {
+    let (project, state_dir, context) = fork_class_fixture("fork-class-direct");
+    let original = session(&read_topology(&state_dir), "claude-source");
+    let mut runtime = FakeLifecycleRuntime::default();
+    let response = route_lifecycle_request_with_runtime(&context, "POST", routes::agents::FORK,
+        Some(&json!({"sourceSessionId": "claude-source", "tool": "mock2", "targetSessionId": "new-class-fork"})), &mut runtime).unwrap();
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(
+        runtime.metadata[0].1["args"],
+        json!(["--next", "--target-profile"])
+    );
+    let launched = runtime.created[0].args.join(" ");
+    assert!(launched.contains("FORK_TARGET_PROFILE"), "{launched}");
+    assert!(!launched.contains("--claude-only"), "{launched}");
+    assert_eq!(
+        session(&read_topology(&state_dir), "claude-source"),
+        original
+    );
+    cleanup(project);
+}
+
+#[test]
+fn fork_class_malformed_launch_values_refuse_before_launch() {
+    for invalid in [
+        json!({"tool": false}),
+        json!({"tool": ""}),
+        json!({"launchOverride": {"args": []}}),
+        json!({"launchOverride": {"command": "/bin/mock2", "args": [3]}}),
+        json!({"launchOverride": {"command": "/bin/mock2", "args": ["bad\u{0000}arg"]}}),
+        json!({"launchOverride": {"command": "/bin/mock2", "env": {"key": 3}}}),
+    ] {
+        let (project, state_dir, context) = fork_class_fixture("fork-class-malformed");
+        let original = read_topology(&state_dir);
+        let mut body = json!({"sourceSessionId": "claude-source", "tool": "mock2"});
+        body.as_object_mut()
+            .unwrap()
+            .extend(invalid.as_object().unwrap().clone());
+        let mut runtime = FakeLifecycleRuntime::default();
+        let response = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::FORK,
+            Some(&body),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, 400, "{}", response.body);
+        assert!(runtime.created.is_empty());
+        assert_eq!(read_topology(&state_dir), original);
+        cleanup(project);
+    }
+}
