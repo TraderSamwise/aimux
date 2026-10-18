@@ -3,6 +3,7 @@
 # parallel after a single cargo --no-run build. The default is serial; add a
 # state such as Sam's home, the default daemon port, a shared tmux socket/server,
 # target here only after checking it does not touch machine-global runtime
+additional_overseer_surfaces
 agent_canonical_order
 agent_goal
 agent_name_across_surfaces

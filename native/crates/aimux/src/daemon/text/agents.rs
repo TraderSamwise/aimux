@@ -794,21 +794,56 @@ fn agent_filtered_text_route(
             "Error: project service returned invalid agent filtered list response: agents entries are invalid",
         );
     }
-    let filtered = agents
-        .into_iter()
-        .filter(|agent| match kind {
-            AgentFilterKind::Loop => {
-                agent
-                    .get("loop")
-                    .and_then(Value::as_object)
-                    .and_then(|loop_state| loop_state.get("active"))
-                    .and_then(Value::as_bool)
-                    == Some(true)
+    let filtered = if matches!(kind, AgentFilterKind::Overseer) {
+        let ids =
+            match required_project_service_array(&json, "overseer status", "overseerSessionIds") {
+                Ok(ids) => ids,
+                Err(response) => return response,
+            };
+        let mut overseers = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for id in ids {
+            let Some(id) = id.as_str().filter(|id| !id.is_empty()) else {
+                return text_error(
+                    502,
+                    "Error: invalid overseer status response: session identity is missing",
+                );
+            };
+            if !seen.insert(id.to_owned()) {
+                return text_error(
+                    502,
+                    "Error: invalid overseer status response: duplicate session identity",
+                );
             }
-            AgentFilterKind::Overseer => is_project_control_agent(agent, "overseer"),
-            AgentFilterKind::Scribe => is_project_control_agent(agent, "scribe"),
-        })
-        .collect::<Vec<_>>();
+            let Some(agent) = agents
+                .iter()
+                .find(|agent| agent.get("id").and_then(Value::as_str) == Some(id))
+            else {
+                return text_error(
+                    502,
+                    format!("Error: invalid overseer status response: session {id} is missing"),
+                );
+            };
+            overseers.push(agent.clone());
+        }
+        overseers
+    } else {
+        agents
+            .into_iter()
+            .filter(|agent| match kind {
+                AgentFilterKind::Loop => {
+                    agent
+                        .get("loop")
+                        .and_then(Value::as_object)
+                        .and_then(|loop_state| loop_state.get("active"))
+                        .and_then(Value::as_bool)
+                        == Some(true)
+                }
+                AgentFilterKind::Overseer => unreachable!(),
+                AgentFilterKind::Scribe => crate::team_contract::is_scribe_session(Some(agent)),
+            })
+            .collect::<Vec<_>>()
+    };
     let payload = json!({ "agents": filtered });
     let lines = match kind {
         AgentFilterKind::Loop => render_core_loop_list_lines(&payload),
@@ -816,14 +851,6 @@ fn agent_filtered_text_route(
         AgentFilterKind::Scribe => render_core_scribe_status_lines(&payload),
     };
     text_or_json_lines(route_url, payload.clone(), &lines)
-}
-
-fn is_project_control_agent(agent: &Value, role: &str) -> bool {
-    match role {
-        "overseer" => crate::team_contract::is_overseer_session(Some(agent)),
-        "scribe" => crate::team_contract::is_scribe_session(Some(agent)),
-        _ => false,
-    }
 }
 
 pub fn agent_list_text_route(

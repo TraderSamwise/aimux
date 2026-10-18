@@ -365,7 +365,7 @@ pub(super) fn launch_agent_session(
         &project_state_dir,
         &input.session_id,
         input.supervisor_role.as_deref(),
-    );
+    )?;
     Ok(AgentSessionLaunchResult {
         session_id: input.session_id,
         target,
@@ -684,7 +684,7 @@ pub(super) async fn launch_agent_session_async(
         &project_state_dir,
         &input.session_id,
         input.supervisor_role.as_deref(),
-    );
+    )?;
     Ok(AgentSessionLaunchResult {
         session_id: input.session_id,
         target,
