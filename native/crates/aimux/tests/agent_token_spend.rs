@@ -5,7 +5,7 @@ use aimux::agent_token_spend::{
     SpendSinceBaseline, TRANSCRIPT_UNREADABLE, advance_cumulative_baseline,
     advance_summed_baseline, chunk_spans_an_oversized_record, claude_spend_chunk,
     codex_cumulative_billed, cumulative_spend_since, offset_still_valid,
-    rebaseline_for_new_episode, runtime_reports_usage, spend_for_session,
+    rebaseline_for_new_episode, runtime_reports_usage, spend_for_session, try_spend_for_session,
 };
 
 fn claude_line(id: &str, input: u64, cache_read: u64, cache_creation: u64, output: u64) -> String {
@@ -445,6 +445,106 @@ fn scratch(name: &str) -> std::path::PathBuf {
     dir
 }
 
+#[test]
+fn fallible_reader_distinguishes_missing_transcript_from_stat_failure() {
+    let dir = scratch("stat-outcomes");
+    let missing = dir.join("not-written.jsonl");
+    let regular = dir.join("regular-file");
+    std::fs::write(&regular, "not a directory").expect("seed regular file");
+    let invalid = regular.join("transcript.jsonl");
+    let mut baseline = SpendBaseline::default();
+
+    assert_eq!(
+        try_spend_for_session("claude", Some(&missing), &mut baseline),
+        Ok(SpendSinceBaseline::Unmeasured(NO_TRANSCRIPT_YET))
+    );
+    let error = try_spend_for_session("claude", Some(&invalid), &mut baseline)
+        .expect_err("a non-directory path component is a failed stat, not absence");
+    assert!(error.contains("stat"), "operation must be named: {error}");
+    assert!(error.contains(invalid.to_str().expect("path")));
+    assert_eq!(baseline, SpendBaseline::default());
+    assert_eq!(
+        spend_for_session("claude", Some(&invalid), &mut baseline),
+        SpendSinceBaseline::Unmeasured(TRANSCRIPT_UNREADABLE)
+    );
+    std::fs::remove_dir_all(&dir).expect("cleanup");
+}
+
+#[test]
+fn a_directory_at_the_transcript_path_is_a_collection_error() {
+    let dir = scratch("directory-outcome");
+    let error = try_spend_for_session("codex", Some(&dir), &mut SpendBaseline::default())
+        .expect_err("a directory is not a transcript that has yet to be written");
+    assert!(error.contains("not a regular file"));
+    assert!(error.contains(dir.to_str().expect("path")));
+    std::fs::remove_dir_all(&dir).expect("cleanup");
+}
+
+#[test]
+fn persisted_baseline_resumes_without_recounting_and_runtimes_share_a_currency() {
+    let dir = scratch("shared-currency");
+    let claude = dir.join("claude.jsonl");
+    let codex = dir.join("codex.jsonl");
+    let codex_line = |input: u64, cached: u64, write: u64, output: u64| {
+        serde_json::json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": input,
+                        "cached_input_tokens": cached,
+                        "cache_write_input_tokens": write,
+                        "output_tokens": output,
+                    }
+                }
+            }
+        })
+        .to_string()
+            + "\n"
+    };
+    let old_claude = claude_line("old", 1_000, 900_000, 20, 30);
+    let old_codex = codex_line(901_000, 900_000, 20, 30);
+    std::fs::write(&claude, &old_claude).expect("seed Claude");
+    std::fs::write(&codex, &old_codex).expect("seed Codex");
+
+    for (tool, path, appended) in [
+        (
+            "claude",
+            &claude,
+            format!("{old_claude}{}", claude_line("new", 100, 999_999, 7, 10)),
+        ),
+        (
+            "codex",
+            &codex,
+            format!("{old_codex}{}", codex_line(1_901_099, 1_899_999, 27, 40)),
+        ),
+    ] {
+        let mut baseline = SpendBaseline::default();
+        assert_eq!(
+            try_spend_for_session(tool, Some(path), &mut baseline),
+            Ok(SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN))
+        );
+        std::fs::write(path, appended).expect("append usage");
+        assert_eq!(
+            try_spend_for_session(tool, Some(path), &mut baseline),
+            Ok(SpendSinceBaseline::Measured(117)),
+            "{tool} must count 100 fresh input + 7 cache writes + 10 output"
+        );
+        let saved = serde_json::to_value(&baseline).expect("serialize baseline");
+        assert!(saved.get("cumulativeAtBaseline").is_some());
+        assert!(saved.get("lastId").is_some());
+        let mut restored: SpendBaseline = serde_json::from_value(saved).expect("restore baseline");
+        assert_eq!(restored, baseline);
+        assert_eq!(
+            try_spend_for_session(tool, Some(path), &mut restored),
+            Ok(SpendSinceBaseline::Measured(117)),
+            "{tool} must retain its count across persisted-baseline restore"
+        );
+    }
+    std::fs::remove_dir_all(&dir).expect("cleanup");
+}
+
 /// A transcript truncated or replaced in place under the SAME name restarts
 /// the count, and reporting that as `Measured(0)` told a goal at 480,000 of a
 /// 500,000 budget that it had spent nothing -- labelled as a measurement, so
@@ -519,6 +619,10 @@ fn an_unreadable_transcript_is_not_reported_as_one_that_was_never_written() {
         std::fs::File::open(&path).is_err(),
         "this process can read a 0o000 file, so the case cannot be set up here"
     );
+    let error = try_spend_for_session("claude", Some(&path), &mut baseline)
+        .expect_err("preserve the failed open for usage collection");
+    assert!(error.contains("open"), "operation must be named: {error}");
+    assert!(error.contains(path.to_str().expect("path")));
     assert_eq!(
         spend_for_session("claude", Some(path.as_path()), &mut baseline),
         SpendSinceBaseline::Unmeasured(TRANSCRIPT_UNREADABLE),
@@ -601,4 +705,187 @@ fn a_split_character_at_the_tail_boundary_does_not_erase_the_reading() {
     );
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn strict_claude_usage_errors_preserve_baseline_and_repair_counts_once() {
+    let dir = scratch("strict-claude");
+    let path = dir.join("claude.jsonl");
+    let seed = "{}\n";
+    for bad in [
+        "{\"message\":{\"usage\": broken}\n",
+        "{\"message\":{\"usage\":false}}\n",
+        "{\"message\":{\"usage\":{\"input_tokens\":\"broken\"}}}\n",
+        "{\"message\":{\"usage\":{\"output_tokens\":-1}}}\n",
+        "{\"message\":{\"usage\":{}}}\n",
+    ] {
+        std::fs::write(&path, seed).unwrap();
+        let mut baseline = SpendBaseline::default();
+        try_spend_for_session("claude", Some(&path), &mut baseline).unwrap();
+        let saved = baseline.clone();
+        std::fs::write(&path, format!("{seed}{bad}")).unwrap();
+        let error = try_spend_for_session("claude", Some(&path), &mut baseline).unwrap_err();
+        assert!(error.contains("Claude"), "{error}");
+        assert!(error.contains(path.to_str().unwrap()), "{error}");
+        assert_eq!(baseline, saved, "failed parsing cannot consume bytes");
+        assert!(try_spend_for_session("claude", Some(&path), &mut baseline).is_err());
+        std::fs::write(
+            &path,
+            format!("{seed}{}", claude_line("repaired", 100, 900000, 20, 30)),
+        )
+        .unwrap();
+        assert_eq!(
+            try_spend_for_session("claude", Some(&path), &mut baseline).unwrap(),
+            SpendSinceBaseline::Measured(150)
+        );
+        assert_eq!(
+            try_spend_for_session("claude", Some(&path), &mut baseline).unwrap(),
+            SpendSinceBaseline::Measured(150)
+        );
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn strict_claude_reader_leaves_partial_usage_and_accepts_nonusage_records() {
+    let dir = scratch("strict-claude-partial");
+    let path = dir.join("claude.jsonl");
+    std::fs::write(&path, "{}\n").unwrap();
+    let mut baseline = SpendBaseline::default();
+    try_spend_for_session("claude", Some(&path), &mut baseline).unwrap();
+    let nonusage = "{\"type\":\"user\",\"message\":{\"content\":\"hello\"}}\n";
+    let complete = claude_line("partial", 10, 999999, 2, 3);
+    let split = complete.find("input_tokens").unwrap() + 6;
+    std::fs::write(&path, format!("{{}}\n{nonusage}{}", &complete[..split])).unwrap();
+    assert_eq!(
+        try_spend_for_session("claude", Some(&path), &mut baseline).unwrap(),
+        SpendSinceBaseline::Measured(0)
+    );
+    assert_eq!(baseline.offset, 3 + nonusage.len() as u64);
+    std::fs::write(&path, format!("{{}}\n{nonusage}{complete}")).unwrap();
+    assert_eq!(
+        try_spend_for_session("claude", Some(&path), &mut baseline).unwrap(),
+        SpendSinceBaseline::Measured(15)
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn strict_codex_record(input: u64) -> String {
+    serde_json::json!({"payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":input,"cached_input_tokens":0,"output_tokens":0}}}}).to_string() + "\n"
+}
+
+#[test]
+fn strict_codex_usage_errors_do_not_rebaseline_or_fall_back_to_stale_totals() {
+    let dir = scratch("strict-codex");
+    let path = dir.join("codex.jsonl");
+    let seed = strict_codex_record(100);
+    for bad in [
+        "{\"payload\":{\"type\":\"token_count\",broken}\n",
+        "{\"payload\":{\"type\":\"token_count\",\"info\":false}}\n",
+        "{\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":false}}}\n",
+        "{\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":\"broken\"}}}}\n",
+        "{\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{}}}}\n",
+    ] {
+        std::fs::write(&path, &seed).unwrap();
+        let mut baseline = SpendBaseline::default();
+        try_spend_for_session("codex", Some(&path), &mut baseline).unwrap();
+        let saved = baseline.clone();
+        std::fs::write(&path, format!("{seed}{bad}")).unwrap();
+        let error = try_spend_for_session("codex", Some(&path), &mut baseline).unwrap_err();
+        assert!(error.contains("Codex"), "{error}");
+        assert_eq!(baseline, saved);
+        std::fs::write(&path, format!("{seed}{}", strict_codex_record(150))).unwrap();
+        assert_eq!(
+            try_spend_for_session("codex", Some(&path), &mut baseline).unwrap(),
+            SpendSinceBaseline::Measured(50)
+        );
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn strict_codex_reader_ignores_partial_records_and_quota_only_events() {
+    let dir = scratch("strict-codex-partial");
+    let path = dir.join("codex.jsonl");
+    let seed = strict_codex_record(100);
+    let no_usage = "{\"payload\":{\"type\":\"token_count\",\"info\":null,\"rate_limits\":null}}\n";
+    std::fs::write(&path, &seed).unwrap();
+    let mut baseline = SpendBaseline::default();
+    try_spend_for_session("codex", Some(&path), &mut baseline).unwrap();
+    std::fs::write(
+        &path,
+        format!("{seed}{no_usage}{{\"payload\":{{\"type\":\"token_count\",\"info\":"),
+    )
+    .unwrap();
+    assert_eq!(
+        try_spend_for_session("codex", Some(&path), &mut baseline).unwrap(),
+        SpendSinceBaseline::Measured(0)
+    );
+    std::fs::write(&path, no_usage).unwrap();
+    assert_eq!(
+        try_spend_for_session("codex", Some(&path), &mut baseline).unwrap(),
+        SpendSinceBaseline::Unmeasured(NO_TRANSCRIPT_YET)
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn cumulative_reset_clears_old_billed_value_before_next_delta() {
+    let mut baseline = SpendBaseline::default();
+    advance_cumulative_baseline(&mut baseline, "same", Some(100));
+    assert_eq!(
+        advance_cumulative_baseline(&mut baseline, "same", Some(250)),
+        SpendSinceBaseline::Measured(150)
+    );
+    assert_eq!(
+        advance_cumulative_baseline(&mut baseline, "same", Some(10)),
+        SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN)
+    );
+    assert_eq!(baseline.billed, 0);
+    assert_eq!(
+        advance_cumulative_baseline(&mut baseline, "same", Some(30)),
+        SpendSinceBaseline::Measured(20)
+    );
+}
+
+#[test]
+fn cumulative_drop_above_initial_baseline_still_restarts_measurement() {
+    let mut baseline = SpendBaseline::default();
+    advance_cumulative_baseline(&mut baseline, "same", Some(100));
+    advance_cumulative_baseline(&mut baseline, "same", Some(250));
+    assert_eq!(
+        advance_cumulative_baseline(&mut baseline, "same", Some(200)),
+        SpendSinceBaseline::Unmeasured(BASELINE_JUST_TAKEN)
+    );
+    assert_eq!(baseline.billed, 0);
+    assert_eq!(
+        advance_cumulative_baseline(&mut baseline, "same", Some(220)),
+        SpendSinceBaseline::Measured(20)
+    );
+}
+
+#[test]
+fn strict_claude_reader_recovers_after_oversized_usage_record_fragment() {
+    let dir = scratch("strict-claude-oversized");
+    let path = dir.join("claude.jsonl");
+    let seed = "{}\n";
+    std::fs::write(&path, seed).unwrap();
+    let mut baseline = SpendBaseline::default();
+    try_spend_for_session("claude", Some(&path), &mut baseline).unwrap();
+    let oversized = format!(
+        "{{\"pad\":\"{}\",\"message\":{{\"usage\":{{\"input_tokens\":50}}}}}}\n",
+        "x".repeat(MAX_CHUNK_BYTES as usize)
+    );
+    std::fs::write(
+        &path,
+        format!("{seed}{oversized}{}", claude_line("after", 10, 100, 2, 3)),
+    )
+    .unwrap();
+    try_spend_for_session("claude", Some(&path), &mut baseline).unwrap();
+    assert_eq!(
+        try_spend_for_session("claude", Some(&path), &mut baseline).unwrap(),
+        SpendSinceBaseline::Measured(15)
+    );
+    assert_eq!(baseline.offset, std::fs::metadata(&path).unwrap().len());
+    std::fs::remove_dir_all(dir).unwrap();
 }
