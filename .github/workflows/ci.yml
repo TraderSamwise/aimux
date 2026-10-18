@@ -192,6 +192,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Node from .nvmrc
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Cache app dependencies for cross-surface tests
+        uses: actions/cache@v4
+        with:
+          path: app/node_modules
+          key: ${{ runner.os }}-${{ github.job }}-node-${{ hashFiles('.nvmrc', 'app/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-node-
+
+      - name: Install app dependencies for cross-surface tests
+        run: yarn --cwd app install --frozen-lockfile
+
       - name: Prepare job Aimux env
         run: |
           echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home" >> "$GITHUB_ENV"
@@ -246,6 +262,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Node from .nvmrc
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Cache app dependencies for cross-surface tests
+        uses: actions/cache@v4
+        with:
+          path: app/node_modules
+          key: ${{ runner.os }}-${{ github.job }}-node-${{ hashFiles('.nvmrc', 'app/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-node-
+
+      - name: Install app dependencies for cross-surface tests
+        run: yarn --cwd app install --frozen-lockfile
+
       - name: Prepare job Aimux env
         run: |
           echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home" >> "$GITHUB_ENV"
@@ -258,7 +290,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: native
-
 
       - name: Cache cargo artifacts
         uses: actions/cache@v4
