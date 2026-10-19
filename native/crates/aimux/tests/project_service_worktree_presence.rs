@@ -194,10 +194,16 @@ fn an_unreadable_checkout_is_left_alone() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// The inverse, and the one that catches a wrong `path` key: an empty path
-/// reads as `Absent`, so a typo there settles every row in the project.
+/// The guard that keeps this task OFF the topology write lock.
+///
+/// Byte equality was the first attempt and proved nothing: deleting the
+/// pre-lock guard outright left every test green, because
+/// `update_runtime_topology` re-serialises the same `Value` to the same bytes.
+/// A no-op rewrite is invisible to content, so this asserts the file was not
+/// written at all -- which is the actual claim, and the only thing stopping
+/// this task contending for the lock every two minutes in every project.
 #[test]
-fn a_settled_topology_is_left_byte_identical() {
+fn a_settled_topology_is_never_opened_for_writing() {
     let (root, checkout) = temp_project("idle");
     let state_dir = root.join("state");
     write_topology(
@@ -208,16 +214,32 @@ fn a_settled_topology_is_left_byte_identical() {
             worktree("retired", "graveyard", "/nonexistent/aimux-presence"),
         ]),
     );
-    let before = std::fs::read(runtime_topology_path(&state_dir)).expect("read before");
+    let path = runtime_topology_path(&state_dir);
+    let before = std::fs::metadata(&path).expect("stat before");
+    let before_mtime = before.modified().expect("mtime before");
+    // The write is atomic-rename, so a rewrite lands a NEW inode even when the
+    // bytes match; mtime alone can tie inside one filesystem tick.
+    let before_inode = inode(&before);
 
     run_task(&root, &state_dir);
 
-    let after = std::fs::read(runtime_topology_path(&state_dir)).expect("read after");
+    let after = std::fs::metadata(&path).expect("stat after");
     assert_eq!(
-        before, after,
+        before_inode,
+        inode(&after),
         "a scan with nothing to settle must not rewrite the topology"
     );
+    assert_eq!(
+        before_mtime,
+        after.modified().expect("mtime after"),
+        "a scan with nothing to settle must not touch the topology"
+    );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+fn inode(metadata: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    metadata.ino()
 }
 
 /// A task nothing registers never runs. Unregistering it leaves clippy clean
@@ -242,4 +264,19 @@ fn the_reconciler_is_registered_on_the_project_tick_loop() {
         "the presence reconciler must be on the tick loop exactly once"
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Nothing else pins this. The contract fixture masks `intervalMs`, so a
+/// scan interval of a day passes every other gate while the feature is
+/// effectively off -- and a figure small enough to matter is the other
+/// direction of the same hole: this walks every worktree row and stats the
+/// candidates, which at a tick-loop cadence is real load on a shared machine.
+#[test]
+fn the_scan_cadence_is_a_slow_backstop() {
+    let interval = WorktreePresenceReconcilerTask.interval_ms();
+    assert!(
+        (60_000..=600_000).contains(&interval),
+        "scan interval {interval}ms is outside the backstop range this task \
+         was reasoned about at; changing it is a decision, not a tidy-up"
+    );
 }

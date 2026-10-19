@@ -1,16 +1,23 @@
 //! Settling a worktree row against whether its checkout is actually there.
 //!
-//! `missing` is declared in `WORKTREE_STATUSES`, matched by the dashboard
-//! renderer (`○`, `gone`) and carried in `LIVE_WORKTREE_STATUSES` -- and until
-//! this task nothing in the crate ever wrote it. It was a word in the
-//! vocabulary no row could reach, so those renderer arms were dead code.
+//! `missing` is declared in `WORKTREE_STATUSES` and carried in
+//! `LIVE_WORKTREE_STATUSES` -- and until this task nothing in the crate ever
+//! wrote it. It was a word in the vocabulary no row could reach.
 //!
 //! What filled the gap was a per-read derivation: every surface stats the path
 //! itself and draws "checkout missing" over a row still stored as `active`. The
-//! screen was honest and the record was not, and because the record never
-//! changed, nothing could act on it -- no reaper, no bulk action, no query. On
-//! this machine seventeen August worktrees sat `active` with no checkout, from
-//! `e2e-audit` on 2026-08-05 onward.
+//! screen was honest and the record was not. On this machine seventeen August
+//! worktrees sat that way, from `e2e-audit` on 2026-08-05 onward.
+//!
+//! RECORD ONLY, today. Every surface still reads the per-read `pathMissing`
+//! probe, `worktree_group` overwrites row status with its own session fold, and
+//! the topology screen rebuilds from desktop state -- so nothing a user sees
+//! changes when a row settles here. This makes the record true, which is what
+//! a reaper or a bulk action over these rows would need; it is not itself that
+//! action. An earlier version of this comment claimed the dashboard renderer's
+//! `missing` arms were dead code revived by this task. They are not: those arms
+//! key on coordination `reachability`, a different vocabulary, and were always
+//! live.
 //!
 //! The same shape as `recover_orphaned_worktree_operations`, one step along: a
 //! status nothing is responsible for reaching is a status that lies.
@@ -64,18 +71,18 @@ impl PeriodicTask for WorktreePresenceReconcilerTask {
             // runtime. `worktree_checkout_probe` carries the same rule, and an
             // earlier draft of THIS task moved only the lock and left the
             // syscalls on the reactor.
-            let settled = spawn_blocking_named(
+            let outcome = spawn_blocking_named(
                 scoped_task_name("worktree-presence-reconciler", "settle", "project"),
                 move || {
                     let identity = worktree_path_identity(&project_root);
                     let topology = read_runtime_topology(&topology_path).map_err(|error| {
                         format!("worktree presence reconciler topology unavailable: {error}")
                     })?;
-                    // Guessed before the lock purely to avoid taking it: the
-                    // update lock can wait seconds behind another writer, and
-                    // almost every scan has nothing to do.
+                    // Guessed before the lock purely to avoid taking it. Almost
+                    // every scan stops here, which is the only thing keeping
+                    // this task off the topology write lock every two minutes.
                     if settlements(&topology, &project_root, &identity).is_empty() {
-                        return Ok(Vec::new());
+                        return Ok(ScanOutcome::NothingToSettle);
                     }
                     let mut settled: Vec<Value> = Vec::new();
                     // Re-derived under the lock: a create may have finished or
@@ -100,7 +107,7 @@ impl PeriodicTask for WorktreePresenceReconcilerTask {
                         }
                         topology
                     })
-                    .map(|_| settled)
+                    .map(|_| ScanOutcome::TookTheLock { settled })
                     .map_err(|error| {
                         format!("worktree presence reconciler could not write topology: {error}")
                     })
@@ -108,26 +115,42 @@ impl PeriodicTask for WorktreePresenceReconcilerTask {
             )
             .await
             .map_err(|error| format!("worktree presence reconciler did not run: {error}"))??;
-            if settled.is_empty() {
-                // The guess was stale: another writer settled or removed those
-                // rows while this waited for the lock. Said out loud because
-                // `update_runtime_topology` has no dirty check and rewrote the
-                // file anyway, and a silent write is how a wrapper lies.
-                log_lifecycle_always(
-                    "worktree presence guess was stale by the time the lock was taken",
+            match outcome {
+                // The overwhelmingly common scan. Not logged: a line every two
+                // minutes per project service is noise, and nothing happened.
+                ScanOutcome::NothingToSettle => {}
+                ScanOutcome::TookTheLock { settled } if settled.is_empty() => {
+                    // The guess went stale while this waited: another writer
+                    // settled or removed those rows. Worth a line because
+                    // `update_runtime_topology` has no dirty check, so the file
+                    // WAS rewritten -- and a write nothing accounts for is how
+                    // a wrapper lies. Reachable only through that race, which
+                    // is why it is not the same branch as the one above.
+                    log_lifecycle_always(
+                        "worktree presence guess was stale by the time the lock was taken",
+                        "worktree-presence-reconciler",
+                        None,
+                    );
+                }
+                ScanOutcome::TookTheLock { settled } => log_lifecycle_always(
+                    "worktree rows settled against their checkout",
                     "worktree-presence-reconciler",
-                    None,
-                );
-                return Ok(());
+                    Some(json!({ "worktrees": settled })),
+                ),
             }
-            log_lifecycle_always(
-                "worktree rows settled against their checkout",
-                "worktree-presence-reconciler",
-                Some(json!({ "worktrees": settled })),
-            );
             Ok(())
         })
     }
+}
+
+/// What a scan actually did, so the log cannot claim the wrong one.
+///
+/// Collapsing these two into "no rows settled" made the ordinary scan -- which
+/// never takes the lock and never writes -- report itself as a stale guess over
+/// a rewritten file, every two minutes, forever.
+enum ScanOutcome {
+    NothingToSettle,
+    TookTheLock { settled: Vec<Value> },
 }
 
 /// The rows whose stored status disagrees with the disk, and what it should be.
@@ -169,17 +192,28 @@ fn settled_status(
         return None;
     }
     let path = worktree_row_path(worktree, project_root);
+    // Absent is a fact; Unknown is a question that could not be asked -- a
+    // permission error on a parent, a mount too slow to answer. Treating those
+    // as absence would stamp a live worktree `missing` over a hiccup.
+    //
+    // An UNMOUNTED volume is not one of them: paths beneath a detached
+    // mountpoint answer ENOENT, which is `Absent`, so such a row does settle to
+    // `missing` and heals on remount. That is the same answer the per-read
+    // probe already paints, so the two agree -- but do not read the line above
+    // as a promise that no mount can reach `missing`.
+    let next = match (status.as_str(), worktree_checkout_state(path)) {
+        ("active", WorktreeCheckoutState::Absent) => "missing",
+        ("missing", WorktreeCheckoutState::Present) => "active",
+        _ => return None,
+    };
+    // Last, because it canonicalises: a second filesystem call, and on a hung
+    // mount a second place to block. Only a row that would otherwise settle
+    // pays it, and it is the probe's own eligibility rule rather than a second
+    // opinion about which rows may be called gone.
     if !worktree_checkout_may_be_marked_missing(worktree, path, root_identity) {
         return None;
     }
-    // Absent is a fact; Unknown is a question that could not be asked. An
-    // unreadable mount answers `Unknown`, and treating that as absence would
-    // stamp a live worktree `missing` every time the volume hiccuped.
-    match (status.as_str(), worktree_checkout_state(path)) {
-        ("active", WorktreeCheckoutState::Absent) => Some("missing"),
-        ("missing", WorktreeCheckoutState::Present) => Some("active"),
-        _ => None,
-    }
+    Some(next)
 }
 
 fn settlements(topology: &Value, project_root: &str, root_identity: &str) -> Vec<&'static str> {

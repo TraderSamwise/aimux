@@ -2542,7 +2542,7 @@ pub fn item_worktree_group_key(item: &Value) -> Option<String> {
 /// and every call inside a loop re-canonicalised the project root -- once per
 /// worktree, in five separate loops. Half the filesystem calls a build made
 /// were re-answering the same question about the same path.
-pub fn is_worktree_path(path: &str, identity: &str) -> bool {
+fn is_worktree_path(path: &str, identity: &str) -> bool {
     worktree_path_identity(path) == identity
 }
 
