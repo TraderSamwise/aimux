@@ -654,6 +654,114 @@ impl DashboardController {
         }
     }
 
+    /// Where a new agent belongs: the lane the cursor is standing in.
+    ///
+    /// `n` used to ignore the selection entirely. The picker read
+    /// `policy.default_target`, which the project service pins to
+    /// `supervisor`, so every new agent became a `control` in the supervisor
+    /// lane however deep in a worktree you were -- recoverable only by knowing
+    /// that Tab toggles the destination. The policy's `worktreeRole` existed
+    /// for this case and nothing consulted it.
+    ///
+    /// The main checkout is a `Worktree` group with no path, which is exactly
+    /// right: it takes the worktree role, and a `None` path is already what
+    /// the spawn route means by the main checkout.
+    ///
+    /// A checkout that is GONE, or one still being made, falls back to the
+    /// supervisor lane. Defaulting into it would hand tmux a cwd that does not
+    /// exist -- the failure `migrate` already refuses by name -- and the row a
+    /// create jumps the cursor onto is `creating` before the git work runs.
+    ///
+    /// "Somewhere to spawn" is asked as "does the service list an ACTIVE,
+    /// NON-RETIRED row for this path", not as a shape of the navigation layer.
+    /// `build_worktree_groups` emits a group for every path a session still
+    /// names, row or no row, so a worktree deleted out from under a running
+    /// agent renders as an ordinary healthy lane with no verdict to give --
+    /// `pathMissing` is null, not true. Keying on `worktree_index` instead
+    /// caught none of those and refused live checkouts whose session spelled
+    /// the path differently (a trailing slash is enough, since navigation
+    /// buckets by the literal string while the service groups by identity).
+    ///
+    /// `snapshot.worktrees` is that list, and it is deliberately incomplete:
+    /// `build_desktop_state` splits retired-but-occupied rows out of it so
+    /// `aimux worktree list` does not print the graveyard, while still emitting
+    /// their GROUP so the agent inside renders. So a graveyarded worktree whose
+    /// checkout is still there reads as "not a destination" here -- which is
+    /// the answer we want. The lane exists to reach the agent still running in
+    /// it; starting NEW work there means resurrecting the worktree first.
+    ///
+    /// Resolved once, here, and carried in the picker mode. `lane_label` and
+    /// `worktree_path` always describe the WORKTREE side of the Tab toggle, so
+    /// both sides of that key can be named truthfully -- including when the
+    /// lane we start in is the supervisor lane and Tab leads to the main
+    /// checkout.
+    fn agent_creation_destination(
+        &self,
+        snapshot: &DesktopStateSnapshot,
+        policy: &crate::dashboard_create::DashboardAgentCreationPolicy,
+    ) -> (
+        crate::dashboard_create::DashboardAgentCreationTarget,
+        Option<String>,
+        String,
+    ) {
+        use crate::dashboard_create::DashboardAgentCreationTarget;
+        use crate::dashboard_navigation::{
+            DashboardNavigationGroupKind, dashboard_navigation_groups,
+        };
+        use crate::project_service::desktop_state::worktree_path_identity;
+        // Derived once; `focused_group` would build the same list again.
+        let groups = dashboard_navigation_groups(snapshot);
+        // Where Tab leads when the resolved lane is the supervisor lane: a
+        // `None` path, which is the main checkout, under the name the rest of
+        // the snapshot already gives it.
+        let main_checkout = groups
+            .iter()
+            .find(|group| {
+                group.kind == DashboardNavigationGroupKind::Worktree && group.path.is_none()
+            })
+            .map_or_else(
+                || snapshot.main_checkout_info.name.clone(),
+                |group| group.name.to_owned(),
+            );
+        let supervisor = |target| (target, None, main_checkout.clone());
+        let Some(group) = groups.get(self.navigation.worktree_index) else {
+            return supervisor(policy.default_target.clone());
+        };
+        let has_a_row = |path: &str| {
+            // Raw first: identical spellings are the overwhelming majority and
+            // cost nothing, where `worktree_path_identity` canonicalises and so
+            // pays a syscall per row per keypress.
+            if snapshot
+                .worktrees
+                .iter()
+                .any(|worktree| worktree.path == path)
+            {
+                return true;
+            }
+            let identity = worktree_path_identity(path);
+            snapshot
+                .worktrees
+                .iter()
+                .any(|worktree| worktree_path_identity(&worktree.path) == identity)
+        };
+        let checkout_is_not_there = group.path_missing
+            || crate::dashboard_renderer::worktree_action_in_flight(group)
+            || group.path.is_some_and(|path| !has_a_row(path));
+        match group.kind {
+            DashboardNavigationGroupKind::Supervisor => {
+                supervisor(DashboardAgentCreationTarget::Supervisor)
+            }
+            DashboardNavigationGroupKind::Worktree if checkout_is_not_there => {
+                supervisor(DashboardAgentCreationTarget::Supervisor)
+            }
+            DashboardNavigationGroupKind::Worktree => (
+                DashboardAgentCreationTarget::Worktree,
+                group.path.map(str::to_owned),
+                group.name.to_owned(),
+            ),
+        }
+    }
+
     pub fn open_tool_picker(
         &mut self,
         tools: Vec<DashboardToolEntry>,
@@ -764,9 +872,18 @@ impl DashboardController {
                     })
                     .and_then(crate::dashboard_create::DashboardAgentCreationPolicy::parse)
                 {
-                    Ok(policy) => DashboardControllerEffect::OpenAgentToolPicker(
-                        DashboardToolPickerMode::Create(policy),
-                    ),
+                    Ok(policy) => {
+                        let (target, worktree_path, lane_label) =
+                            self.agent_creation_destination(snapshot, &policy);
+                        DashboardControllerEffect::OpenAgentToolPicker(
+                            DashboardToolPickerMode::Create {
+                                policy,
+                                target,
+                                worktree_path,
+                                lane_label,
+                            },
+                        )
+                    }
                     Err(error) => {
                         self.footer_alert = Some(DashboardFailureAlert::local(error));
                         DashboardControllerEffect::Render
@@ -1697,7 +1814,9 @@ impl DashboardController {
             {
                 tool_picker.select_digit(digit, worktree_path)
             }
-            DashboardKey::Tab if matches!(tool_picker.mode, DashboardToolPickerMode::Create(_)) => {
+            DashboardKey::Tab
+                if matches!(tool_picker.mode, DashboardToolPickerMode::Create { .. }) =>
+            {
                 tool_picker.create_in_worktree = !tool_picker.create_in_worktree;
                 DashboardToolPickerEffect::Render
             }

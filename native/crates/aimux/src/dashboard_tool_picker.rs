@@ -29,11 +29,33 @@ pub struct DashboardToolPickerState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardToolPickerMode {
-    Create(DashboardAgentCreationPolicy),
+    /// The destination the opener resolved from where the cursor is -- the
+    /// lane AND its checkout -- so the picker never has to guess either.
+    ///
+    /// `policy.default_target` is the fallback the OPENER applies when there is
+    /// no lane to read, and is deliberately not consulted here. The path is
+    /// carried rather than re-read at Enter because the two were derived at
+    /// different moments: if the focused worktree went away while the picker
+    /// was open, the target said one checkout and the path said whichever
+    /// neighbour the cursor fell onto.
+    Create {
+        policy: DashboardAgentCreationPolicy,
+        target: DashboardAgentCreationTarget,
+        /// `None` is the main checkout, which is what the spawn route means by
+        /// an absent `worktreePath`.
+        worktree_path: Option<String>,
+        /// What to call the worktree destination on the overlay. The hint said
+        /// "Focused worktree" over the main checkout, which is not one.
+        lane_label: String,
+    },
     CreateOverseer,
     CreateScribe,
-    Fork { source_session_id: String },
-    SwitchTool { session_id: String },
+    Fork {
+        source_session_id: String,
+    },
+    SwitchTool {
+        session_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,13 +66,14 @@ pub enum DashboardToolPickerEffect {
 }
 
 impl DashboardToolPickerState {
-    pub fn new(tools: Vec<DashboardToolEntry>, policy: DashboardAgentCreationPolicy) -> Self {
-        Self::with_mode(tools, DashboardToolPickerMode::Create(policy))
-    }
-
     pub fn with_mode(tools: Vec<DashboardToolEntry>, mode: DashboardToolPickerMode) -> Self {
-        let create_in_worktree = matches!(&mode, DashboardToolPickerMode::Create(policy)
-            if policy.default_target == DashboardAgentCreationTarget::Worktree);
+        // The TARGET the opener resolved, not the policy's project-wide
+        // default. Reading `policy.default_target` here meant the picker
+        // always opened on the supervisor lane, whatever lane the cursor was
+        // standing in -- so every `n` in a worktree created a control agent in
+        // the supervisor lane unless the user knew to press Tab.
+        let create_in_worktree = matches!(&mode, DashboardToolPickerMode::Create { target, .. }
+            if *target == DashboardAgentCreationTarget::Worktree);
         Self {
             tools,
             index: 0,
@@ -122,19 +145,28 @@ impl DashboardToolPickerState {
         launch_override: Option<Value>,
     ) -> DashboardToolPickerEffect {
         match &self.mode {
-            DashboardToolPickerMode::Create(policy) => {
+            DashboardToolPickerMode::Create {
+                policy,
+                worktree_path: destination,
+                ..
+            } => {
                 let role = if self.create_in_worktree {
                     &policy.worktree_role
                 } else {
                     &policy.default_role
                 };
+                // The destination resolved when the picker opened, not the one
+                // under the cursor now. Deliberately NOT shadowing the
+                // `worktree_path` parameter the other arms still read: a line
+                // inserted above such a shadow silently gets the cursor back.
+                let destination_path = destination.as_deref();
                 DashboardToolPickerEffect::Create(plan_dashboard_create(
                     &DashboardCreateIntent::Agent(DashboardAgentCreateIntent {
                         role: Some(role.clone()),
                         tool: Some(tool.key.clone()),
                         session_id: None,
                         worktree_path: if self.create_in_worktree {
-                            worktree_path.map(str::to_owned)
+                            destination_path.map(str::to_owned)
                         } else {
                             None
                         },
@@ -210,7 +242,7 @@ pub fn render_tool_picker_overlay(
     rows: usize,
 ) -> String {
     let title = match &state.mode {
-        DashboardToolPickerMode::Create(_) => "Select tool".to_owned(),
+        DashboardToolPickerMode::Create { .. } => "Select tool".to_owned(),
         DashboardToolPickerMode::CreateOverseer => "Select overseer".to_owned(),
         DashboardToolPickerMode::CreateScribe => "Select scribe".to_owned(),
         DashboardToolPickerMode::Fork { source_session_id } => {
@@ -232,16 +264,17 @@ pub fn render_tool_picker_overlay(
             icon: None,
         });
     }
-    if let DashboardToolPickerMode::Create(policy) = &state.mode {
-        let target = if state.create_in_worktree {
-            "Focused worktree"
+    if let DashboardToolPickerMode::Create {
+        policy, lane_label, ..
+    } = &state.mode
+    {
+        // The resolved lane's own name, not the word "worktree". The main
+        // checkout is a worktree group and is not a worktree, so the old hint
+        // announced "Focused worktree" over the commonest destination there is.
+        let (target, role) = if state.create_in_worktree {
+            (lane_label.as_str(), &policy.worktree_role)
         } else {
-            "Supervisor lane"
-        };
-        let role = if state.create_in_worktree {
-            &policy.worktree_role
-        } else {
-            &policy.default_role
+            ("Supervisor lane", &policy.default_role)
         };
         body.push(format!("  {target} · {role}  [Tab] change destination"));
         body.push(String::new());

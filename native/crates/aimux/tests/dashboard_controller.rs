@@ -4,6 +4,7 @@ use aimux::dashboard_controller::{
     DashboardScreen, DashboardSubscreenAction, orchestration_targets_from_resource,
     parse_dashboard_key, parse_dashboard_keys,
 };
+use aimux::dashboard_create::DashboardAgentCreationTarget;
 use aimux::dashboard_model::{
     DashboardKept, DashboardOperationFailure, DesktopStateGoldenFixture, DesktopStateSnapshot,
     SessionSemanticState, SessionStatus, SessionTeamMetadata, dashboard_has_clearable_failures,
@@ -595,11 +596,15 @@ fn coalesced_input_stops_after_opening_command_surfaces() {
     let mut picker_controller = DashboardController::new(&snapshot);
     let before_picker = picker_controller.input_surface();
     let picker = picker_controller.handle_key(&snapshot, DashboardKey::Printable('n'));
-    assert_eq!(
-        picker,
-        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create(
-            creation_policy()
-        ))
+    assert!(
+        matches!(
+            &picker,
+            DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+                target: DashboardAgentCreationTarget::Worktree,
+                ..
+            })
+        ),
+        "{picker:?}"
     );
     assert!(picker_controller.should_stop_coalesced_input(before_picker, &picker));
 }
@@ -765,18 +770,25 @@ fn new_agent_key_opens_tool_picker_effect() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
 
-    assert_eq!(
-        controller.handle_key(&snapshot, DashboardKey::NewAgent),
-        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create(
-            creation_policy()
-        ))
-    );
+    let effect = controller.handle_key(&snapshot, DashboardKey::NewAgent);
+    let DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+        policy,
+        target,
+        ..
+    }) = effect
+    else {
+        panic!("expected the create picker");
+    };
+    assert_eq!(policy, creation_policy());
+    // The default focus is the main checkout, which is a worktree-kind lane.
+    assert_eq!(target, DashboardAgentCreationTarget::Worktree);
 }
 
 #[test]
 fn tool_picker_enter_dispatches_agent_spawn_request() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    give_worktree_a_row(&mut snapshot, "<ROOT>");
     let mut controller = DashboardController::new(&snapshot);
     controller.navigation.level = DashboardNavLevel::Sessions;
     focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
@@ -788,7 +800,12 @@ fn tool_picker_enter_dispatches_agent_spawn_request() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+            worktree_path: None,
+            lane_label: "Main checkout".to_owned(),
+        },
     );
 
     let DashboardControllerEffect::Request(request) =
@@ -821,7 +838,12 @@ fn tool_picker_escape_closes_and_restores_dashboard_quit() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+            worktree_path: None,
+            lane_label: "Main checkout".to_owned(),
+        },
     );
 
     assert_eq!(
@@ -847,7 +869,12 @@ fn tool_picker_quit_key_quits_instead_of_trapping_input() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+            worktree_path: None,
+            lane_label: "Main checkout".to_owned(),
+        },
     );
 
     assert_eq!(
@@ -868,7 +895,12 @@ fn tool_picker_options_create_launch_override_request() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+            worktree_path: None,
+            lane_label: "Main checkout".to_owned(),
+        },
     );
 
     assert_eq!(
@@ -910,7 +942,12 @@ fn tool_picker_options_surface_parse_errors_without_request() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+            worktree_path: None,
+            lane_label: "Main checkout".to_owned(),
+        },
     );
     controller.handle_key(&snapshot, DashboardKey::Printable('o'));
     for key in parse_dashboard_keys(b"\"unterminated") {
@@ -3497,6 +3534,303 @@ fn selected_session_id<'a>(
     }
 }
 
+/// Pressing `n` in a worktree used to create a `control` agent in the
+/// SUPERVISOR lane, discarding the worktree entirely. The picker read the
+/// project-wide `defaultTarget` -- which the project service pins to
+/// `supervisor` -- and never looked at the cursor, so the only way to reach
+/// the lane you were standing in was to know about an undocumented Tab.
+#[test]
+fn new_agent_in_a_worktree_targets_that_worktree() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    give_worktree_a_row(&mut snapshot, "<ROOT>");
+    let mut controller = DashboardController::new(&snapshot);
+    focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
+
+    let DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+        target,
+        ..
+    }) = controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+
+    assert_eq!(
+        target,
+        DashboardAgentCreationTarget::Worktree,
+        "a new agent belongs to the lane the cursor is in"
+    );
+}
+
+/// A checkout that is GONE is not somewhere to put a new agent. Defaulting
+/// into it hands tmux a cwd that does not exist -- the failure `migrate`
+/// already refuses by name -- where the old behaviour happened to work by
+/// ignoring the cursor. The fallback must not reintroduce it.
+#[test]
+fn new_agent_on_a_missing_checkout_falls_back_to_the_supervisor_lane() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    snapshot.worktree_groups[0].path_missing = true;
+    let mut controller = DashboardController::new(&snapshot);
+    focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
+
+    let DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+        target,
+        worktree_path,
+        ..
+    }) = controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+
+    assert_eq!(target, DashboardAgentCreationTarget::Supervisor);
+    assert_eq!(worktree_path, None, "no checkout may be offered");
+}
+
+/// A lane wearing no marks at all, built by hand at the navigation layer.
+///
+/// The REAL payload version of this lives in `supervisor_lane_surfaces.rs`,
+/// built through `build_desktop_state_with_live_window_ids`, because the shape
+/// assembled here is one the project service does not emit -- an earlier
+/// attempt at this guard keyed on it and therefore pinned nothing. This stays
+/// as the cheap complement: whatever shape the lane arrives in, a path with no
+/// topology row behind it is not a destination.
+#[test]
+fn new_agent_on_an_orphan_lane_falls_back_to_the_supervisor_lane() {
+    let mut snapshot = snapshot();
+    let mut stranded = snapshot.sessions[0].clone();
+    stranded.id = "codex-stranded".into();
+    stranded.worktree_path = Some("/definitely/gone/wt".into());
+    snapshot.sessions.push(stranded);
+    let mut controller = DashboardController::new(&snapshot);
+    let groups = dashboard_navigation_groups(&snapshot);
+    let orphan = groups
+        .iter()
+        .position(|group| group.path == Some("/definitely/gone/wt"))
+        .expect("the orphan lane");
+    assert!(
+        !groups[orphan].path_missing,
+        "the orphan lane must wear no marks, or this proves nothing"
+    );
+    controller.navigation.worktree_index = orphan;
+    controller.navigation.item_index = 0;
+
+    let DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+        target,
+        worktree_path,
+        ..
+    }) = controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+
+    assert_eq!(target, DashboardAgentCreationTarget::Supervisor);
+    assert_eq!(worktree_path, None, "no vanished checkout may be offered");
+}
+
+/// The label the resolver PRODUCES, not one a test handed it.
+///
+/// Both overlay tests construct `lane_label` themselves, so replacing this
+/// lookup with a constant left every suite green -- the same gap, one level
+/// down, as the hint that nothing asserted.
+#[test]
+fn the_resolved_label_names_the_lane_the_agent_will_land_in() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    snapshot.worktree_groups[0].name = "feature-lane".into();
+    give_worktree_a_row(&mut snapshot, "<ROOT>");
+    let mut controller = DashboardController::new(&snapshot);
+    focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
+
+    let DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+        lane_label,
+        ..
+    }) = controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+    assert_eq!(lane_label, "feature-lane");
+}
+
+/// And from the supervisor lane, where the label must name where Tab leads --
+/// the main checkout, under the name the rest of the snapshot gives it.
+#[test]
+fn the_resolved_label_from_the_supervisor_lane_names_the_main_checkout() {
+    let mut snapshot = snapshot_with_supervisor_lane();
+    let main = snapshot
+        .worktree_groups
+        .iter_mut()
+        .find(|group| group.path.is_none())
+        .expect("a main checkout group");
+    main.name = "the-main-checkout".into();
+    let mut controller = DashboardController::new(&snapshot);
+    let groups = dashboard_navigation_groups(&snapshot);
+    controller.navigation.worktree_index = groups
+        .iter()
+        .position(|group| group.kind == DashboardNavigationGroupKind::Supervisor)
+        .expect("a supervisor lane");
+
+    let DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+        lane_label,
+        target,
+        ..
+    }) = controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+    assert_eq!(target, DashboardAgentCreationTarget::Supervisor);
+    assert_eq!(lane_label, "the-main-checkout");
+}
+
+/// A worktree still being created has no directory yet, and the TUI jumps the
+/// cursor onto its row as soon as it appears.
+#[test]
+fn new_agent_on_a_checkout_still_arriving_falls_back_to_the_supervisor_lane() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    snapshot.worktree_groups[0].pending = true;
+    let mut controller = DashboardController::new(&snapshot);
+    focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
+
+    let DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+        target,
+        ..
+    }) = controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+
+    assert_eq!(target, DashboardAgentCreationTarget::Supervisor);
+}
+
+/// The destination is resolved once, when the picker opens. Re-reading the
+/// cursor at Enter meant the target named one checkout and the path named
+/// whichever neighbour the cursor had fallen onto.
+#[test]
+fn the_resolved_checkout_survives_the_cursor_moving() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    give_worktree_a_row(&mut snapshot, "<ROOT>");
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
+
+    let DashboardControllerEffect::OpenAgentToolPicker(mode) =
+        controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+    controller.open_tool_picker(
+        vec![DashboardToolEntry {
+            key: "codex".into(),
+            command: "codex".into(),
+            args: vec![],
+            default_args: vec![],
+            default_env: Default::default(),
+        }],
+        mode,
+    );
+    // The cursor goes elsewhere while the picker is open.
+    controller.navigation.worktree_index = 0;
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected request");
+    };
+    assert_eq!(request.body["worktreePath"], "<ROOT>");
+}
+
+/// The other direction, which is the behaviour the supervisor-lane default was
+/// actually asked for: standing IN the supervisor lane still makes a control.
+#[test]
+fn new_agent_in_the_supervisor_lane_targets_the_supervisor_lane() {
+    let snapshot = snapshot_with_supervisor_lane();
+    let mut controller = DashboardController::new(&snapshot);
+    let groups = dashboard_navigation_groups(&snapshot);
+    let supervisor = groups
+        .iter()
+        .position(|group| group.kind == DashboardNavigationGroupKind::Supervisor)
+        .expect("a supervisor lane");
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = supervisor;
+    controller.navigation.item_index = 0;
+
+    let DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+        target,
+        ..
+    }) = controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+
+    assert_eq!(target, DashboardAgentCreationTarget::Supervisor);
+}
+
+/// End to end through the picker, because the target only matters if it
+/// reaches the spawn body. Both halves changed: the role AND the path.
+#[test]
+fn new_agent_in_a_worktree_spawns_a_coder_in_that_checkout() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    give_worktree_a_row(&mut snapshot, "<ROOT>");
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
+
+    let DashboardControllerEffect::OpenAgentToolPicker(mode) =
+        controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+    controller.open_tool_picker(
+        vec![DashboardToolEntry {
+            key: "codex".into(),
+            command: "codex".into(),
+            args: vec![],
+            default_args: vec![],
+            default_env: Default::default(),
+        }],
+        mode,
+    );
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected request");
+    };
+    assert_eq!(
+        request.body,
+        json!({
+            "tool": "codex",
+            "role": "coder",
+            "worktreePath": "<ROOT>",
+            "open": false
+        })
+    );
+}
+
+/// A topology row behind a group, which is what makes its checkout a real
+/// destination. Without one the lane is a path the service has no verdict
+/// about, and `n` deliberately refuses it.
+fn give_worktree_a_row(snapshot: &mut DesktopStateSnapshot, path: &str) {
+    if snapshot
+        .worktrees
+        .iter()
+        .any(|worktree| worktree.path == path)
+    {
+        return;
+    }
+    let mut row = snapshot
+        .worktrees
+        .first()
+        .cloned()
+        .expect("the fixture has at least one worktree row");
+    row.path = path.to_owned();
+    row.name = path.to_owned();
+    snapshot.worktrees.push(row);
+}
+
 fn focus_worktree_path(
     controller: &mut DashboardController,
     snapshot: &DesktopStateSnapshot,
@@ -4653,7 +4987,12 @@ fn bulk_graveyard_waits_for_existing_picker_before_showing_confirmation_or_repor
     controller.agent_restore_prompt_dismissed = true;
     controller.open_tool_picker(
         Vec::new(),
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+            worktree_path: None,
+            lane_label: "Main checkout".to_owned(),
+        },
     );
     controller
         .receive_bulk_graveyard_preview(json!({"scope": "project", "dryRun": true,
@@ -4677,7 +5016,12 @@ fn bulk_graveyard_waits_for_existing_picker_before_showing_confirmation_or_repor
     controller.handle_key(&snapshot, DashboardKey::Back);
     controller.open_tool_picker(
         Vec::new(),
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+            worktree_path: None,
+            lane_label: "Main checkout".to_owned(),
+        },
     );
     controller.receive_bulk_graveyard_report("One failure: permission denied".into());
     assert!(controller.bulk_graveyard_report.is_none());

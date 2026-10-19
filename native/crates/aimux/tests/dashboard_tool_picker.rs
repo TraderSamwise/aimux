@@ -1,10 +1,11 @@
 use aimux::config::merge_config_layers;
-use aimux::dashboard_create::DashboardCreatePlan;
+use aimux::dashboard_create::{DashboardAgentCreationTarget, DashboardCreatePlan};
 use aimux::dashboard_tool_picker::{
     DashboardToolPickerEffect, DashboardToolPickerMode, DashboardToolPickerState,
     enabled_dashboard_tools, render_tool_picker_overlay,
 };
 use aimux::project_api_contract::routes;
+use aimux::tui_render::text::strip_ansi;
 use serde_json::json;
 
 #[test]
@@ -47,7 +48,12 @@ fn create_selected_maps_default_launch_override() {
     let tools = enabled_dashboard_tools(&config);
     let mut picker = DashboardToolPickerState::with_mode(
         tools,
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+            worktree_path: Some("/repo/.aimux/worktrees/demo".to_owned()),
+            lane_label: "demo".to_owned(),
+        },
     );
     picker.index = 1;
 
@@ -124,7 +130,15 @@ fn create_overseer_mode_marks_spawn_request_as_overseer() {
 fn digit_selects_and_creates_tool() {
     let config = merge_config_layers(None, None);
     let tools = enabled_dashboard_tools(&config);
-    let mut picker = DashboardToolPickerState::new(tools, creation_policy());
+    let mut picker = DashboardToolPickerState::with_mode(
+        tools,
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+            worktree_path: None,
+            lane_label: "Main checkout".to_owned(),
+        },
+    );
 
     let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
         picker.select_digit('2', None)
@@ -225,7 +239,15 @@ fn switch_mode_maps_selected_tool_to_switch_request() {
 #[test]
 fn render_picker_overlay_lists_tools() {
     let tools = enabled_dashboard_tools(&merge_config_layers(None, None));
-    let picker = DashboardToolPickerState::new(tools, creation_policy());
+    let picker = DashboardToolPickerState::with_mode(
+        tools,
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+            worktree_path: None,
+            lane_label: "Main checkout".to_owned(),
+        },
+    );
 
     let output = render_tool_picker_overlay(&picker, 80, 24);
 
@@ -248,12 +270,20 @@ fn picker_consumes_service_destination_and_custom_roles() {
         "defaultTarget":"worktree", "defaultRole":"review-control", "worktreeRole":"custom-coder"
     }))
     .unwrap();
-    let mut picker = DashboardToolPickerState::new(
+    let mut picker = DashboardToolPickerState::with_mode(
         enabled_dashboard_tools(&merge_config_layers(None, None)),
-        policy,
+        DashboardToolPickerMode::Create {
+            policy,
+            target: DashboardAgentCreationTarget::Worktree,
+            worktree_path: Some("/repo/feature".to_owned()),
+            lane_label: "feature".to_owned(),
+        },
     );
+    // The argument is deliberately a DIFFERENT path from the carried one: the
+    // destination is the one resolved when the picker opened, so a cursor that
+    // moved on cannot redirect the spawn.
     let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
-        picker.create_selected(Some("/repo/feature"))
+        picker.create_selected(Some("/repo/moved-on"))
     else {
         panic!("spawn request");
     };
@@ -267,4 +297,69 @@ fn picker_consumes_service_destination_and_custom_roles() {
     };
     assert_eq!(request.body["role"], "review-control");
     assert!(request.body.get("worktreePath").is_none());
+}
+
+/// The overlay must name the place the agent will go, and Tab must name a
+/// DIFFERENT place -- it is labelled "change destination".
+///
+/// Nothing asserted this line before. Reverting it to the literal "Focused
+/// worktree" left every test green, which is how it came to say that over the
+/// main checkout: a worktree group that is not a worktree.
+#[test]
+fn the_overlay_names_both_sides_of_the_destination_toggle() {
+    let tools = enabled_dashboard_tools(&merge_config_layers(None, None));
+    let mut picker = DashboardToolPickerState::with_mode(
+        tools,
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Worktree,
+            worktree_path: Some("/repo/.aimux/worktrees/feature".to_owned()),
+            lane_label: "feature".to_owned(),
+        },
+    );
+
+    let worktree_side = strip_ansi(&render_tool_picker_overlay(&picker, 96, 32));
+    assert!(
+        worktree_side.contains("feature · coder"),
+        "the resolved lane must be named: {worktree_side}"
+    );
+    assert!(
+        !worktree_side.contains("Focused worktree"),
+        "the literal word is what made this wrong for the main checkout"
+    );
+
+    picker.create_in_worktree = false;
+    let supervisor_side = strip_ansi(&render_tool_picker_overlay(&picker, 96, 32));
+    assert!(
+        supervisor_side.contains("Supervisor lane · control"),
+        "the other side of Tab must be named too: {supervisor_side}"
+    );
+}
+
+/// When the resolved lane IS the supervisor lane, Tab still has to lead
+/// somewhere it can name. It leads to the main checkout, because that is where
+/// a `None` path spawns -- and saying "Supervisor lane" on both sides of a key
+/// called "change destination" is the lie this guards.
+#[test]
+fn tab_out_of_the_supervisor_lane_names_the_main_checkout() {
+    let tools = enabled_dashboard_tools(&merge_config_layers(None, None));
+    let mut picker = DashboardToolPickerState::with_mode(
+        tools,
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+            worktree_path: None,
+            lane_label: "Main Checkout".to_owned(),
+        },
+    );
+
+    let supervisor_side = strip_ansi(&render_tool_picker_overlay(&picker, 96, 32));
+    picker.create_in_worktree = true;
+    let other_side = strip_ansi(&render_tool_picker_overlay(&picker, 96, 32));
+
+    assert!(supervisor_side.contains("Supervisor lane · control"));
+    assert!(
+        other_side.contains("Main Checkout · coder"),
+        "Tab must name where it actually goes: {other_side}"
+    );
 }
