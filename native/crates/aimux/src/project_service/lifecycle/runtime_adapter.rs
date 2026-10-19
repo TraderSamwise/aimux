@@ -1,8 +1,9 @@
 use crate::async_subprocess::AsyncCommand;
 use crate::backend_session_ids::{
-    BackendSessionDiscoveryOptions, codex_backend_session_ids_for_cwd,
+    BackendSessionDiscoveryOptions, claude_backend_session_ids_for_cwd,
+    codex_backend_session_ids_for_cwd,
 };
-use crate::claude_background_sessions::{BackgroundSessionIds, parse_background_sessions};
+use crate::claude_background_sessions::{BackgroundSessionIds, parse_background_sessions_checked};
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::tmux::{
     CapturePaneOptions, LiveWindowIndex, TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo,
@@ -409,24 +410,22 @@ pub trait ProjectLifecycleRuntime {
     fn capture_restart_window(&mut self, target: &TmuxTarget) -> Result<Option<String>, String> {
         Ok(self.capture_window(target))
     }
+    fn claude_backend_session_ids_for_cwd(
+        &mut self,
+        _cwd: &str,
+    ) -> Result<BTreeSet<String>, String> {
+        Err("runtime does not support Claude transcript discovery".into())
+    }
     fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String> {
         codex_backend_session_ids_for_cwd(cwd, &BackendSessionDiscoveryOptions::default())
     }
-    /// Sessions Claude still has running in the background, which `--resume`
-    /// refuses and `attach` opens. Empty on any failure: not knowing has to
-    /// fall back to today's resume, never to attaching the wrong session.
-    fn claude_background_session_ids(&mut self, cwd: &str) -> BackgroundSessionIds {
-        let Ok(output) = std::process::Command::new("claude")
-            .args(["agents", "--json"])
-            .current_dir(cwd)
+    /// An unavailable registry is distinct from a successful empty lookup: a
+    /// missing backend id must not turn a failed inspection into a fresh start.
+    fn claude_background_session_ids(&mut self, cwd: &str) -> Result<BackgroundSessionIds, String> {
+        let output = claude_background_command(cwd)?
             .output()
-        else {
-            return BackgroundSessionIds::new();
-        };
-        if !output.status.success() {
-            return BackgroundSessionIds::new();
-        }
-        parse_background_sessions(&String::from_utf8_lossy(&output.stdout), cwd)
+            .map_err(|error| error.to_string())?;
+        parse_claude_background_output(output, cwd)
     }
     fn wait_for_window_after_launch(&mut self, target: &TmuxTarget, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
@@ -477,7 +476,19 @@ pub(crate) trait AsyncProjectLifecycleRuntime {
         target: &TmuxTarget,
         timeout: Duration,
     ) -> bool;
+    fn claude_backend_session_ids_for_cwd(
+        &mut self,
+        _cwd: &str,
+    ) -> Result<BTreeSet<String>, String> {
+        Err("runtime does not support Claude transcript discovery".into())
+    }
     fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String>;
+    async fn claude_background_session_ids(
+        &mut self,
+        _cwd: &str,
+    ) -> Result<BackgroundSessionIds, String> {
+        Err("runtime does not support Claude background session inspection".into())
+    }
     async fn kill_window(&mut self, window_id: &str) -> Result<(), String>;
     /// Ask attached clients to redraw. Defaults to doing nothing so a fake
     /// runtime never reaches tmux; only the system runtime spawns it.
@@ -487,9 +498,51 @@ pub(crate) trait AsyncProjectLifecycleRuntime {
     }
 }
 
+fn claude_background_command(cwd: &str) -> Result<AsyncCommand, String> {
+    static CLAUDE_PROGRAM: std::sync::OnceLock<Result<std::ffi::OsString, String>> =
+        std::sync::OnceLock::new();
+    let program = CLAUDE_PROGRAM
+        .get_or_init(|| {
+            crate::program_lookup::resolve_program_from_path(
+                "claude",
+                std::env::var_os("PATH"),
+                None,
+            )
+        })
+        .as_ref()
+        .map_err(Clone::clone)?;
+    let mut command = AsyncCommand::new(program);
+    command.args(["agents", "--json"]).current_dir(cwd);
+    Ok(command)
+}
+
+fn parse_claude_background_output(
+    output: std::process::Output,
+    cwd: &str,
+) -> Result<BackgroundSessionIds, String> {
+    if !output.status.success() {
+        return Err(format!(
+            "Claude background session inspection exited {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let payload = String::from_utf8(output.stdout).map_err(|error| {
+        format!("Claude background session inspection returned invalid UTF-8: {error}")
+    })?;
+    parse_background_sessions_checked(&payload, cwd)
+}
+
 pub struct SystemProjectLifecycleRuntime;
 
 impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
+    fn claude_backend_session_ids_for_cwd(
+        &mut self,
+        cwd: &str,
+    ) -> Result<BTreeSet<String>, String> {
+        claude_backend_session_ids_for_cwd(cwd, None)
+    }
+
     fn capture_restart_window(&mut self, target: &TmuxTarget) -> Result<Option<String>, String> {
         TmuxRuntimeManager::new()
             .capture_target(
@@ -723,6 +776,24 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
 }
 
 impl AsyncProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
+    async fn claude_background_session_ids(
+        &mut self,
+        cwd: &str,
+    ) -> Result<BackgroundSessionIds, String> {
+        let output = claude_background_command(cwd)?
+            .output_async()
+            .await
+            .map_err(|error| error.to_string())?;
+        parse_claude_background_output(output, cwd)
+    }
+
+    fn claude_backend_session_ids_for_cwd(
+        &mut self,
+        cwd: &str,
+    ) -> Result<BTreeSet<String>, String> {
+        claude_backend_session_ids_for_cwd(cwd, None)
+    }
+
     async fn ensure_project_session(&mut self, project_root: &Path) -> Result<(), String> {
         let project_root = project_root.to_path_buf();
         crate::async_runtime::spawn_blocking_named(

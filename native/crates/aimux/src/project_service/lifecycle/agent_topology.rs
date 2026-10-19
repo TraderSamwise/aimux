@@ -85,6 +85,7 @@ pub(super) fn agent_window_metadata(
         "worktreePath",
         "label",
         "headline",
+        "restoreNotice",
         "createdAt",
         "role",
         // The plane is assignable and independent of role and worktree, so it
@@ -222,7 +223,7 @@ pub(super) fn upsert_agent_topology(
     if let Some(team) = topology_session_team(metadata) {
         session.insert("team".into(), team);
     }
-    for key in ["worktreePath", "label", "headline"] {
+    for key in ["worktreePath", "label", "headline", "restoreNotice"] {
         if let Some(value) = metadata.get(key).cloned().filter(|value| !value.is_null()) {
             session.insert(key.into(), value);
         }

@@ -1014,6 +1014,7 @@ fn dashboard_session(
         "restoreBlockedReason",
         "restartLaunchOptions",
         "freshRelaunchAllowed",
+        "restoreNotice",
         "team",
         "role",
         "overseer",
@@ -1157,6 +1158,7 @@ fn dashboard_session(
     }
     let semantic = derive_session_semantics(SessionSemanticsInput {
         status: raw_status.to_owned(),
+        restore_notice: restore_notice(session),
         pending_action,
         activity,
         attention,
@@ -1218,6 +1220,19 @@ fn dashboard_session(
     );
     item.insert("semantic".into(), semantic);
     Value::Object(item)
+}
+
+/// The restore decision is service-owned; clients render the resulting chip.
+/// Keep the completed-launch disclosure after a backend id is recorded later.
+fn restore_notice(session: &Value) -> Option<String> {
+    string_field(session, "restoreNotice")
+        .map(str::to_owned)
+        .or_else(|| {
+            (string_field(session, "status") == Some("offline")
+                && string_field(session, "backendSessionId").is_none()
+                && session.get("freshRelaunchAllowed").and_then(Value::as_bool) == Some(true))
+            .then(|| crate::agent_row_chips::FRESH_RESTORE_NOTICE.to_owned())
+        })
 }
 
 fn agent_creation_policy() -> Value {

@@ -16,40 +16,43 @@ use serde_json::Value;
 /// Short id keyed by full session uuid, for sessions Claude still has running.
 pub type BackgroundSessionIds = BTreeMap<String, String>;
 
-/// Parse `claude agents --json`. Entries without both ids, or in a terminal
-/// state, are not attachable and are left out.
-pub fn parse_background_sessions(payload: &str, cwd: &str) -> BackgroundSessionIds {
-    let Ok(parsed) = serde_json::from_str::<Value>(payload) else {
-        return BackgroundSessionIds::new();
-    };
+/// Fallible inventory used when absence would authorize a new conversation.
+pub fn parse_background_sessions_checked(
+    payload: &str,
+    cwd: &str,
+) -> Result<BackgroundSessionIds, String> {
+    let parsed: Value = serde_json::from_str(payload)
+        .map_err(|error| format!("invalid Claude background inventory: {error}"))?;
     let entries = match &parsed {
-        Value::Array(items) => items.clone(),
+        Value::Array(items) => items,
         Value::Object(object) => object
             .get("sessions")
             .or_else(|| object.get("agents"))
             .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default(),
-        _ => Vec::new(),
+            .ok_or("Claude background inventory has no sessions array")?,
+        _ => return Err("Claude background inventory is not an array or object".into()),
     };
     let mut found = BackgroundSessionIds::new();
     for entry in entries {
-        let Some(session_id) = non_empty(entry.get("sessionId")) else {
+        if matches!(
+            entry.get("state").and_then(Value::as_str),
+            Some("completed" | "exited" | "stopped" | "failed")
+        ) {
             continue;
-        };
-        let Some(short_id) = non_empty(entry.get("id")) else {
-            continue;
-        };
+        }
+        let session_id =
+            non_empty(entry.get("sessionId")).ok_or("Claude background entry has no sessionId")?;
+        let short_id = non_empty(entry.get("id")).ok_or("Claude background entry has no id")?;
         // A session in another checkout is a different agent that happens to be
         // running; attaching to it would open the wrong conversation.
-        if let Some(entry_cwd) = non_empty(entry.get("cwd"))
-            && !same_path(&entry_cwd, cwd)
-        {
+        let entry_cwd =
+            non_empty(entry.get("cwd")).ok_or("Claude background session has no cwd")?;
+        if !same_path(&entry_cwd, cwd) {
             continue;
         }
         found.insert(session_id, short_id);
     }
-    found
+    Ok(found)
 }
 
 /// The only conversation an agent with no recorded backend session id can be.
@@ -86,14 +89,12 @@ mod tests {
 
     const PAYLOAD: &str = r#"[
         {"id":"0cfac0d9","cwd":"/repo","kind":"background","sessionId":"0cfac0d9-6e3f-424f-9027-3ddefd750729","name":"Extract kanji arena","state":"blocked"},
-        {"id":"fb460718","cwd":"/elsewhere","kind":"background","sessionId":"fb460718-776a-4e4c-bc06-4bb8ca5b5fa0","state":"idle"},
-        {"cwd":"/repo","sessionId":"304bdb81-cab6-4714-adf8-1e6b61858960","name":"no short id"},
-        {"id":"deadbeef","cwd":"/repo"}
+        {"id":"fb460718","cwd":"/elsewhere","kind":"background","sessionId":"fb460718-776a-4e4c-bc06-4bb8ca5b5fa0","state":"idle"}
     ]"#;
 
     #[test]
     fn maps_a_running_session_to_the_id_attach_takes() {
-        let found = parse_background_sessions(PAYLOAD, "/repo");
+        let found = parse_background_sessions_checked(PAYLOAD, "/repo").unwrap();
         assert_eq!(
             found.get("0cfac0d9-6e3f-424f-9027-3ddefd750729"),
             Some(&"0cfac0d9".to_owned())
@@ -102,7 +103,7 @@ mod tests {
 
     #[test]
     fn a_session_in_another_checkout_is_a_different_agent() {
-        let found = parse_background_sessions(PAYLOAD, "/repo");
+        let found = parse_background_sessions_checked(PAYLOAD, "/repo").unwrap();
         assert!(
             !found.contains_key("fb460718-776a-4e4c-bc06-4bb8ca5b5fa0"),
             "attaching across checkouts opens the wrong conversation"
@@ -110,10 +111,23 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_missing_either_id_is_not_attachable() {
-        let found = parse_background_sessions(PAYLOAD, "/repo");
-        assert!(!found.contains_key("304bdb81-cab6-4714-adf8-1e6b61858960"));
-        assert_eq!(found.len(), 1, "{found:?}");
+    fn an_incomplete_inventory_is_not_verified_absence() {
+        for payload in [
+            r#"[{}]"#,
+            "[null]",
+            r#"[{"id":"short","cwd":"/repo"}]"#,
+            r#"[{"sessionId":"uuid","cwd":"/repo"}]"#,
+        ] {
+            assert!(
+                parse_background_sessions_checked(payload, "/repo").is_err(),
+                "{payload}"
+            );
+        }
+        assert!(
+            parse_background_sessions_checked("[]", "/repo")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     // The strix overseer: no backendSessionId, a transcriptPath pointing at a
@@ -121,7 +135,7 @@ mod tests {
     // session Claude had in that checkout.
     #[test]
     fn one_running_session_is_the_only_one_an_agent_can_be() {
-        let found = parse_background_sessions(PAYLOAD, "/repo");
+        let found = parse_background_sessions_checked(PAYLOAD, "/repo").unwrap();
         assert_eq!(
             sole_background_session(&found),
             Some(("0cfac0d9-6e3f-424f-9027-3ddefd750729", "0cfac0d9"))
@@ -134,7 +148,7 @@ mod tests {
             {"id":"aaa","cwd":"/repo","sessionId":"aaa-full"},
             {"id":"bbb","cwd":"/repo","sessionId":"bbb-full"}
         ]"#;
-        let found = parse_background_sessions(payload, "/repo");
+        let found = parse_background_sessions_checked(payload, "/repo").unwrap();
         assert_eq!(found.len(), 2);
         assert_eq!(
             sole_background_session(&found),
@@ -149,14 +163,15 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_output_is_empty_rather_than_a_wrong_attach() {
-        assert!(parse_background_sessions("not json", "/repo").is_empty());
-        assert!(parse_background_sessions("", "/repo").is_empty());
+    fn unreadable_output_is_an_error_not_verified_absence() {
+        assert!(parse_background_sessions_checked("not json", "/repo").is_err());
+        assert!(parse_background_sessions_checked("", "/repo").is_err());
         assert!(
-            parse_background_sessions(
+            parse_background_sessions_checked(
                 r#"{"sessions":[{"id":"a1","cwd":"/repo","sessionId":"a1-full"}]}"#,
                 "/repo"
             )
+            .unwrap()
             .contains_key("a1-full"),
             "an object payload still parses"
         );

@@ -276,3 +276,45 @@ fn enter_still_resumes_a_live_record_with_no_window() {
         "only a session that is actually down can be refused here"
     );
 }
+
+#[test]
+fn explicit_fresh_restart_bypasses_restore_block_but_requires_an_offline_nonpending_agent() {
+    use aimux::dashboard_model::SessionStatus;
+    let fixture = snapshot();
+    let mut session = fixture.worktree_groups[1].sessions[1].clone();
+    assert_eq!(session.restore_state.as_deref(), Some("blocked"));
+    session.status = SessionStatus::Offline;
+    let DashboardActionPlan::Request(request) = plan_dashboard_action(
+        Some(DashboardEntryRef::Session(&session)),
+        DashboardActionKind::RestartFresh,
+    ) else {
+        panic!("offline agent must offer explicit fresh restart");
+    };
+    assert_eq!(request.path, routes::agents::RESUME);
+    assert_eq!(
+        request.body,
+        json!({"sessionId": session.id, "fresh": true})
+    );
+    for status in [SessionStatus::Running, SessionStatus::Exited] {
+        session.status = status.clone();
+        assert!(
+            matches!(
+                plan_dashboard_action(
+                    Some(DashboardEntryRef::Session(&session)),
+                    DashboardActionKind::RestartFresh,
+                ),
+                DashboardActionPlan::Blocked(_)
+            ),
+            "{status:?} is not eligible for the backend resume route"
+        );
+    }
+    session.status = SessionStatus::Offline;
+    session.pending = true;
+    assert!(matches!(
+        plan_dashboard_action(
+            Some(DashboardEntryRef::Session(&session)),
+            DashboardActionKind::RestartFresh
+        ),
+        DashboardActionPlan::Busy(_)
+    ));
+}

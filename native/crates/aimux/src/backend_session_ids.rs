@@ -4,7 +4,7 @@ use crate::runtime_topology::{
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -344,22 +344,100 @@ pub fn discover_claude_backend_session_id(
     cwd: &str,
     projects_dir: Option<&Path>,
 ) -> Option<String> {
-    let dir = claude_projects_dir(projects_dir).join(encode_claude_project_path(cwd));
-    let entries = fs::read_dir(dir).ok()?;
-    let mut ids = Vec::new();
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        let Some(id) = name.strip_suffix(".jsonl") else {
-            continue;
-        };
-        if is_uuid(id) {
-            ids.push(id.to_owned());
-        }
+    let ids = claude_backend_session_ids_for_cwd(cwd, projects_dir).ok()?;
+    if ids.len() == 1 {
+        ids.into_iter().next()
+    } else {
+        None
     }
-    (ids.len() == 1).then(|| ids.remove(0))
+}
+
+/// Inspect Claude's transcript store without treating an inspection failure as
+/// an empty history. Encoded project directories can collide and relocated
+/// transcripts retain their original cwd. A cwd mismatch is therefore uncertain
+/// history, never evidence of absence. Legacy transcripts without a cwd remain
+/// candidates: their presence must not authorize a fresh relaunch.
+pub fn claude_backend_session_ids_for_cwd(
+    cwd: &str,
+    projects_dir: Option<&Path>,
+) -> Result<BTreeSet<String>, String> {
+    let dir = claude_projects_dir(projects_dir).join(encode_claude_project_path(cwd));
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        Err(error) => {
+            return Err(format!(
+                "failed to read Claude projects dir {}: {error}",
+                dir.display()
+            ));
+        }
+    };
+    let mut ids = BTreeSet::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "failed to read Claude projects dir entry under {}: {error}",
+                dir.display()
+            )
+        })?;
+        let name = entry.file_name();
+        let Some(id) = name.to_str().and_then(|name| name.strip_suffix(".jsonl")) else {
+            continue;
+        };
+        if !is_uuid(id) {
+            continue;
+        }
+        let path = entry.path();
+        let metadata = fs::metadata(&path).map_err(|error| {
+            format!(
+                "failed to inspect Claude transcript {}: {error}",
+                path.display()
+            )
+        })?;
+        if !metadata.is_file() {
+            continue;
+        }
+        let file = File::open(&path).map_err(|error| {
+            format!(
+                "failed to open Claude transcript {}: {error}",
+                path.display()
+            )
+        })?;
+        let mut recorded_cwd = None;
+        for line in BufReader::new(file).lines() {
+            let line = line.map_err(|error| {
+                format!(
+                    "failed to read Claude transcript {}: {error}",
+                    path.display()
+                )
+            })?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let record: Value = serde_json::from_str(&line).map_err(|error| {
+                format!(
+                    "failed to parse Claude transcript {}: {error}",
+                    path.display()
+                )
+            })?;
+            if let Some(value) = record.get("cwd").and_then(Value::as_str)
+                && !value.trim().is_empty()
+            {
+                recorded_cwd = Some(value.to_owned());
+                break;
+            }
+        }
+        if let Some(recorded) = recorded_cwd
+            && recorded.trim_end_matches('/') != cwd.trim_end_matches('/')
+        {
+            return Err(format!(
+                "Claude transcript {} records cwd {recorded:?}, but discovery requested {cwd:?}; this may be relocated history or a colliding project directory, so its backend identity must be chosen explicitly",
+                path.display()
+            ));
+        }
+        ids.insert(id.to_owned());
+    }
+    Ok(ids)
 }
 
 pub fn discover_codex_backend_session_id(

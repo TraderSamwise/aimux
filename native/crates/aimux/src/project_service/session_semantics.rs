@@ -3,6 +3,7 @@ use serde_json::{Map, Value, json};
 #[derive(Debug, Clone, Default)]
 pub struct SessionSemanticsInput {
     pub status: String,
+    pub restore_notice: Option<String>,
     pub pending_action: Option<String>,
     pub activity: Option<String>,
     pub attention: Option<String>,
@@ -91,6 +92,7 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
     let mut row_chips =
         crate::agent_row_chips::agent_row_chips(&crate::agent_row_chips::RowChipsInput {
             offline: row_chips_offline(&input, &user),
+            restore_notice: input.restore_notice.clone(),
             waiting_on_me_count,
             workflow_blocked_count: blocked_count,
             subagent_label: input.subagent_label.clone(),

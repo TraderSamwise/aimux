@@ -240,7 +240,7 @@ pub fn build_tmux_window_metadata(
     );
     let classifier_probe = session_with_stored_control_flags(session, stored_session);
     insert_optional_value(&mut out, "team", classifier_probe.get("team").cloned());
-    for key in ["worktreePath", "label", "headline"] {
+    for key in ["worktreePath", "label", "headline", "restoreNotice"] {
         insert_optional_value(&mut out, key, session.get(key).cloned());
     }
     // Without this a tmux->metadata resync erases the stored plane on every

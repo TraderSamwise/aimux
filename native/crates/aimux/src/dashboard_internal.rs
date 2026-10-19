@@ -714,7 +714,9 @@ pub fn run_native_dashboard_with_seams(
                     cacheable_input = false;
                 }
                 let discard_confirmation_tail =
-                    matches!(effect, DashboardControllerEffect::BulkGraveyardPreview(_));
+                    matches!(effect, DashboardControllerEffect::BulkGraveyardPreview(_))
+                        || (controller.fresh_restart_confirm.is_some()
+                            && before_surface != controller.input_surface());
                 let stop_after_key = is_coalesced_input
                     && controller.should_stop_coalesced_input(before_surface, &effect);
                 match effect {
@@ -2636,6 +2638,15 @@ fn render_dashboard_snapshot(
             &frame,
             render_worktree_list_overlay(&snapshot.worktree_groups, viewport.cols, viewport.rows),
         );
+    }
+    if let Some(session) = controller.fresh_restart_confirm.as_ref() {
+        let overlay = crate::dashboard_service_input::render_fresh_restart_confirm_overlay(
+            session,
+            viewport.cols,
+            viewport.rows,
+        );
+        controller.fresh_restart_confirm_visible = true;
+        return dashboard_overlay_frame(&frame, overlay);
     }
     if controller.agent_restore_prompt_active(snapshot)
         && let Some(offer) = snapshot.agent_restore_offer.as_ref()
