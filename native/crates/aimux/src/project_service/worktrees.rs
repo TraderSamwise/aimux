@@ -11,9 +11,7 @@ use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname
 use super::router::ProjectServiceRequestContext;
 use super::usage::load_last_used_state;
 
-const LIVE_WORKTREE_STATUSES: &[&str] = &[
-    "planned", "creating", "active", "removing", "missing", "error",
-];
+use crate::runtime_topology::LIVE_WORKTREE_STATUSES;
 const MAX_VISIBLE_ATTACHED_AGENTS_PER_WORKTREE: usize = 5;
 
 pub fn route_worktree_read_request(

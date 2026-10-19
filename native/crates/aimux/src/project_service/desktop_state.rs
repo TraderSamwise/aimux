@@ -51,9 +51,7 @@ use super::session_visibility::{
 use super::usage::parse_recency_timestamp;
 use super::visual_clients::VisualClientLeaseRoute;
 
-const ACTIVE_WORKTREE_STATUSES: &[&str] = &[
-    "planned", "creating", "active", "removing", "missing", "error",
-];
+use crate::runtime_topology::LIVE_WORKTREE_STATUSES as ACTIVE_WORKTREE_STATUSES;
 const DASHBOARD_SERVICE_STATUSES: &[&str] = &[
     "planned", "starting", "running", "stopped", "offline", "error",
 ];
@@ -2302,10 +2300,9 @@ struct WorktreeCheckoutProbe {
 /// `status` is the topology's own record of the lifecycle, so this keys on that
 /// rather than on whether a `pendingAction` happens to be set on the row.
 fn worktree_checkout_is_still_arriving(worktree: &Value) -> bool {
-    matches!(
-        string_field(worktree, "status"),
-        Some("planned" | "creating" | "removing")
-    )
+    string_field(worktree, "status").is_some_and(|status| {
+        status == "planned" || crate::transient_state::is_transient_state(status)
+    })
 }
 
 fn worktree_branch_or_current_from_probe(

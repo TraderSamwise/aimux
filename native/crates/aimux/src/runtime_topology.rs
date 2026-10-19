@@ -991,12 +991,39 @@ fn service_status(value: Option<&Value>) -> String {
     }
 }
 
+/// Every status a worktree row may hold, and the one place they are listed.
+///
+/// Four copies of this list had drifted apart by hand -- two in
+/// `project_service` and a third spelled inline -- so adding a status meant
+/// four edits and forgetting one was silent. The recovery set is derived from
+/// this by `transient_state::is_transient_state` rather than hand-maintained,
+/// so a new in-flight status is reaped the day it is added.
+pub const WORKTREE_STATUSES: &[&str] = &[
+    "planned",
+    "creating",
+    "active",
+    "removing",
+    "graveyard",
+    "missing",
+    "error",
+];
+
+/// The statuses a worktree row holds while its checkout is still expected to
+/// be there -- everything but the graveyard.
+pub const LIVE_WORKTREE_STATUSES: &[&str] = &{
+    // Written out because const filtering is not available here; the gate in
+    // `worktree_status_vocabulary.rs` fails if this stops matching.
+    [
+        "planned", "creating", "active", "removing", "missing", "error",
+    ]
+};
+
 fn worktree_status(value: Option<&Value>) -> String {
-    match value_display(value).as_str() {
-        "planned" | "creating" | "active" | "removing" | "graveyard" | "missing" | "error" => {
-            value_display(value)
-        }
-        _ => "error".into(),
+    let display = value_display(value);
+    if WORKTREE_STATUSES.contains(&display.as_str()) {
+        display
+    } else {
+        "error".into()
     }
 }
 

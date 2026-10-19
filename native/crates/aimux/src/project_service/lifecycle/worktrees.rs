@@ -1392,11 +1392,11 @@ pub(crate) fn recover_orphaned_worktree_operations(project_state_dir: &Path) -> 
     let updated = update_runtime_topology(runtime_topology_path(project_state_dir), |topology| {
         map_topology_array(topology, "worktrees", |mut worktree| {
             let status = string_field(&worktree, "status");
-            // Only the two words `worktree_status` actually admits. The wider
-            // transient vocabulary is for sessions and services, which coerce
-            // these away, so filtering on it would match nothing and read as
-            // if it did.
-            if status != "creating" && status != "removing" {
+            // Derived, not listed: every status a worktree row may hold that
+            // also names an action under way. Today that is `creating` and
+            // `removing`; a transient status added tomorrow is reaped without
+            // anyone remembering to come back here.
+            if !crate::transient_state::is_transient_state(&status) {
                 return worktree;
             }
             let row_path = string_field(&worktree, "path");

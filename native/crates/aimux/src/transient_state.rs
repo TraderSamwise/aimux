@@ -46,9 +46,12 @@ pub fn is_transient_state(value: &str) -> bool {
 /// strict allowlist and nothing else would keep the two in step.
 ///
 /// Deriving does not make it self-healing: the status is persisted, so a
-/// service killed between the two writes leaves `creating` on disk and the row
-/// reads as working for good. Nothing reaps that today, which is why `x` is
-/// deliberately still allowed on such a row.
+/// service killed between the two writes leaves `creating` on disk. Project
+/// service startup now settles those rows -- see
+/// `lifecycle::recover_orphaned_worktree_operations` -- because no lifecycle
+/// operation survives its process, so an in-flight status found at startup is
+/// orphaned by definition. `x` stays allowed on such a row for the window
+/// before the next start.
 pub fn pending_action_for_status(status: Option<&str>) -> Option<&str> {
     status.filter(|status| is_transient_state(status))
 }
