@@ -92,7 +92,9 @@ pub(super) fn backend_session_claimed_by_other(
         .into_iter()
         .find(|other| {
             string_field(other, "id") != session_id
-                && tool_config_key_for_session(other) == tool
+                && tool_config_key_for_session(
+                    &crate::runtime_topology::topology_session_to_session_state(other, topology),
+                ) == tool
                 && trimmed_string(other.get("backendSessionId")).as_deref() == Some(backend_id)
         })
         .map(|other| string_field(&other, "id"))

@@ -8385,6 +8385,12 @@ fn claude_restore_discovery_preserves_history_absence_and_errors() {
         ("claimed", Ok(BTreeSet::from([uuid.to_owned()])), "blocked"),
         ("claimed-live", Ok(BTreeSet::new()), "blocked"),
         (
+            "claimed-legacy",
+            Ok(BTreeSet::from([uuid.to_owned()])),
+            "blocked",
+        ),
+        ("claimed-live-legacy", Ok(BTreeSet::new()), "blocked"),
+        (
             "known",
             Err("must not scan known identity".to_owned()),
             "resume",
@@ -8420,11 +8426,22 @@ fn claude_restore_discovery_preserves_history_absence_and_errors() {
                 "createdAt":"2026-01-01T00:00:00.000Z", "updatedAt":"2026-01-01T00:00:00.000Z"
             }),
         );
-        if matches!(name, "claimed" | "claimed-live") {
+        if name.starts_with("claimed") {
             update_runtime_topology(runtime_topology_path(&state_dir), |mut topology| {
                 let mut owner = topology["sessions"][0].clone();
                 owner["id"] = json!("claude-other");
                 owner["backendSessionId"] = json!(uuid);
+                if name.ends_with("legacy") {
+                    owner.as_object_mut().unwrap().remove("tool");
+                    owner.as_object_mut().unwrap().remove("toolConfigKey");
+                    owner["command"] = json!("/opt/claude");
+                    owner["nodeId"] = json!("agent:claude-other");
+                    let mut node = topology["nodes"][0].clone();
+                    node["id"] = json!("agent:claude-other");
+                    node["logicalId"] = json!("claude-other");
+                    node["toolConfigKey"] = json!("claude");
+                    topology["nodes"].as_array_mut().unwrap().push(node);
+                }
                 topology["sessions"].as_array_mut().unwrap().push(owner);
                 topology
             })
@@ -8443,7 +8460,7 @@ fn claude_restore_discovery_preserves_history_absence_and_errors() {
             claude_backend_ids: Some(ids),
             ..Default::default()
         };
-        if name == "claimed" {
+        if matches!(name, "claimed" | "claimed-legacy") {
             let stopped = route_lifecycle_request_with_runtime(
                 &context,
                 "POST",
@@ -8460,7 +8477,7 @@ fn claude_restore_discovery_preserves_history_absence_and_errors() {
             );
             assert_eq!(stored["freshRelaunchAllowed"], false);
         }
-        if name == "claimed-live" {
+        if name.starts_with("claimed-live") {
             runtime
                 .claude_background_ids
                 .insert(uuid.to_owned(), "short-id".into());

@@ -714,7 +714,9 @@ pub fn run_native_dashboard_with_seams(
                     cacheable_input = false;
                 }
                 let discard_confirmation_tail =
-                    matches!(effect, DashboardControllerEffect::BulkGraveyardPreview(_));
+                    matches!(effect, DashboardControllerEffect::BulkGraveyardPreview(_))
+                        || (controller.fresh_restart_confirm.is_some()
+                            && before_surface != controller.input_surface());
                 let stop_after_key = is_coalesced_input
                     && controller.should_stop_coalesced_input(before_surface, &effect);
                 match effect {
