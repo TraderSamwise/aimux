@@ -83,15 +83,21 @@ fn terminal_statuses_are_never_transient() {
 /// missing" over them from a per-read stat. The screen was right and the record
 /// was not, and because the record never moved, nothing could act on it.
 ///
-/// This is a declaration backed by a scan, not a proof: it checks that the
-/// named module mentions the status, which a reader would also satisfy. What it
-/// makes impossible is the silent case -- adding an eighth status without
-/// deciding who produces it.
+/// This is a declaration backed by a weak scan, and the weakness is the point
+/// to understand: the scan only checks that the named module still mentions the
+/// status outside its test block. It cannot tell a write from a read, so it
+/// will not catch a deleted write in a file that still matches on the word.
+///
+/// What it does make impossible is the silent case this bug was -- adding a
+/// status without deciding who produces it, and naming a module that has since
+/// stopped producing it at all. That a row actually reaches `missing` is proved
+/// behaviourally, on a real topology file, in
+/// `tests/project_service_worktree_presence.rs`.
 const WORKTREE_STATUS_WRITERS: &[(&str, &str)] = &[
-    ("active", "src/runtime_topology_worktrees.rs"),
+    ("active", "src/project_service/lifecycle/worktrees.rs"),
     ("creating", "src/project_service/lifecycle/worktrees.rs"),
     ("error", "src/project_service/lifecycle/worktrees.rs"),
-    ("graveyard", "src/runtime_topology_worktrees.rs"),
+    ("graveyard", "src/project_service/lifecycle/worktrees.rs"),
     (
         "missing",
         "src/project_service/worktree_presence_reconciler.rs",
@@ -141,28 +147,30 @@ fn each_declared_writer_mentions_the_status_it_writes() {
         let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
             panic!("writer for {status} unreadable at {relative}: {error}")
         });
+        // Production only. Scanning the whole file let a deleted write pass on
+        // the strength of its own `#[cfg(test)]` block still naming the word.
+        let production = source
+            .split_once("#[cfg(test)]")
+            .map_or(source.as_str(), |(before, _)| before);
         assert!(
-            source.contains(&format!("\"{status}\"")),
-            "{relative} is declared the writer of {status} and never names it; \
-             the writer moved and this list did not follow"
+            production.contains(&format!("\"{status}\"")),
+            "{relative} is declared the writer of {status} and no longer names \
+             it; the writer moved and this list did not follow"
         );
     }
 }
 
-/// The reconciler that gave `missing` a writer must not take the graveyard
-/// with it. Nine absent `graveyard` rows on this machine are correct.
+/// A textual guard used to sit here, forbidding the exact substring
+/// `("graveyard", WorktreeCheckoutState` in the reconciler. It was removed:
+/// `("graveyard" | "active", ..)` defeats it, and rustfmt wrapping the arm
+/// would have failed it with the behaviour unchanged. The real constraint is
+/// `no_other_status_is_settled_on_checkout_presence`, which walks this
+/// vocabulary and asserts the behaviour for every status in both directions.
 #[test]
-fn the_presence_reconciler_settles_only_the_two_checkout_statuses() {
-    let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source = std::fs::read_to_string(
-        crate_dir.join("src/project_service/worktree_presence_reconciler.rs"),
-    )
-    .expect("presence reconciler source");
-    for forbidden in ["graveyard", "planned"] {
-        assert!(
-            !source.contains(&format!("(\"{forbidden}\", WorktreeCheckoutState")),
-            "the presence reconciler settles {forbidden} on checkout presence; \
-             an absent checkout is that status's expected state"
-        );
-    }
+fn the_vocabulary_is_what_the_reconciler_is_tested_against() {
+    assert!(
+        WORKTREE_STATUSES.contains(&"graveyard") && WORKTREE_STATUSES.contains(&"missing"),
+        "the behavioural test derives its cases from this list; it must hold \
+         the statuses that matter"
+    );
 }

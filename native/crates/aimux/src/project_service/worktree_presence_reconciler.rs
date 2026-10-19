@@ -19,7 +19,10 @@ use serde_json::{Value, json};
 
 use crate::async_runtime::{scoped_task_name, spawn_blocking_named};
 use crate::debug_logging::log_lifecycle_always;
-use crate::project_service::desktop_state::{WorktreeCheckoutState, worktree_checkout_state};
+use crate::project_service::desktop_state::{
+    WorktreeCheckoutState, worktree_checkout_may_be_marked_missing, worktree_checkout_state,
+    worktree_path_identity, worktree_row_path,
+};
 use crate::project_service::lifecycle::now_iso;
 use crate::runtime_topology::{
     read_runtime_topology, runtime_topology_path, update_runtime_topology,
@@ -28,11 +31,15 @@ use crate::runtime_topology::{
 use super::router::ProjectServiceRequestContext;
 use super::scheduler::{PeriodicTask, PeriodicTaskFuture};
 
-const DEFAULT_SCAN_INTERVAL_MS: i64 = 250;
-/// Slow backstop. The create, remove and graveyard routes write the status
-/// they produce; this exists for the checkout that leaves some other way -- a
-/// `git worktree remove` run by hand, a deleted directory, a restored backup.
-const DEFAULT_SCAN_EVERY_TICKS: u64 = 480;
+/// Slow backstop. The create and graveyard routes write the status they
+/// produce; this exists for the checkout that leaves some other way -- a
+/// removal run by hand, a deleted directory, a restored backup.
+///
+/// Declared as the interval with no `tick_multiple` override, so the two
+/// cannot disagree: the scheduler derives the multiple from this, and a 250ms
+/// figure beside a separate 480 override is one deleted line away from being
+/// a 250ms task.
+const SCAN_INTERVAL_MS: i64 = 120_000;
 
 #[derive(Default)]
 pub struct WorktreePresenceReconcilerTask;
@@ -43,63 +50,74 @@ impl PeriodicTask for WorktreePresenceReconcilerTask {
     }
 
     fn interval_ms(&self) -> i64 {
-        DEFAULT_SCAN_INTERVAL_MS
-    }
-
-    fn tick_multiple(&self) -> u64 {
-        DEFAULT_SCAN_EVERY_TICKS
+        SCAN_INTERVAL_MS
     }
 
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             let topology_path = runtime_topology_path(context.project_state_dir());
-            let topology = read_runtime_topology(&topology_path).map_err(|error| {
-                format!("worktree presence reconciler topology unavailable: {error}")
-            })?;
-            if settlements(&topology).is_empty() {
-                return Ok(());
-            }
-            // Off the async worker for the same reason the retired reaper is:
-            // the topology update lock can wait seconds behind another writer.
+            let project_root = context.project_root().to_string_lossy().into_owned();
+            // ALL of it off the async worker, not only the write. Reading the
+            // topology parses YAML, and every candidate row costs a `stat`
+            // that blocks in the kernel until a hung mount answers -- on a
+            // tokio worker that stalls every other periodic task sharing the
+            // runtime. `worktree_checkout_probe` carries the same rule, and an
+            // earlier draft of THIS task moved only the lock and left the
+            // syscalls on the reactor.
             let settled = spawn_blocking_named(
-                scoped_task_name("worktree-presence-reconciler", "topology-update", "project"),
+                scoped_task_name("worktree-presence-reconciler", "settle", "project"),
                 move || {
+                    let identity = worktree_path_identity(&project_root);
+                    let topology = read_runtime_topology(&topology_path).map_err(|error| {
+                        format!("worktree presence reconciler topology unavailable: {error}")
+                    })?;
+                    // Guessed before the lock purely to avoid taking it: the
+                    // update lock can wait seconds behind another writer, and
+                    // almost every scan has nothing to do.
+                    if settlements(&topology, &project_root, &identity).is_empty() {
+                        return Ok(Vec::new());
+                    }
                     let mut settled: Vec<Value> = Vec::new();
-                    let result = update_runtime_topology(&topology_path, |mut topology| {
-                        settled.clear();
-                        // Re-derived under the lock: a create may have finished
-                        // or a remove started while this waited, so the set read
-                        // before the wait is a guess. What the log names is what
-                        // this wrote.
+                    // Re-derived under the lock: a create may have finished or
+                    // a removal started while this waited, so the set from
+                    // before the wait is a guess. What the log names is what
+                    // this wrote.
+                    update_runtime_topology(&topology_path, |mut topology| {
                         if let Some(worktrees) =
                             topology.get_mut("worktrees").and_then(Value::as_array_mut)
                         {
                             for worktree in worktrees.iter_mut() {
-                                let Some(next) = settled_status(worktree) else {
+                                let Some(next) = settled_status(worktree, &project_root, &identity)
+                                else {
                                     continue;
                                 };
-                                let path = string_field(worktree, "path");
+                                let path = worktree_row_path(worktree, &project_root).to_owned();
                                 let from = string_field(worktree, "status");
-                                object_insert_mut(
-                                    worktree,
-                                    "status",
-                                    Value::String(next.to_owned()),
-                                );
+                                object_insert_mut(worktree, "status", Value::String(next.into()));
                                 object_insert_mut(worktree, "updatedAt", Value::String(now_iso()));
                                 settled.push(json!({ "path": path, "from": from, "to": next }));
                             }
                         }
                         topology
-                    });
-                    result.map(|_| settled)
+                    })
+                    .map(|_| settled)
+                    .map_err(|error| {
+                        format!("worktree presence reconciler could not write topology: {error}")
+                    })
                 },
             )
             .await
-            .map_err(|error| format!("worktree presence reconciler did not run: {error}"))?
-            .map_err(|error| {
-                format!("worktree presence reconciler could not write topology: {error}")
-            })?;
+            .map_err(|error| format!("worktree presence reconciler did not run: {error}"))??;
             if settled.is_empty() {
+                // The guess was stale: another writer settled or removed those
+                // rows while this waited for the lock. Said out loud because
+                // `update_runtime_topology` has no dirty check and rewrote the
+                // file anyway, and a silent write is how a wrapper lies.
+                log_lifecycle_always(
+                    "worktree presence guess was stale by the time the lock was taken",
+                    "worktree-presence-reconciler",
+                    None,
+                );
                 return Ok(());
             }
             log_lifecycle_always(
@@ -122,35 +140,58 @@ impl PeriodicTask for WorktreePresenceReconcilerTask {
 /// - `missing` with a checkout becomes `active` again, so a restored directory
 ///   or a remounted volume heals itself without anyone pressing anything.
 ///
+/// Eligibility is `worktree_checkout_may_be_marked_missing`, the same rule the
+/// per-read probe paints `pathMissing` by -- so the stored status is a lagging
+/// persistence of that verdict, never a second opinion about which rows count.
+///
 /// Deliberately NOT touched:
 ///
 /// - `graveyard`, which is absent on purpose. Nine such rows on this machine
 ///   are correct, and a sweep that counts absence alone destroys them.
-/// - `planned`, `creating`, `removing`: an operation is under way and its
-///   checkout is expected to be half-there. `recover_orphaned_worktree_operations`
-///   owns those at startup, where they are orphaned by definition.
 /// - `error`, which already carries an `operationFailure` saying what happened.
 ///   Overwriting it with `missing` would drop the only account of the failure.
-fn settled_status(worktree: &Value) -> Option<&'static str> {
-    let path = string_field(worktree, "path");
+/// - `planned`, `creating` and the main checkout, through the shared rule.
+///
+/// The removal route writes NO status: it deletes the checkout, then the
+/// assets, then the row. A scan landing in that window stamps `missing` on a
+/// row about to be deleted. That route re-reads under the lock so nothing is
+/// lost, but do not read the ordering here as protection -- there is none.
+fn settled_status(
+    worktree: &Value,
+    project_root: &str,
+    root_identity: &str,
+) -> Option<&'static str> {
+    // Status first, so a row whose answer could not be used never costs a
+    // syscall. Folding the filters behind the `stat` is a regression this
+    // codebase has already had once, in `worktree_checkout_probe`.
+    let status = string_field(worktree, "status");
+    if !matches!(status.as_str(), "active" | "missing") {
+        return None;
+    }
+    let path = worktree_row_path(worktree, project_root);
+    if !worktree_checkout_may_be_marked_missing(worktree, path, root_identity) {
+        return None;
+    }
     // Absent is a fact; Unknown is a question that could not be asked. An
     // unreadable mount answers `Unknown`, and treating that as absence would
     // stamp a live worktree `missing` every time the volume hiccuped.
-    match (
-        string_field(worktree, "status").as_str(),
-        worktree_checkout_state(&path),
-    ) {
+    match (status.as_str(), worktree_checkout_state(path)) {
         ("active", WorktreeCheckoutState::Absent) => Some("missing"),
         ("missing", WorktreeCheckoutState::Present) => Some("active"),
         _ => None,
     }
 }
 
-fn settlements(topology: &Value) -> Vec<&'static str> {
+fn settlements(topology: &Value, project_root: &str, root_identity: &str) -> Vec<&'static str> {
     topology
         .get("worktrees")
         .and_then(Value::as_array)
-        .map(|worktrees| worktrees.iter().filter_map(settled_status).collect())
+        .map(|worktrees| {
+            worktrees
+                .iter()
+                .filter_map(|worktree| settled_status(worktree, project_root, root_identity))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -175,62 +216,105 @@ pub fn worktree_presence_reconciler_task() -> Box<dyn PeriodicTask> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime_topology::WORKTREE_STATUSES;
 
-    fn row(status: &str, path: &str) -> Value {
-        json!({ "id": "worktree:x", "status": status, "path": path })
+    const ROOT: &str = "/repo";
+    const ABSENT: &str = "/nonexistent/aimux-presence-test";
+
+    fn settle(status: &str, path: &str) -> Option<&'static str> {
+        settled_status(
+            &json!({ "id": "worktree:x", "status": status, "path": path }),
+            ROOT,
+            &worktree_path_identity(ROOT),
+        )
+    }
+
+    fn unique_name(prefix: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "aimux-presence-{prefix}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ))
+    }
+
+    fn present_dir() -> String {
+        let dir = unique_name("dir");
+        std::fs::create_dir_all(&dir).expect("present dir");
+        dir.to_string_lossy().into_owned()
     }
 
     #[test]
     fn an_active_row_with_no_checkout_settles_to_missing() {
-        assert_eq!(
-            settled_status(&row("active", "/nonexistent/aimux-presence-test")),
-            Some("missing")
-        );
+        assert_eq!(settle("active", ABSENT), Some("missing"));
     }
 
     #[test]
     fn a_missing_row_whose_checkout_returned_settles_to_active() {
-        let dir = std::env::temp_dir();
-        assert_eq!(
-            settled_status(&row("missing", &dir.to_string_lossy())),
-            Some("active")
-        );
+        let dir = present_dir();
+        assert_eq!(settle("missing", &dir), Some("active"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Every status but the two that claim a checkout is left alone, in both
+    /// directions. Derived from the vocabulary rather than listed, so a status
+    /// added tomorrow is covered the day it is added -- and an arm added for
+    /// one of them fails here however it is spelled, which a grep for that
+    /// arm's text could not do.
     #[test]
-    fn an_absent_graveyard_row_is_left_alone() {
-        assert_eq!(
-            settled_status(&row("graveyard", "/nonexistent/aimux-presence-test")),
-            None
-        );
-    }
-
-    #[test]
-    fn an_absent_in_flight_row_is_left_to_the_startup_recovery() {
-        for status in ["planned", "creating", "removing"] {
-            assert_eq!(
-                settled_status(&row(status, "/nonexistent/aimux-presence-test")),
-                None,
-                "{status}"
-            );
+    fn no_other_status_is_settled_on_checkout_presence() {
+        let dir = present_dir();
+        for status in WORKTREE_STATUSES {
+            if matches!(*status, "active" | "missing") {
+                continue;
+            }
+            assert_eq!(settle(status, ABSENT), None, "{status} with no checkout");
+            assert_eq!(settle(status, &dir), None, "{status} with a checkout");
         }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn an_absent_error_row_keeps_its_failure_account() {
-        assert_eq!(
-            settled_status(&row("error", "/nonexistent/aimux-presence-test")),
-            None
-        );
-    }
-
+    /// The inverse, and the one that catches a wrong `path` read: an empty
+    /// path answers `Absent`, so reading the wrong key settles every row.
     #[test]
     fn a_settled_row_is_not_rewritten_on_the_next_scan() {
-        let dir = std::env::temp_dir();
-        assert_eq!(settled_status(&row("active", &dir.to_string_lossy())), None);
+        let dir = present_dir();
+        assert_eq!(settle("active", &dir), None);
+        assert_eq!(settle("missing", ABSENT), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A row with no `path` key means the project root everywhere else, and
+    /// the main checkout is never a worktree to mark. Read raw, such a row is
+    /// `""` -- which stats as `Absent` and could then never heal.
+    #[test]
+    fn the_main_checkout_is_never_marked() {
+        let pathless = json!({ "id": "worktree:root", "status": "active" });
         assert_eq!(
-            settled_status(&row("missing", "/nonexistent/aimux-presence-test")),
-            None
+            settled_status(&pathless, ABSENT, &worktree_path_identity(ABSENT)),
+            None,
+            "a pathless row is the project root, not an absent checkout"
         );
+        assert_eq!(settle("active", ROOT), None, "the main checkout by path");
+    }
+
+    /// Errors are not empty values. `stat` under a regular file answers
+    /// ENOTDIR, which is `Unknown`. The obvious simplification to
+    /// `!worktree_checkout_is_present(..)` makes this fail.
+    #[test]
+    fn an_unreadable_checkout_is_not_an_absent_one() {
+        let file = unique_name("file");
+        std::fs::write(&file, b"x").expect("write file");
+        let under_a_file = file.join("checkout");
+        assert!(
+            std::fs::metadata(&under_a_file)
+                .err()
+                .is_some_and(|error| error.kind() != std::io::ErrorKind::NotFound),
+            "this path must not answer NotFound for the test to mean anything"
+        );
+        assert_eq!(settle("active", &under_a_file.to_string_lossy()), None);
+        let _ = std::fs::remove_file(&file);
     }
 }
