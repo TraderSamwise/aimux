@@ -788,6 +788,7 @@ fn new_agent_key_opens_tool_picker_effect() {
 fn tool_picker_enter_dispatches_agent_spawn_request() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    give_worktree_a_row(&mut snapshot, "<ROOT>");
     let mut controller = DashboardController::new(&snapshot);
     controller.navigation.level = DashboardNavLevel::Sessions;
     focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
@@ -3542,6 +3543,7 @@ fn selected_session_id<'a>(
 fn new_agent_in_a_worktree_targets_that_worktree() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    give_worktree_a_row(&mut snapshot, "<ROOT>");
     let mut controller = DashboardController::new(&snapshot);
     focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
 
@@ -3585,11 +3587,14 @@ fn new_agent_on_a_missing_checkout_falls_back_to_the_supervisor_lane() {
     assert_eq!(worktree_path, None, "no checkout may be offered");
 }
 
-/// The same hazard wearing no marks. When a worktree row is deleted outright
-/// but a session still names its path, the navigation layer rebuilds the lane
-/// locally with `path_missing: false` hardcoded -- it refuses to invent a
-/// verdict about a directory it cannot see. Keying only on the marks let `n`
-/// default straight into a checkout that is gone.
+/// A lane wearing no marks at all, built by hand at the navigation layer.
+///
+/// The REAL payload version of this lives in `supervisor_lane_surfaces.rs`,
+/// built through `build_desktop_state_with_live_window_ids`, because the shape
+/// assembled here is one the project service does not emit -- an earlier
+/// attempt at this guard keyed on it and therefore pinned nothing. This stays
+/// as the cheap complement: whatever shape the lane arrives in, a path with no
+/// topology row behind it is not a destination.
 #[test]
 fn new_agent_on_an_orphan_lane_falls_back_to_the_supervisor_lane() {
     let mut snapshot = snapshot();
@@ -3623,6 +3628,60 @@ fn new_agent_on_an_orphan_lane_falls_back_to_the_supervisor_lane() {
     assert_eq!(worktree_path, None, "no vanished checkout may be offered");
 }
 
+/// The label the resolver PRODUCES, not one a test handed it.
+///
+/// Both overlay tests construct `lane_label` themselves, so replacing this
+/// lookup with a constant left every suite green -- the same gap, one level
+/// down, as the hint that nothing asserted.
+#[test]
+fn the_resolved_label_names_the_lane_the_agent_will_land_in() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    snapshot.worktree_groups[0].name = "feature-lane".into();
+    give_worktree_a_row(&mut snapshot, "<ROOT>");
+    let mut controller = DashboardController::new(&snapshot);
+    focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
+
+    let DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+        lane_label,
+        ..
+    }) = controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+    assert_eq!(lane_label, "feature-lane");
+}
+
+/// And from the supervisor lane, where the label must name where Tab leads --
+/// the main checkout, under the name the rest of the snapshot gives it.
+#[test]
+fn the_resolved_label_from_the_supervisor_lane_names_the_main_checkout() {
+    let mut snapshot = snapshot_with_supervisor_lane();
+    let main = snapshot
+        .worktree_groups
+        .iter_mut()
+        .find(|group| group.path.is_none())
+        .expect("a main checkout group");
+    main.name = "the-main-checkout".into();
+    let mut controller = DashboardController::new(&snapshot);
+    let groups = dashboard_navigation_groups(&snapshot);
+    controller.navigation.worktree_index = groups
+        .iter()
+        .position(|group| group.kind == DashboardNavigationGroupKind::Supervisor)
+        .expect("a supervisor lane");
+
+    let DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+        lane_label,
+        target,
+        ..
+    }) = controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+    assert_eq!(target, DashboardAgentCreationTarget::Supervisor);
+    assert_eq!(lane_label, "the-main-checkout");
+}
+
 /// A worktree still being created has no directory yet, and the TUI jumps the
 /// cursor onto its row as soon as it appears.
 #[test]
@@ -3651,6 +3710,7 @@ fn new_agent_on_a_checkout_still_arriving_falls_back_to_the_supervisor_lane() {
 fn the_resolved_checkout_survives_the_cursor_moving() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    give_worktree_a_row(&mut snapshot, "<ROOT>");
     let mut controller = DashboardController::new(&snapshot);
     controller.navigation.level = DashboardNavLevel::Sessions;
     focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
@@ -3713,6 +3773,7 @@ fn new_agent_in_the_supervisor_lane_targets_the_supervisor_lane() {
 fn new_agent_in_a_worktree_spawns_a_coder_in_that_checkout() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    give_worktree_a_row(&mut snapshot, "<ROOT>");
     let mut controller = DashboardController::new(&snapshot);
     controller.navigation.level = DashboardNavLevel::Sessions;
     focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
@@ -3747,6 +3808,27 @@ fn new_agent_in_a_worktree_spawns_a_coder_in_that_checkout() {
             "open": false
         })
     );
+}
+
+/// A topology row behind a group, which is what makes its checkout a real
+/// destination. Without one the lane is a path the service has no verdict
+/// about, and `n` deliberately refuses it.
+fn give_worktree_a_row(snapshot: &mut DesktopStateSnapshot, path: &str) {
+    if snapshot
+        .worktrees
+        .iter()
+        .any(|worktree| worktree.path == path)
+    {
+        return;
+    }
+    let mut row = snapshot
+        .worktrees
+        .first()
+        .cloned()
+        .expect("the fixture has at least one worktree row");
+    row.path = path.to_owned();
+    row.name = path.to_owned();
+    snapshot.worktrees.push(row);
 }
 
 fn focus_worktree_path(

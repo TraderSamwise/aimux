@@ -672,13 +672,15 @@ impl DashboardController {
     /// exist -- the failure `migrate` already refuses by name -- and the row a
     /// create jumps the cursor onto is `creating` before the git work runs.
     ///
-    /// An ORPHAN group is the same hazard wearing no marks. When a worktree row
-    /// is deleted outright, `dashboard_navigation` rebuilds the lane locally
-    /// from a session that still names the path, and hardcodes
-    /// `path_missing: false` because it deliberately refuses to invent a
-    /// verdict about a directory it cannot see. Such a group has no
-    /// `worktree_index`; the row-less MAIN CHECKOUT also has none, so the path
-    /// is what separates them.
+    /// "Gone" is asked as "is there a topology ROW behind this lane", not as a
+    /// shape of the navigation layer. `build_worktree_groups` emits a group for
+    /// every path a session still names, row or no row, so a worktree deleted
+    /// out from under a running agent renders as an ordinary healthy lane with
+    /// no verdict to give -- `pathMissing` is null, not true. Keying on
+    /// `worktree_index` instead caught none of those and refused live
+    /// checkouts whose session spelled the path differently (a trailing slash
+    /// is enough, since navigation buckets by the literal string while the
+    /// service groups by identity).
     ///
     /// Resolved once, here, and carried in the picker mode. `lane_label` and
     /// `worktree_path` always describe the WORKTREE side of the Tab toggle, so
@@ -698,23 +700,35 @@ impl DashboardController {
         use crate::dashboard_navigation::{
             DashboardNavigationGroupKind, dashboard_navigation_groups,
         };
+        use crate::project_service::desktop_state::worktree_path_identity;
+        // Derived once; `focused_group` would build the same list again.
+        let groups = dashboard_navigation_groups(snapshot);
         // Where Tab leads when the resolved lane is the supervisor lane: a
-        // `None` path, which is the main checkout, under its own name.
-        let main_checkout = || {
-            dashboard_navigation_groups(snapshot)
-                .into_iter()
-                .find(|group| {
-                    group.kind == DashboardNavigationGroupKind::Worktree && group.path.is_none()
-                })
-                .map_or_else(|| "Main checkout".to_owned(), |group| group.name.to_owned())
-        };
-        let supervisor = |target| (target, None, main_checkout());
-        let Some(group) = self.navigation.focused_group(snapshot) else {
+        // `None` path, which is the main checkout, under the name the rest of
+        // the snapshot already gives it.
+        let main_checkout = groups
+            .iter()
+            .find(|group| {
+                group.kind == DashboardNavigationGroupKind::Worktree && group.path.is_none()
+            })
+            .map_or_else(
+                || snapshot.main_checkout_info.name.clone(),
+                |group| group.name.to_owned(),
+            );
+        let supervisor = |target| (target, None, main_checkout.clone());
+        let Some(group) = groups.get(self.navigation.worktree_index) else {
             return supervisor(policy.default_target.clone());
         };
+        let has_a_row = |path: &str| {
+            let identity = worktree_path_identity(path);
+            snapshot
+                .worktrees
+                .iter()
+                .any(|worktree| worktree_path_identity(&worktree.path) == identity)
+        };
         let checkout_is_not_there = group.path_missing
-            || (group.worktree_index.is_none() && group.path.is_some())
-            || crate::dashboard_renderer::worktree_action_in_flight(&group);
+            || crate::dashboard_renderer::worktree_action_in_flight(group)
+            || group.path.is_some_and(|path| !has_a_row(path));
         match group.kind {
             DashboardNavigationGroupKind::Supervisor => {
                 supervisor(DashboardAgentCreationTarget::Supervisor)
