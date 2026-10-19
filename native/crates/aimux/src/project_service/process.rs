@@ -53,6 +53,7 @@ use crate::project_service::subagent_activity_task::subagent_activity_task;
 use crate::project_service::transcript_reconciler_task::transcript_reconciler_task;
 use crate::project_service::visual_clients::project_expose_hot_snapshot_refresh_task;
 use crate::project_service::window_reconciliation::window_reconciliation_task;
+use crate::project_service::worktree_presence_reconciler::worktree_presence_reconciler_task;
 use crate::runtime_lifecycle_methods::write_instruction_files;
 use crate::secure_permissions;
 use crate::tmux_expose::{
@@ -1910,6 +1911,7 @@ pub fn project_service_periodic_tasks_for_context(
     periodic_tasks.push(scribe_watcher_task(context));
     periodic_tasks.push(window_reconciliation_task());
     periodic_tasks.push(retired_worktree_reaper_task());
+    periodic_tasks.push(worktree_presence_reconciler_task());
     append_stability_doctor_test_wedge_task(&mut periodic_tasks);
     periodic_tasks
 }

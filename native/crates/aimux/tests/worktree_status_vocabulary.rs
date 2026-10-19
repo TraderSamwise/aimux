@@ -73,3 +73,104 @@ fn terminal_statuses_are_never_transient() {
         );
     }
 }
+
+/// Every status in the vocabulary names the module responsible for WRITING it.
+///
+/// `missing` was declared here, matched by the dashboard renderer (`○`,
+/// `gone`) and carried in `LIVE_WORKTREE_STATUSES` -- and nothing in the crate
+/// ever wrote it. Seventeen worktrees on this machine sat stored as `active`
+/// with no checkout, from 2026-08-05 on, while every surface drew "checkout
+/// missing" over them from a per-read stat. The screen was right and the record
+/// was not, and because the record never moved, nothing could act on it.
+///
+/// This is a declaration backed by a weak scan, and the weakness is the point
+/// to understand: the scan only checks that the named module still mentions the
+/// status outside its test block. It cannot tell a write from a read, so it
+/// will not catch a deleted write in a file that still matches on the word.
+///
+/// What it does make impossible is the silent case this bug was -- adding a
+/// status without deciding who produces it, and naming a module that has since
+/// stopped producing it at all. That a row actually reaches `missing` is proved
+/// behaviourally, on a real topology file, in
+/// `tests/project_service_worktree_presence.rs`.
+const WORKTREE_STATUS_WRITERS: &[(&str, &str)] = &[
+    ("active", "src/project_service/lifecycle/worktrees.rs"),
+    ("creating", "src/project_service/lifecycle/worktrees.rs"),
+    ("error", "src/project_service/lifecycle/worktrees.rs"),
+    ("graveyard", "src/project_service/lifecycle/worktrees.rs"),
+    (
+        "missing",
+        "src/project_service/worktree_presence_reconciler.rs",
+    ),
+];
+
+/// Words in the vocabulary that no code can produce.
+///
+/// `planned` and `removing` are real worktree statuses in name only. `removing`
+/// lives for real as a *pending action* kind in `dashboard_pending_actions.rs`,
+/// which is a different field; as a `worktrees[].status` it has never been
+/// written. Both are left in the vocabulary rather than deleted here because
+/// `LIVE_WORKTREE_STATUSES` feeds stored rows through coercion, and dropping a
+/// word turns any row still wearing it into `error`.
+///
+/// Listed so the set cannot grow in silence. Removing them is a separate
+/// decision; adding to them needs an argument.
+const WORKTREE_STATUSES_WITH_NO_WRITER: &[&str] = &["planned", "removing"];
+
+#[test]
+fn every_worktree_status_either_has_a_writer_or_is_declared_unreachable() {
+    for status in WORKTREE_STATUSES {
+        let written = WORKTREE_STATUS_WRITERS
+            .iter()
+            .any(|(declared, _)| declared == status);
+        let unreachable = WORKTREE_STATUSES_WITH_NO_WRITER.contains(status);
+        assert!(
+            written ^ unreachable,
+            "{status} is neither declared as written nor as unreachable \
+             (written={written} unreachable={unreachable}). Name the module \
+             that produces it, or say plainly that nothing does."
+        );
+    }
+    for (status, _) in WORKTREE_STATUS_WRITERS {
+        assert!(
+            WORKTREE_STATUSES.contains(status),
+            "{status} has a declared writer but is not in the vocabulary"
+        );
+    }
+}
+
+#[test]
+fn each_declared_writer_mentions_the_status_it_writes() {
+    let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (status, relative) in WORKTREE_STATUS_WRITERS {
+        let path = crate_dir.join(relative);
+        let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("writer for {status} unreadable at {relative}: {error}")
+        });
+        // Production only. Scanning the whole file let a deleted write pass on
+        // the strength of its own `#[cfg(test)]` block still naming the word.
+        let production = source
+            .split_once("#[cfg(test)]")
+            .map_or(source.as_str(), |(before, _)| before);
+        assert!(
+            production.contains(&format!("\"{status}\"")),
+            "{relative} is declared the writer of {status} and no longer names \
+             it; the writer moved and this list did not follow"
+        );
+    }
+}
+
+/// A textual guard used to sit here, forbidding the exact substring
+/// `("graveyard", WorktreeCheckoutState` in the reconciler. It was removed:
+/// `("graveyard" | "active", ..)` defeats it, and rustfmt wrapping the arm
+/// would have failed it with the behaviour unchanged. The real constraint is
+/// `no_other_status_is_settled_on_checkout_presence`, which walks this
+/// vocabulary and asserts the behaviour for every status in both directions.
+#[test]
+fn the_vocabulary_is_what_the_reconciler_is_tested_against() {
+    assert!(
+        WORKTREE_STATUSES.contains(&"graveyard") && WORKTREE_STATUSES.contains(&"missing"),
+        "the behavioural test derives its cases from this list; it must hold \
+         the statuses that matter"
+    );
+}

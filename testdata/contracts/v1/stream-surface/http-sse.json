@@ -252,6 +252,11 @@
                 "name": "window-reconciliation",
                 "intervalMs": "<interval-ms-or-null>",
                 "hot": false
+              },
+              {
+                "name": "worktree-presence-reconciler",
+                "intervalMs": "<interval-ms-or-null>",
+                "hot": false
               }
             ]
           }
@@ -823,6 +828,11 @@
                 },
                 {
                   "name": "window-reconciliation",
+                  "intervalMs": "<interval-ms-or-null>",
+                  "hot": false
+                },
+                {
+                  "name": "worktree-presence-reconciler",
                   "intervalMs": "<interval-ms-or-null>",
                   "hot": false
                 }

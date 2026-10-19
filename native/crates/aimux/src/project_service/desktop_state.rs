@@ -2251,8 +2251,8 @@ fn worktree_checkout_probe(
         // every row still being created, rows this build had never touched. The
         // count is a budget, so a row nobody will ask about does not get a
         // syscall.
-        let can_be_marked_missing = !worktree_checkout_is_still_arriving(worktree)
-            && !is_worktree_path(path, &root_identity);
+        let can_be_marked_missing =
+            worktree_checkout_may_be_marked_missing(worktree, path, &root_identity);
         let carries_a_failure = worktree
             .get("operationFailure")
             .is_some_and(|failure| !failure.is_null());
@@ -2293,6 +2293,24 @@ struct WorktreeCheckoutProbe {
     /// `metadata` answered Ok, which is the rule `clear_worktree_row_failure`
     /// uses to decide whether it can touch a row at all.
     present: BTreeSet<String>,
+}
+
+/// Whether an absent checkout on this row may be reported as gone.
+///
+/// ONE rule, because there are now two consumers of it and they answer at
+/// different times: the per-read probe above paints `pathMissing` on every
+/// desktop-state build, and the presence reconciler persists the same verdict
+/// into `worktrees[].status` on the tick loop. They may lag each other; they
+/// may not disagree about which rows are even eligible.
+///
+/// A checkout still arriving has no directory yet -- a create is minutes of git
+/// work -- and the project's main checkout is never a worktree to mark.
+pub fn worktree_checkout_may_be_marked_missing(
+    worktree: &Value,
+    path: &str,
+    root_identity: &str,
+) -> bool {
+    !worktree_checkout_is_still_arriving(worktree) && !is_worktree_path(path, root_identity)
 }
 
 /// A worktree whose checkout has not been made yet, or is being unmade.
@@ -2538,7 +2556,7 @@ fn is_worktree_path(path: &str, identity: &str) -> bool {
 /// group and `mainCheckoutInfo` beside it both said `master`. One rule, so the
 /// predicate that decides to spend the subprocess and the consumer that uses
 /// it cannot read the same field two ways.
-fn worktree_row_path<'a>(worktree: &'a Value, project_root: &'a str) -> &'a str {
+pub fn worktree_row_path<'a>(worktree: &'a Value, project_root: &'a str) -> &'a str {
     string_field(worktree, "path").unwrap_or(project_root)
 }
 

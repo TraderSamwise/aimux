@@ -72,6 +72,7 @@ pub mod window_reconciliation;
 pub mod work_outline;
 pub mod worktree_cache_cleanup;
 pub mod worktree_colors_contract;
+pub mod worktree_presence_reconciler;
 pub mod worktrees;
 
 pub mod usage_model;
