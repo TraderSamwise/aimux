@@ -1931,6 +1931,13 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
 /// One predicate for the row summary's ordering, the row's tone and the detail
 /// panel, because a checkout that has not arrived yet is not a checkout that is
 /// gone and all three have to agree about which it is.
+///
+/// `agent_creation_destination` also asks it, for a different question: not
+/// "has this row settled?" but "is this somewhere to put a process?". Today
+/// every kind it matches -- removing, graveyarding, resurrecting, deleting --
+/// answers no to both. A kind added here that does NOT belong in that second
+/// set would silently refuse to spawn into a usable checkout, so split them
+/// rather than widening this one.
 pub(crate) fn worktree_action_in_flight(worktree: &DashboardNavigationGroup<'_>) -> bool {
     worktree.pending_action.is_some() || worktree.removing || worktree.pending
 }

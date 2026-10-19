@@ -66,22 +66,6 @@ pub enum DashboardToolPickerEffect {
 }
 
 impl DashboardToolPickerState {
-    pub fn new(
-        tools: Vec<DashboardToolEntry>,
-        policy: DashboardAgentCreationPolicy,
-        target: DashboardAgentCreationTarget,
-    ) -> Self {
-        Self::with_mode(
-            tools,
-            DashboardToolPickerMode::Create {
-                policy,
-                target,
-                worktree_path: None,
-                lane_label: "Main checkout".to_owned(),
-            },
-        )
-    }
-
     pub fn with_mode(tools: Vec<DashboardToolEntry>, mode: DashboardToolPickerMode) -> Self {
         // The TARGET the opener resolved, not the policy's project-wide
         // default. Reading `policy.default_target` here meant the picker
@@ -172,17 +156,17 @@ impl DashboardToolPickerState {
                     &policy.default_role
                 };
                 // The destination resolved when the picker opened, not the one
-                // under the cursor now. `worktree_path` is still the argument
-                // every other mode uses.
-                let _ = worktree_path;
-                let worktree_path = destination.as_deref();
+                // under the cursor now. Deliberately NOT shadowing the
+                // `worktree_path` parameter the other arms still read: a line
+                // inserted above such a shadow silently gets the cursor back.
+                let destination_path = destination.as_deref();
                 DashboardToolPickerEffect::Create(plan_dashboard_create(
                     &DashboardCreateIntent::Agent(DashboardAgentCreateIntent {
                         role: Some(role.clone()),
                         tool: Some(tool.key.clone()),
                         session_id: None,
                         worktree_path: if self.create_in_worktree {
-                            worktree_path.map(str::to_owned)
+                            destination_path.map(str::to_owned)
                         } else {
                             None
                         },

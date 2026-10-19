@@ -3585,6 +3585,44 @@ fn new_agent_on_a_missing_checkout_falls_back_to_the_supervisor_lane() {
     assert_eq!(worktree_path, None, "no checkout may be offered");
 }
 
+/// The same hazard wearing no marks. When a worktree row is deleted outright
+/// but a session still names its path, the navigation layer rebuilds the lane
+/// locally with `path_missing: false` hardcoded -- it refuses to invent a
+/// verdict about a directory it cannot see. Keying only on the marks let `n`
+/// default straight into a checkout that is gone.
+#[test]
+fn new_agent_on_an_orphan_lane_falls_back_to_the_supervisor_lane() {
+    let mut snapshot = snapshot();
+    let mut stranded = snapshot.sessions[0].clone();
+    stranded.id = "codex-stranded".into();
+    stranded.worktree_path = Some("/definitely/gone/wt".into());
+    snapshot.sessions.push(stranded);
+    let mut controller = DashboardController::new(&snapshot);
+    let groups = dashboard_navigation_groups(&snapshot);
+    let orphan = groups
+        .iter()
+        .position(|group| group.path == Some("/definitely/gone/wt"))
+        .expect("the orphan lane");
+    assert!(
+        !groups[orphan].path_missing,
+        "the orphan lane must wear no marks, or this proves nothing"
+    );
+    controller.navigation.worktree_index = orphan;
+    controller.navigation.item_index = 0;
+
+    let DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+        target,
+        worktree_path,
+        ..
+    }) = controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+
+    assert_eq!(target, DashboardAgentCreationTarget::Supervisor);
+    assert_eq!(worktree_path, None, "no vanished checkout may be offered");
+}
+
 /// A worktree still being created has no directory yet, and the TUI jumps the
 /// cursor onto its row as soon as it appears.
 #[test]

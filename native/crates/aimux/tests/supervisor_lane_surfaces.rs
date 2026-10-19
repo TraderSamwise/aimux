@@ -37,8 +37,9 @@ fn spawn_body(snapshot: &DesktopStateSnapshot, lane: Lane) -> Value {
         .position(|group| match lane {
             Lane::Supervisor => group.kind == DashboardNavigationGroupKind::Supervisor,
             Lane::Feature => group.path.is_some_and(|path| path.ends_with("/feature")),
+            Lane::DefaultFocus => false,
         })
-        .expect("the lane under test");
+        .unwrap_or(controller.navigation.worktree_index);
     let DashboardControllerEffect::OpenAgentToolPicker(mode) =
         controller.handle_key(snapshot, DashboardKey::NewAgent)
     else {
@@ -61,6 +62,8 @@ fn spawn_body(snapshot: &DesktopStateSnapshot, lane: Lane) -> Value {
 enum Lane {
     Supervisor,
     Feature,
+    /// Wherever the dashboard puts the cursor when nobody has moved it.
+    DefaultFocus,
 }
 
 /// The same probe with one Tab, which is the only way to reach the other lane
@@ -72,6 +75,7 @@ fn tabbed_spawn_body(snapshot: &DesktopStateSnapshot, lane: Lane) -> Value {
         .position(|group| match lane {
             Lane::Supervisor => group.kind == DashboardNavigationGroupKind::Supervisor,
             Lane::Feature => group.path.is_some_and(|path| path.ends_with("/feature")),
+            Lane::DefaultFocus => panic!("the Tab probe needs a named lane"),
         })
         .expect("the lane under test");
     let DashboardControllerEffect::OpenAgentToolPicker(mode) =
@@ -165,6 +169,29 @@ fn supervisor_lane_visibility_and_new_agent_defaults_match_the_app() {
         tabbed_spawn_body(&snapshot, Lane::Feature),
         default_spawn,
         "Tab out of a worktree must give exactly the supervisor body"
+    );
+    // The fact the old gate was really pinning, kept rather than dropped: what
+    // the two surfaces do when nobody chooses anything.
+    //
+    // They DIFFER, deliberately. The app has no cursor, so its preselected
+    // chip is the policy's `defaultTarget` and it spawns a control in the
+    // supervisor lane. The TUI's cursor always names a lane, and its default
+    // focus is the main checkout, so it spawns a coder there. Asserted rather
+    // than left uncovered, because an undeclared divergence between these two
+    // is exactly what this file exists to catch -- if either side changes its
+    // untouched default, this fails and the choice gets made on purpose.
+    let tui_untouched = spawn_body(&snapshot, Lane::DefaultFocus);
+    assert_eq!(
+        tui_untouched["role"], "coder",
+        "the TUI's default focus is the main checkout"
+    );
+    assert!(
+        tui_untouched.get("worktreePath").is_none(),
+        "the main checkout is an absent path: {tui_untouched}"
+    );
+    assert_eq!(
+        default_spawn["role"], "control",
+        "the app's untouched chip is the policy default, which is supervisor"
     );
     let probe = directory.0.join("surfaces.json");
     fs::write(
