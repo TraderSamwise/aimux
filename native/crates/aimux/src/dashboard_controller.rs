@@ -654,38 +654,56 @@ impl DashboardController {
         }
     }
 
-    /// Which lane a new agent belongs to: the one the cursor is standing in.
+    /// Where a new agent belongs: the lane the cursor is standing in.
     ///
     /// `n` used to ignore the selection entirely. The picker read
     /// `policy.default_target`, which the project service pins to
     /// `supervisor`, so every new agent became a `control` in the supervisor
     /// lane however deep in a worktree you were -- recoverable only by knowing
-    /// to press Tab. The policy's `worktreeRole` existed for this case and
-    /// nothing consulted it.
+    /// that Tab toggles the destination. The policy's `worktreeRole` existed
+    /// for this case and nothing consulted it.
     ///
     /// The main checkout is a `Worktree` group with no path, which is exactly
-    /// right: it takes the worktree role, and a `None` path is what the spawn
-    /// route already means by the main checkout.
+    /// right: it takes the worktree role, and a `None` path is already what
+    /// the spawn route means by the main checkout.
     ///
-    /// `default_target` survives as the fallback for a dashboard with no lanes
-    /// at all to read, which is the only case where there is nothing better.
-    fn agent_creation_target(
+    /// A checkout that is GONE, or one still being made, falls back to the
+    /// supervisor lane. Defaulting into it would hand tmux a cwd that does not
+    /// exist -- the failure `migrate` already refuses by name -- and the row a
+    /// create jumps the cursor onto is `creating` before the git work runs.
+    ///
+    /// Resolved once, here, and carried in the picker mode: the lane, its
+    /// path, and the name to show for it.
+    fn agent_creation_destination(
         &self,
         snapshot: &DesktopStateSnapshot,
         policy: &crate::dashboard_create::DashboardAgentCreationPolicy,
-    ) -> crate::dashboard_create::DashboardAgentCreationTarget {
+    ) -> (
+        crate::dashboard_create::DashboardAgentCreationTarget,
+        Option<String>,
+        String,
+    ) {
         use crate::dashboard_create::DashboardAgentCreationTarget;
         use crate::dashboard_navigation::DashboardNavigationGroupKind;
-        match self
-            .navigation
-            .focused_group(snapshot)
-            .map(|group| group.kind)
-        {
-            Some(DashboardNavigationGroupKind::Supervisor) => {
-                DashboardAgentCreationTarget::Supervisor
+        let supervisor = |target| (target, None, "Supervisor lane".to_owned());
+        let Some(group) = self.navigation.focused_group(snapshot) else {
+            return supervisor(policy.default_target.clone());
+        };
+        match group.kind {
+            DashboardNavigationGroupKind::Supervisor => {
+                supervisor(DashboardAgentCreationTarget::Supervisor)
             }
-            Some(DashboardNavigationGroupKind::Worktree) => DashboardAgentCreationTarget::Worktree,
-            None => policy.default_target.clone(),
+            DashboardNavigationGroupKind::Worktree
+                if group.path_missing
+                    || crate::dashboard_renderer::worktree_action_in_flight(&group) =>
+            {
+                supervisor(DashboardAgentCreationTarget::Supervisor)
+            }
+            DashboardNavigationGroupKind::Worktree => (
+                DashboardAgentCreationTarget::Worktree,
+                group.path.map(str::to_owned),
+                group.name.to_owned(),
+            ),
         }
     }
 
@@ -800,9 +818,15 @@ impl DashboardController {
                     .and_then(crate::dashboard_create::DashboardAgentCreationPolicy::parse)
                 {
                     Ok(policy) => {
-                        let target = self.agent_creation_target(snapshot, &policy);
+                        let (target, worktree_path, lane_label) =
+                            self.agent_creation_destination(snapshot, &policy);
                         DashboardControllerEffect::OpenAgentToolPicker(
-                            DashboardToolPickerMode::Create { policy, target },
+                            DashboardToolPickerMode::Create {
+                                policy,
+                                target,
+                                worktree_path,
+                                lane_label,
+                            },
                         )
                     }
                     Err(error) => {

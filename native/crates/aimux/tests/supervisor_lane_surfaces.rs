@@ -1,7 +1,7 @@
 use aimux::config::merge_config_layers;
 use aimux::dashboard_controller::{DashboardController, DashboardControllerEffect, DashboardKey};
 use aimux::dashboard_model::{DashboardKept, DesktopStateSnapshot, filter_dashboard_visible_model};
-use aimux::dashboard_navigation::dashboard_navigation_groups;
+use aimux::dashboard_navigation::{DashboardNavigationGroupKind, dashboard_navigation_groups};
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::dashboard_tool_picker::enabled_dashboard_tools;
 use aimux::project_service::desktop_state::{
@@ -22,12 +22,23 @@ impl Drop for ProbeDirectory {
     }
 }
 
-fn spawn_body(snapshot: &DesktopStateSnapshot, worktree: bool) -> Value {
+/// The TUI half of the comparison, standing in a named lane.
+///
+/// It used to park on `/feature` for BOTH probes and call the no-Tab result
+/// the default, which only matched the app because `n` ignored the cursor
+/// entirely. That made the gate agree with the app by reproducing the bug: a
+/// user standing in a worktree got a supervisor control agent on both
+/// surfaces. The two probes now stand where the app's two chips point, so
+/// equal intent is compared with equal intent.
+fn spawn_body(snapshot: &DesktopStateSnapshot, lane: Lane) -> Value {
     let mut controller = DashboardController::new(snapshot);
     controller.navigation.worktree_index = dashboard_navigation_groups(snapshot)
         .iter()
-        .position(|group| group.path.is_some_and(|path| path.ends_with("/feature")))
-        .expect("feature group");
+        .position(|group| match lane {
+            Lane::Supervisor => group.kind == DashboardNavigationGroupKind::Supervisor,
+            Lane::Feature => group.path.is_some_and(|path| path.ends_with("/feature")),
+        })
+        .expect("the lane under test");
     let DashboardControllerEffect::OpenAgentToolPicker(mode) =
         controller.handle_key(snapshot, DashboardKey::NewAgent)
     else {
@@ -37,18 +48,50 @@ fn spawn_body(snapshot: &DesktopStateSnapshot, worktree: bool) -> Value {
         enabled_dashboard_tools(&merge_config_layers(None, None)),
         mode,
     );
-    if worktree {
-        assert_eq!(
-            controller.handle_key(snapshot, DashboardKey::Tab),
-            DashboardControllerEffect::Render
-        );
-    }
     let DashboardControllerEffect::Request(request) =
         controller.handle_key(snapshot, DashboardKey::Enter)
     else {
         panic!("Enter must submit a spawn request");
     };
     assert_eq!(request.path, "/agents/spawn");
+    request.body
+}
+
+#[derive(Clone, Copy)]
+enum Lane {
+    Supervisor,
+    Feature,
+}
+
+/// The same probe with one Tab, which is the only way to reach the other lane
+/// without moving the cursor.
+fn tabbed_spawn_body(snapshot: &DesktopStateSnapshot, lane: Lane) -> Value {
+    let mut controller = DashboardController::new(snapshot);
+    controller.navigation.worktree_index = dashboard_navigation_groups(snapshot)
+        .iter()
+        .position(|group| match lane {
+            Lane::Supervisor => group.kind == DashboardNavigationGroupKind::Supervisor,
+            Lane::Feature => group.path.is_some_and(|path| path.ends_with("/feature")),
+        })
+        .expect("the lane under test");
+    let DashboardControllerEffect::OpenAgentToolPicker(mode) =
+        controller.handle_key(snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("n must open the agent picker");
+    };
+    controller.open_tool_picker(
+        enabled_dashboard_tools(&merge_config_layers(None, None)),
+        mode,
+    );
+    assert_eq!(
+        controller.handle_key(snapshot, DashboardKey::Tab),
+        DashboardControllerEffect::Render
+    );
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(snapshot, DashboardKey::Enter)
+    else {
+        panic!("Enter must submit a spawn request");
+    };
     request.body
 }
 
@@ -106,11 +149,23 @@ fn supervisor_lane_visibility_and_new_agent_defaults_match_the_app() {
     });
     let tui_visible = strip_ansi(&rendered.frame).contains("SUPERVISOR");
     assert!(tui_visible, "the empty supervisor lane must be rendered");
-    let default_spawn = spawn_body(&snapshot, false);
-    let worktree_spawn = spawn_body(&snapshot, true);
+    let default_spawn = spawn_body(&snapshot, Lane::Supervisor);
+    let worktree_spawn = spawn_body(&snapshot, Lane::Feature);
     assert_eq!(default_spawn["role"], "control");
     assert!(default_spawn.get("worktreePath").is_none());
     assert_eq!(worktree_spawn["role"], "coder");
+    assert!(
+        worktree_spawn["worktreePath"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("/feature")),
+        "the worktree probe must carry its own checkout: {worktree_spawn}"
+    );
+    // Tab still crosses between the two, from the lane the cursor is in.
+    assert_eq!(
+        tabbed_spawn_body(&snapshot, Lane::Feature),
+        default_spawn,
+        "Tab out of a worktree must give exactly the supervisor body"
+    );
     let probe = directory.0.join("surfaces.json");
     fs::write(
         &probe,

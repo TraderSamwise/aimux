@@ -50,6 +50,8 @@ fn create_selected_maps_default_launch_override() {
         DashboardToolPickerMode::Create {
             policy: creation_policy(),
             target: DashboardAgentCreationTarget::Supervisor,
+            worktree_path: Some("/repo/.aimux/worktrees/demo".to_owned()),
+            lane_label: "demo".to_owned(),
         },
     );
     picker.index = 1;
@@ -259,13 +261,20 @@ fn picker_consumes_service_destination_and_custom_roles() {
         "defaultTarget":"worktree", "defaultRole":"review-control", "worktreeRole":"custom-coder"
     }))
     .unwrap();
-    let mut picker = DashboardToolPickerState::new(
+    let mut picker = DashboardToolPickerState::with_mode(
         enabled_dashboard_tools(&merge_config_layers(None, None)),
-        policy,
-        DashboardAgentCreationTarget::Worktree,
+        DashboardToolPickerMode::Create {
+            policy,
+            target: DashboardAgentCreationTarget::Worktree,
+            worktree_path: Some("/repo/feature".to_owned()),
+            lane_label: "feature".to_owned(),
+        },
     );
+    // The argument is deliberately a DIFFERENT path from the carried one: the
+    // destination is the one resolved when the picker opened, so a cursor that
+    // moved on cannot redirect the spawn.
     let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
-        picker.create_selected(Some("/repo/feature"))
+        picker.create_selected(Some("/repo/moved-on"))
     else {
         panic!("spawn request");
     };

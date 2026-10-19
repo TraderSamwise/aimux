@@ -1931,7 +1931,7 @@ fn worktree_summary_text(worktree: &DashboardNavigationGroup<'_>) -> String {
 /// One predicate for the row summary's ordering, the row's tone and the detail
 /// panel, because a checkout that has not arrived yet is not a checkout that is
 /// gone and all three have to agree about which it is.
-fn worktree_action_in_flight(worktree: &DashboardNavigationGroup<'_>) -> bool {
+pub(crate) fn worktree_action_in_flight(worktree: &DashboardNavigationGroup<'_>) -> bool {
     worktree.pending_action.is_some() || worktree.removing || worktree.pending
 }
 

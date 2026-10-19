@@ -29,13 +29,24 @@ pub struct DashboardToolPickerState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardToolPickerMode {
-    /// `target` is the lane the opener resolved from where the cursor is, so
-    /// the picker never has to guess. `policy.default_target` is the fallback
-    /// the OPENER applies when there is no lane to read, and is deliberately
-    /// not consulted here.
+    /// The destination the opener resolved from where the cursor is -- the
+    /// lane AND its checkout -- so the picker never has to guess either.
+    ///
+    /// `policy.default_target` is the fallback the OPENER applies when there is
+    /// no lane to read, and is deliberately not consulted here. The path is
+    /// carried rather than re-read at Enter because the two were derived at
+    /// different moments: if the focused worktree went away while the picker
+    /// was open, the target said one checkout and the path said whichever
+    /// neighbour the cursor fell onto.
     Create {
         policy: DashboardAgentCreationPolicy,
         target: DashboardAgentCreationTarget,
+        /// `None` is the main checkout, which is what the spawn route means by
+        /// an absent `worktreePath`.
+        worktree_path: Option<String>,
+        /// What to call the worktree destination on the overlay. The hint said
+        /// "Focused worktree" over the main checkout, which is not one.
+        lane_label: String,
     },
     CreateOverseer,
     CreateScribe,
@@ -60,7 +71,15 @@ impl DashboardToolPickerState {
         policy: DashboardAgentCreationPolicy,
         target: DashboardAgentCreationTarget,
     ) -> Self {
-        Self::with_mode(tools, DashboardToolPickerMode::Create { policy, target })
+        Self::with_mode(
+            tools,
+            DashboardToolPickerMode::Create {
+                policy,
+                target,
+                worktree_path: None,
+                lane_label: "Main checkout".to_owned(),
+            },
+        )
     }
 
     pub fn with_mode(tools: Vec<DashboardToolEntry>, mode: DashboardToolPickerMode) -> Self {
@@ -142,12 +161,21 @@ impl DashboardToolPickerState {
         launch_override: Option<Value>,
     ) -> DashboardToolPickerEffect {
         match &self.mode {
-            DashboardToolPickerMode::Create { policy, .. } => {
+            DashboardToolPickerMode::Create {
+                policy,
+                worktree_path: destination,
+                ..
+            } => {
                 let role = if self.create_in_worktree {
                     &policy.worktree_role
                 } else {
                     &policy.default_role
                 };
+                // The destination resolved when the picker opened, not the one
+                // under the cursor now. `worktree_path` is still the argument
+                // every other mode uses.
+                let _ = worktree_path;
+                let worktree_path = destination.as_deref();
                 DashboardToolPickerEffect::Create(plan_dashboard_create(
                     &DashboardCreateIntent::Agent(DashboardAgentCreateIntent {
                         role: Some(role.clone()),
@@ -252,16 +280,17 @@ pub fn render_tool_picker_overlay(
             icon: None,
         });
     }
-    if let DashboardToolPickerMode::Create { policy, .. } = &state.mode {
-        let target = if state.create_in_worktree {
-            "Focused worktree"
+    if let DashboardToolPickerMode::Create {
+        policy, lane_label, ..
+    } = &state.mode
+    {
+        // The resolved lane's own name, not the word "worktree". The main
+        // checkout is a worktree group and is not a worktree, so the old hint
+        // announced "Focused worktree" over the commonest destination there is.
+        let (target, role) = if state.create_in_worktree {
+            (lane_label.as_str(), &policy.worktree_role)
         } else {
-            "Supervisor lane"
-        };
-        let role = if state.create_in_worktree {
-            &policy.worktree_role
-        } else {
-            &policy.default_role
+            ("Supervisor lane", &policy.default_role)
         };
         body.push(format!("  {target} · {role}  [Tab] change destination"));
         body.push(String::new());
