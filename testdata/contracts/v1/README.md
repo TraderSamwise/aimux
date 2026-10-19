@@ -593,7 +593,14 @@ level/category gating, secret redaction, rotation, and lifecycle records.
   captured by running TypeScript `session-recency`.
 - `runtime-state/session-restorability.json`: offline-session exact backend
   restore readiness and blocker selection captured by running TypeScript
-  `session-restorability`.
+  `session-restorability`. One case,
+  `runtime-state-session-restorability-003`, carries a `divergesFromNode`
+  note: Node called an offline Claude or Codex row with no
+  `backendSessionId` "blocked", and that answer was wrong on the live fleet
+  -- it told the strix overseer it was unrecoverable while its conversation
+  was still running. Rust calls it "ready", meaning only that the restore
+  route may go looking; authorising a fresh start still needs a successful
+  empty inspection.
 - `runtime-state/session-semantics.json`: session semantic labels, attention
   scores, compact hints, notification projection, and display-label precedence
   captured by running TypeScript `session-semantics`. One case,
@@ -701,7 +708,12 @@ level/category gating, secret redaction, rotation, and lifecycle records.
   token, and card rendering behavior captured by running TypeScript
   `tui/render/theme` helpers.
 - `tui/dashboard-footer-hints.json`: dashboard footer hint ordering and labels
-  captured by running TypeScript `buildDashboardFooterHints`.
+  originally captured from TypeScript `buildDashboardFooterHints`; outputs now
+  use the actual Rust renderer, including the intentional bulk graveyard and
+  remote branch actions. One case, `dashboard-footer-hints-004`, carries a
+  `divergesFromNode` note: Node had no fresh-restart action at all, so an
+  offline agent whose backend conversation could not be identified was a dead
+  end. Rust offers `F start fresh` on exactly that row.
 - `tui/screen-overlays.json`: dashboard overlay raw ANSI output and visible
   text captured by running TypeScript `tui/screens/overlay-renderers` helpers.
   One case, `tui-screen-overlay-010`, carries a `divergesFromNode` note: Node

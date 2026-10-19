@@ -1597,6 +1597,7 @@
       "name": "flat selected blocked offline agent",
       "source": "src/tui/screens/dashboard-renderers.ts",
       "api": "buildDashboardFooterHints",
+      "divergesFromNode": "Node had no fresh-restart action at all: an offline agent whose exact backend conversation could not be identified was a dead end, which is what PR #476 fixed. Rust offers `F start fresh` on exactly that row -- a confirmed relaunch that abandons history -- so the hint appears here and in no Node capture. Deliberate divergence, not drift; the key is planned by plan_session_restart_fresh in dashboard_actions.rs.",
       "input": {
         "snapshot": {
           "agentRestoreOffer": null,
@@ -1839,6 +1840,7 @@
         ["D", "cache cleanup"],
         ["w", "worktree"],
         ["B", "remote branch"],
+        ["F", "start fresh", "danger"],
         ["a", "hide offline"],
         ["s", "msg"],
         ["H", "handoff"],

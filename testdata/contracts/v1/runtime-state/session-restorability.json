@@ -53,9 +53,10 @@
     },
     {
       "id": "runtime-state-session-restorability-003",
-      "name": "revalidates precomputed ready state against exact backend resume requirements",
+      "name": "lets a discoverable backend conversation stay ready without an exact id",
       "source": "src/session-restorability.test.ts",
       "api": "describeSessionRestorability",
+      "divergesFromNode": "Node answered \"blocked / missing exact resumable backend session id\" for an offline Claude or Codex row with no backendSessionId, and that answer was wrong on the live fleet: it told the strix overseer it was unrecoverable while its conversation was still running. PR #476 made this case \"ready\", which means only that the restore route MAY look for the conversation -- by rollout scan, or by attaching to one the tool still has open. It does not authorise a fresh start; only a successful empty inspection does. Deliberate divergence, not drift; see describe_session_restorability in project_service/agents.rs.",
       "input": {
         "session": {
           "id": "claude-stale-ready",
@@ -66,7 +67,7 @@
         },
         "tools": { "claude": { "resumeArgs": ["--resume", "{sessionId}"], "resumeByBackendSessionId": true } }
       },
-      "output": { "restoreState": "blocked", "restoreBlockedReason": "missing exact resumable backend session id" },
+      "output": { "restoreState": "ready" },
       "inputSha256": "828f4a2c525ff630c4fb21446abeb28fde50cd7909b2f820c735f24fcccc6a54"
     },
     {
