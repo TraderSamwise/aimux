@@ -672,15 +672,23 @@ impl DashboardController {
     /// exist -- the failure `migrate` already refuses by name -- and the row a
     /// create jumps the cursor onto is `creating` before the git work runs.
     ///
-    /// "Gone" is asked as "is there a topology ROW behind this lane", not as a
-    /// shape of the navigation layer. `build_worktree_groups` emits a group for
-    /// every path a session still names, row or no row, so a worktree deleted
-    /// out from under a running agent renders as an ordinary healthy lane with
-    /// no verdict to give -- `pathMissing` is null, not true. Keying on
-    /// `worktree_index` instead caught none of those and refused live
-    /// checkouts whose session spelled the path differently (a trailing slash
-    /// is enough, since navigation buckets by the literal string while the
-    /// service groups by identity).
+    /// "Somewhere to spawn" is asked as "does the service list an ACTIVE,
+    /// NON-RETIRED row for this path", not as a shape of the navigation layer.
+    /// `build_worktree_groups` emits a group for every path a session still
+    /// names, row or no row, so a worktree deleted out from under a running
+    /// agent renders as an ordinary healthy lane with no verdict to give --
+    /// `pathMissing` is null, not true. Keying on `worktree_index` instead
+    /// caught none of those and refused live checkouts whose session spelled
+    /// the path differently (a trailing slash is enough, since navigation
+    /// buckets by the literal string while the service groups by identity).
+    ///
+    /// `snapshot.worktrees` is that list, and it is deliberately incomplete:
+    /// `build_desktop_state` splits retired-but-occupied rows out of it so
+    /// `aimux worktree list` does not print the graveyard, while still emitting
+    /// their GROUP so the agent inside renders. So a graveyarded worktree whose
+    /// checkout is still there reads as "not a destination" here -- which is
+    /// the answer we want. The lane exists to reach the agent still running in
+    /// it; starting NEW work there means resurrecting the worktree first.
     ///
     /// Resolved once, here, and carried in the picker mode. `lane_label` and
     /// `worktree_path` always describe the WORKTREE side of the Tab toggle, so
@@ -720,6 +728,16 @@ impl DashboardController {
             return supervisor(policy.default_target.clone());
         };
         let has_a_row = |path: &str| {
+            // Raw first: identical spellings are the overwhelming majority and
+            // cost nothing, where `worktree_path_identity` canonicalises and so
+            // pays a syscall per row per keypress.
+            if snapshot
+                .worktrees
+                .iter()
+                .any(|worktree| worktree.path == path)
+            {
+                return true;
+            }
             let identity = worktree_path_identity(path);
             snapshot
                 .worktrees

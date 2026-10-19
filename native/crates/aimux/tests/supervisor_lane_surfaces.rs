@@ -406,3 +406,87 @@ fn a_live_checkout_spelled_differently_is_still_a_destination() {
     );
     assert_eq!(request.body["role"], "coder");
 }
+
+/// A retired worktree something is still ALIVE in, whose checkout is still on
+/// disk. Its lane looks entirely healthy -- its own name and branch from the
+/// row, a real `worktree_index`, `pathMissing` false, no in-flight marks --
+/// because the service emits the group so the agent inside renders on every
+/// surface, while deliberately keeping the row out of `worktrees` so
+/// `aimux worktree list` does not print the graveyard.
+///
+/// So `n` there is NOT offered that checkout. Recorded as a decision rather
+/// than left accidental: the lane exists to reach the agent still running in
+/// it, and starting new work in a retired worktree means resurrecting it
+/// first. The guard reads "is there an active, non-retired row", and this is
+/// the case that makes those two words load-bearing.
+#[test]
+fn a_retired_worktree_someone_is_still_working_in_is_not_a_destination() {
+    let directory = ProbeDirectory(
+        std::env::temp_dir().join(format!("aimux-retired-alive-{}", std::process::id())),
+    );
+    let retired = directory.0.join("retired-wt");
+    fs::create_dir_all(&retired).expect("create the checkout that is still there");
+    let root = directory.0.to_string_lossy().into_owned();
+    let retired_path = retired.to_string_lossy().into_owned();
+    let topology = json!({
+        "sessions": [{
+            "id": "codex-still-here", "status": "running", "tool": "codex",
+            "toolConfigKey": "codex", "command": "codex", "worktreePath": retired_path
+        }],
+        "services": [],
+        "worktrees": [{
+            "id": "retired-wt", "name": "retired-wt", "branch": "retired-wt",
+            "status": "graveyard", "path": retired_path
+        }]
+    });
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root,
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &json!({}),
+        },
+        Some(&Default::default()),
+    );
+    let snapshot: DesktopStateSnapshot = serde_json::from_value(state).expect("desktop snapshot");
+    assert!(
+        !snapshot
+            .worktrees
+            .iter()
+            .any(|worktree| worktree.path == retired_path),
+        "the retired row is kept out of `worktrees` by design; if that changes, \
+         this test is pinning the wrong thing"
+    );
+    let groups = dashboard_navigation_groups(&snapshot);
+    let lane = groups
+        .iter()
+        .position(|group| group.path.is_some_and(|path| path == retired_path))
+        .expect("the retired lane must still be rendered for the agent inside");
+    assert!(
+        !groups[lane].path_missing,
+        "the checkout is still on disk; the refusal must not come from that"
+    );
+
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.worktree_index = lane;
+    let DashboardControllerEffect::OpenAgentToolPicker(mode) =
+        controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("n must open the agent picker");
+    };
+    controller.open_tool_picker(
+        enabled_dashboard_tools(&merge_config_layers(None, None)),
+        mode,
+    );
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("Enter must submit a spawn request");
+    };
+    assert!(
+        request.body.get("worktreePath").is_none(),
+        "a retired worktree is not where new work starts: {}",
+        request.body
+    );
+    assert_eq!(request.body["role"], "control");
+}
