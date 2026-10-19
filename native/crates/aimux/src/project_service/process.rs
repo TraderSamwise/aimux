@@ -255,6 +255,16 @@ pub fn run_project_service_startup_tasks(
     let _ = runtime.repair_legacy_project_session_names(&startup.project_root);
     let _ =
         reconcile_offline_backend_session_ids(&startup.project_root, &startup.project_state_dir);
+    let recovered = crate::project_service::lifecycle::recover_orphaned_worktree_operations(
+        &startup.project_state_dir,
+    );
+    if recovered > 0 {
+        log_lifecycle_always(
+            "startup settled worktree rows left mid-operation by a stopped service",
+            "project-service",
+            Some(json!({ "recovered": recovered })),
+        );
+    }
     let config = load_config_for_project(&startup.project_root);
     write_instruction_files(&startup.project_root, &config);
     let _ = report_default_scribe_outcome(&ensure_default_scribe_agent(context, runtime));

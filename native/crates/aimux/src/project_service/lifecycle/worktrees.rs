@@ -1374,6 +1374,58 @@ pub(super) fn mark_worktree_remove_error(
 /// forever, with no way to graveyard that worktree from the TUI.
 ///
 /// Returns how many rows changed, so a caller can say whether it did anything.
+/// Settle worktree rows left mid-operation by a service that died.
+///
+/// A create writes `status: "creating"` before the git work and rewrites the
+/// row when it finishes, so a service killed between the two leaves `creating`
+/// on disk and the row reads as working for good. On this machine
+/// `twitter-intern` sat that way for five days and `chat-trade` for ten, both
+/// with their checkout fully made.
+///
+/// Safe to run unconditionally HERE and nowhere else: no lifecycle operation
+/// survives its process, so at startup every in-flight status is orphaned by
+/// definition and needs no liveness check. Elapsed time cannot stand in for
+/// that -- `updatedAt` is written once when the status is set and never
+/// refreshed, and the 180s budget bounds the caller's WAIT, not the work.
+pub(crate) fn recover_orphaned_worktree_operations(project_state_dir: &Path) -> usize {
+    let mut recovered = 0;
+    let updated = update_runtime_topology(runtime_topology_path(project_state_dir), |topology| {
+        map_topology_array(topology, "worktrees", |mut worktree| {
+            let status = string_field(&worktree, "status");
+            // Only the two words `worktree_status` actually admits. The wider
+            // transient vocabulary is for sessions and services, which coerce
+            // these away, so filtering on it would match nothing and read as
+            // if it did.
+            if status != "creating" && status != "removing" {
+                return worktree;
+            }
+            let row_path = string_field(&worktree, "path");
+            let settled = if worktree_checkout_is_present(&row_path) {
+                // The work finished; only the status write was lost. Same rule
+                // `clear_worktree_row_failure` already uses to revive a row.
+                "active"
+            } else {
+                "error"
+            };
+            if let Some(map) = worktree.as_object_mut() {
+                map.insert("status".into(), Value::String(settled.into()));
+                if settled == "error" {
+                    map.insert(
+                        "operationFailure".into(),
+                        Value::String(format!(
+                            "The project service stopped while {status} this worktree, and no checkout is present."
+                        )),
+                    );
+                }
+            }
+            object_insert_mut(&mut worktree, "updatedAt", Value::String(now_iso()));
+            recovered += 1;
+            worktree
+        })
+    });
+    if updated.is_err() { 0 } else { recovered }
+}
+
 pub(crate) fn clear_worktree_row_failure(project_state_dir: &Path, worktree_path: &str) -> usize {
     let mut cleared = 0;
     let updated = update_runtime_topology(runtime_topology_path(project_state_dir), |topology| {

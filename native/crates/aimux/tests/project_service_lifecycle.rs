@@ -1732,6 +1732,105 @@ fn default_scribe_startup_honors_disabled_configuration() {
 }
 
 #[test]
+fn startup_settles_worktree_rows_a_dead_service_left_mid_operation() {
+    let project = temp_project("startup-orphaned-worktrees");
+    let aimux_dir = project.join(".aimux");
+    fs::create_dir_all(&aimux_dir).unwrap();
+    fs::write(
+        aimux_dir.join("config.json"),
+        serde_json::to_string_pretty(&json!({ "scribe": { "defaultAgent": null } })).unwrap(),
+    )
+    .unwrap();
+    let state_dir = project.join("state");
+    fs::create_dir_all(&state_dir).unwrap();
+
+    // A finished checkout whose status write was lost, and one that was never
+    // made. Plus the rows a sweep must NOT touch: on Sam's machine nine
+    // graveyard rows have no checkout, which is their expected state.
+    let made = project.join(".aimux/worktrees/finished");
+    fs::create_dir_all(made.join(".git")).unwrap();
+    let graveyarded = project.join(".aimux/worktrees/retired");
+    let topology = json!({
+        "version": 1,
+        "generatedAt": "2026-10-19T00:00:00.000Z",
+        "rigs": [{
+            "id": "rig", "name": "startup-orphaned-worktrees",
+            "projectRoot": project.to_string_lossy(),
+            "createdAt": "2026-10-01T00:00:00.000Z", "updatedAt": "2026-10-01T00:00:00.000Z"
+        }],
+        "worktrees": [
+            { "id": "worktree:a", "rigId": "rig", "name": "finished", "status": "creating",
+              "path": made.to_string_lossy(), "branch": "finished",
+              "createdAt": "2026-10-14T04:18:51.080Z", "updatedAt": "2026-10-14T04:18:51.096Z" },
+            { "id": "worktree:b", "rigId": "rig", "name": "never-made", "status": "creating",
+              "path": project.join(".aimux/worktrees/never-made").to_string_lossy(),
+              "branch": "never-made",
+              "createdAt": "2026-10-09T08:56:11.000Z", "updatedAt": "2026-10-09T08:56:11.000Z" },
+            { "id": "worktree:c", "rigId": "rig", "name": "retired", "status": "graveyard",
+              "path": graveyarded.to_string_lossy(), "branch": "retired",
+              "createdAt": "2026-10-01T00:00:00.000Z", "updatedAt": "2026-10-01T00:00:00.000Z" },
+            { "id": "worktree:d", "rigId": "rig", "name": "live", "status": "active",
+              "path": made.to_string_lossy(), "branch": "live",
+              "createdAt": "2026-10-01T00:00:00.000Z", "updatedAt": "2026-10-01T00:00:00.000Z" }
+        ]
+    });
+    fs::write(
+        state_dir.join("runtime-topology.yaml"),
+        serde_yaml::to_string(&topology).unwrap(),
+    )
+    .unwrap();
+
+    let startup = ProjectServiceStartup {
+        project_id: "startup-orphaned-worktrees".to_owned(),
+        project_root: project.clone(),
+        project_state_dir: state_dir.clone(),
+        desired_port: 43_002,
+    };
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    run_project_service_startup_tasks(&startup, &context, &mut runtime);
+
+    let rows = read_topology(&state_dir);
+    let row = |name: &str| {
+        rows["worktrees"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == name)
+            .unwrap_or_else(|| panic!("{name} row is gone"))
+            .clone()
+    };
+
+    assert_eq!(
+        row("finished")["status"],
+        "active",
+        "a create that finished must stop reading as in flight"
+    );
+    assert!(row("finished").get("operationFailure").is_none());
+    assert_eq!(
+        row("never-made")["status"],
+        "error",
+        "a create that never produced a checkout must say so"
+    );
+    assert!(
+        row("never-made")["operationFailure"]
+            .as_str()
+            .unwrap()
+            .contains("stopped while creating"),
+        "{}",
+        row("never-made")
+    );
+    assert_eq!(
+        row("retired")["status"],
+        "graveyard",
+        "a graveyarded row's absent checkout is expected, not a fault"
+    );
+    assert_eq!(row("live")["status"], "active");
+    cleanup(project);
+}
+
+#[test]
 fn project_service_startup_repairs_legacy_tmux_session_names() {
     let project = temp_project("startup-repair-legacy-tmux");
     let aimux_dir = project.join(".aimux");
