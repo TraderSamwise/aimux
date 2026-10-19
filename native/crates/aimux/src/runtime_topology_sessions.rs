@@ -449,6 +449,7 @@ fn session_to_topology_session(session: &Value, node_id: &str, now: &str) -> Val
     );
     for key in [
         "backendSessionId",
+        "restoreNotice",
         "worktreePath",
         "label",
         "headline",
@@ -602,6 +603,7 @@ fn merge_offline_session(session: &Value, existing: Option<&Value>) -> Value {
     let mut merged = session.as_object().cloned().unwrap_or_default();
     for key in [
         "backendSessionId",
+        "restoreNotice",
         "freshRelaunchAllowed",
         "restoreBlockedReason",
     ] {

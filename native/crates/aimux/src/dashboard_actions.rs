@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DashboardActionKind {
     Enter,
+    RestartFresh,
     Stop,
     ClearOperationFailures,
 }
@@ -41,6 +42,10 @@ pub fn plan_dashboard_action(
             Some(DashboardEntryRef::Service(service)) => plan_service_enter(service),
             None => DashboardActionPlan::Ignored,
         },
+        DashboardActionKind::RestartFresh => match entry {
+            Some(DashboardEntryRef::Session(session)) => plan_session_restart_fresh(session),
+            _ => DashboardActionPlan::Ignored,
+        },
         DashboardActionKind::Stop => match entry {
             Some(DashboardEntryRef::Session(session)) => plan_session_stop(session),
             Some(DashboardEntryRef::Service(service)) => plan_service_stop(service),
@@ -67,6 +72,29 @@ fn plan_session_enter(session: &DashboardSession) -> DashboardActionPlan {
             request(routes::agents::RESUME, json!({ "sessionId": session.id }))
         }
     }
+}
+
+fn plan_session_restart_fresh(session: &DashboardSession) -> DashboardActionPlan {
+    if let Some(blocked) = pending_block(
+        "Session",
+        &session.id,
+        session.pending,
+        session.pending_action.as_deref(),
+    ) {
+        return blocked;
+    }
+    if session.status != SessionStatus::Offline {
+        return DashboardActionPlan::Blocked(format!(
+            "Session {} is not offline; starting fresh is offline only",
+            session.id
+        ));
+    }
+    // An explicit, confirmed fresh start bypasses the service's restore block.
+    // Backend discovery and ordinary restorability remain service decisions.
+    request(
+        routes::agents::RESUME,
+        json!({ "sessionId": session.id, "fresh": true }),
+    )
 }
 
 fn plan_service_enter(service: &DashboardService) -> DashboardActionPlan {

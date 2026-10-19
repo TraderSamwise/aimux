@@ -52,6 +52,8 @@ struct FakeLifecycleRuntime {
     rename_window_error: Option<String>,
     codex_backend_ids_by_cwd: BTreeMap<String, Result<BTreeSet<String>, String>>,
     claude_background_ids: BTreeMap<String, String>,
+    claude_backend_ids: Option<Result<BTreeSet<String>, String>>,
+    claude_background_error: Option<String>,
     main_repo: Option<String>,
     worktrees_created: Vec<FakeCreateWorktree>,
     prepared_pull_requests: Vec<FakePreparePullRequest>,
@@ -322,8 +324,20 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
     fn claude_background_session_ids(
         &mut self,
         _cwd: &str,
-    ) -> aimux::claude_background_sessions::BackgroundSessionIds {
-        self.claude_background_ids.clone()
+    ) -> Result<aimux::claude_background_sessions::BackgroundSessionIds, String> {
+        if let Some(error) = &self.claude_background_error {
+            return Err(error.clone());
+        }
+        Ok(self.claude_background_ids.clone())
+    }
+
+    fn claude_backend_session_ids_for_cwd(
+        &mut self,
+        _cwd: &str,
+    ) -> Result<BTreeSet<String>, String> {
+        self.claude_backend_ids
+            .clone()
+            .unwrap_or_else(|| Ok(BTreeSet::new()))
     }
 
     fn kill_window(&mut self, window_id: &str) -> Result<(), String> {
@@ -584,7 +598,7 @@ fn agent_stop_keeps_restore_blocked_when_codex_history_is_ambiguous() {
     assert_eq!(response.status, 200);
     let topology = read_topology(&state_dir);
     let session = session(&topology, "codex-live");
-    assert_eq!(session["freshRelaunchAllowed"], Value::Null);
+    assert_eq!(session["freshRelaunchAllowed"], false);
     assert!(
         session["restoreBlockedReason"]
             .as_str()
@@ -3000,7 +3014,7 @@ fn agent_resume_fresh_relaunch_clears_error_metadata_without_backend_id() {
         &context,
         "POST",
         routes::agents::RESUME,
-        Some(&json!({ "sessionId": "mock-error" })),
+        Some(&json!({ "sessionId": "mock-error", "fresh": true })),
         &mut runtime,
     )
     .unwrap();
@@ -4504,6 +4518,10 @@ fn agent_restore_previous_reconciles_offer_restores_ready_sessions_and_writes_re
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
         .with_live_windows(LiveWindowIndex::from_pairs([("@stale", "aimux")]));
     let mut runtime = FakeLifecycleRuntime::default();
+    runtime.codex_backend_ids_by_cwd.insert(
+        project.to_string_lossy().into_owned(),
+        Err("history unavailable".into()),
+    );
 
     let response = route_lifecycle_request_with_runtime(
         &context,
@@ -7554,7 +7572,7 @@ fn restart_args_rejected_length_preserves_fresh_recovery_for_retry() {
             &context,
             "POST",
             routes::agents::RESUME,
-            Some(&json!({ "sessionId": "mock-offline", "restartArgs": [arg] })),
+            Some(&json!({ "sessionId": "mock-offline", "restartArgs": [arg], "fresh": true })),
             &mut runtime,
         )
         .unwrap();
@@ -8354,4 +8372,183 @@ fn fork_class_uncertain_creation_retains_context_and_reports_ownership() {
         );
         cleanup(project);
     }
+}
+
+/// Reboot recovery: no durable id, no background process, and real discovery
+/// must produce three distinct outcomes before a launch is authorized.
+#[test]
+fn claude_restore_discovery_preserves_history_absence_and_errors() {
+    let uuid = "0cfac0d9-6e3f-424f-9027-3ddefd750729";
+    for (name, ids, expected) in [
+        ("absent", Ok(BTreeSet::new()), "fresh"),
+        ("history", Ok(BTreeSet::from([uuid.to_owned()])), "resume"),
+        ("claimed", Ok(BTreeSet::from([uuid.to_owned()])), "blocked"),
+        ("claimed-live", Ok(BTreeSet::new()), "blocked"),
+        (
+            "known",
+            Err("must not scan known identity".to_owned()),
+            "resume",
+        ),
+        (
+            "failure",
+            Err("history disk unavailable".to_owned()),
+            "blocked",
+        ),
+        (
+            "ambiguous",
+            Ok(BTreeSet::from([
+                uuid.to_owned(),
+                "304bdb81-cab6-4714-adf8-1e6b61858960".to_owned(),
+            ])),
+            "blocked",
+        ),
+    ] {
+        let project = temp_project(&format!("claude-restore-{name}"));
+        write_project_tool_config(&project);
+        let config_path = project.join(".aimux/config.json");
+        let mut config: Value =
+            serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+        config["tools"]["claude"] = config["tools"]["mock"].clone();
+        fs::write(&config_path, config.to_string()).unwrap();
+        let state_dir = project.join("state");
+        write_agent_resume_topology(
+            &state_dir,
+            json!({
+                "id":"claude-overseer", "nodeId":"agent:claude-overseer", "status":"offline",
+                "tool":"claude", "command":"/bin/mock", "args":["--base"],
+                "freshRelaunchAllowed": name != "absent",
+                "createdAt":"2026-01-01T00:00:00.000Z", "updatedAt":"2026-01-01T00:00:00.000Z"
+            }),
+        );
+        if matches!(name, "claimed" | "claimed-live") {
+            update_runtime_topology(runtime_topology_path(&state_dir), |mut topology| {
+                let mut owner = topology["sessions"][0].clone();
+                owner["id"] = json!("claude-other");
+                owner["backendSessionId"] = json!(uuid);
+                topology["sessions"].as_array_mut().unwrap().push(owner);
+                topology
+            })
+            .unwrap();
+        }
+        if name == "known" {
+            update_runtime_topology(runtime_topology_path(&state_dir), |mut topology| {
+                topology["sessions"][0]["backendSessionId"] = json!(uuid);
+                topology
+            })
+            .unwrap();
+            fs::write(state_dir.join("metadata.json"), json!({"version":1,"sessions":{"claude-overseer":{"derived":{"activity":"error"}}}}).to_string()).unwrap();
+        }
+        let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+        let mut runtime = FakeLifecycleRuntime {
+            claude_backend_ids: Some(ids),
+            ..Default::default()
+        };
+        if name == "claimed" {
+            let stopped = route_lifecycle_request_with_runtime(
+                &context,
+                "POST",
+                routes::agents::STOP,
+                Some(&json!({"sessionId":"claude-overseer"})),
+                &mut runtime,
+            )
+            .unwrap();
+            assert_eq!(stopped.status, 200);
+            let stored = session(&read_topology(&state_dir), "claude-overseer");
+            assert!(
+                stored["backendSessionId"].is_null(),
+                "stop must not claim another agent's history"
+            );
+            assert_eq!(stored["freshRelaunchAllowed"], false);
+        }
+        if name == "claimed-live" {
+            runtime
+                .claude_background_ids
+                .insert(uuid.to_owned(), "short-id".into());
+        }
+        if name == "known" {
+            runtime.claude_background_error = Some("background query unavailable".into());
+        }
+        let response = route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::RESUME,
+            Some(&json!({"sessionId":"claude-overseer"})),
+            &mut runtime,
+        )
+        .unwrap();
+        if expected == "blocked" {
+            assert_eq!(response.status, 500, "{name}: {:?}", response.body);
+            assert!(
+                runtime.created.is_empty(),
+                "lookup failure/ambiguity cannot authorize fresh"
+            );
+            assert_eq!(
+                session(&read_topology(&state_dir), "claude-overseer")["freshRelaunchAllowed"],
+                false
+            );
+            let error = response.body["error"].as_str().unwrap();
+            assert!(error.contains("--force"), "{error}");
+            if name == "failure" {
+                assert!(error.contains("history disk unavailable"), "{error}");
+            }
+        } else {
+            assert_eq!(response.status, 200, "{name}: {:?}", response.body);
+            let launch = runtime.created.first().unwrap().args.join(" ");
+            let stored = session(&read_topology(&state_dir), "claude-overseer");
+            if expected == "resume" {
+                assert!(
+                    launch.contains(&format!("'--resume' '{uuid}'")),
+                    "history must resume: {launch}"
+                );
+                assert_eq!(stored["backendSessionId"], uuid);
+                assert!(response.body["restoreNotice"].is_null());
+            } else {
+                assert!(!launch.contains("--resume"), "{launch}");
+                assert_eq!(stored["restoreNotice"], "Fresh start; history not resumed");
+                assert_eq!(
+                    response.body["restoreNotice"],
+                    "Fresh start; history not resumed"
+                );
+            }
+        }
+        cleanup(project);
+    }
+}
+
+#[test]
+fn claude_restore_background_lookup_failure_is_not_absence() {
+    let project = temp_project("claude-bg-failure");
+    write_project_tool_config(&project);
+    let config_path = project.join(".aimux/config.json");
+    let mut config: Value =
+        serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    config["tools"]["claude"] = config["tools"]["mock"].clone();
+    fs::write(config_path, config.to_string()).unwrap();
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({"id":"claude-overseer", "nodeId":"agent:claude-overseer", "status":"offline", "tool":"claude", "command":"/bin/mock", "args":[], "createdAt":"2026-01-01T00:00:00.000Z", "updatedAt":"2026-01-01T00:00:00.000Z"}),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        claude_background_error: Some("agents command failed".into()),
+        ..Default::default()
+    };
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESUME,
+        Some(&json!({"sessionId":"claude-overseer"})),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(response.status, 500);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("agents command failed")
+    );
+    assert!(runtime.created.is_empty());
+    cleanup(project);
 }

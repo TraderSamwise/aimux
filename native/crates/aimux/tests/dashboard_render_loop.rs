@@ -968,3 +968,73 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool, partial_result: b
         }
     }
 }
+
+#[test]
+fn blocked_agent_fresh_restart_warning_is_reachable_in_the_render_loop() {
+    let root =
+        std::env::temp_dir().join(format!("aimux-render-fresh-warning-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut fixture = snapshot();
+    let mut offline = fixture.sessions[0].clone();
+    offline.id = "claude-blocked-fresh".into();
+    offline.status = aimux::dashboard_model::SessionStatus::Offline;
+    offline.restore_state = Some("blocked".into());
+    offline.restore_blocked_reason = Some("Multiple matching transcripts".into());
+    offline.semantic = None;
+    offline.overseer = None;
+    offline.scribe = None;
+    offline.project_control = None;
+    offline.team = None;
+    offline.worktree_path = None;
+    fixture.sessions = vec![offline];
+    fixture.teammates.clear();
+    fixture.services.clear();
+    fixture.worktree_groups.clear();
+    fixture.agent_restore_offer = None;
+    let painted = Captured::default();
+    let frames = Arc::clone(&painted.0);
+    let script = Arc::new(Mutex::new(std::collections::VecDeque::from(vec![
+        vec![],
+        vec![DashboardKey::Printable('F')],
+        vec![],
+        vec![DashboardKey::Back],
+        vec![],
+    ])));
+    let key_script = Arc::clone(&script);
+    let seams = DashboardLoopSeams {
+        keys: Box::new(move || key_script.lock().unwrap().pop_front().unwrap_or_default()),
+        snapshot: Box::new(move || {
+            Ok(DashboardSnapshotLoad {
+                snapshot: fixture.clone(),
+                endpoint: None,
+            })
+        }),
+        stop: Box::new(move || script.lock().unwrap().is_empty()),
+        output: Box::new(painted),
+        frame: Box::new(|_| {}),
+        deferral: DashboardRefreshDeferral::PRODUCTION,
+    };
+    let result = run_native_dashboard_with_seams(
+        NativeDashboardOptions {
+            project_root: root.clone(),
+            desktop_state_file: Some(root.join("desktop-state.json")),
+            cols: 140,
+            rows: 40,
+            once: false,
+        },
+        Some(seams),
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+    result.unwrap();
+    let painted = aimux::tui_render::text::strip_ansi(&frames.lock().unwrap());
+    assert!(
+        painted.contains("START AGENT FRESH"),
+        "the key must paint its confirmation: {painted}"
+    );
+    assert!(painted.contains("History will not be resumed"));
+    assert!(painted.contains("Multiple matching transcripts"));
+    assert!(
+        painted.contains("start fresh"),
+        "offline rows advertise the escape hatch"
+    );
+}

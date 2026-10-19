@@ -674,7 +674,7 @@ pub fn topology_desktop_session_list_with_live_window_ids(
 
 pub fn topology_desktop_session_list_with_live_window_projection(
     topology: &Value,
-    metadata_sessions: &BTreeMap<String, Value>,
+    _metadata_sessions: &BTreeMap<String, Value>,
     tools: &Map<String, Value>,
     live_window_ids: LiveWindowIdsProjection<'_>,
 ) -> Vec<Value> {
@@ -705,8 +705,7 @@ pub fn topology_desktop_session_list_with_live_window_projection(
                 }
             }
             if status == "offline" {
-                let fresh_relaunch_allowed =
-                    should_relaunch_fresh_session(&session, metadata_sessions);
+                let fresh_relaunch_allowed = should_relaunch_fresh_session(&session);
                 set_value(
                     &mut session,
                     "freshRelaunchAllowed",
@@ -877,6 +876,8 @@ pub fn build_agent_list(
                 "status",
                 "restoreState",
                 "restoreBlockedReason",
+                "restoreNotice",
+                "freshRelaunchAllowed",
                 "restartLaunchOptions",
                 "worktreePath",
                 "label",
@@ -985,8 +986,18 @@ pub fn describe_session_restorability(
     if tool_config.is_none() {
         return Some(blocked_restorability("unknown agent tool"));
     }
+    let missing_backend = string_field(session, "backendSessionId").is_none();
+    if missing_backend && session.get("freshRelaunchAllowed").and_then(Value::as_bool) == Some(true)
+    {
+        return Some(json!({ "restoreState": "ready" }));
+    }
     if let Some(reason) = exact_backend_resume_blocked_reason(tool_key, tool_config) {
         return Some(blocked_restorability(&reason));
+    }
+    if missing_backend && matches!(tool_key, "claude" | "codex") {
+        // Ready means the route may attempt discovery. It does not authorize
+        // a fresh start: only a successful empty inspection can do that.
+        return Some(json!({ "restoreState": "ready" }));
     }
     if string_field(session, "backendSessionId").is_none()
         && session.get("freshRelaunchAllowed").and_then(Value::as_bool) != Some(true)
@@ -1023,25 +1034,11 @@ fn is_teammate_session(session: &Value) -> bool {
     team_string_field(session, "parentSessionId").is_some()
 }
 
-fn should_relaunch_fresh_session(
-    session: &Value,
-    metadata_sessions: &BTreeMap<String, Value>,
-) -> bool {
-    let Some(session_id) = string_field(session, "id").filter(|id| !id.trim().is_empty()) else {
-        return false;
-    };
-    let derived = metadata_sessions
-        .get(session_id)
-        .and_then(|metadata| metadata.get("derived"));
-    if string_field_value(derived.and_then(|derived| derived.get("activity"))) == Some("error")
-        || string_field_value(derived.and_then(|derived| derived.get("attention"))) == Some("error")
-    {
-        return true;
-    }
-    if string_field(session, "backendSessionId").is_some() {
-        return false;
-    }
-    session.get("freshRelaunchAllowed").and_then(Value::as_bool) == Some(true)
+fn should_relaunch_fresh_session(session: &Value) -> bool {
+    // A backend error never proves that a conversation is unreachable. Only
+    // the lifecycle discovery result may authorize losing the resume path.
+    string_field(session, "backendSessionId").is_none()
+        && session.get("freshRelaunchAllowed").and_then(Value::as_bool) == Some(true)
 }
 
 fn tool_can_attach_to_a_running_session(tool_config: Option<&Value>) -> bool {
@@ -1091,10 +1088,6 @@ fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
 }
 
-fn string_field_value(value: Option<&Value>) -> Option<&str> {
-    value.and_then(Value::as_str)
-}
-
 fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value
         .get("team")
@@ -1126,23 +1119,22 @@ mod tests {
         );
         assert_eq!(
             describe_session_restorability(&session, &tools),
-            None,
+            Some(json!({ "restoreState": "ready" })),
             "the restore route looks for the running session and reports what it finds"
         );
     }
 
     #[test]
-    fn a_tool_that_cannot_attach_still_says_the_id_is_missing() {
+    fn a_discovery_capable_tool_can_attempt_restore_without_an_id() {
         let session = json!({ "id": "codex-a", "status": "offline", "toolConfigKey": "codex" });
         let mut tools = Map::new();
         tools.insert(
             "codex".into(),
             json!({ "resumeArgs": ["resume", "{sessionId}"] }),
         );
-        let blocked = describe_session_restorability(&session, &tools).expect("blocked");
         assert_eq!(
-            blocked.get("restoreBlockedReason").and_then(Value::as_str),
-            Some("missing exact resumable backend session id")
+            describe_session_restorability(&session, &tools),
+            Some(json!({ "restoreState": "ready" }))
         );
     }
 

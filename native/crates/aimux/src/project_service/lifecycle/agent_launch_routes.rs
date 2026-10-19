@@ -1286,7 +1286,6 @@ fn resume_agent_session_with_args(
         return json_error(400, "unknown agent tool");
     };
     let command = trimmed_string(session.get("command")).unwrap_or_else(|| tool_key.clone());
-    let backend_session_id = trimmed_string(session.get("backendSessionId"));
     let metadata_state = load_metadata_state(&project_state_dir);
     if let Some(stored_session) = metadata_state.sessions.get(&session_id) {
         session = session_with_stored_control_flags(&session, Some(stored_session));
@@ -1310,36 +1309,41 @@ fn resume_agent_session_with_args(
         .sessions
         .get(&session_id)
         .and_then(|session| session.get("derived"));
+    if is_project_control_session(Some(&session))
+        && let Some(session) = session.as_object_mut()
+    {
+        session.remove("worktreePath");
+    }
+    let cwd = trimmed_string(session.get("worktreePath")).unwrap_or_else(|| project_root.clone());
+    let background = if !force_fresh && attach_args(tool_config, "probe").is_some() {
+        runtime.claude_background_session_ids(&cwd)
+    } else {
+        Ok(Default::default())
+    };
+    discover_live_backend_id(&mut session, &background);
+    if !force_fresh {
+        let disposition =
+            missing_backend_session_disposition(runtime, &session, &project_root, &topology);
+        if let Err(error) =
+            apply_resume_disposition(context, &topology, &mut session, disposition, &background)
+        {
+            return json_error(500, error);
+        }
+    }
+    let backend_session_id = trimmed_string(session.get("backendSessionId"));
     let relaunch_fresh = force_fresh || should_relaunch_agent_fresh(&session, derived);
     let use_backend_resume = !relaunch_fresh
         && can_resume_with_backend_session_id(tool_config, backend_session_id.as_deref());
-    // Claude refuses --resume for a session it still has running in the
-    // background and exits 1, so resuming one launched a process that died on
-    // the spot. Attach to it instead; the conversation is alive.
-    // An agent whose backend session id was never written down is otherwise
-    // unrestorable. When Claude still has exactly one session running in this
-    // checkout, that is the conversation, so attach and write the id down.
-    let mut backend_session_id = backend_session_id;
-    let background_attach = (!relaunch_fresh)
-        .then(|| {
-            let cwd =
-                trimmed_string(session.get("worktreePath")).unwrap_or_else(|| project_root.clone());
-            let running = runtime.claude_background_session_ids(&cwd);
-            match backend_session_id.as_deref() {
-                Some(known) => running
-                    .get(known)
-                    .and_then(|short_id| attach_args(tool_config, short_id)),
-                None => crate::claude_background_sessions::sole_background_session(&running)
-                    .and_then(|(session_id, short_id)| {
-                        attach_args(tool_config, short_id).map(|args| (session_id.to_owned(), args))
-                    })
-                    .map(|(discovered, args)| {
-                        backend_session_id = Some(discovered);
-                        args
-                    }),
-            }
+    let background_attach = if !relaunch_fresh {
+        background.as_ref().ok().and_then(|running| {
+            backend_session_id
+                .as_ref()
+                .and_then(|id| running.get(id))
+                .and_then(|id| attach_args(tool_config, id))
         })
-        .flatten();
+    } else {
+        None
+    };
     let action_args = if let Some(attach) = background_attach {
         attach
     } else if use_backend_resume {
@@ -1350,13 +1354,9 @@ fn resume_agent_session_with_args(
     } else if relaunch_fresh {
         Vec::new()
     } else {
-        return json_error(
-            500,
-            format!(
-                "Cannot restore session \"{session_id}\" without an exact resumable backend session id for \"{tool_key}\""
-            ),
-        );
+        return json_error(500, restore_remedy(&session_id, &tool_key));
     };
+    set_restore_notice(&mut session, relaunch_fresh);
     let saved_args = restart_args
         .map(<[String]>::to_vec)
         .unwrap_or_else(|| string_array_field(session.get("args")));
@@ -1489,11 +1489,126 @@ fn resume_agent_session_with_args(
     settle_pending_role_relaunch(&project_state_dir, &session_id);
     let _ = sync_agent_role_registry_session_from_metadata(&project_state_dir, &session_id);
     lifecycle_response(
-        json!({ "sessionId": session_id, "status": "running" }),
+        json!({ "sessionId": session_id, "status": "running", "restoreNotice": session.get("restoreNotice") }),
         operation,
         "agent",
         Some(&session_id),
     )
+}
+
+fn restore_remedy(session_id: &str, tool_key: &str) -> String {
+    format!(
+        "Cannot restore session \"{session_id}\" without an exact resumable backend session id for \"{tool_key}\". Press F in the dashboard and confirm to start fresh without resuming history. If control-plane restart is also blocked, use aimux restart --force."
+    )
+}
+
+fn discover_live_backend_id(
+    session: &mut Value,
+    background: &Result<crate::claude_background_sessions::BackgroundSessionIds, String>,
+) {
+    if trimmed_string(session.get("backendSessionId")).is_none()
+        && let Ok(running) = background
+        && let Some((id, _)) = crate::claude_background_sessions::sole_background_session(running)
+    {
+        session["backendSessionId"] = json!(id);
+    }
+}
+
+fn set_restore_notice(session: &mut Value, fresh: bool) {
+    session["restoreNotice"] = if fresh {
+        json!(crate::agent_row_chips::FRESH_RESTORE_NOTICE)
+    } else {
+        Value::Null
+    };
+}
+
+/// Persist the service's discovery result so every client sees the same reason.
+/// A prior fresh permission is rechecked on each attempt; it never overrides
+/// newly discoverable history or an inspection failure.
+fn apply_resume_disposition(
+    context: &ProjectServiceRequestContext,
+    topology: &Value,
+    session: &mut Value,
+    disposition: MissingBackendSessionDisposition,
+    background: &Result<crate::claude_background_sessions::BackgroundSessionIds, String>,
+) -> Result<(), String> {
+    let session_id = string_field(session, "id");
+    let tool_key = tool_config_key_for_session(session).unwrap_or_default();
+    let discovered_id = match &disposition {
+        MissingBackendSessionDisposition::RecordBackendSession(id) => Some(id.clone()),
+        _ => trimmed_string(session.get("backendSessionId")),
+    };
+    let originally_missing = find_by_id(topology, "sessions", &session_id)
+        .is_some_and(|stored| trimmed_string(stored.get("backendSessionId")).is_none());
+    let claimed_by = originally_missing
+        .then_some(discovered_id.as_ref())
+        .flatten()
+        .and_then(|id| backend_session_claimed_by_other(topology, session, id));
+    let disposition = if let Some(owner) = claimed_by {
+        session["backendSessionId"] = Value::Null;
+        MissingBackendSessionDisposition::Blocked(format!(
+            "Discovered conversation already belongs to session {}",
+            owner
+        ))
+    } else {
+        disposition
+    };
+    let disposition = match disposition {
+        MissingBackendSessionDisposition::AllowFreshRelaunch => match background {
+            Err(error) => MissingBackendSessionDisposition::Blocked(format!(
+                "Claude background sessions could not be inspected: {error}"
+            )),
+            Ok(running) if !running.is_empty() => {
+                MissingBackendSessionDisposition::Blocked(format!(
+                    "Claude has {} possible running sessions; choose one before restarting",
+                    running.len()
+                ))
+            }
+            _ => MissingBackendSessionDisposition::AllowFreshRelaunch,
+        },
+        other => other,
+    };
+    let mut blocked = None;
+    match disposition {
+        MissingBackendSessionDisposition::RecordBackendSession(id) => {
+            session["backendSessionId"] = json!(id);
+            session["freshRelaunchAllowed"] = json!(false);
+            session["restoreBlockedReason"] = Value::Null;
+        }
+        MissingBackendSessionDisposition::AllowFreshRelaunch => {
+            session["freshRelaunchAllowed"] = json!(true);
+            session["restoreBlockedReason"] = Value::Null;
+        }
+        MissingBackendSessionDisposition::Blocked(reason) => {
+            let reason = format!("{reason}. {}", restore_remedy(&session_id, &tool_key));
+            session["freshRelaunchAllowed"] = json!(false);
+            session["restoreBlockedReason"] = json!(reason);
+            blocked = Some(reason);
+        }
+        MissingBackendSessionDisposition::Unchanged => {}
+    }
+    update_runtime_topology(
+        runtime_topology_path(context.project_state_dir()),
+        |mut topology| {
+            if let Some(sessions) = topology.get_mut("sessions").and_then(Value::as_array_mut)
+                && let Some(stored) = sessions
+                    .iter_mut()
+                    .find(|stored| string_field(stored, "id") == session_id)
+            {
+                for key in [
+                    "backendSessionId",
+                    "freshRelaunchAllowed",
+                    "restoreBlockedReason",
+                ] {
+                    if let Some(value) = session.get(key) {
+                        stored[key] = value.clone();
+                    }
+                }
+            }
+            topology
+        },
+    )?;
+    blocked.map_or(Ok(()), Err)
 }
 
 fn resume_launch_error(error: &str, edited_args: bool) -> ProjectServiceDispatchResponse {
@@ -1551,7 +1666,6 @@ async fn resume_agent_session_async(
         return json_error(400, "unknown agent tool");
     };
     let command = trimmed_string(session.get("command")).unwrap_or_else(|| tool_key.clone());
-    let backend_session_id = trimmed_string(session.get("backendSessionId"));
     let metadata_state = load_metadata_state(&project_state_dir);
     if let Some(stored_session) = metadata_state.sessions.get(&session_id) {
         session = session_with_stored_control_flags(&session, Some(stored_session));
@@ -1560,10 +1674,48 @@ async fn resume_agent_session_async(
         .sessions
         .get(&session_id)
         .and_then(|session| session.get("derived"));
+    if is_project_control_session(Some(&session))
+        && let Some(session) = session.as_object_mut()
+    {
+        session.remove("worktreePath");
+    }
+    let cwd = trimmed_string(session.get("worktreePath")).unwrap_or_else(|| project_root.clone());
+    let background = if !force_fresh && attach_args(tool_config, "probe").is_some() {
+        runtime.claude_background_session_ids(&cwd).await
+    } else {
+        Ok(Default::default())
+    };
+    discover_live_backend_id(&mut session, &background);
+    if !force_fresh {
+        let disposition = missing_backend_session_disposition_async_runtime(
+            runtime,
+            &session,
+            &project_root,
+            &topology,
+        );
+        if let Err(error) =
+            apply_resume_disposition(context, &topology, &mut session, disposition, &background)
+        {
+            return json_error(500, error);
+        }
+    }
+    let backend_session_id = trimmed_string(session.get("backendSessionId"));
     let relaunch_fresh = force_fresh || should_relaunch_agent_fresh(&session, derived);
     let use_backend_resume = !relaunch_fresh
         && can_resume_with_backend_session_id(tool_config, backend_session_id.as_deref());
-    let action_args = if use_backend_resume {
+    let background_attach = if !relaunch_fresh {
+        background.as_ref().ok().and_then(|running| {
+            backend_session_id
+                .as_ref()
+                .and_then(|id| running.get(id))
+                .and_then(|id| attach_args(tool_config, id))
+        })
+    } else {
+        None
+    };
+    let action_args = if let Some(attach) = background_attach {
+        attach
+    } else if use_backend_resume {
         resume_args(
             tool_config,
             backend_session_id.as_deref().unwrap_or_default(),
@@ -1571,13 +1723,9 @@ async fn resume_agent_session_async(
     } else if relaunch_fresh {
         Vec::new()
     } else {
-        return json_error(
-            500,
-            format!(
-                "Cannot restore session \"{session_id}\" without an exact resumable backend session id for \"{tool_key}\""
-            ),
-        );
+        return json_error(500, restore_remedy(&session_id, &tool_key));
     };
+    set_restore_notice(&mut session, relaunch_fresh);
     let saved_args = string_array_field(session.get("args"));
     let (launch_args, persist_args) = compose_tool_launch(tool_config, &action_args, &saved_args);
     if relaunch_fresh {
@@ -1640,7 +1788,7 @@ async fn resume_agent_session_async(
         &tool_key,
         &command,
         persist_args,
-        backend_session_id.as_deref().filter(|_| use_backend_resume),
+        backend_session_id.as_deref().filter(|_| !relaunch_fresh),
     );
     if let Err(error) = runtime
         .set_window_metadata(&target.window_id, &metadata)
@@ -1670,7 +1818,7 @@ async fn resume_agent_session_async(
     settle_pending_role_relaunch(&project_state_dir, &session_id);
     let _ = sync_agent_role_registry_session_from_metadata(&project_state_dir, &session_id);
     lifecycle_response(
-        json!({ "sessionId": session_id, "status": "running" }),
+        json!({ "sessionId": session_id, "status": "running", "restoreNotice": session.get("restoreNotice") }),
         operation,
         "agent",
         Some(&session_id),
@@ -1851,6 +1999,7 @@ mod tests {
         created: Vec<FakeAsyncCreateWindow>,
         metadata: Vec<(String, Value)>,
         existing_windows: Vec<String>,
+        claude_ids: Option<Result<BTreeSet<String>, String>>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1933,8 +2082,104 @@ mod tests {
             Ok(BTreeSet::new())
         }
 
+        fn claude_backend_session_ids_for_cwd(
+            &mut self,
+            _cwd: &str,
+        ) -> Result<BTreeSet<String>, String> {
+            self.claude_ids
+                .clone()
+                .unwrap_or_else(|| Ok(BTreeSet::new()))
+        }
+
+        async fn claude_background_session_ids(
+            &mut self,
+            _cwd: &str,
+        ) -> Result<crate::claude_background_sessions::BackgroundSessionIds, String> {
+            Ok(Default::default())
+        }
+
         async fn kill_window(&mut self, _window_id: &str) -> Result<(), String> {
             Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn async_claude_restore_distinguishes_history_absence_and_failure() {
+        let uuid = "0cfac0d9-6e3f-424f-9027-3ddefd750729";
+        for (name, ids) in [
+            ("absent", Ok(BTreeSet::new())),
+            ("history", Ok(BTreeSet::from([uuid.to_owned()]))),
+            ("failure", Err("history read failed".to_owned())),
+        ] {
+            let root = unique_test_dir(&format!("async-claude-{name}"));
+            let state_dir = root.join("state");
+            fs::create_dir_all(root.join(".aimux")).unwrap();
+            fs::create_dir_all(&state_dir).unwrap();
+            fs::write(root.join(".aimux/config.json"), json!({"tools":{"claude":{
+                "command":"/bin/mock", "args":[], "enabled":true, "wrapperEnabled":true,
+                "resumeArgs":["--resume","{sessionId}"], "attachArgs":["attach","{backgroundId}"],
+                "resumeByBackendSessionId":true
+            }}}).to_string()).unwrap();
+            let topology = crate::runtime_topology::coerce_runtime_topology(&json!({
+                "version":1,"generatedAt":"2026-01-01T00:00:00.000Z",
+                "rigs":[{"id":"rig-1","name":"repo","projectRoot":root,"createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"}],
+                "nodes":[{"id":"agent:claude-one","rigId":"rig-1","logicalId":"claude-one","runtime":"claude","createdAt":"2026-01-01T00:00:00.000Z"}],
+                "sessions":[{"id":"claude-one","nodeId":"agent:claude-one","status":"offline","tool":"claude","command":"/bin/mock","args":[],"createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"}],
+                "edges":[],"bindings":[],"services":[],"worktrees":[],"worktreeGraveyard":[],"teamRoles":[],"remoteClients":[],"lifecycleOperations":[],"exchangeRefs":[]
+            })).unwrap();
+            crate::runtime_topology::write_runtime_topology(
+                runtime_topology_path(&state_dir),
+                &topology,
+            )
+            .unwrap();
+            let context = ProjectServiceRequestContext::with_project_state_dir(&root, &state_dir);
+            let progress = async_lifecycle_progress_for_request(
+                "POST",
+                routes::agents::SPAWN,
+                Some(&json!({"tool":"claude"})),
+            )
+            .unwrap();
+            let mut runtime = FakeAsyncLifecycleRuntime {
+                claude_ids: Some(ids),
+                ..Default::default()
+            };
+            let response = resume_agent_session_async(
+                &context,
+                "claude-one",
+                &mut runtime,
+                false,
+                "agent.resume",
+                &progress,
+            )
+            .await;
+            if name == "failure" {
+                assert_eq!(response.status, 500, "{}", response.body);
+                assert!(
+                    response.body["error"]
+                        .as_str()
+                        .unwrap()
+                        .contains("history read failed")
+                );
+                assert!(runtime.created.is_empty());
+            } else {
+                assert_eq!(response.status, 200, "{}", response.body);
+                let command = runtime.created[0].args.join(" ");
+                if name == "history" {
+                    assert!(
+                        command.contains(&format!("'--resume' '{uuid}'")),
+                        "{command}"
+                    );
+                    assert_eq!(runtime.metadata[0].1["backendSessionId"], uuid);
+                    assert!(response.body["restoreNotice"].is_null());
+                } else {
+                    assert!(!command.contains("--resume"), "{command}");
+                    assert_eq!(
+                        response.body["restoreNotice"],
+                        crate::agent_row_chips::FRESH_RESTORE_NOTICE
+                    );
+                }
+            }
+            fs::remove_dir_all(root).unwrap();
         }
     }
 

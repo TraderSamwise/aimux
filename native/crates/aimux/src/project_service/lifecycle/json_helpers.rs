@@ -27,10 +27,6 @@ pub(super) fn string_array_field(value: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub(super) fn string_field_value(value: Option<&Value>) -> Option<&str> {
-    value.and_then(Value::as_str)
-}
-
 pub(super) fn object_insert_mut(value: &mut Value, key: &str, inserted: Value) {
     if !value.is_object() {
         *value = Value::Object(Map::new());

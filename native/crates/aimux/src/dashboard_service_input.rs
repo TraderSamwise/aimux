@@ -795,6 +795,42 @@ fn teammate_label(teammate: &DashboardSession) -> String {
     }
 }
 
+pub fn render_fresh_restart_confirm_overlay(
+    session: &crate::dashboard_model::DashboardSession,
+    cols: usize,
+    rows: usize,
+) -> String {
+    let mut body = vec![
+        format!(
+            "  {} ({})",
+            crate::dashboard_model::agent_display_name(session),
+            session.id
+        ),
+        String::new(),
+        "  Start a new conversation? History will not be resumed.".into(),
+        "  Any existing conversation remains in the backend history store.".into(),
+    ];
+    if let Some(reason) = session.restore_blocked_reason.as_deref() {
+        body.extend(
+            bulk_graveyard_report_lines(reason, cols.saturating_sub(12))
+                .into_iter()
+                .map(|line| format!("  {line}")),
+        );
+    }
+    body.extend([
+        String::new(),
+        modal_hints("[Enter/y] start fresh  [n/Esc] cancel"),
+    ]);
+    render_overlay_box(&OverlayBoxSpec {
+        title: "Start Agent Fresh",
+        body: &body,
+        cols,
+        rows,
+        variant: OverlayVariant::Red,
+        icon: None,
+    })
+}
+
 pub fn render_bulk_graveyard_confirm_overlay(
     preview: &serde_json::Value,
     cols: usize,

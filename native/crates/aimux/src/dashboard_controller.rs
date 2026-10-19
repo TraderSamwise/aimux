@@ -100,6 +100,8 @@ pub struct DashboardController {
     pub worktree_remove_confirm: Option<DashboardWorktreeRemoveConfirm>,
     pub worktree_list_open: bool,
     pub worktree_cache_cleanup_confirm: Option<Value>,
+    pub fresh_restart_confirm: Option<DashboardSession>,
+    pub fresh_restart_confirm_visible: bool,
     pub bulk_graveyard_confirm: Option<Value>,
     pub bulk_graveyard_confirm_visible: bool,
     bulk_graveyard_waiting_preview: Option<Value>,
@@ -173,6 +175,7 @@ enum DashboardInputOverlay {
     WorktreeRemoveConfirm,
     WorktreeList,
     WorktreeCacheCleanupConfirm,
+    FreshRestartConfirm,
     BulkGraveyardConfirm,
     BulkGraveyardReport,
     Goal,
@@ -625,6 +628,8 @@ impl DashboardController {
             worktree_remove_confirm: None,
             worktree_list_open: false,
             worktree_cache_cleanup_confirm: None,
+            fresh_restart_confirm: None,
+            fresh_restart_confirm_visible: false,
             bulk_graveyard_confirm: None,
             bulk_graveyard_confirm_visible: false,
             bulk_graveyard_waiting_preview: None,
@@ -682,6 +687,9 @@ impl DashboardController {
         }
         if self.worktree_list_open {
             return self.handle_worktree_list_key(key);
+        }
+        if self.fresh_restart_confirm.is_some() {
+            return self.handle_fresh_restart_confirm_key(snapshot, key);
         }
         if self.agent_restore_prompt_active(snapshot) {
             return self.handle_agent_restore_prompt_key(snapshot, key);
@@ -815,6 +823,7 @@ impl DashboardController {
                 self.worktree_list_open = true;
                 DashboardControllerEffect::Render
             }
+            DashboardKey::Printable('F') => self.confirm_fresh_restart(snapshot),
             DashboardKey::Printable('K') => self.preview_bulk_graveyard(snapshot, false),
             DashboardKey::Ctrl('k') => self.preview_bulk_graveyard(snapshot, true),
             DashboardKey::Printable('D') => {
@@ -862,7 +871,7 @@ impl DashboardController {
                             DashboardControllerEffect::Render
                         }
                         DashboardActionPlan::Blocked(message) => {
-                            self.footer_alert = Some(message.into());
+                            self.set_enter_refusal(snapshot, message);
                             DashboardControllerEffect::Render
                         }
                         DashboardActionPlan::Ignored => DashboardControllerEffect::Render,
@@ -1129,6 +1138,8 @@ impl DashboardController {
         self.worktree_remove_confirm = None;
         self.worktree_list_open = false;
         self.worktree_cache_cleanup_confirm = None;
+        self.fresh_restart_confirm = None;
+        self.fresh_restart_confirm_visible = false;
         self.bulk_graveyard_confirm = None;
         self.overseer_overlay_open = false;
         self.overseer_watch_instructions = None;
@@ -1196,6 +1207,8 @@ impl DashboardController {
             DashboardInputOverlay::WorktreeRemoveConfirm
         } else if self.worktree_list_open {
             DashboardInputOverlay::WorktreeList
+        } else if self.fresh_restart_confirm.is_some() {
+            DashboardInputOverlay::FreshRestartConfirm
         } else if self.bulk_graveyard_report.is_some() {
             DashboardInputOverlay::BulkGraveyardReport
         } else if self.bulk_graveyard_confirm.is_some() {
@@ -3241,6 +3254,69 @@ impl DashboardController {
         }
     }
 
+    fn confirm_fresh_restart(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(session) = self.selected_session_for_tool_action(snapshot) else {
+            return DashboardControllerEffect::Ignored;
+        };
+        match plan_dashboard_action(
+            Some(DashboardEntryRef::Session(session)),
+            DashboardActionKind::RestartFresh,
+        ) {
+            DashboardActionPlan::Request(_) => {
+                self.fresh_restart_confirm = Some(session.clone());
+                self.fresh_restart_confirm_visible = false;
+                DashboardControllerEffect::Render
+            }
+            DashboardActionPlan::Busy(message) => {
+                self.set_busy(message);
+                DashboardControllerEffect::Render
+            }
+            DashboardActionPlan::Blocked(message) => {
+                self.footer_alert = Some(message.into());
+                DashboardControllerEffect::Render
+            }
+            DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn handle_fresh_restart_confirm_key(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back | DashboardKey::Printable('n' | 'N') => {
+                self.fresh_restart_confirm = None;
+                self.fresh_restart_confirm_visible = false;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Enter | DashboardKey::Printable('y' | 'Y')
+                if self.fresh_restart_confirm_visible =>
+            {
+                let confirmed = self
+                    .fresh_restart_confirm
+                    .take()
+                    .expect("active confirmation");
+                self.fresh_restart_confirm_visible = false;
+                // A refresh may have removed the target or brought it back online.
+                // Never apply the captured confirmation to a different selected row.
+                if self
+                    .selected_session_for_tool_action(snapshot)
+                    .is_none_or(|session| session.id != confirmed.id)
+                {
+                    self.footer_alert =
+                        Some("The selected agent changed; select it and start fresh again".into());
+                    return DashboardControllerEffect::Render;
+                }
+                self.handle_action(snapshot, DashboardActionKind::RestartFresh)
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
     fn handle_enter(&mut self, snapshot: &DesktopStateSnapshot) -> DashboardControllerEffect {
         if self.navigation.level == DashboardNavLevel::Worktrees {
             return match self.navigation.step_in(snapshot) {
@@ -3387,11 +3463,27 @@ impl DashboardController {
                 DashboardControllerEffect::Render
             }
             DashboardActionPlan::Blocked(message) => {
-                self.footer_alert = Some(message.into());
+                if action == DashboardActionKind::Enter {
+                    self.set_enter_refusal(snapshot, message);
+                } else {
+                    self.footer_alert = Some(message.into());
+                }
                 DashboardControllerEffect::Render
             }
             DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
         }
+    }
+
+    fn set_enter_refusal(&mut self, snapshot: &DesktopStateSnapshot, message: String) {
+        let message = if self
+            .selected_session_for_tool_action(snapshot)
+            .is_some_and(|session| session.status == SessionStatus::Offline)
+        {
+            format!("{message}. Press F to start fresh (confirmation required).")
+        } else {
+            message
+        };
+        self.footer_alert = Some(message.into());
     }
 
     fn handle_stop_key(&mut self, snapshot: &DesktopStateSnapshot) -> DashboardControllerEffect {
@@ -3767,7 +3859,7 @@ fn dashboard_keys_from_event(event: KeyEvent) -> Vec<DashboardKey> {
 
 fn shifted_dashboard_command_key(event: &KeyEvent, lower_key: &str) -> Option<DashboardKey> {
     for letter in [
-        "a", "h", "t", "l", "w", "d", "o", "p", "v", "x", "r", "s", "k", "u",
+        "a", "h", "t", "l", "w", "d", "o", "p", "v", "x", "r", "s", "k", "u", "f",
     ] {
         if is_shifted_letter_command(event, lower_key, letter) {
             return letter

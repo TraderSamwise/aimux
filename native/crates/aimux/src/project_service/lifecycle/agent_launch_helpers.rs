@@ -2,9 +2,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 use super::ids::{sha256_hex, short_id};
-use super::json_helpers::{
-    array_field, string_array_field, string_field, string_field_value, trimmed_string,
-};
+use super::json_helpers::{array_field, string_array_field, string_field, trimmed_string};
 use super::runtime_adapter::{AsyncProjectLifecycleRuntime, ProjectLifecycleRuntime};
 use crate::tool_capabilities::supports_exact_backend_resume;
 
@@ -14,12 +12,7 @@ pub(super) fn tool_config_key_for_session(session: &Value) -> Option<String> {
         .or_else(|| trimmed_string(session.get("command")))
 }
 
-pub(super) fn should_relaunch_agent_fresh(session: &Value, derived: Option<&Value>) -> bool {
-    if string_field_value(derived.and_then(|derived| derived.get("activity"))) == Some("error")
-        || string_field_value(derived.and_then(|derived| derived.get("attention"))) == Some("error")
-    {
-        return true;
-    }
+pub(super) fn should_relaunch_agent_fresh(session: &Value, _derived: Option<&Value>) -> bool {
     trimmed_string(session.get("backendSessionId")).is_none()
         && session.get("freshRelaunchAllowed").and_then(Value::as_bool) == Some(true)
 }
@@ -36,53 +29,116 @@ pub(super) fn missing_backend_session_disposition(
     runtime: &mut impl ProjectLifecycleRuntime,
     session: &Value,
     project_root: &str,
+    topology: &Value,
 ) -> MissingBackendSessionDisposition {
-    missing_backend_session_disposition_from_ids(session, project_root, |cwd| {
-        runtime.codex_backend_session_ids_for_cwd(cwd)
-    })
+    let disposition =
+        missing_backend_session_disposition_from_ids(session, project_root, |tool_key, cwd| {
+            match tool_key {
+                "claude" => runtime.claude_backend_session_ids_for_cwd(cwd),
+                "codex" => runtime.codex_backend_session_ids_for_cwd(cwd),
+                _ => unreachable!("only tools with transcript discovery reach this callback"),
+            }
+        });
+    match disposition {
+        MissingBackendSessionDisposition::RecordBackendSession(id) => {
+            if let Some(owner) = backend_session_claimed_by_other(topology, session, &id) {
+                MissingBackendSessionDisposition::Blocked(format!(
+                    "Discovered conversation already belongs to session {owner}"
+                ))
+            } else {
+                MissingBackendSessionDisposition::RecordBackendSession(id)
+            }
+        }
+        other => other,
+    }
 }
 
 pub(super) fn missing_backend_session_disposition_async_runtime(
     runtime: &mut impl AsyncProjectLifecycleRuntime,
     session: &Value,
     project_root: &str,
+    topology: &Value,
 ) -> MissingBackendSessionDisposition {
-    missing_backend_session_disposition_from_ids(session, project_root, |cwd| {
-        runtime.codex_backend_session_ids_for_cwd(cwd)
-    })
+    let disposition =
+        missing_backend_session_disposition_from_ids(session, project_root, |tool_key, cwd| {
+            match tool_key {
+                "claude" => runtime.claude_backend_session_ids_for_cwd(cwd),
+                "codex" => runtime.codex_backend_session_ids_for_cwd(cwd),
+                _ => unreachable!("only tools with transcript discovery reach this callback"),
+            }
+        });
+    match disposition {
+        MissingBackendSessionDisposition::RecordBackendSession(id) => {
+            if let Some(owner) = backend_session_claimed_by_other(topology, session, &id) {
+                MissingBackendSessionDisposition::Blocked(format!(
+                    "Discovered conversation already belongs to session {owner}"
+                ))
+            } else {
+                MissingBackendSessionDisposition::RecordBackendSession(id)
+            }
+        }
+        other => other,
+    }
+}
+
+pub(super) fn backend_session_claimed_by_other(
+    topology: &Value,
+    session: &Value,
+    backend_id: &str,
+) -> Option<String> {
+    let session_id = string_field(session, "id");
+    let tool = tool_config_key_for_session(session);
+    array_field(topology, "sessions")
+        .into_iter()
+        .find(|other| {
+            string_field(other, "id") != session_id
+                && tool_config_key_for_session(other) == tool
+                && trimmed_string(other.get("backendSessionId")).as_deref() == Some(backend_id)
+        })
+        .map(|other| string_field(&other, "id"))
 }
 
 fn missing_backend_session_disposition_from_ids(
     session: &Value,
     project_root: &str,
-    mut ids_for_cwd: impl FnMut(&str) -> Result<std::collections::BTreeSet<String>, String>,
+    mut ids_for_cwd: impl FnMut(&str, &str) -> Result<std::collections::BTreeSet<String>, String>,
 ) -> MissingBackendSessionDisposition {
     if trimmed_string(session.get("backendSessionId")).is_some() {
         return MissingBackendSessionDisposition::Unchanged;
     }
     let Some(tool_key) = tool_config_key_for_session(session) else {
-        return MissingBackendSessionDisposition::Unchanged;
+        return MissingBackendSessionDisposition::Blocked(
+            "Cannot inspect history for an unknown agent tool".into(),
+        );
     };
-    if tool_key != "codex" {
-        return MissingBackendSessionDisposition::Unchanged;
-    }
+    let tool_label = match tool_key.as_str() {
+        "claude" => "Claude",
+        "codex" => "Codex",
+        // These tools do not have an exact backend conversation to discover.
+        "aider" | "shell" => return MissingBackendSessionDisposition::AllowFreshRelaunch,
+        _ => {
+            return MissingBackendSessionDisposition::Blocked(format!(
+                "Agent tool \"{tool_key}\" has no supported backend history discovery"
+            ));
+        }
+    };
     let cwd =
         trimmed_string(session.get("worktreePath")).unwrap_or_else(|| project_root.to_owned());
-    let mut ids = match ids_for_cwd(&cwd) {
+    let mut ids = match ids_for_cwd(&tool_key, &cwd) {
         Ok(ids) => ids,
         Err(error) => {
             return MissingBackendSessionDisposition::Blocked(format!(
-                "Codex session history for {cwd} could not be inspected: {error}"
+                "{tool_label} session history for {cwd} could not be inspected: {error}"
             ));
         }
     };
     match ids.len() {
         0 => MissingBackendSessionDisposition::AllowFreshRelaunch,
         1 => MissingBackendSessionDisposition::RecordBackendSession(
-            ids.pop_first().unwrap_or_default(),
+            ids.pop_first().expect("one discovered backend session"),
         ),
         count => MissingBackendSessionDisposition::Blocked(format!(
-            "Codex has {count} possible resumable sessions for {cwd}; choose one before restarting"
+            "{tool_label} has {count} possible resumable sessions for {cwd}; choose one before restarting"
         )),
     }
 }
@@ -480,3 +536,80 @@ const CODEX_OPTIONS_WITH_VALUE: &[&str] = &[
     "-s",
     "--sandbox",
 ];
+
+#[cfg(test)]
+mod missing_backend_disposition_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn claude_missing_backend_has_three_distinct_dispositions() {
+        let session = json!({ "toolConfigKey": "claude", "worktreePath": "/repo/wt" });
+        let decide = |result: Result<BTreeSet<String>, String>| {
+            missing_backend_session_disposition_from_ids(&session, "/repo", |tool, cwd| {
+                assert_eq!((tool, cwd), ("claude", "/repo/wt"));
+                result.clone()
+            })
+        };
+        assert_eq!(
+            decide(Ok(BTreeSet::new())),
+            MissingBackendSessionDisposition::AllowFreshRelaunch
+        );
+        assert_eq!(
+            decide(Ok(BTreeSet::from(["backend-id".into()]))),
+            MissingBackendSessionDisposition::RecordBackendSession("backend-id".into())
+        );
+        let MissingBackendSessionDisposition::Blocked(reason) =
+            decide(Err("permission denied".into()))
+        else {
+            panic!("lookup failure must block, never authorize a fresh start");
+        };
+        assert!(
+            reason.contains("Claude")
+                && reason.contains("/repo/wt")
+                && reason.contains("permission denied"),
+            "{reason}"
+        );
+        assert!(matches!(
+            decide(Ok(BTreeSet::from(["one".into(), "two".into()]))),
+            MissingBackendSessionDisposition::Blocked(_)
+        ));
+    }
+
+    #[test]
+    fn known_backend_history_is_preserved_even_after_an_agent_error() {
+        let session = json!({ "toolConfigKey": "claude", "backendSessionId": "known", "freshRelaunchAllowed": true });
+        assert_eq!(
+            missing_backend_session_disposition_from_ids(&session, "/repo", |_, _| panic!(
+                "known identity needs no rediscovery"
+            )),
+            MissingBackendSessionDisposition::Unchanged
+        );
+        assert!(!should_relaunch_agent_fresh(
+            &session,
+            Some(&json!({"activity": "error", "attention": "error"}))
+        ));
+    }
+
+    #[test]
+    fn every_tool_without_a_backend_id_gets_an_explicit_disposition() {
+        for tool in ["aider", "shell"] {
+            assert_eq!(
+                missing_backend_session_disposition_from_ids(
+                    &json!({"toolConfigKey": tool}),
+                    "/repo",
+                    |_, _| panic!("no exact backend store exists")
+                ),
+                MissingBackendSessionDisposition::AllowFreshRelaunch
+            );
+        }
+        for session in [json!({"toolConfigKey": "custom"}), json!({})] {
+            assert!(matches!(
+                missing_backend_session_disposition_from_ids(&session, "/repo", |_, _| panic!(
+                    "no supported store exists"
+                )),
+                MissingBackendSessionDisposition::Blocked(_)
+            ));
+        }
+    }
+}

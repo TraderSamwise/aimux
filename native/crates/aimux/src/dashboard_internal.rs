@@ -2637,6 +2637,15 @@ fn render_dashboard_snapshot(
             render_worktree_list_overlay(&snapshot.worktree_groups, viewport.cols, viewport.rows),
         );
     }
+    if let Some(session) = controller.fresh_restart_confirm.as_ref() {
+        let overlay = crate::dashboard_service_input::render_fresh_restart_confirm_overlay(
+            session,
+            viewport.cols,
+            viewport.rows,
+        );
+        controller.fresh_restart_confirm_visible = true;
+        return dashboard_overlay_frame(&frame, overlay);
+    }
     if controller.agent_restore_prompt_active(snapshot)
         && let Some(offer) = snapshot.agent_restore_offer.as_ref()
     {

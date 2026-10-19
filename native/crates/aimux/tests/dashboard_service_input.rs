@@ -377,3 +377,22 @@ fn orchestration_target(label: &str) -> DashboardOrchestrationTarget {
         recipient_ids: vec!["agent-1".into()],
     }
 }
+
+#[test]
+fn fresh_restart_confirmation_discloses_history_is_not_resumed() {
+    let session: DashboardSession = serde_json::from_value(json!({
+        "index": 1, "id": "claude-blocked", "command": "claude", "label": "Overseer", "active": false, "tool": "claude", "status": "offline",
+        "restoreState": "blocked", "restoreBlockedReason": "Multiple matching transcripts"
+    }))
+    .unwrap();
+    let output = strip_ansi(
+        &aimux::dashboard_service_input::render_fresh_restart_confirm_overlay(&session, 120, 30),
+    );
+    assert!(output.contains("START AGENT FRESH"));
+    assert!(output.contains("claude-blocked"));
+    assert!(output.contains("History will not be resumed"));
+    assert!(output.contains("Multiple matching transcripts"));
+    let words = output.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(words.contains("Enter/y start fresh"));
+    assert!(words.contains("n/Esc cancel"));
+}
