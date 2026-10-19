@@ -29,11 +29,22 @@ pub struct DashboardToolPickerState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardToolPickerMode {
-    Create(DashboardAgentCreationPolicy),
+    /// `target` is the lane the opener resolved from where the cursor is, so
+    /// the picker never has to guess. `policy.default_target` is the fallback
+    /// the OPENER applies when there is no lane to read, and is deliberately
+    /// not consulted here.
+    Create {
+        policy: DashboardAgentCreationPolicy,
+        target: DashboardAgentCreationTarget,
+    },
     CreateOverseer,
     CreateScribe,
-    Fork { source_session_id: String },
-    SwitchTool { session_id: String },
+    Fork {
+        source_session_id: String,
+    },
+    SwitchTool {
+        session_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,13 +55,22 @@ pub enum DashboardToolPickerEffect {
 }
 
 impl DashboardToolPickerState {
-    pub fn new(tools: Vec<DashboardToolEntry>, policy: DashboardAgentCreationPolicy) -> Self {
-        Self::with_mode(tools, DashboardToolPickerMode::Create(policy))
+    pub fn new(
+        tools: Vec<DashboardToolEntry>,
+        policy: DashboardAgentCreationPolicy,
+        target: DashboardAgentCreationTarget,
+    ) -> Self {
+        Self::with_mode(tools, DashboardToolPickerMode::Create { policy, target })
     }
 
     pub fn with_mode(tools: Vec<DashboardToolEntry>, mode: DashboardToolPickerMode) -> Self {
-        let create_in_worktree = matches!(&mode, DashboardToolPickerMode::Create(policy)
-            if policy.default_target == DashboardAgentCreationTarget::Worktree);
+        // The TARGET the opener resolved, not the policy's project-wide
+        // default. Reading `policy.default_target` here meant the picker
+        // always opened on the supervisor lane, whatever lane the cursor was
+        // standing in -- so every `n` in a worktree created a control agent in
+        // the supervisor lane unless the user knew to press Tab.
+        let create_in_worktree = matches!(&mode, DashboardToolPickerMode::Create { target, .. }
+            if *target == DashboardAgentCreationTarget::Worktree);
         Self {
             tools,
             index: 0,
@@ -122,7 +142,7 @@ impl DashboardToolPickerState {
         launch_override: Option<Value>,
     ) -> DashboardToolPickerEffect {
         match &self.mode {
-            DashboardToolPickerMode::Create(policy) => {
+            DashboardToolPickerMode::Create { policy, .. } => {
                 let role = if self.create_in_worktree {
                     &policy.worktree_role
                 } else {
@@ -210,7 +230,7 @@ pub fn render_tool_picker_overlay(
     rows: usize,
 ) -> String {
     let title = match &state.mode {
-        DashboardToolPickerMode::Create(_) => "Select tool".to_owned(),
+        DashboardToolPickerMode::Create { .. } => "Select tool".to_owned(),
         DashboardToolPickerMode::CreateOverseer => "Select overseer".to_owned(),
         DashboardToolPickerMode::CreateScribe => "Select scribe".to_owned(),
         DashboardToolPickerMode::Fork { source_session_id } => {
@@ -232,7 +252,7 @@ pub fn render_tool_picker_overlay(
             icon: None,
         });
     }
-    if let DashboardToolPickerMode::Create(policy) = &state.mode {
+    if let DashboardToolPickerMode::Create { policy, .. } = &state.mode {
         let target = if state.create_in_worktree {
             "Focused worktree"
         } else {

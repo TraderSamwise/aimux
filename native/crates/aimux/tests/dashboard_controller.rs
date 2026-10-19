@@ -4,6 +4,7 @@ use aimux::dashboard_controller::{
     DashboardScreen, DashboardSubscreenAction, orchestration_targets_from_resource,
     parse_dashboard_key, parse_dashboard_keys,
 };
+use aimux::dashboard_create::DashboardAgentCreationTarget;
 use aimux::dashboard_model::{
     DashboardKept, DashboardOperationFailure, DesktopStateGoldenFixture, DesktopStateSnapshot,
     SessionSemanticState, SessionStatus, SessionTeamMetadata, dashboard_has_clearable_failures,
@@ -597,9 +598,10 @@ fn coalesced_input_stops_after_opening_command_surfaces() {
     let picker = picker_controller.handle_key(&snapshot, DashboardKey::Printable('n'));
     assert_eq!(
         picker,
-        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create(
-            creation_policy()
-        ))
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Worktree,
+        })
     );
     assert!(picker_controller.should_stop_coalesced_input(before_picker, &picker));
 }
@@ -767,9 +769,10 @@ fn new_agent_key_opens_tool_picker_effect() {
 
     assert_eq!(
         controller.handle_key(&snapshot, DashboardKey::NewAgent),
-        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create(
-            creation_policy()
-        ))
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Worktree,
+        })
     );
 }
 
@@ -788,7 +791,10 @@ fn tool_picker_enter_dispatches_agent_spawn_request() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+        },
     );
 
     let DashboardControllerEffect::Request(request) =
@@ -821,7 +827,10 @@ fn tool_picker_escape_closes_and_restores_dashboard_quit() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+        },
     );
 
     assert_eq!(
@@ -847,7 +856,10 @@ fn tool_picker_quit_key_quits_instead_of_trapping_input() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+        },
     );
 
     assert_eq!(
@@ -868,7 +880,10 @@ fn tool_picker_options_create_launch_override_request() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+        },
     );
 
     assert_eq!(
@@ -910,7 +925,10 @@ fn tool_picker_options_surface_parse_errors_without_request() {
             default_args: vec![],
             default_env: Default::default(),
         }],
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+        },
     );
     controller.handle_key(&snapshot, DashboardKey::Printable('o'));
     for key in parse_dashboard_keys(b"\"unterminated") {
@@ -3497,6 +3515,101 @@ fn selected_session_id<'a>(
     }
 }
 
+/// Pressing `n` in a worktree used to create a `control` agent in the
+/// SUPERVISOR lane, discarding the worktree entirely. The picker read the
+/// project-wide `defaultTarget` -- which the project service pins to
+/// `supervisor` -- and never looked at the cursor, so the only way to reach
+/// the lane you were standing in was to know about an undocumented Tab.
+#[test]
+fn new_agent_in_a_worktree_targets_that_worktree() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    let mut controller = DashboardController::new(&snapshot);
+    focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
+
+    let DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+        target,
+        ..
+    }) = controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+
+    assert_eq!(
+        target,
+        DashboardAgentCreationTarget::Worktree,
+        "a new agent belongs to the lane the cursor is in"
+    );
+}
+
+/// The other direction, which is the behaviour the supervisor-lane default was
+/// actually asked for: standing IN the supervisor lane still makes a control.
+#[test]
+fn new_agent_in_the_supervisor_lane_targets_the_supervisor_lane() {
+    let snapshot = snapshot_with_supervisor_lane();
+    let mut controller = DashboardController::new(&snapshot);
+    let groups = dashboard_navigation_groups(&snapshot);
+    let supervisor = groups
+        .iter()
+        .position(|group| group.kind == DashboardNavigationGroupKind::Supervisor)
+        .expect("a supervisor lane");
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = supervisor;
+    controller.navigation.item_index = 0;
+
+    let DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create {
+        target,
+        ..
+    }) = controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+
+    assert_eq!(target, DashboardAgentCreationTarget::Supervisor);
+}
+
+/// End to end through the picker, because the target only matters if it
+/// reaches the spawn body. Both halves changed: the role AND the path.
+#[test]
+fn new_agent_in_a_worktree_spawns_a_coder_in_that_checkout() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].path = Some("<ROOT>".into());
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    focus_worktree_path(&mut controller, &snapshot, Some("<ROOT>"));
+
+    let DashboardControllerEffect::OpenAgentToolPicker(mode) =
+        controller.handle_key(&snapshot, DashboardKey::NewAgent)
+    else {
+        panic!("expected the create picker");
+    };
+    controller.open_tool_picker(
+        vec![DashboardToolEntry {
+            key: "codex".into(),
+            command: "codex".into(),
+            args: vec![],
+            default_args: vec![],
+            default_env: Default::default(),
+        }],
+        mode,
+    );
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected request");
+    };
+    assert_eq!(
+        request.body,
+        json!({
+            "tool": "codex",
+            "role": "coder",
+            "worktreePath": "<ROOT>",
+            "open": false
+        })
+    );
+}
+
 fn focus_worktree_path(
     controller: &mut DashboardController,
     snapshot: &DesktopStateSnapshot,
@@ -4653,7 +4766,10 @@ fn bulk_graveyard_waits_for_existing_picker_before_showing_confirmation_or_repor
     controller.agent_restore_prompt_dismissed = true;
     controller.open_tool_picker(
         Vec::new(),
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+        },
     );
     controller
         .receive_bulk_graveyard_preview(json!({"scope": "project", "dryRun": true,
@@ -4677,7 +4793,10 @@ fn bulk_graveyard_waits_for_existing_picker_before_showing_confirmation_or_repor
     controller.handle_key(&snapshot, DashboardKey::Back);
     controller.open_tool_picker(
         Vec::new(),
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+        },
     );
     controller.receive_bulk_graveyard_report("One failure: permission denied".into());
     assert!(controller.bulk_graveyard_report.is_none());

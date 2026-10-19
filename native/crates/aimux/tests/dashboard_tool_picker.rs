@@ -1,5 +1,5 @@
 use aimux::config::merge_config_layers;
-use aimux::dashboard_create::DashboardCreatePlan;
+use aimux::dashboard_create::{DashboardAgentCreationTarget, DashboardCreatePlan};
 use aimux::dashboard_tool_picker::{
     DashboardToolPickerEffect, DashboardToolPickerMode, DashboardToolPickerState,
     enabled_dashboard_tools, render_tool_picker_overlay,
@@ -47,7 +47,10 @@ fn create_selected_maps_default_launch_override() {
     let tools = enabled_dashboard_tools(&config);
     let mut picker = DashboardToolPickerState::with_mode(
         tools,
-        DashboardToolPickerMode::Create(creation_policy()),
+        DashboardToolPickerMode::Create {
+            policy: creation_policy(),
+            target: DashboardAgentCreationTarget::Supervisor,
+        },
     );
     picker.index = 1;
 
@@ -124,7 +127,11 @@ fn create_overseer_mode_marks_spawn_request_as_overseer() {
 fn digit_selects_and_creates_tool() {
     let config = merge_config_layers(None, None);
     let tools = enabled_dashboard_tools(&config);
-    let mut picker = DashboardToolPickerState::new(tools, creation_policy());
+    let mut picker = DashboardToolPickerState::new(
+        tools,
+        creation_policy(),
+        DashboardAgentCreationTarget::Supervisor,
+    );
 
     let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
         picker.select_digit('2', None)
@@ -225,7 +232,11 @@ fn switch_mode_maps_selected_tool_to_switch_request() {
 #[test]
 fn render_picker_overlay_lists_tools() {
     let tools = enabled_dashboard_tools(&merge_config_layers(None, None));
-    let picker = DashboardToolPickerState::new(tools, creation_policy());
+    let picker = DashboardToolPickerState::new(
+        tools,
+        creation_policy(),
+        DashboardAgentCreationTarget::Supervisor,
+    );
 
     let output = render_tool_picker_overlay(&picker, 80, 24);
 
@@ -251,6 +262,7 @@ fn picker_consumes_service_destination_and_custom_roles() {
     let mut picker = DashboardToolPickerState::new(
         enabled_dashboard_tools(&merge_config_layers(None, None)),
         policy,
+        DashboardAgentCreationTarget::Worktree,
     );
     let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
         picker.create_selected(Some("/repo/feature"))

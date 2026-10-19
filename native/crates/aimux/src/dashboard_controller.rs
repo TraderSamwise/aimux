@@ -654,6 +654,41 @@ impl DashboardController {
         }
     }
 
+    /// Which lane a new agent belongs to: the one the cursor is standing in.
+    ///
+    /// `n` used to ignore the selection entirely. The picker read
+    /// `policy.default_target`, which the project service pins to
+    /// `supervisor`, so every new agent became a `control` in the supervisor
+    /// lane however deep in a worktree you were -- recoverable only by knowing
+    /// to press Tab. The policy's `worktreeRole` existed for this case and
+    /// nothing consulted it.
+    ///
+    /// The main checkout is a `Worktree` group with no path, which is exactly
+    /// right: it takes the worktree role, and a `None` path is what the spawn
+    /// route already means by the main checkout.
+    ///
+    /// `default_target` survives as the fallback for a dashboard with no lanes
+    /// at all to read, which is the only case where there is nothing better.
+    fn agent_creation_target(
+        &self,
+        snapshot: &DesktopStateSnapshot,
+        policy: &crate::dashboard_create::DashboardAgentCreationPolicy,
+    ) -> crate::dashboard_create::DashboardAgentCreationTarget {
+        use crate::dashboard_create::DashboardAgentCreationTarget;
+        use crate::dashboard_navigation::DashboardNavigationGroupKind;
+        match self
+            .navigation
+            .focused_group(snapshot)
+            .map(|group| group.kind)
+        {
+            Some(DashboardNavigationGroupKind::Supervisor) => {
+                DashboardAgentCreationTarget::Supervisor
+            }
+            Some(DashboardNavigationGroupKind::Worktree) => DashboardAgentCreationTarget::Worktree,
+            None => policy.default_target.clone(),
+        }
+    }
+
     pub fn open_tool_picker(
         &mut self,
         tools: Vec<DashboardToolEntry>,
@@ -764,9 +799,12 @@ impl DashboardController {
                     })
                     .and_then(crate::dashboard_create::DashboardAgentCreationPolicy::parse)
                 {
-                    Ok(policy) => DashboardControllerEffect::OpenAgentToolPicker(
-                        DashboardToolPickerMode::Create(policy),
-                    ),
+                    Ok(policy) => {
+                        let target = self.agent_creation_target(snapshot, &policy);
+                        DashboardControllerEffect::OpenAgentToolPicker(
+                            DashboardToolPickerMode::Create { policy, target },
+                        )
+                    }
                     Err(error) => {
                         self.footer_alert = Some(DashboardFailureAlert::local(error));
                         DashboardControllerEffect::Render
@@ -1697,7 +1735,9 @@ impl DashboardController {
             {
                 tool_picker.select_digit(digit, worktree_path)
             }
-            DashboardKey::Tab if matches!(tool_picker.mode, DashboardToolPickerMode::Create(_)) => {
+            DashboardKey::Tab
+                if matches!(tool_picker.mode, DashboardToolPickerMode::Create { .. }) =>
+            {
                 tool_picker.create_in_worktree = !tool_picker.create_in_worktree;
                 DashboardToolPickerEffect::Render
             }
