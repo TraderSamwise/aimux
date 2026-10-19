@@ -7,6 +7,7 @@
 //! these assert -- including the case where nothing may change.
 
 use aimux::async_runtime::{block_on_named, init_process_runtime};
+use aimux::periodic_scheduler::TICK_INTERVAL_MS as SCHEDULER_TICK_INTERVAL_MS;
 use aimux::project_service::process::project_service_periodic_tasks_for_context;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::scheduler::PeriodicTask;
@@ -271,12 +272,23 @@ fn the_reconciler_is_registered_on_the_project_tick_loop() {
 /// effectively off -- and a figure small enough to matter is the other
 /// direction of the same hole: this walks every worktree row and stats the
 /// candidates, which at a tick-loop cadence is real load on a shared machine.
+///
+/// `tick_multiple` as well as `interval_ms`, because the effective cadence is
+/// the multiple: an override of 345_600 disables the task while an
+/// `interval_ms` assertion alone stays green.
 #[test]
 fn the_scan_cadence_is_a_slow_backstop() {
-    let interval = WorktreePresenceReconcilerTask.interval_ms();
+    let task = WorktreePresenceReconcilerTask;
+    let interval = task.interval_ms();
     assert!(
         (60_000..=600_000).contains(&interval),
         "scan interval {interval}ms is outside the backstop range this task \
          was reasoned about at; changing it is a decision, not a tidy-up"
+    );
+    let effective = task.tick_multiple() as i64 * SCHEDULER_TICK_INTERVAL_MS;
+    assert_eq!(
+        effective, interval,
+        "the tick multiple is what the scheduler actually uses; it must agree \
+         with the declared interval"
     );
 }

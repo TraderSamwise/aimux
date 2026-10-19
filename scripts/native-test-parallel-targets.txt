@@ -143,6 +143,7 @@ project_service_usage_monitor
 project_service_window_reconciliation
 project_service_work_outline
 project_service_worktree_presence
+project_service_worktree_presence_log
 project_service_worktrees
 proxy_project_binding
 registry

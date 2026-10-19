@@ -81,7 +81,7 @@ impl PeriodicTask for WorktreePresenceReconcilerTask {
                     // Guessed before the lock purely to avoid taking it. Almost
                     // every scan stops here, which is the only thing keeping
                     // this task off the topology write lock every two minutes.
-                    if settlements(&topology, &project_root, &identity).is_empty() {
+                    if !any_settlement(&topology, &project_root, &identity) {
                         return Ok(ScanOutcome::NothingToSettle);
                     }
                     let mut settled: Vec<Value> = Vec::new();
@@ -105,6 +105,16 @@ impl PeriodicTask for WorktreePresenceReconcilerTask {
                                 settled.push(json!({ "path": path, "from": from, "to": next }));
                             }
                         }
+                        if !settled.is_empty() {
+                            // Every other topology writer stamps this. A file
+                            // whose `generatedAt` predates its newest row is
+                            // the same class of lie this task exists to end.
+                            object_insert_mut(
+                                &mut topology,
+                                "generatedAt",
+                                Value::String(now_iso()),
+                            );
+                        }
                         topology
                     })
                     .map(|_| ScanOutcome::TookTheLock { settled })
@@ -120,8 +130,9 @@ impl PeriodicTask for WorktreePresenceReconcilerTask {
                 // minutes per project service is noise, and nothing happened.
                 ScanOutcome::NothingToSettle => {}
                 ScanOutcome::TookTheLock { settled } if settled.is_empty() => {
-                    // The guess went stale while this waited: another writer
-                    // settled or removed those rows. Worth a line because
+                    // The guess went stale while this waited -- another writer
+                    // settled or removed those rows, or the checkout itself
+                    // changed between the two stats. Worth a line because
                     // `update_runtime_topology` has no dirty check, so the file
                     // WAS rewritten -- and a write nothing accounts for is how
                     // a wrapper lies. Reachable only through that race, which
@@ -216,17 +227,20 @@ fn settled_status(
     Some(next)
 }
 
-fn settlements(topology: &Value, project_root: &str, root_identity: &str) -> Vec<&'static str> {
+/// Whether any row would settle, short-circuiting at the first one found.
+///
+/// A boolean rather than the set, because the set from before the lock is a
+/// guess the in-lock pass re-derives anyway -- and collecting it stats every
+/// row where stopping at the first candidate does not.
+fn any_settlement(topology: &Value, project_root: &str, root_identity: &str) -> bool {
     topology
         .get("worktrees")
         .and_then(Value::as_array)
-        .map(|worktrees| {
+        .is_some_and(|worktrees| {
             worktrees
                 .iter()
-                .filter_map(|worktree| settled_status(worktree, project_root, root_identity))
-                .collect()
+                .any(|worktree| settled_status(worktree, project_root, root_identity).is_some())
         })
-        .unwrap_or_default()
 }
 
 fn string_field(value: &Value, key: &str) -> String {
