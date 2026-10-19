@@ -76,6 +76,8 @@ export interface DesktopSession {
   createdAt?: string;
   restoreState?: "ready" | "blocked";
   restoreBlockedReason?: string;
+  restoreNotice?: string;
+  freshRelaunchAllowed?: boolean;
   restartLaunchOptions?: AgentRestartLaunchOptions;
   role?: AgentRole;
   lane?: AgentLane;

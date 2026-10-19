@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::project_service::session_semantics::capped_count_label;
 
+pub const FRESH_RESTORE_NOTICE: &str = "Fresh start; history not resumed";
+
 /// How a chip reads. The names are what a renderer maps to its own palette;
 /// which tone a fact deserves is decided here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -64,6 +66,8 @@ pub struct RowChipsInput {
     /// A dead agent's facts are still true but nothing is happening, so every
     /// chip reads muted rather than calling for attention.
     pub offline: bool,
+    /// The project service's restore disclosure, rendered verbatim.
+    pub restore_notice: Option<String>,
     pub waiting_on_me_count: i64,
     pub workflow_blocked_count: i64,
     /// The sub-agent summary's own label, already spelled by the service.
@@ -89,6 +93,18 @@ pub fn agent_row_chips(input: &RowChipsInput) -> Vec<RowChip> {
         }
     };
     let mut chips = Vec::new();
+    if let Some(label) = input
+        .restore_notice
+        .as_deref()
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+    {
+        chips.push(RowChip::new(
+            "restore-notice",
+            label,
+            tone(RowChipTone::Attention),
+        ));
+    }
     // The pane says "on me" and the compact hint says "on you"; the row is
     // read by the person being waited on, so it says "you".
     if input.waiting_on_me_count > 0 {
@@ -212,6 +228,7 @@ mod tests {
     fn busy() -> RowChipsInput {
         RowChipsInput {
             offline: false,
+            restore_notice: None,
             waiting_on_me_count: 2,
             workflow_blocked_count: 1,
             subagent_label: Some("2 sub-agents".to_owned()),

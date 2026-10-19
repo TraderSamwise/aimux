@@ -968,3 +968,169 @@ fn drive_bulk_graveyard_confirmation(overlapping_picker: bool, partial_result: b
         }
     }
 }
+
+#[test]
+fn blocked_agent_fresh_restart_warning_is_reachable_in_the_render_loop() {
+    let root =
+        std::env::temp_dir().join(format!("aimux-render-fresh-warning-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut fixture = snapshot();
+    let mut offline = fixture.sessions[0].clone();
+    offline.id = "claude-blocked-fresh".into();
+    offline.status = aimux::dashboard_model::SessionStatus::Offline;
+    offline.restore_state = Some("blocked".into());
+    offline.restore_blocked_reason = Some("Multiple matching transcripts".into());
+    offline.semantic = None;
+    offline.overseer = None;
+    offline.scribe = None;
+    offline.project_control = None;
+    offline.team = None;
+    offline.worktree_path = None;
+    fixture.sessions = vec![offline];
+    fixture.teammates.clear();
+    fixture.services.clear();
+    fixture.worktree_groups.clear();
+    fixture.agent_restore_offer = None;
+    let painted = Captured::default();
+    let frames = Arc::clone(&painted.0);
+    let script = Arc::new(Mutex::new(std::collections::VecDeque::from(vec![
+        vec![],
+        vec![DashboardKey::Printable('F')],
+        vec![],
+        vec![DashboardKey::Back],
+        vec![],
+    ])));
+    let key_script = Arc::clone(&script);
+    let seams = DashboardLoopSeams {
+        keys: Box::new(move || key_script.lock().unwrap().pop_front().unwrap_or_default()),
+        snapshot: Box::new(move || {
+            Ok(DashboardSnapshotLoad {
+                snapshot: fixture.clone(),
+                endpoint: None,
+            })
+        }),
+        stop: Box::new(move || script.lock().unwrap().is_empty()),
+        output: Box::new(painted),
+        frame: Box::new(|_| {}),
+        deferral: DashboardRefreshDeferral::PRODUCTION,
+    };
+    let result = run_native_dashboard_with_seams(
+        NativeDashboardOptions {
+            project_root: root.clone(),
+            desktop_state_file: Some(root.join("desktop-state.json")),
+            cols: 140,
+            rows: 40,
+            once: false,
+        },
+        Some(seams),
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+    result.unwrap();
+    let painted = aimux::tui_render::text::strip_ansi(&frames.lock().unwrap());
+    assert!(
+        painted.contains("START AGENT FRESH"),
+        "the key must paint its confirmation: {painted}"
+    );
+    assert!(painted.contains("History will not be resumed"));
+    assert!(painted.contains("Multiple matching transcripts"));
+    assert!(
+        painted.contains("start fresh"),
+        "offline rows advertise the escape hatch"
+    );
+}
+
+#[test]
+fn fresh_restart_discards_buffered_enter_and_y_until_a_new_key_after_the_warning() {
+    for buffered_confirm in [DashboardKey::Enter, DashboardKey::Printable('y')] {
+        let root = std::env::temp_dir().join(format!(
+            "aimux-render-fresh-buffered-{}-{buffered_confirm:?}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut fixture = snapshot();
+        let mut offline = fixture.sessions[0].clone();
+        offline.id = "claude-buffered-fresh".into();
+        offline.status = aimux::dashboard_model::SessionStatus::Offline;
+        offline.restore_state = Some("blocked".into());
+        offline.restore_blocked_reason = Some("Multiple matching transcripts".into());
+        offline.semantic = None;
+        offline.overseer = None;
+        offline.scribe = None;
+        offline.project_control = None;
+        offline.team = None;
+        offline.worktree_path = None;
+        fixture.sessions = vec![offline];
+        fixture.teammates.clear();
+        fixture.services.clear();
+        fixture.worktree_groups.clear();
+        fixture.agent_restore_offer = None;
+        let painted = Captured::default();
+        let final_output = Arc::clone(&painted.0);
+        let output_for_keys = Arc::clone(&painted.0);
+        let before_independent_key = Arc::new(Mutex::new(None));
+        let before_key_capture = Arc::clone(&before_independent_key);
+        let script = Arc::new(Mutex::new(std::collections::VecDeque::from(vec![
+            vec![],
+            vec![DashboardKey::Printable('F'), buffered_confirm],
+            vec![],
+            vec![],
+            vec![DashboardKey::Printable('y')],
+            vec![DashboardKey::Tab],
+            vec![],
+        ])));
+        let key_script = Arc::clone(&script);
+        let mut poll = 0;
+        let seams = DashboardLoopSeams {
+            keys: Box::new(move || {
+                if poll == 4 {
+                    *before_key_capture.lock().unwrap() =
+                        Some(output_for_keys.lock().unwrap().clone());
+                }
+                poll += 1;
+                key_script.lock().unwrap().pop_front().unwrap_or_default()
+            }),
+            snapshot: Box::new(move || {
+                Ok(DashboardSnapshotLoad {
+                    snapshot: fixture.clone(),
+                    endpoint: None,
+                })
+            }),
+            stop: Box::new(move || script.lock().unwrap().is_empty()),
+            output: Box::new(painted),
+            frame: Box::new(|_| {}),
+            deferral: DashboardRefreshDeferral::PRODUCTION,
+        };
+        let result = run_native_dashboard_with_seams(
+            NativeDashboardOptions {
+                project_root: root.clone(),
+                desktop_state_file: Some(root.join("desktop-state.json")),
+                cols: 140,
+                rows: 40,
+                once: false,
+            },
+            Some(seams),
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+        result.unwrap();
+        let before = aimux::tui_render::text::strip_ansi(
+            before_independent_key.lock().unwrap().as_deref().unwrap(),
+        );
+        assert!(before.contains("START AGENT FRESH"));
+        assert!(before.contains("History will not be resumed"));
+        assert!(
+            !before.contains("State: Starting"),
+            "buffered confirmation must not create an optimistic restart request: {before}"
+        );
+        assert!(
+            !before.contains("Dashboard action requires a project-service endpoint"),
+            "buffered confirmation must not reach request dispatch: {before}"
+        );
+        // A missing endpoint deliberately marks the actual dispatch boundary.
+        // An independent key must reach it, proving the warning was actionable.
+        let after = aimux::tui_render::text::strip_ansi(&final_output.lock().unwrap());
+        assert!(
+            after.contains("Dashboard action requires a project-service endpoint"),
+            "a new y after seeing the warning must dispatch the confirmed restart: {after}"
+        );
+    }
+}

@@ -319,3 +319,220 @@ fn an_agent_that_failed_and_then_exited_reads_as_gone_on_both_rows() {
         "every chip the app is handed reads muted: {chips:?}"
     );
 }
+
+#[test]
+fn fresh_restore_disclosure_matches_the_app_and_terminal_before_and_after_launch() {
+    for (status, backend_id, fresh_allowed, notice, expected) in [
+        ("offline", None, true, None, true),
+        (
+            "running",
+            Some("new-backend"),
+            false,
+            Some("Fresh start; history not resumed"),
+            true,
+        ),
+        // A discovery failure, or a known exact id, must not promise a fresh restore.
+        ("offline", None, false, None, false),
+        ("offline", Some("history-backend"), true, None, false),
+    ] {
+        let mut topology = topology(status);
+        let session = &mut topology["sessions"][0];
+        session["freshRelaunchAllowed"] = json!(fresh_allowed);
+        if let Some(id) = backend_id {
+            session["backendSessionId"] = json!(id);
+        }
+        if let Some(notice) = notice {
+            session["restoreNotice"] = json!(notice);
+        }
+        // Round-trip through persisted topology: dropping restoreNotice from
+        // a field allowlist must lose this proof, not pass a helper-only test.
+        let topology = coerce_runtime_topology(&topology).expect("stored topology");
+        let metadata = BTreeMap::new();
+        let state = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: PROJECT.into(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange(0, 0),
+            },
+            Some(&support::live_windows("aimux-repo", &["@1"])),
+        );
+        let session = session_state(&state);
+        let chips = chips_handed_to_the_app(&session);
+        let disclosure = chips.iter().find(|chip| chip.kind == "restore-notice");
+        assert_eq!(disclosure.is_some(), expected, "{session}");
+        let row = dashboard_row(&state);
+        if let Some(chip) = disclosure {
+            assert_eq!(chip.label, "Fresh start; history not resumed");
+            assert!(
+                row.contains(&chip.label),
+                "the terminal must say what the app was handed: {row}"
+            );
+        } else {
+            assert!(!row.contains("history not resumed"), "{row}");
+        }
+    }
+}
+
+#[test]
+fn missing_backend_history_can_reach_discovery_through_ordinary_enter_on_both_surfaces() {
+    use aimux::dashboard_actions::{
+        DashboardActionKind, DashboardActionPlan, plan_dashboard_action,
+    };
+    use aimux::dashboard_model::DashboardSession;
+    use aimux::dashboard_navigation::DashboardEntryRef;
+    use aimux::project_api_contract::routes;
+
+    for tool in ["claude", "codex"] {
+        for failure in [None, Some("history inspection failed: permission denied")] {
+            let mut topology = topology("offline");
+            topology["nodes"][0]["toolConfigKey"] = json!(tool);
+            for key in ["tool", "toolConfigKey", "command"] {
+                topology["sessions"][0][key] = json!(tool);
+            }
+            if let Some(reason) = failure {
+                topology["sessions"][0]["restoreBlockedReason"] = json!(reason);
+            }
+            let metadata = BTreeMap::new();
+            let state = build_desktop_state_with_live_window_ids(
+                DesktopStateInput {
+                    project_root: PROJECT.into(),
+                    topology: &topology,
+                    metadata_sessions: &metadata,
+                    exchange: &exchange(0, 0),
+                },
+                Some(&support::live_windows("aimux-repo", &[])),
+            );
+            let app = session_state(&state);
+            assert_eq!(
+                app["restoreState"],
+                if failure.is_some() {
+                    "blocked"
+                } else {
+                    "ready"
+                },
+                "{app}"
+            );
+            assert_ne!(
+                app["freshRelaunchAllowed"], true,
+                "attempting discovery is not permission to discard history"
+            );
+            assert!(
+                chips_handed_to_the_app(&app)
+                    .iter()
+                    .all(|chip| chip.kind != "restore-notice")
+            );
+            let terminal: DashboardSession = serde_json::from_value(app).unwrap();
+            let plan = plan_dashboard_action(
+                Some(DashboardEntryRef::Session(&terminal)),
+                DashboardActionKind::Enter,
+            );
+            if failure.is_some() {
+                assert!(matches!(plan, DashboardActionPlan::Blocked(_)), "{plan:?}");
+            } else {
+                let DashboardActionPlan::Request(request) = plan else {
+                    panic!("ordinary Enter must reach service discovery: {plan:?}");
+                };
+                assert_eq!(request.path, routes::agents::RESUME);
+                assert_eq!(request.body, json!({ "sessionId": SESSION }));
+            }
+        }
+    }
+}
+
+#[test]
+fn fresh_disclosure_survives_live_tmux_sync_and_topology_reconciliation() {
+    use aimux::project_service::tmux_metadata_sync::{
+        TmuxMetadataSyncRuntime, sync_tmux_window_metadata,
+    };
+    use aimux::runtime_topology_sessions::reconcile_runtime_topology_sessions;
+    use aimux::tmux::TmuxTarget;
+
+    struct Runtime {
+        target: TmuxTarget,
+        metadata: Value,
+    }
+    impl TmuxMetadataSyncRuntime for Runtime {
+        fn get_target_by_window_id(&mut self, _: &str, _: &str) -> Option<TmuxTarget> {
+            Some(self.target.clone())
+        }
+        fn get_window_metadata(&mut self, _: &str) -> Option<Value> {
+            Some(self.metadata.clone())
+        }
+        fn set_window_metadata(&mut self, _: &str, metadata: &Value) -> Result<(), String> {
+            self.metadata = metadata.clone();
+            Ok(())
+        }
+        fn apply_managed_agent_window_policy(&mut self, _: &str, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    let isolation = support::TestIsolation::new("restore-disclosure-sync");
+    for disclosed in [true, false] {
+        let mut topology = topology("running");
+        topology["sessions"][0]["backendSessionId"] = json!("newly-captured-backend");
+        if disclosed {
+            topology["sessions"][0]["restoreNotice"] = json!("Fresh start; history not resumed");
+        }
+        let target = TmuxTarget {
+            session_name: "aimux-repo".into(),
+            window_id: "@1".into(),
+            window_index: 1,
+            window_name: "claude".into(),
+            pane_dead: None,
+        };
+        // A stale window notice must be overwritten on an exact resume, while
+        // a fresh launch's notice must survive metadata rebuilt on output.
+        let mut runtime = Runtime {
+            target: target.clone(),
+            metadata: json!({ "kind": "agent", "sessionId": SESSION, "restoreNotice": "Fresh start; history not resumed" }),
+        };
+        let synced =
+            sync_tmux_window_metadata(&mut runtime, isolation.root(), &topology, SESSION, &target)
+                .expect("metadata sync");
+        assert_eq!(
+            synced.metadata.get("restoreNotice").is_some(),
+            disclosed,
+            "{synced:?}"
+        );
+        assert_eq!(
+            runtime.metadata, synced.metadata,
+            "assert what was written to tmux, not only the helper result"
+        );
+
+        let mut incoming = runtime.metadata.clone();
+        incoming["id"] = json!(SESSION);
+        incoming["lifecycle"] = json!("live");
+        incoming["tmuxTarget"] = json!({ "sessionName": target.session_name, "windowId": target.window_id, "windowIndex": target.window_index, "windowName": target.window_name });
+        reconcile_runtime_topology_sessions(
+            &mut topology,
+            &[incoming],
+            &[],
+            PROJECT,
+            "2026-10-16T01:00:00.000Z",
+        );
+        let topology = coerce_runtime_topology(&topology).unwrap();
+        let metadata = BTreeMap::new();
+        let state = build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: PROJECT.into(),
+                topology: &topology,
+                metadata_sessions: &metadata,
+                exchange: &exchange(0, 0),
+            },
+            Some(&support::live_windows("aimux-repo", &["@1"])),
+        );
+        let app = session_state(&state);
+        assert_eq!(app["backendSessionId"], "newly-captured-backend");
+        assert_eq!(app["restoreNotice"].as_str().is_some(), disclosed);
+        let chips = chips_handed_to_the_app(&app);
+        let chip = chips.iter().find(|chip| chip.kind == "restore-notice");
+        assert_eq!(chip.is_some(), disclosed, "{app}");
+        let row = dashboard_row(&state);
+        assert_eq!(
+            row.contains("Fresh start; history not resumed"),
+            disclosed,
+            "{row}"
+        );
+    }
+}

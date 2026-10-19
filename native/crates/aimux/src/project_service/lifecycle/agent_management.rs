@@ -62,6 +62,7 @@ pub(super) fn route_agent_stop(
         runtime,
         &session_state,
         &context.project_root().to_string_lossy(),
+        &topology,
     );
     if let Some(window_id) = &window_id
         && let Err(error) = runtime.kill_window(window_id)
@@ -101,6 +102,7 @@ pub(super) fn route_agent_stop(
                         object_insert_mut(&mut current, "freshRelaunchAllowed", Value::Bool(true));
                     }
                     MissingBackendSessionDisposition::Blocked(reason) => {
+                        object_insert_mut(&mut current, "freshRelaunchAllowed", Value::Bool(false));
                         object_insert_mut(
                             &mut current,
                             "restoreBlockedReason",
@@ -161,6 +163,7 @@ pub(super) async fn route_agent_stop_async(
         runtime,
         &session_state,
         &context.project_root().to_string_lossy(),
+        &topology,
     );
     if let Some(window_id) = window_id {
         progress.mark_irreversible();
@@ -201,6 +204,7 @@ pub(super) async fn route_agent_stop_async(
                         object_insert_mut(&mut current, "freshRelaunchAllowed", Value::Bool(true));
                     }
                     MissingBackendSessionDisposition::Blocked(reason) => {
+                        object_insert_mut(&mut current, "freshRelaunchAllowed", Value::Bool(false));
                         object_insert_mut(
                             &mut current,
                             "restoreBlockedReason",

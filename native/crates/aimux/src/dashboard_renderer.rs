@@ -413,6 +413,13 @@ fn build_dashboard_footer_hints(
             label: "restart args",
             tone: None,
         });
+    let fresh_restart_hint = selected_session
+        .is_some_and(|session| session.status == SessionStatus::Offline)
+        .then_some(FooterHint {
+            key: "F",
+            label: "start fresh",
+            tone: Some(KeyTone::Danger),
+        });
     let kill_verb = if selected_service.is_some() {
         Some("stop")
     } else if selected_session.is_some_and(|session| session.status == SessionStatus::Offline) {
@@ -571,6 +578,7 @@ fn build_dashboard_footer_hints(
             },
         ];
         hints.extend(restart_hint);
+        hints.extend(fresh_restart_hint);
         hints.extend(visibility);
         hints.extend(talk);
         hints.extend(scribe_controls);
@@ -759,6 +767,7 @@ fn build_dashboard_footer_hints(
             },
         ];
         hints.extend(restart_hint);
+        hints.extend(fresh_restart_hint);
         hints.extend(visibility);
         hints.extend(talk);
         hints.extend(scribe_controls);
@@ -1677,6 +1686,11 @@ fn row_chips_input(session: &DashboardSession) -> crate::agent_row_chips::RowChi
         pending_delivery_count: session.thread_pending_count as i64,
         waiting_on_them_count: session.thread_waiting_on_them_count as i64,
         family_count: session.workflow_family_count as i64,
+        restore_notice: session
+            .extra
+            .get("restoreNotice")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     }
 }
 
@@ -3050,7 +3064,7 @@ fn render_help_content() -> Vec<String> {
         String::new(),
         format!("  {}", style("Actions", Tone::Strong)),
         "    [n] agent  [v] service  [f] fork  [S] switch tool".into(),
-        "    [a] hide/show offline agents  [A] edit offline restart args  [x] stop/kill".into(),
+        "    [a] hide/show offline agents  [A] edit offline restart args  [F] start fresh (confirm)  [x] stop/kill".into(),
         "    [K] graveyard offline in worktree  [Ctrl-K] whole project (confirm)".into(),
         "    [O] overseer menu  [O then p] pause/resume loop alerts".into(),
     ]

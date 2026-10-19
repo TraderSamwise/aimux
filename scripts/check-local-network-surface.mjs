@@ -107,8 +107,8 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   },
   {
     path: "native/crates/aimux/src/project_service/lifecycle/runtime_adapter.rs",
-    marker: 'std::process::Command::new("claude")',
-    command: "claude",
+    marker: "AsyncCommand::new(program);",
+    command: "claude, resolved once to an absolute path",
     argv: "literal: agents --json",
     input: "fixed: only the working directory varies, and it is the project or worktree path",
   },

@@ -1478,6 +1478,8 @@ export interface AgentListItem {
   restoreState?: string;
   restartLaunchOptions?: AgentRestartLaunchOptions;
   restoreBlockedReason?: string;
+  restoreNotice?: string;
+  freshRelaunchAllowed?: boolean;
   worktreePath?: string;
   label?: string;
   activity?: string;

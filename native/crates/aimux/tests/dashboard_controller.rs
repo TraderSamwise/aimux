@@ -457,7 +457,9 @@ fn quick_jump_second_digit_activates_the_selected_entry() {
     );
     assert_eq!(
         controller.footer_alert_message(),
-        Some("codex cannot be resumed: missing exact resumable backend session id")
+        Some(
+            "codex cannot be resumed: missing exact resumable backend session id. Press F to start fresh (confirmation required)."
+        )
     );
     assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
     assert_eq!(controller.navigation.item_index, 1);
@@ -4928,5 +4930,130 @@ fn new_agent_requires_service_creation_defaults() {
             .unwrap()
             .message
             .contains("roles must not be empty")
+    );
+}
+
+#[test]
+fn fresh_restart_requires_rendered_confirmation_and_sends_fresh_for_blocked_sessions() {
+    for reason in [
+        "no backend session id",
+        "multiple matching transcripts",
+        "history lookup failed",
+    ] {
+        let (mut snapshot, mut controller, id) = restart_options_dashboard();
+        let session = snapshot.sessions.iter_mut().find(|s| s.id == id).unwrap();
+        session.restore_state = Some("blocked".into());
+        session.restore_blocked_reason = Some(reason.into());
+        sync_restart_dashboard_session(&mut snapshot, &id);
+        let before = controller.input_surface();
+        let effect = controller.handle_key(&snapshot, parse_dashboard_key(b"F"));
+        assert_eq!(effect, DashboardControllerEffect::Render);
+        assert!(controller.should_stop_coalesced_input(before, &effect));
+        assert_eq!(controller.fresh_restart_confirm.as_ref().unwrap().id, id);
+        for key in [
+            DashboardKey::Enter,
+            DashboardKey::Printable('y'),
+            DashboardKey::Printable('F'),
+        ] {
+            assert_eq!(
+                controller.handle_key(&snapshot, key),
+                DashboardControllerEffect::Ignored,
+                "keys received before the warning is rendered cannot confirm"
+            );
+        }
+        controller.fresh_restart_confirm_visible = true;
+        let DashboardControllerEffect::Request(request) =
+            controller.handle_key(&snapshot, DashboardKey::Enter)
+        else {
+            panic!("a confirmed fresh start must escape {reason}");
+        };
+        assert_eq!(request.path, routes::agents::RESUME);
+        assert_eq!(request.body, json!({"sessionId": id, "fresh": true}));
+        assert!(controller.fresh_restart_confirm.is_none());
+    }
+}
+
+#[test]
+fn fresh_restart_cancel_and_live_transition_do_not_send_a_request() {
+    for key in [DashboardKey::Back, DashboardKey::Printable('n')] {
+        let (snapshot, mut controller, _) = restart_options_dashboard();
+        controller.handle_key(&snapshot, DashboardKey::Printable('F'));
+        controller.fresh_restart_confirm_visible = true;
+        assert_eq!(
+            controller.handle_key(&snapshot, key),
+            DashboardControllerEffect::Render
+        );
+        assert!(controller.fresh_restart_confirm.is_none());
+    }
+    let (mut snapshot, mut controller, id) = restart_options_dashboard();
+    controller.handle_key(&snapshot, DashboardKey::Printable('F'));
+    controller.fresh_restart_confirm_visible = true;
+    snapshot
+        .sessions
+        .iter_mut()
+        .find(|s| s.id == id)
+        .unwrap()
+        .status = SessionStatus::Running;
+    sync_restart_dashboard_session(&mut snapshot, &id);
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert!(
+        controller
+            .footer_alert_message()
+            .unwrap()
+            .contains("offline only")
+    );
+}
+
+#[test]
+fn fresh_restart_revalidates_the_confirmed_target() {
+    let (snapshot, mut controller, _) = restart_options_dashboard();
+    controller.handle_key(&snapshot, DashboardKey::Printable('F'));
+    controller.fresh_restart_confirm_visible = true;
+    controller.navigation.item_index = 0;
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert!(
+        controller
+            .footer_alert_message()
+            .unwrap()
+            .contains("selected agent changed")
+    );
+}
+
+#[test]
+fn fresh_restart_accepts_shift_f_terminal_encodings() {
+    for bytes in [b"F".as_slice(), b"\x1b[70;2u", b"\x1b[102;2u"] {
+        let (snapshot, mut controller, _) = restart_options_dashboard();
+        controller.handle_key(&snapshot, parse_dashboard_key(bytes));
+        assert!(controller.fresh_restart_confirm.is_some(), "{bytes:?}");
+        assert!(controller.tool_picker.is_none());
+    }
+}
+
+#[test]
+fn fresh_restart_does_not_offer_a_confirmation_for_exited_agents() {
+    let (mut snapshot, mut controller, id) = restart_options_dashboard();
+    snapshot
+        .sessions
+        .iter_mut()
+        .find(|s| s.id == id)
+        .unwrap()
+        .status = SessionStatus::Exited;
+    sync_restart_dashboard_session(&mut snapshot, &id);
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('F')),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.fresh_restart_confirm.is_none());
+    assert!(
+        controller
+            .footer_alert_message()
+            .unwrap()
+            .contains("offline only")
     );
 }

@@ -331,7 +331,10 @@ fn computes_offline_restore_state_like_typescript() {
     );
     assert_eq!(find(&sessions, "codex-offline")["restoreState"], "ready");
     assert_eq!(find(&sessions, "codex-fresh")["restoreState"], "ready");
-    assert_eq!(find(&sessions, "codex-error")["freshRelaunchAllowed"], true);
+    assert_eq!(
+        find(&sessions, "codex-error")["freshRelaunchAllowed"],
+        false
+    );
     assert_eq!(find(&sessions, "codex-error")["restoreState"], "ready");
     assert_eq!(find(&sessions, "unknown-tool")["restoreState"], "blocked");
     assert_eq!(
@@ -343,6 +346,58 @@ fn computes_offline_restore_state_like_typescript() {
         find(&sessions, "aider-offline")["restoreBlockedReason"],
         "agent tool \"aider\" does not support exact backend resume"
     );
+}
+
+#[test]
+fn backend_errors_do_not_authorize_fresh_restore_or_override_a_known_history_id() {
+    for backend_id in [None, Some("conversation-to-preserve")] {
+        let mut topology = topology_fixture();
+        let session = topology["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|session| session["id"] == "codex-error")
+            .unwrap();
+        session["freshRelaunchAllowed"] = json!(backend_id.is_some());
+        if let Some(id) = backend_id {
+            session["backendSessionId"] = json!(id);
+        }
+        let metadata = BTreeMap::from([(
+            "codex-error".to_owned(),
+            json!({
+                "derived": { "activity": "error", "attention": "error" }
+            }),
+        )]);
+        let sessions = topology_desktop_session_list_with_live_window_ids(
+            &topology,
+            &metadata,
+            &tools(),
+            &support::live_windows("aimux-repo", &[]),
+        );
+        let session = find(&sessions, "codex-error");
+        assert_eq!(session["freshRelaunchAllowed"], false, "{session}");
+        assert_eq!(session["restoreState"], "ready");
+        if let Some(id) = backend_id {
+            assert_eq!(session["backendSessionId"], id);
+        }
+    }
+}
+
+#[test]
+fn verified_fresh_relaunch_is_ready_for_tools_without_exact_backend_resume() {
+    let mut tools = tools();
+    tools.insert("shell".into(), json!({ "command": "sh", "args": [] }));
+    for tool in ["aider", "shell"] {
+        for permission in [false, true] {
+            let session = json!({ "id": "no-history", "status": "offline", "toolConfigKey": tool, "freshRelaunchAllowed": permission });
+            let state = describe_session_restorability(&session, &tools).unwrap();
+            assert_eq!(
+                state["restoreState"],
+                if permission { "ready" } else { "blocked" },
+                "{tool}: {state}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -367,10 +422,7 @@ fn describe_session_restorability_preserves_blocked_reasons() {
             &tools
         )
         .unwrap(),
-        json!({
-            "restoreState": "blocked",
-            "restoreBlockedReason": "missing exact resumable backend session id"
-        })
+        json!({ "restoreState": "ready" })
     );
     assert!(
         describe_session_restorability(&json!({ "id": "live", "status": "running" }), &tools)
