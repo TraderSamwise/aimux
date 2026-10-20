@@ -47,8 +47,10 @@ const COL_IDENTITY: usize = 16;
 const ROW_CHIP_BUDGET: usize = 2;
 const COL_STATUS: usize = 14;
 const COL_TIME: usize = 16;
-/// Wide enough for `99+ new` and the one plain cell every column keeps so a
-/// styled run never merges with the next one.
+/// `99+` plus a plain cell on EACH side: `cols` concatenates with no gap, and
+/// the columns on both sides can fill themselves. `COL_TIME` is 16 and
+/// `prompted 10h ago` is exactly 16, so a right-hand reservation alone let the
+/// time run straight into the count.
 ///
 /// Spent only on a lane that HAS a count. A fixed column cost all eight cells
 /// on every row of every lane, where almost no row has unread at all, and it
@@ -56,7 +58,7 @@ const COL_TIME: usize = 16;
 /// `missing exact resumable backend sessi…` down to `backe…`. Alignment is
 /// only ever read WITHIN a lane, so a lane with nothing to align needs no
 /// column.
-const COL_UNREAD: usize = 8;
+const COL_UNREAD: usize = 5;
 
 pub use crate::dashboard_navigation::DashboardNavLevel;
 
@@ -899,6 +901,7 @@ fn render_supervisor_group(
         .iter()
         .map(|entry| (entry.id, entry.digit))
         .collect::<BTreeMap<_, _>>();
+    let identity_width = lane_identity_width(group.sessions.iter().copied());
     let rail_width = unread_rail_width(group.sessions.iter().copied());
     let mut rows = group
         .sessions
@@ -910,6 +913,7 @@ fn render_supervisor_group(
                 session,
                 selected,
                 digit_by_id.get(session.id.as_str()).copied().flatten(),
+                identity_width,
                 rail_width,
             )
         })
@@ -965,6 +969,7 @@ fn supervisor_session_row(
     session: &DashboardSession,
     selected: bool,
     digit: Option<usize>,
+    identity_width: usize,
     rail_width: usize,
 ) -> String {
     let marker = if selected {
@@ -1006,19 +1011,19 @@ fn supervisor_session_row(
         },
         Column {
             content: &identity,
-            width: COL_IDENTITY,
+            width: identity_width,
         },
         Column {
             content: &status,
             width: COL_STATUS,
         },
         Column {
-            content: &time,
-            width: COL_TIME,
-        },
-        Column {
             content: &unread,
             width: rail_width,
+        },
+        Column {
+            content: &time,
+            width: COL_TIME,
         },
         Column {
             content: &location,
@@ -1137,9 +1142,9 @@ fn agent_row(
         .unwrap_or_default();
     let dot = format!("{} ", session_status_dot(session));
     let (name, suffix) = agent_identity_parts(session);
-    // No truncation: `agent_identity_column_width` sizes the column to this
-    // very string, and `truncate_ansi` appends a reset even when it cuts
-    // nothing -- which is a byte the recorded Node frame does not have.
+    // No truncation: the lane's column is at least as wide as this string --
+    // it is a max over the lane -- and `truncate_ansi` appends a reset even
+    // when it cuts nothing, which is a byte the recorded Node frame lacks.
     let identity = format!("{name}{suffix}");
     let unread = unread_rail_cell(session);
     let status = session_status_cell(session, &derived_status_label(session));
@@ -1165,12 +1170,12 @@ fn agent_row(
             width: COL_STATUS,
         },
         Column {
-            content: &session_time_text(session),
-            width: COL_TIME,
-        },
-        Column {
             content: &unread,
             width: rail_width,
+        },
+        Column {
+            content: &session_time_text(session),
+            width: COL_TIME,
         },
     ]);
     let offline = is_session_offline(session);
@@ -1359,7 +1364,11 @@ fn unread_rail_cell(session: &DashboardSession) -> String {
     } else {
         Tone::Accent
     };
-    style(&format!("{label} new"), tone)
+    // The bare number the app badge renders, not a phrase. "N unread" is a
+    // retired chip `agent_unread_across_surfaces` still refuses by name, and
+    // "N new" collides with the row's own `N new activity`, which counts
+    // something else entirely. The column carries the meaning.
+    format!(" {}", style(&label, tone))
 }
 
 /// The name, and the parenthetical id that disambiguates it. Separate because

@@ -1086,17 +1086,20 @@ fn an_unread_count_leaves_the_agent_id_alone() {
     });
     let plain = strip_ansi(&result.frame);
 
-    let row = plain
+    let row = result
+        .frame
         .lines()
         .find(|line| line.contains("(08h5sggs)"))
         .unwrap_or_else(|| panic!("the id must survive the count, got {plain}"));
     assert!(
-        row.contains("3 new"),
-        "and the count must still be on the row: {row}"
+        row_has_count(row, "3"),
+        "and the count must still be on the row: {}",
+        strip_ansi(row)
     );
     assert!(
-        row.find("(08h5sggs)") < row.find("3 new"),
-        "the count sits in its own column past the identity, not inside it: {row}"
+        row.find("(08h5sggs)") < row.find(&style("3", Tone::Accent)),
+        "the count sits in its own column past the identity, not inside it: {}",
+        strip_ansi(row)
     );
     assert!(plain.contains("Ready"));
     for line in frame_content_only(&result.frame).split("\r\n") {
@@ -3096,6 +3099,12 @@ fn snapshot_with_semantic(semantic: Option<serde_json::Value>) -> DesktopStateSn
     snapshot
 }
 
+/// The count as the row actually renders it: the styled cell, not a loose
+/// digit that any timestamp or index would satisfy.
+fn row_has_count(frame: &str, label: &str) -> bool {
+    frame.contains(&style(label, Tone::Accent)) || frame.contains(&style(label, Tone::Muted))
+}
+
 fn row_frame(snapshot: &DesktopStateSnapshot) -> String {
     render_dashboard_frame(&DashboardRenderInput {
         snapshot,
@@ -3228,9 +3237,13 @@ fn a_semantic_block_without_notifications_still_badges_the_flat_count() {
     })));
     snapshot.sessions[0].notification_unread_count = 4;
     snapshot.worktree_groups[0].sessions[0].notification_unread_count = 4;
-    let plain = strip_ansi(&row_frame(&snapshot));
+    let frame = row_frame(&snapshot);
 
-    assert!(plain.contains("4 new"), "the badge falls back, got {plain}");
+    assert!(
+        row_has_count(&frame, "4"),
+        "the count falls back to the flat field, got {}",
+        strip_ansi(&frame)
+    );
 }
 
 /// The count keeps a plain cell between itself and whatever follows.
@@ -3247,7 +3260,7 @@ fn the_count_does_not_run_into_the_next_column() {
         "presentation": { "statusLabel": "needs input", "compactHint": "on you", "attentionScore": 4 }
     })));
     let frame = row_frame(&snapshot);
-    let count = style("2 new", Tone::Accent);
+    let count = style("2", Tone::Accent);
     let at = frame.find(&count).expect("the row carries 2 new");
     assert!(
         frame[at + count.len()..].starts_with(' '),
@@ -3270,7 +3283,7 @@ fn the_count_is_amber_live_and_muted_once_it_is_stale_or_gone() {
         "presentation": { "statusLabel": "Ready", "compactHint": "4 unread", "attentionScore": 2 }
     })));
     assert!(
-        row_frame(&live).contains(&style("4 new", Tone::Accent)),
+        row_frame(&live).contains(&style("4", Tone::Accent)),
         "a live agent's count is accent"
     );
 
@@ -3280,17 +3293,17 @@ fn the_count_is_amber_live_and_muted_once_it_is_stale_or_gone() {
     stale.worktree_groups[0].sessions[0].notification_stale = true;
     let frame = row_frame(&stale);
     assert!(
-        frame.contains(&style("4 new", Tone::Muted)),
+        frame.contains(&style("4", Tone::Muted)),
         "a stale notice is muted"
     );
-    assert!(!frame.contains(&style("4 new", Tone::Accent)));
+    assert!(!frame.contains(&style("4", Tone::Accent)));
 
     // And an agent that is gone.
     let mut gone = live.clone();
     gone.sessions[0].status = SessionStatus::Offline;
     gone.worktree_groups[0].sessions[0].status = SessionStatus::Offline;
     assert!(
-        row_frame(&gone).contains(&style("4 new", Tone::Muted)),
+        row_frame(&gone).contains(&style("4", Tone::Muted)),
         "an offline agent's count is muted"
     );
 }
@@ -3306,8 +3319,8 @@ fn a_payload_with_no_semantic_block_still_badges_the_flat_count() {
     let mut snapshot = snapshot_with_semantic(None);
     snapshot.sessions[0].notification_unread_count = 5;
     snapshot.worktree_groups[0].sessions[0].notification_unread_count = 5;
-    let plain = strip_ansi(&row_frame(&snapshot));
-    assert!(plain.contains("5 new"), "got {plain}");
+    let frame = row_frame(&snapshot);
+    assert!(row_has_count(&frame, "5"), "got {}", strip_ansi(&frame));
 }
 
 /// The supervisor lane badges too, and nothing proved it.
@@ -3320,7 +3333,7 @@ fn the_supervisor_lane_carries_its_unread_count() {
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let mut snapshot = fixture.runtime_full.clone();
     let mut overseer = snapshot.sessions[0].clone();
-    overseer.id = "claude-sup7id".into();
+    overseer.id = "claude-sup7idgg".into();
     overseer.label = None;
     overseer.overseer = Some(true);
     overseer.scribe = Some(false);
@@ -3370,17 +3383,20 @@ fn the_supervisor_lane_carries_its_unread_count() {
         scribe_preview_entries: &[],
     });
     let plain = strip_ansi(&result.frame);
-    let row = plain
+    let row = result
+        .frame
         .lines()
-        .find(|line| line.contains("(sup7id)"))
+        .find(|line| line.contains("(sup7idgg)"))
         .unwrap_or_else(|| panic!("the supervisor row keeps its id too, got {plain}"));
     assert!(
-        row.contains("6 new"),
-        "the lane row carries the count in its own column: {row}"
+        row_has_count(row, "6"),
+        "the lane row carries the count in its own column: {}",
+        strip_ansi(row)
     );
     assert!(
-        row.find("(sup7id)") < row.find("6 new"),
-        "and past the identity, not inside it: {row}"
+        row.find("(sup7idgg)") < row.find(&style("6", Tone::Accent)),
+        "and past the identity, not inside it: {}",
+        strip_ansi(row)
     );
 }
 
@@ -3499,10 +3515,11 @@ fn waiting_on_you_has_no_flat_fallback_on_purpose() {
         session.workflow_on_me_count = 4;
         session.notification_unread_count = 1;
     }
-    let plain = strip_ansi(&row_frame(&snapshot));
+    let frame = row_frame(&snapshot);
+    let plain = strip_ansi(&frame);
     assert!(
-        plain.contains("1 new"),
-        "the badge does fall back, got {plain}"
+        row_has_count(&frame, "1"),
+        "the count does fall back, got {plain}"
     );
     assert!(!plain.contains("waiting on you"), "and this one does not");
 }
@@ -3638,7 +3655,9 @@ fn unread_counts_line_up_across_rows() {
         .lines()
         .filter(|line| line.contains("(aa)") || line.contains("(bbbbbbbb)"))
         .map(|line| {
-            line.find("2 new")
+            // Measured on the STRIPPED row, because the question is which
+            // screen column the reader's eye lands on, not which byte.
+            line.rfind(" 2 ")
                 .unwrap_or_else(|| panic!("no count on {line}"))
         })
         .collect::<Vec<_>>();
@@ -3647,5 +3666,195 @@ fn unread_counts_line_up_across_rows() {
     assert_eq!(
         columns[0], columns[1],
         "the counts must share one x whatever the identity width: {plain}"
+    );
+}
+
+/// The column is spent per LANE, not across the dashboard.
+///
+/// A fixed column cost five cells on every row of every lane, and almost no
+/// row has unread -- so it came off the trailing chips everywhere. Deriving
+/// the width from the whole snapshot instead of the lane brings that straight
+/// back for every lane that has no count at all, and nothing noticed: no test
+/// had one lane with unread beside one without.
+///
+/// Asserted by rendering the same two lanes twice, with the loud lane's count
+/// on and off. The quiet lane's row must not move.
+#[test]
+fn a_lane_with_no_unread_spends_no_width_on_the_column() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let quiet_row = |loud_count: usize| {
+        let mut snapshot = fixture.runtime_light.clone();
+        let mut quiet = snapshot.sessions[0].clone();
+        // Eight characters: `agent_identity_column_width` only widens the
+        // column for an id of 8 or fewer, so a longer one silently falls back
+        // to COL_IDENTITY and the identity is truncated instead.
+        quiet.id = "claude-quietone".into();
+        quiet.command = "claude".into();
+        quiet.label = None;
+        quiet.notification_unread_count = 0;
+        let mut loud = quiet.clone();
+        loud.id = "claude-loudagnt".into();
+        loud.notification_unread_count = loud_count;
+        loud.notification_stale = false;
+
+        // Both lanes NAMED, so neither is the main checkout's special case,
+        // and the sessions point at them: navigation buckets by
+        // `worktree_path`, so a session left pointing elsewhere does not
+        // render at all.
+        let loud_lane = "/repo/.aimux/worktrees/loud-lane";
+        let quiet_lane = "/repo/.aimux/worktrees/quiet-lane";
+        loud.worktree_path = Some(loud_lane.into());
+        quiet.worktree_path = Some(quiet_lane.into());
+        let mut first = snapshot.worktree_groups[0].clone();
+        first.name = "loud-lane".into();
+        first.path = Some(loud_lane.into());
+        first.sessions = vec![loud.clone()];
+        let mut second = snapshot.worktree_groups[0].clone();
+        second.name = "quiet-lane".into();
+        second.path = Some(quiet_lane.into());
+        second.sessions = vec![quiet.clone()];
+        snapshot.worktree_groups = vec![first, second];
+        snapshot.sessions = vec![loud, quiet];
+
+        let result = render_dashboard_frame(&DashboardRenderInput {
+            snapshot: &snapshot,
+            overseer_sessions: &[],
+            scribe_sessions: &[],
+            cols: 160,
+            rows: 60,
+            nav_level: DashboardNavLevel::Sessions,
+            selected_session_id: None,
+            selected_service_id: None,
+            focused_worktree_path: None,
+            focused_group_index: None,
+            runtime_label: Some("tmux"),
+            version: Some("local"),
+            hide_offline_agents: false,
+            hidden_offline_agent_count: 0,
+            scroll_offset: 0,
+            footer_progress: None,
+            footer_note: None,
+            footer_alerts: &[],
+            details_sidebar_visible: false,
+            preview_source: "output",
+            scribe_preview_entries: &[],
+        });
+        let plain = strip_ansi(&result.frame);
+        let row = plain
+            .lines()
+            .find(|line| line.contains("(quietone)"))
+            .unwrap_or_else(|| panic!("the quiet lane must render:\n{plain}"))
+            .to_owned();
+        let loud_rendered = plain.lines().any(|line| line.contains("(loudagnt)"));
+        assert!(loud_rendered, "and so must the loud one:\n{plain}");
+        row
+    };
+
+    assert_eq!(
+        quiet_row(0),
+        quiet_row(4),
+        "a lane with no count must render identically whether or not ANOTHER \
+         lane has one"
+    );
+}
+
+/// The worktree-less dashboard renders rows through its own call site, and an
+/// un-updated caller there is invisible to every other test in this file.
+#[test]
+fn the_flat_dashboard_carries_the_count_too() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    let mut session = snapshot.sessions[0].clone();
+    session.id = "claude-flatlane".into();
+    session.command = "claude".into();
+    session.label = None;
+    session.notification_unread_count = 7;
+    session.notification_stale = false;
+    snapshot.sessions = vec![session];
+    // No worktrees at all: this is the `!has_worktrees` branch.
+    snapshot.worktree_groups.clear();
+    snapshot.worktrees.clear();
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 160,
+        rows: 60,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        focused_group_index: None,
+        runtime_label: Some("tmux"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let row = result
+        .frame
+        .lines()
+        .find(|line| line.contains("(flatlane)"))
+        .unwrap_or_else(|| {
+            panic!(
+                "the flat row must render, got {}",
+                strip_ansi(&result.frame)
+            )
+        });
+    assert!(
+        row_has_count(row, "7"),
+        "and carry its count: {}",
+        strip_ansi(row)
+    );
+}
+
+/// `COL_UNREAD` has to hold the widest thing the cell can make, with a plain
+/// cell on each side.
+///
+/// `capped_count_label` stops at `99+` and the cell adds a leading space, so
+/// the content is 4 and the column is 5. Measured against a row whose TIME
+/// cell is non-empty, because the column that follows is the time: with an
+/// empty one its own padding supplies the gap and a too-narrow column passes.
+#[test]
+fn the_column_holds_the_capped_count_with_a_cell_to_spare() {
+    let mut snapshot = snapshot_with_semantic(Some(json!({
+        "user": { "label": "ready", "attention": "normal" },
+        "notifications": { "unreadCount": 150 },
+        "presentation": { "statusLabel": "Ready", "compactHint": "99+ unread", "attentionScore": 2 }
+    })));
+    for session in snapshot
+        .sessions
+        .iter_mut()
+        .chain(snapshot.worktree_groups[0].sessions.iter_mut())
+    {
+        session.last_output_at = Some("2020-01-01T00:00:00.000Z".into());
+    }
+
+    let plain = strip_ansi(&row_frame(&snapshot));
+    let row = plain
+        .lines()
+        .find(|line| line.contains("99+"))
+        .unwrap_or_else(|| panic!("the cap must render, got {plain}"));
+    assert!(
+        row.contains("output "),
+        "the time cell must be populated or this proves nothing: {row}"
+    );
+    let at = row.find("99+").expect("the cap");
+    assert!(
+        row[..at].ends_with(' '),
+        "a plain cell has to precede the count: {row}"
+    );
+    assert!(
+        row[at + 3..].starts_with(' '),
+        "and follow it, or the time runs straight into it: {row}"
     );
 }

@@ -299,9 +299,18 @@ fn the_row_the_app_and_the_details_show_one_unread_count() {
             "the field the app badge renders"
         );
         let row = dashboard_row(&state);
+        // The number, and the id that used to be evicted to make room for it.
+        // This asserted `(live) {count} ` -- the count jammed against the
+        // identity -- which only ever fit because this fixture's id is four
+        // characters. A real eight-character id pushed `claude (ec6r87gg)`
+        // past COL_IDENTITY and the parenthetical was the thing that yielded.
         assert!(
-            row.contains(&format!("(live) {count} ")),
-            "the row badges the same number beside the name, got {row:?}"
+            row.contains("(live)"),
+            "the id survives the count now, got {row:?}"
+        );
+        assert!(
+            row.contains(&format!("{count}")),
+            "and the row still shows the same number, got {row:?}"
         );
         // Once, in one place. Every other assertion here is a positive
         // `contains`, so re-adding the retired `N unread` chip beside the
@@ -343,9 +352,10 @@ fn a_needs_input_agent_badges_the_same_count_the_app_does() {
     );
     assert_eq!(session["notificationUnreadCount"].as_u64(), Some(2));
     let row = dashboard_row(&state);
+    assert!(row.contains("(live)"), "the id survives, got {row:?}");
     assert!(
-        row.contains("(live) 2 "),
-        "the row badges 2, the number the app badge shows, got {row:?}"
+        row.contains('2'),
+        "the row shows 2, the number the app badge shows, got {row:?}"
     );
     let details = render_session_details(Some(session), 60, 40).join("\n");
     assert!(
@@ -368,9 +378,10 @@ fn a_hundred_unread_reads_as_the_apps_cap() {
     // And 99 itself is not capped. Without this the threshold could sit
     // anywhere below 100 and still pass.
     let ninety_nine = dashboard_row(&desktop_state("/repo", &exchange(99), None));
-    // The parenthetical has yielded by here -- a four-cell badge leaves 11 for
-    // the identity and `codex (live)` is 12 -- so anchor on the index cell.
-    assert!(ninety_nine.contains("[1] codex 99 "), "got {ninety_nine:?}");
+    // The parenthetical used to yield by here -- a four-cell badge left 11 for
+    // the identity and `codex (live)` is 12. It does not any more.
+    assert!(ninety_nine.contains("codex (live)"), "got {ninety_nine:?}");
+    assert!(ninety_nine.contains("99"), "got {ninety_nine:?}");
     assert!(!ninety_nine.contains("99+"), "got {ninety_nine:?}");
 }
 
