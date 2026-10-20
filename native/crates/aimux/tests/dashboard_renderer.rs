@@ -3821,11 +3821,14 @@ fn the_flat_dashboard_carries_the_count_too() {
 /// cell on each side.
 ///
 /// `capped_count_label` stops at `99+` and the cell adds a leading space, so
-/// the content is 4 and the column is 5. BOTH neighbours have to be full for
-/// this to mean anything: an empty time cell's padding supplies the gap on
-/// the right, and the status cell's padding supplies it on the left. The
-/// first version of this test only filled the time cell, and dropping the
-/// leading space passed.
+/// the content is 4 and the column is 5. BOTH neighbours have to FILL their
+/// columns for this to mean anything, or their own padding supplies the gap
+/// and dropping the leading space passes -- which it did, twice, against two
+/// different left-hand neighbours.
+///
+/// The identity fills only on the `COL_IDENTITY` branch: the other returns
+/// `visible_width + 1`, so it always keeps a pad cell. A label forces that
+/// branch, and a label longer than 16 truncates to exactly 16.
 #[test]
 fn the_column_holds_the_capped_count_with_a_cell_to_spare() {
     let mut snapshot = snapshot_with_semantic(Some(json!({
@@ -3841,6 +3844,7 @@ fn the_column_holds_the_capped_count_with_a_cell_to_spare() {
         .chain(snapshot.worktree_groups[0].sessions.iter_mut())
     {
         session.last_output_at = Some("2020-01-01T00:00:00.000Z".into());
+        session.label = Some("an-agent-name-past-sixteen".into());
     }
 
     let plain = strip_ansi(&row_frame(&snapshot));
@@ -3849,12 +3853,12 @@ fn the_column_holds_the_capped_count_with_a_cell_to_spare() {
         .find(|line| line.contains("99+"))
         .unwrap_or_else(|| panic!("the cap must render, got {plain}"));
     assert!(
-        row.contains("fourteen-chars"),
-        "the status cell must be full or the left guard proves nothing: {row}"
+        row.contains("an-agent-name-p"),
+        "the identity must fill its column or the LEFT guard proves nothing: {row}"
     );
     assert!(
-        row.contains("output "),
-        "and the time cell, or the right guard proves nothing: {row}"
+        row.contains("fourteen-chars"),
+        "and the status cell, or the right guard proves nothing: {row}"
     );
     let at = row.find("99+").expect("the cap");
     assert!(
@@ -3869,10 +3873,13 @@ fn the_column_holds_the_capped_count_with_a_cell_to_spare() {
 
 /// The count must survive a narrow card, because it is what the row is FOR.
 ///
-/// Sitting after the time column it fell off the end first: at cols=100 with
-/// the details sidebar an agent with seven unread showed no count at all.
-/// Moving it before the time fixed that and nothing rendered a narrow frame
-/// to prove it -- the swap was reintroducible with the whole suite green.
+/// Sitting out by the time column it fell off the end first. The first
+/// version of this test picked cols=100 and called it "the narrowest the card
+/// ever gets", which is false: the two-pane layout starts at
+/// `input.cols >= 72`, and `populated_dashboard_frame_fits_common_viewports`
+/// already renders 80x24. Between 72 and 82 the count was cut entirely --
+/// LESS visible than the pill it replaced, which lived inside the identity
+/// cell ahead of the cut. 72 is the real floor, so that is what this pins.
 #[test]
 fn the_count_survives_a_narrow_card() {
     let fixture: DesktopStateGoldenFixture =
@@ -3894,7 +3901,8 @@ fn the_count_survives_a_narrow_card() {
         snapshot: &snapshot,
         overseer_sessions: &[],
         scribe_sessions: &[],
-        cols: 100,
+        // The narrowest two-pane the renderer supports.
+        cols: 72,
         rows: 50,
         nav_level: DashboardNavLevel::Sessions,
         selected_session_id: None,
@@ -3909,7 +3917,6 @@ fn the_count_survives_a_narrow_card() {
         footer_progress: None,
         footer_note: None,
         footer_alerts: &[],
-        // The narrowest the card ever gets: the sidebar takes the rest.
         details_sidebar_visible: true,
         preview_source: "output",
         scribe_preview_entries: &[],

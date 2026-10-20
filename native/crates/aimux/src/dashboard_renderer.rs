@@ -48,9 +48,17 @@ const ROW_CHIP_BUDGET: usize = 2;
 const COL_STATUS: usize = 14;
 const COL_TIME: usize = 16;
 /// `99+` plus a plain cell on EACH side: `cols` concatenates with no gap, and
-/// the columns on both sides can fill themselves. `COL_TIME` is 16 and
-/// `prompted 10h ago` is exactly 16, so a right-hand reservation alone let the
-/// time run straight into the count.
+/// both neighbours can fill themselves -- the identity column is a lane max,
+/// so the widest identity in a lane fills it exactly, and `row_state_label`
+/// falls through to a raw label that can fill `COL_STATUS`.
+///
+/// Placed immediately after the identity rather than out by the time cell.
+/// Card rows truncate from the right, and the two-pane layout starts at 72
+/// columns (`input.cols >= 72`), where the card is about 42 wide -- out there
+/// the count was cut off entirely between 72 and 82, which is LESS visible
+/// than the pill it replaced, since that pill lived inside the identity cell
+/// ahead of the cut. Fixing the id eviction is not worth reintroducing the
+/// disappearance it was paired with.
 ///
 /// Spent only on a lane that HAS a count. A fixed column cost all eight cells
 /// on every row of every lane, where almost no row has unread at all, and it
@@ -1014,12 +1022,12 @@ fn supervisor_session_row(
             width: identity_width,
         },
         Column {
-            content: &status,
-            width: COL_STATUS,
-        },
-        Column {
             content: &unread,
             width: rail_width,
+        },
+        Column {
+            content: &status,
+            width: COL_STATUS,
         },
         Column {
             content: &time,
@@ -1166,12 +1174,12 @@ fn agent_row(
             width: identity_width,
         },
         Column {
-            content: &status,
-            width: COL_STATUS,
-        },
-        Column {
             content: &unread,
             width: rail_width,
+        },
+        Column {
+            content: &status,
+            width: COL_STATUS,
         },
         Column {
             content: &session_time_text(session),
