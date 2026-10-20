@@ -247,7 +247,22 @@ remote_help_pattern='^[[:space:]]{2}(remote|hosted|login|logout|whoami|security)
 # for instead -- a strictly narrower claim about the same thing. The TYPE name,
 # not its module: `attachment_upload` as a needle also matches this project's
 # own local `route_attachment_upload`, which has nothing to do with a relay.
-remote_string_pattern='AIMUX_RELAY_URL|relay[.]aimux[.]app|wss://|ws://|relay_client|relay_runner|daemon::relay|daemon/relay|hosted_server|hosted_cli|remote_login|remote_security_devices|HttpAttachmentUploader|attachments/hosted'
+#
+# `attachments/hosted` is gone for that same reason, and should have left with
+# it. It is the URL path composed at attachment_hosting.rs:301, in the local
+# decision code -- that module has no cfg gating at all, so the literal is
+# compiled into both variants and survives into the local binary whenever the
+# optimiser happens not to strip it. Whether it does is pure rodata luck: the
+# needle passed on 9862f525c and failed on beac8c8f6, where the only delta was
+# an fs::canonicalize call in an unrelated module, and the same local build on
+# macOS contains none of these needles at all.
+#
+# Dropping it costs nothing, because a path literal cannot upload anything.
+# The local variant's cargo tree is independently asserted to carry no ureq,
+# tungstenite or other HTTP client (and the full variant is asserted to carry
+# them, so that check fails in both directions). With no client in the tree
+# there is no socket to open, whatever strings survive.
+remote_string_pattern='AIMUX_RELAY_URL|relay[.]aimux[.]app|wss://|ws://|relay_client|relay_runner|daemon::relay|daemon/relay|hosted_server|hosted_cli|remote_login|remote_security_devices|HttpAttachmentUploader'
 # Bare crate names, which need a word boundary. `strings` emits runs of
 # adjacent literals from rodata with nothing between them, so an unanchored
 # `ureq` matches the tail of our own `project-ensure` whenever the linker puts
