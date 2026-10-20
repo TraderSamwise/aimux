@@ -633,15 +633,10 @@ fn collect_codex_session_ids_for_cwd(
         let Some(id) = string_field(payload, "id") else {
             continue;
         };
-        // Trailing slashes, the way the Claude path already compares. A
-        // `worktreePath` carrying one -- user-supplied task worktrees can --
-        // made a checkout that HAS a conversation read as having none, which
-        // is the direction that loses it.
         if !is_uuid(&id)
-            || string_field(payload, "cwd")
+            || !string_field(payload, "cwd")
                 .as_deref()
-                .map(|recorded| recorded.trim_end_matches('/'))
-                != Some(cwd.trim_end_matches('/'))
+                .is_some_and(|recorded| is_same_checkout(recorded, cwd))
             || options.codex_exclude_backend_session_ids.contains(&id)
         {
             continue;
@@ -673,6 +668,35 @@ fn collect_codex_session_ids_for_cwd(
         }
     }
     Ok(())
+}
+
+/// Do these two spellings name the same checkout?
+///
+/// Trailing slashes first, the way the Claude path already compares: a
+/// `worktreePath` can carry one -- user-supplied task worktrees do -- and
+/// comparing byte-for-byte made a checkout that HAS a conversation read as
+/// having none.
+///
+/// Then symlinks, which matter more here than they look. On macOS `/tmp` and
+/// `/var` are symlinks into `/private`, and a process records the path it
+/// resolved rather than the one it was handed, so the same directory reaches
+/// this comparison under two spellings. A mismatch used to be harmless --
+/// the session stayed at risk and the restart was refused -- but a guard that
+/// treats "found nothing" as "nothing to lose" turns it into a killed
+/// conversation. Canonicalising costs a stat on a path that already failed to
+/// match, and only when both sides still exist.
+fn is_same_checkout(recorded: &str, cwd: &str) -> bool {
+    let recorded = recorded.trim_end_matches('/');
+    let cwd = cwd.trim_end_matches('/');
+    if recorded == cwd {
+        return true;
+    }
+    match (fs::canonicalize(recorded), fs::canonicalize(cwd)) {
+        (Ok(left), Ok(right)) => left == right,
+        // A checkout that is gone cannot be canonicalised, and two paths that
+        // did not match as strings are not the same one on that evidence.
+        _ => false,
+    }
 }
 
 fn identity_from_session(

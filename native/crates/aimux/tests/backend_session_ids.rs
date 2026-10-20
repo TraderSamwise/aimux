@@ -554,6 +554,54 @@ fn presence_separates_an_empty_store_from_an_unreadable_one() {
     remove_dir_all(temp).ok();
 }
 
+/// A symlinked checkout is the same checkout.
+///
+/// A process records the path it resolved, not the one it was handed, and on
+/// macOS `/tmp` and `/var` are symlinks into `/private`. While a mismatch only
+/// meant the restart was refused this was harmless; now that the guard reads
+/// "found nothing" as "nothing to lose", the same mismatch kills a live
+/// conversation.
+#[test]
+fn a_symlinked_checkout_is_the_same_checkout() {
+    let temp = temp_dir("aimux-codex-symlink");
+    let real = temp.join("real-checkout");
+    create_dir_all(&real).expect("mkdir checkout");
+    let link = temp.join("linked-checkout");
+    std::os::unix::fs::symlink(&real, &link).expect("symlink");
+
+    let sessions_dir = temp.join("sessions");
+    // Codex recorded the resolved path.
+    write_codex_transcript(&sessions_dir, "14", UUID_A, real.to_str().expect("utf8"));
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+
+    // Aimux asks with the path it handed over, which is the symlink.
+    assert_eq!(
+        discover_codex_backend_session_id(link.to_str().expect("utf8"), &options),
+        Some(UUID_A.into()),
+        "the same directory, reached by its other name"
+    );
+    assert_eq!(
+        codex_conversation_presence(link.to_str().expect("utf8"), &options),
+        CodexConversationPresence::Present,
+        "and the guard must not call that nothing to lose"
+    );
+
+    // The control: a genuinely different checkout is still absent, so this is
+    // not simply matching everything.
+    let other = temp.join("other-checkout");
+    create_dir_all(&other).expect("mkdir other");
+    assert_eq!(
+        codex_conversation_presence(other.to_str().expect("utf8"), &options),
+        CodexConversationPresence::ConfirmedAbsent
+    );
+
+    remove_dir_all(temp).ok();
+}
+
 /// An undateable transcript is not an absent one.
 ///
 /// Discovery drops a rollout whose `session_meta.timestamp` will not parse,
