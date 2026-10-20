@@ -32,6 +32,14 @@ pub struct AgentIdentityError {
 pub struct BackendSessionDiscoveryOptions {
     pub claude_projects_dir: Option<PathBuf>,
     pub codex_sessions_dir: Option<PathBuf>,
+    /// Only rollouts CREATED at or after this instant.
+    ///
+    /// Read from the rollout's own `session_meta` timestamp, which never
+    /// changes, and only from the file's mtime when the record carries none.
+    /// mtime alone cannot answer this: a rollout is appended to for as long
+    /// as its conversation lives, so an hour-old transcript still being
+    /// written looks newer than a launch that just happened. That is why this
+    /// field existed and neither production caller ever set it.
     pub codex_since_ms: Option<u128>,
     pub codex_exclude_backend_session_ids: BTreeSet<String>,
 }
@@ -499,11 +507,6 @@ fn collect_codex_session_ids_for_cwd(
         {
             continue;
         }
-        if let Some(since_ms) = options.codex_since_ms
-            && modified_ms(&path).is_none_or(|mtime| mtime < since_ms)
-        {
-            continue;
-        }
         let Some(line) = read_first_line(&path)? else {
             continue;
         };
@@ -511,6 +514,11 @@ fn collect_codex_session_ids_for_cwd(
             continue;
         };
         if string_field(&record, "type").as_deref() != Some("session_meta") {
+            continue;
+        }
+        if let Some(since_ms) = options.codex_since_ms
+            && codex_rollout_created_ms(&record, &path).is_none_or(|created| created < since_ms)
+        {
             continue;
         }
         let Some(payload) = record.get("payload") else {
@@ -595,6 +603,28 @@ fn read_first_line(path: &Path) -> Result<Option<String>, String> {
             .map(Some)
             .map_err(|error| format!("failed to decode {}: {error}", path.display()))
     }
+}
+
+/// When a rollout was CREATED, from the record that says so.
+///
+/// `session_meta` carries its own `timestamp`, written once when codex opens
+/// the conversation. The file's mtime is the fallback and is a different fact
+/// -- the last time anything was appended -- so it is only consulted when the
+/// record has no timestamp of its own, which real codex rollouts always do.
+fn codex_rollout_created_ms(record: &Value, path: &Path) -> Option<u128> {
+    match string_field(record, "timestamp") {
+        // A timestamp that will not parse is not an absent one. Falling
+        // through to mtime here would quietly reinstate the bug this filter
+        // exists to fix, in the direction that INCLUDES the wrong rollout.
+        Some(timestamp) => iso_timestamp_ms(&timestamp),
+        None => modified_ms(path),
+    }
+}
+
+pub fn iso_timestamp_ms(value: &str) -> Option<u128> {
+    let parsed =
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()?;
+    u128::try_from(parsed.unix_timestamp_nanos() / 1_000_000).ok()
 }
 
 fn modified_ms(path: &Path) -> Option<u128> {

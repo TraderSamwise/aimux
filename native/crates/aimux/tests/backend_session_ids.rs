@@ -6,7 +6,7 @@ use aimux::backend_session_ids::{
     resolve_agent_identity, resolve_agent_identity_with_options,
 };
 use serde_json::json;
-use std::fs::{create_dir_all, remove_dir_all, write};
+use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -314,6 +314,30 @@ fn claude_history_does_not_silently_drop_a_transcript_that_cannot_be_inspected()
     remove_dir_all(projects_dir).unwrap();
 }
 
+fn write_codex_transcript_at(
+    sessions_dir: &Path,
+    day: &str,
+    uuid: &str,
+    cwd: &str,
+    timestamp: &str,
+) {
+    let dir = sessions_dir.join("2026").join("08").join(day);
+    create_dir_all(&dir).expect("mkdir");
+    let path = dir.join(format!("rollout-2026-08-{day}T00-00-00-{uuid}.jsonl"));
+    write(
+        &path,
+        format!(
+            "{}\n",
+            json!({
+                "timestamp": timestamp,
+                "type": "session_meta",
+                "payload": { "id": uuid, "cwd": cwd, "originator": "codex-tui" },
+            })
+        ),
+    )
+    .expect("write codex transcript");
+}
+
 fn write_codex_transcript(sessions_dir: &Path, day: &str, uuid: &str, cwd: &str) {
     let dir = sessions_dir.join("2026").join("08").join(day);
     create_dir_all(&dir).expect("mkdir");
@@ -340,4 +364,147 @@ fn temp_dir(prefix: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
     create_dir_all(&path).expect("mkdir temp");
     path
+}
+
+/// A reused checkout has a transcript per conversation, which is why
+/// `refuses_ambiguous_codex_transcripts` exists: by cwd alone, "which of these
+/// belongs to this agent" has no answer, and a worktree you had worked in
+/// twice could not be restored at all.
+///
+/// It is answerable by time. The agent's own conversation is the one OPENED
+/// after the agent was, and `session_meta` carries the instant it was opened.
+#[test]
+fn a_launch_time_floor_resolves_what_cwd_alone_cannot() {
+    let temp = temp_dir("aimux-codex-floor");
+    let sessions_dir = temp.join("sessions");
+    write_codex_transcript_at(
+        &sessions_dir,
+        "14",
+        UUID_A,
+        "/repo",
+        "2026-08-14T00:00:00.000Z",
+    );
+    write_codex_transcript_at(
+        &sessions_dir,
+        "15",
+        UUID_B,
+        "/repo",
+        "2026-08-15T12:00:00.000Z",
+    );
+
+    let unfiltered = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        discover_codex_backend_session_id("/repo", &unfiltered),
+        None,
+        "by cwd alone the two are still indistinguishable"
+    );
+
+    // An agent launched between them: only the later conversation is its own.
+    let floor = iso_ms("2026-08-15T00:00:00.000Z");
+    let narrowed = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        codex_since_ms: Some(floor),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        discover_codex_backend_session_id("/repo", &narrowed),
+        Some(UUID_B.into())
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+/// The floor reads the rollout's OWN timestamp, never the file's mtime.
+///
+/// mtime is a different fact: a transcript is appended to for as long as its
+/// conversation lives, so an old one someone is still talking in looks newer
+/// than a launch that just happened. Filtering on mtime -- which is what this
+/// option did before, and why neither production caller ever set it -- hands
+/// back the wrong conversation here.
+#[test]
+fn the_floor_ignores_a_stale_transcript_that_is_still_being_written() {
+    let temp = temp_dir("aimux-codex-mtime");
+    let sessions_dir = temp.join("sessions");
+    let old = sessions_dir
+        .join("2026")
+        .join("08")
+        .join("14")
+        .join(format!("rollout-2026-08-14T00-00-00-{UUID_A}.jsonl"));
+    write_codex_transcript_at(
+        &sessions_dir,
+        "14",
+        UUID_A,
+        "/repo",
+        "2026-08-14T00:00:00.000Z",
+    );
+    // Touched now: the conversation is old, the file is not.
+    write(&old, read_to_string(&old).expect("read back")).expect("touch");
+
+    // The control: without a floor this transcript IS discoverable, so the
+    // assertion below cannot pass because the fixture is broken.
+    let unfiltered = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        discover_codex_backend_session_id("/repo", &unfiltered),
+        Some(UUID_A.into()),
+        "the fixture has to be discoverable for the floor to mean anything"
+    );
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        codex_since_ms: Some(iso_ms("2026-08-15T00:00:00.000Z")),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        discover_codex_backend_session_id("/repo", &options),
+        None,
+        "a conversation opened before the floor is not this agent's, however \
+         recently it was written to"
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+fn iso_ms(value: &str) -> u128 {
+    aimux::backend_session_ids::iso_timestamp_ms(value).expect("parseable timestamp")
+}
+
+/// A timestamp that will not parse is not an absent one.
+///
+/// Falling through to mtime there reinstates the bug in the direction that
+/// INCLUDES the wrong rollout, which is how a stale conversation gets adopted.
+#[test]
+fn an_unparseable_timestamp_is_not_treated_as_a_missing_one() {
+    let temp = temp_dir("aimux-codex-badstamp");
+    let sessions_dir = temp.join("sessions");
+    write_codex_transcript_at(&sessions_dir, "14", UUID_A, "/repo", "not-a-timestamp");
+
+    // The control: with no floor it is found, so the refusal below is about
+    // the timestamp and not about the fixture.
+    let unfiltered = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        discover_codex_backend_session_id("/repo", &unfiltered),
+        Some(UUID_A.into())
+    );
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        codex_since_ms: Some(iso_ms("2026-08-01T00:00:00.000Z")),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        discover_codex_backend_session_id("/repo", &options),
+        None,
+        "an unreadable opening time cannot satisfy a floor"
+    );
+
+    remove_dir_all(temp).ok();
 }

@@ -314,7 +314,11 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
         self.restart_window_output.clone()
     }
 
-    fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String> {
+    fn codex_backend_session_ids_for_cwd(
+        &mut self,
+        cwd: &str,
+        _created_after_ms: Option<u128>,
+    ) -> Result<BTreeSet<String>, String> {
         self.codex_backend_ids_by_cwd
             .get(cwd)
             .cloned()
