@@ -31,7 +31,7 @@ mod support;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-const SESSION: &str = "codex-live";
+const SESSION: &str = "codex-ec6r87gg";
 
 fn temp_project(name: &str) -> PathBuf {
     let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -243,6 +243,24 @@ fn needs_input_exchange(count: usize) -> Value {
 
 /// The TUI dashboard row, rendered from the very state the app is handed, so
 /// the row and the badge cannot be reading different derivations.
+/// The count as its OWN column: a whitespace-delimited token after the
+/// identity, never a digit inside something else.
+///
+/// `row.contains("2")` matched `2mo` in the time cell -- the fixture's thread
+/// is dated, `format_relative_recency` reads the real clock, and at sixty days
+/// old that assertion would have started passing with no count on the row at
+/// all and no code change.
+fn row_counts(row: &str, count: &str) -> bool {
+    let Some(at) = row.find("(ec6r87gg)") else {
+        return false;
+    };
+    row[at..]
+        .split_whitespace()
+        .filter(|token| *token == count)
+        .count()
+        == 1
+}
+
 fn dashboard_row(state: &Value) -> String {
     let snapshot: DesktopStateSnapshot =
         serde_json::from_value(state.clone()).expect("the service's own state is a TUI snapshot");
@@ -273,7 +291,7 @@ fn dashboard_row(state: &Value) -> String {
     let rows = plain
         .split("\r\n")
         // Anchored on the row's index cell, not the name: the badge drops the
-        // parenthetical id to make room, so "(live)" is not always there.
+        // parenthetical id to make room, so "(ec6r87gg)" is not always there.
         .filter(|line| line.contains("[1] codex"))
         .map(str::to_owned)
         .collect::<Vec<_>>();
@@ -299,13 +317,22 @@ fn the_row_the_app_and_the_details_show_one_unread_count() {
             "the field the app badge renders"
         );
         let row = dashboard_row(&state);
+        // The number, and the id that used to be evicted to make room for it.
+        // This asserted `(ec6r87gg) {count} ` -- the count jammed against the
+        // identity -- which only ever fit because this fixture's id is four
+        // characters. A real eight-character id pushed `claude (ec6r87gg)`
+        // past COL_IDENTITY and the parenthetical was the thing that yielded.
         assert!(
-            row.contains(&format!("(live) {count} ")),
-            "the row badges the same number beside the name, got {row:?}"
+            row.contains("(ec6r87gg)"),
+            "the id survives the count now, got {row:?}"
+        );
+        assert!(
+            row_counts(&row, &count.to_string()),
+            "and the row still shows the same number, got {row:?}"
         );
         // Once, in one place. Every other assertion here is a positive
         // `contains`, so re-adding the retired `N unread` chip beside the
-        // badge -- a row reading `codex (live) 3  Ready  3 unread` -- passed
+        // badge -- a row reading `codex (ec6r87gg) 3  Ready  3 unread` -- passed
         // the whole suite. This fixture has no threads and no new output, so
         // the row carries the badge and nothing else.
         assert!(
@@ -343,9 +370,10 @@ fn a_needs_input_agent_badges_the_same_count_the_app_does() {
     );
     assert_eq!(session["notificationUnreadCount"].as_u64(), Some(2));
     let row = dashboard_row(&state);
+    assert!(row.contains("(ec6r87gg)"), "the id survives, got {row:?}");
     assert!(
-        row.contains("(live) 2 "),
-        "the row badges 2, the number the app badge shows, got {row:?}"
+        row_counts(&row, "2"),
+        "the row shows 2, the number the app badge shows, got {row:?}"
     );
     let details = render_session_details(Some(session), 60, 40).join("\n");
     assert!(
@@ -368,9 +396,13 @@ fn a_hundred_unread_reads_as_the_apps_cap() {
     // And 99 itself is not capped. Without this the threshold could sit
     // anywhere below 100 and still pass.
     let ninety_nine = dashboard_row(&desktop_state("/repo", &exchange(99), None));
-    // The parenthetical has yielded by here -- a four-cell badge leaves 11 for
-    // the identity and `codex (live)` is 12 -- so anchor on the index cell.
-    assert!(ninety_nine.contains("[1] codex 99 "), "got {ninety_nine:?}");
+    // The parenthetical used to yield by here -- a four-cell badge left 11 for
+    // the identity and `codex (ec6r87gg)` is 12. It does not any more.
+    assert!(
+        ninety_nine.contains("codex (ec6r87gg)"),
+        "got {ninety_nine:?}"
+    );
+    assert!(row_counts(&ninety_nine, "99"), "got {ninety_nine:?}");
     assert!(!ninety_nine.contains("99+"), "got {ninety_nine:?}");
 }
 
