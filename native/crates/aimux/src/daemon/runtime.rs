@@ -156,7 +156,9 @@ use crate::tmux::{
 };
 use crate::tmux_exec_metrics::get_tmux_exec_metrics;
 use crate::tmux_runtime_stop::list_managed_project_session_names;
-use crate::tool_capabilities::supports_exact_backend_resume;
+use crate::tool_capabilities::{
+    has_backend_session_id_acquisition_path, supports_exact_backend_resume,
+};
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -6183,6 +6185,19 @@ fn restart_backend_id_at_risk_sessions_with_presence_cache(
             if !supports_exact_backend_resume(Some(tool_config)) {
                 continue;
             }
+            // Declaring the capability is not having it. A tool with no
+            // `sessionIdFlag` and no discovery arm cannot be told its id and
+            // cannot be found one, so the poll below would wait the full
+            // timeout and then refuse, for ever, on every restart. And there
+            // is nothing behind the refusal: without an id `resumeArgs`
+            // cannot be filled in, so aimux could never resume that
+            // conversation whether it restarts or not.
+            if !has_backend_session_id_acquisition_path(
+                Some(restart_guard_session_tool(&session)),
+                Some(tool_config),
+            ) {
+                continue;
+            }
             // A guard is for something that can be LOST. Codex cannot be told
             // its conversation id at launch -- the CLI has no flag for it --
             // so every codex row is born without one and this guard refused
@@ -7298,6 +7313,73 @@ mod tests {
         assert!(launcher.calls().is_empty());
         assert!(launcher.terminations().is_empty());
         fixture.cleanup();
+    }
+
+    /// Waiting for an id that nothing can write is not caution.
+    ///
+    /// A custom tool can declare `resumeArgs` carrying a `{sessionId}` and so
+    /// be treated as exactly resumable, while having no `sessionIdFlag` to be
+    /// told an id and no discovery arm to be found one. The guard then waited
+    /// the full timeout and refused, on every restart, for the life of the
+    /// agent -- and nothing was behind the refusal, because without an id
+    /// `resumeArgs` can never be filled in either.
+    #[test]
+    fn a_tool_that_can_never_learn_its_id_does_not_block_a_restart() {
+        for (case, session_id_flag, expect_at_risk) in [
+            ("unacquirable", None, false),
+            (
+                "told-at-launch",
+                Some(json!(["--session-id", "{sessionId}"])),
+                true,
+            ),
+        ] {
+            let fixture = restart_service_fixture(&format!("restart-acquisition-{case}"));
+            let project = fixture.project_root.clone();
+            let mut tool = json!({
+                "command": "/bin/custom",
+                "args": [],
+                "enabled": true,
+                "resumeArgs": ["--resume", "{sessionId}"],
+                "resumeByBackendSessionId": true,
+            });
+            if let Some(flag) = session_id_flag {
+                tool["sessionIdFlag"] = flag;
+            }
+            let aimux_dir = Path::new(&project).join(".aimux");
+            fs::create_dir_all(&aimux_dir).expect("project aimux dir");
+            fs::write(
+                aimux_dir.join("config.json"),
+                serde_json::to_string(&json!({ "tools": { "custom": tool } }))
+                    .expect("config json"),
+            )
+            .expect("write project config");
+
+            fixture.persist_runtime_session_with_window(
+                "custom-one",
+                "custom",
+                "running",
+                None,
+                Some("@custom-one"),
+                None,
+            );
+
+            let risks = restart_backend_id_at_risk_sessions_with_presence_cache(
+                &fixture.resolver,
+                std::slice::from_ref(&project),
+                Some(&LiveWindowIndex::from_pairs([(
+                    "@custom-one",
+                    "aimux-test",
+                )])),
+                &mut CodexPresenceLookup::new(&mut CodexPresenceCache::new()),
+            );
+
+            assert_eq!(
+                !risks.is_empty(),
+                expect_at_risk,
+                "{case}: a tool is guarded only when its id can actually be acquired"
+            );
+            fixture.cleanup();
+        }
     }
 
     /// Which question did the guard ask?

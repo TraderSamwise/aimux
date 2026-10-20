@@ -1061,8 +1061,25 @@ fn agent_spawn_launches_tool_and_records_topology_metadata() {
     assert_eq!(response.body["tmuxTarget"]["windowId"], "@11");
     assert_eq!(response.body["tmuxTarget"]["windowIndex"], 11);
     assert_eq!(response.body["tmuxTarget"]["windowName"], "/bin/mock");
-    assert!(response.body.get("warning").is_none());
-    assert!(response.body.get("warnings").is_none());
+    // `mock` declares resumeArgs with a {sessionId} and no sessionIdFlag, and
+    // no discovery arm reads its store, so nothing can ever learn its
+    // conversation id. Spawn says so now instead of saying nothing.
+    assert!(
+        response.body["warning"]
+            .as_str()
+            .expect("an unacquirable exact-resume tool warns at spawn")
+            .contains("nothing can acquire its conversation id"),
+        "{}",
+        response.body["warning"]
+    );
+    assert_eq!(
+        response.body["warnings"],
+        json!([{
+            "kind": "restartRestore",
+            "message": response.body["warning"].as_str().expect("warning text"),
+        }]),
+        "the list carries that same one reason on the existing channel"
+    );
     assert_eq!(response.body["transition"]["operation"], "agent.spawn");
     assert_eq!(runtime.created[0].name, "/bin/mock");
     assert_eq!(runtime.created[0].cwd, worktree.to_string_lossy());

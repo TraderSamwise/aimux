@@ -316,6 +316,18 @@ pub fn discover_backend_session_id_with_options(
     }
 }
 
+/// The tools whose own store `discover_backend_session_id_with_options`
+/// knows how to read.
+///
+/// This lists exactly the arms of that match, and a test pins the two
+/// together rather than trusting whoever edits the match next. The pairing
+/// matters because a tool declared resumable with no arm here and no
+/// `sessionIdFlag` has no way to ever learn its conversation id, and the
+/// restart guard then waits for an id that nothing can supply.
+pub fn backend_session_id_is_discoverable(tool_config_key: Option<&str>) -> bool {
+    matches!(tool_config_key, Some("claude") | Some("codex"))
+}
+
 pub fn claude_transcript_path(
     cwd: &str,
     backend_session_id: &str,

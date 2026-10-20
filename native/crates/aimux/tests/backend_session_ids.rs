@@ -1,10 +1,15 @@
 use aimux::backend_session_ids::{
-    BackendSessionDiscoveryOptions, CodexConversationPresence, build_agent_identity_error_payload,
-    build_agent_identity_payload, claude_backend_session_ids_for_cwd, claude_transcript_path,
-    codex_conversation_presence, codex_conversation_presence_since,
-    discover_backend_session_id_with_options, discover_claude_backend_session_id,
-    discover_codex_backend_session_id, relocate_claude_transcript, render_agent_identity_lines,
-    resolve_agent_identity, resolve_agent_identity_with_options,
+    BackendSessionDiscoveryOptions, CodexConversationPresence, backend_session_id_is_discoverable,
+    build_agent_identity_error_payload, build_agent_identity_payload,
+    claude_backend_session_ids_for_cwd, claude_transcript_path, codex_conversation_presence,
+    codex_conversation_presence_since, discover_backend_session_id_with_options,
+    discover_claude_backend_session_id, discover_codex_backend_session_id,
+    relocate_claude_transcript, render_agent_identity_lines, resolve_agent_identity,
+    resolve_agent_identity_with_options,
+};
+use aimux::config::default_config;
+use aimux::tool_capabilities::{
+    exact_backend_resume_unacquirable_reason, supports_exact_backend_resume,
 };
 use serde_json::json;
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
@@ -545,6 +550,122 @@ fn presence_separates_an_empty_store_from_an_unreadable_one() {
         codex_conversation_presence("/repo", &options),
         CodexConversationPresence::Present
     );
+
+    remove_dir_all(temp).ok();
+}
+
+/// Declaring exact resume is not the same as being able to do it.
+///
+/// A tool whose `resumeArgs` carry `{sessionId}` is treated as exactly
+/// resumable, and the restart guard then holds a restart open until that
+/// session has a `backendSessionId`. If nothing can ever write one, the
+/// guard waits for ever -- which is precisely what codex did to every
+/// control-plane restart. So every tool that claims the capability has to
+/// have a way to acquire the id.
+#[test]
+fn every_exact_resume_tool_can_acquire_its_id() {
+    let config = default_config();
+    let tools = config
+        .get("tools")
+        .and_then(|tools| tools.as_object())
+        .expect("default config ships a tools object");
+    assert!(
+        tools.len() >= 3,
+        "the gate is vacuous if the default config stops shipping tools"
+    );
+
+    let mut checked = Vec::new();
+    for (tool_key, tool_config) in tools {
+        if !supports_exact_backend_resume(Some(tool_config)) {
+            continue;
+        }
+        checked.push(tool_key.clone());
+        assert_eq!(
+            exact_backend_resume_unacquirable_reason(tool_key, Some(tool_config)),
+            None,
+            "{tool_key} claims exact resume with no way to ever learn its conversation id"
+        );
+    }
+
+    // Named rather than counted, so a tool silently losing the declaration
+    // shows up here instead of shrinking the gate to nothing.
+    assert_eq!(
+        checked,
+        vec!["claude".to_owned(), "codex".to_owned()],
+        "these are the tools the gate is protecting"
+    );
+}
+
+/// The gate has to be able to fail.
+///
+/// Claude is told its id at launch and codex's is discoverable afterwards, so
+/// the real config cannot exercise the refusal. This is the shape that would
+/// reinstate the bug: the claim, with neither acquisition path.
+#[test]
+fn a_tool_declared_resumable_with_no_way_to_learn_its_id_is_named() {
+    let invented = json!({
+        "command": "newtool",
+        "resumeArgs": ["resume", "{sessionId}"],
+        "resumeByBackendSessionId": true,
+    });
+    assert!(
+        supports_exact_backend_resume(Some(&invented)),
+        "the fixture has to actually claim the capability or it proves nothing"
+    );
+
+    let reason = exact_backend_resume_unacquirable_reason("newtool", Some(&invented))
+        .expect("a tool with no sessionIdFlag and no discovery arm must be named");
+    assert!(reason.contains("newtool"), "{reason}");
+
+    // Give it the launch flag and the objection goes away.
+    let mut told_at_launch = invented.clone();
+    told_at_launch["sessionIdFlag"] = json!(["--session-id", "{sessionId}"]);
+    assert_eq!(
+        exact_backend_resume_unacquirable_reason("newtool", Some(&told_at_launch)),
+        None,
+        "being told the id at launch is an acquisition path"
+    );
+}
+
+/// The discoverable list and the discovery match must agree.
+///
+/// `backend_session_id_is_discoverable` is a hand-written list of the arms in
+/// `discover_backend_session_id_with_options`. Comparing the two against each
+/// other is the only thing that keeps them in step when someone adds an arm.
+#[test]
+fn the_discoverable_list_matches_what_discovery_actually_does() {
+    let temp = temp_dir("aimux-acquisition-parity");
+    let claude_dir = temp.join("claude");
+    let codex_dir = temp.join("codex");
+    let claude_transcript = claude_transcript_path("/repo", UUID_A, Some(&claude_dir));
+    create_dir_all(claude_transcript.parent().expect("parent")).expect("mkdir");
+    write(&claude_transcript, "{}\n").expect("write claude transcript");
+    write_codex_transcript(&codex_dir, "14", UUID_B, "/repo");
+
+    let options = BackendSessionDiscoveryOptions {
+        claude_projects_dir: Some(claude_dir),
+        codex_sessions_dir: Some(codex_dir),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+
+    for (tool_key, expected) in [
+        (Some("claude"), Some(UUID_A.to_owned())),
+        (Some("codex"), Some(UUID_B.to_owned())),
+        (Some("aider"), None),
+        (None, None),
+    ] {
+        let discovered =
+            discover_backend_session_id_with_options(tool_key, Some("/repo"), &options);
+        assert_eq!(
+            discovered, expected,
+            "discovery for {tool_key:?} is not what the parity table says"
+        );
+        assert_eq!(
+            backend_session_id_is_discoverable(tool_key),
+            discovered.is_some(),
+            "the discoverable list disagrees with discovery for {tool_key:?}"
+        );
+    }
 
     remove_dir_all(temp).ok();
 }
