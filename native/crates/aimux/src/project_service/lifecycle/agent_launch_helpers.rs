@@ -31,14 +31,18 @@ pub(super) fn missing_backend_session_disposition(
     project_root: &str,
     topology: &Value,
 ) -> MissingBackendSessionDisposition {
-    let disposition =
-        missing_backend_session_disposition_from_ids(session, project_root, |tool_key, cwd| {
-            match tool_key {
-                "claude" => runtime.claude_backend_session_ids_for_cwd(cwd),
-                "codex" => runtime.codex_backend_session_ids_for_cwd(cwd),
-                _ => unreachable!("only tools with transcript discovery reach this callback"),
-            }
-        });
+    let disposition = missing_backend_session_disposition_from_ids(
+        session,
+        project_root,
+        sole_unidentified_claimant(topology, session, project_root),
+        |tool_key, cwd, created_after_ms| match tool_key {
+            // Claude's id is dictated at launch, so it never reaches the
+            // narrowing pass and has no use for the floor.
+            "claude" => runtime.claude_backend_session_ids_for_cwd(cwd),
+            "codex" => runtime.codex_backend_session_ids_for_cwd(cwd, created_after_ms),
+            _ => unreachable!("only tools with transcript discovery reach this callback"),
+        },
+    );
     match disposition {
         MissingBackendSessionDisposition::RecordBackendSession(id) => {
             if let Some(owner) = backend_session_claimed_by_other(topology, session, &id) {
@@ -59,14 +63,18 @@ pub(super) fn missing_backend_session_disposition_async_runtime(
     project_root: &str,
     topology: &Value,
 ) -> MissingBackendSessionDisposition {
-    let disposition =
-        missing_backend_session_disposition_from_ids(session, project_root, |tool_key, cwd| {
-            match tool_key {
-                "claude" => runtime.claude_backend_session_ids_for_cwd(cwd),
-                "codex" => runtime.codex_backend_session_ids_for_cwd(cwd),
-                _ => unreachable!("only tools with transcript discovery reach this callback"),
-            }
-        });
+    let disposition = missing_backend_session_disposition_from_ids(
+        session,
+        project_root,
+        sole_unidentified_claimant(topology, session, project_root),
+        |tool_key, cwd, created_after_ms| match tool_key {
+            // Claude's id is dictated at launch, so it never reaches the
+            // narrowing pass and has no use for the floor.
+            "claude" => runtime.claude_backend_session_ids_for_cwd(cwd),
+            "codex" => runtime.codex_backend_session_ids_for_cwd(cwd, created_after_ms),
+            _ => unreachable!("only tools with transcript discovery reach this callback"),
+        },
+    );
     match disposition {
         MissingBackendSessionDisposition::RecordBackendSession(id) => {
             if let Some(owner) = backend_session_claimed_by_other(topology, session, &id) {
@@ -100,10 +108,42 @@ pub(super) fn backend_session_claimed_by_other(
         .map(|other| string_field(&other, "id"))
 }
 
+/// Whether this agent is the only one in its checkout that could claim a
+/// transcript -- live, same tool, and with no conversation recorded yet.
+///
+/// Two such agents cannot be told apart by time alone: if one's own transcript
+/// never appeared, the other's survives the floor and gets adopted. Counting
+/// them is the whole check, and it needs the topology, which only the callers
+/// of this module have.
+fn sole_unidentified_claimant(topology: &Value, session: &Value, project_root: &str) -> bool {
+    let cwd =
+        trimmed_string(session.get("worktreePath")).unwrap_or_else(|| project_root.to_owned());
+    let tool = tool_config_key_for_session(session);
+    let session_id = string_field(session, "id");
+    array_field(topology, "sessions")
+        .into_iter()
+        .filter(|other| string_field(other, "id") != session_id)
+        .filter(|other| {
+            crate::project_service::session_visibility::LIVE_SESSION_STATUSES
+                .contains(&string_field(other, "status").as_str())
+        })
+        .filter(|other| trimmed_string(other.get("backendSessionId")).is_none())
+        .filter(|other| tool_config_key_for_session(other) == tool)
+        .all(|other| {
+            trimmed_string(other.get("worktreePath")).unwrap_or_else(|| project_root.to_owned())
+                != cwd
+        })
+}
+
 fn missing_backend_session_disposition_from_ids(
     session: &Value,
     project_root: &str,
-    mut ids_for_cwd: impl FnMut(&str, &str) -> Result<std::collections::BTreeSet<String>, String>,
+    sole_unidentified_claimant: bool,
+    mut ids_for_cwd: impl FnMut(
+        &str,
+        &str,
+        Option<u128>,
+    ) -> Result<std::collections::BTreeSet<String>, String>,
 ) -> MissingBackendSessionDisposition {
     if trimmed_string(session.get("backendSessionId")).is_some() {
         return MissingBackendSessionDisposition::Unchanged;
@@ -126,7 +166,7 @@ fn missing_backend_session_disposition_from_ids(
     };
     let cwd =
         trimmed_string(session.get("worktreePath")).unwrap_or_else(|| project_root.to_owned());
-    let mut ids = match ids_for_cwd(&tool_key, &cwd) {
+    let mut ids = match ids_for_cwd(&tool_key, &cwd, None) {
         Ok(ids) => ids,
         Err(error) => {
             return MissingBackendSessionDisposition::Blocked(format!(
@@ -139,9 +179,82 @@ fn missing_backend_session_disposition_from_ids(
         1 => MissingBackendSessionDisposition::RecordBackendSession(
             ids.pop_first().expect("one discovered backend session"),
         ),
+        count if sole_unidentified_claimant => {
+            narrow_by_launch_time(session, &tool_key, &cwd, tool_label, count, ids_for_cwd)
+        }
         count => MissingBackendSessionDisposition::Blocked(format!(
-            "{tool_label} has {count} possible resumable sessions for {cwd}; choose one before restarting"
+            "{tool_label} has {count} possible resumable sessions for {cwd} and more than one \
+             agent there has no conversation of its own; choose one before restarting"
         )),
+    }
+}
+
+/// A reused checkout has a transcript per conversation, so "which of these is
+/// THIS agent's" is unanswerable by cwd alone -- which is why a worktree you
+/// have worked in twice could not be restored at all.
+///
+/// It is answerable by time: the agent's own conversation is the one opened
+/// after the agent was. The floor is the session's `createdAt` and the
+/// rollout's own `session_meta` timestamp, never the file's mtime, which keeps
+/// moving for as long as anyone is talking.
+///
+/// Narrowing to NOTHING means every transcript here predates this agent. For
+/// THIS caller that is a refusal rather than a licence to start fresh: it is
+/// being asked which conversation to resume, and it has no answer.
+///
+/// The restart guard reads the same state and correctly concludes the
+/// opposite, that there is nothing of this agent's to lose. The two are not
+/// in conflict because they are asked different questions -- "which one do I
+/// reopen" has no answer here, while "is there anything to protect" has the
+/// answer no. The guard only treats it that way once an undateable transcript
+/// naming the checkout has been ruled out, which is the case this comment
+/// used to fold in as "missing or unreadable".
+///
+/// Narrowing to ONE is not proof that one is THIS agent's, either. If a second
+/// id-less agent shares the checkout and its own transcript is missing --
+/// codex died before writing `session_meta`, or it was pruned -- the survivor
+/// is its neighbour's, and adopting it puts two agents in one conversation.
+/// Only the sole unidentified claimant in a checkout may narrow; the caller
+/// decides that, because only it can see the other sessions.
+fn narrow_by_launch_time(
+    session: &Value,
+    tool_key: &str,
+    cwd: &str,
+    tool_label: &str,
+    count: usize,
+    mut ids_for_cwd: impl FnMut(
+        &str,
+        &str,
+        Option<u128>,
+    ) -> Result<std::collections::BTreeSet<String>, String>,
+) -> MissingBackendSessionDisposition {
+    let ambiguous = || {
+        MissingBackendSessionDisposition::Blocked(format!(
+            "{tool_label} has {count} possible resumable sessions for {cwd}; choose one before restarting"
+        ))
+    };
+    let Some(launched_ms) = trimmed_string(session.get("createdAt"))
+        .as_deref()
+        .and_then(crate::backend_session_ids::iso_timestamp_ms)
+    else {
+        return ambiguous();
+    };
+    let mut narrowed = match ids_for_cwd(tool_key, cwd, Some(launched_ms)) {
+        Ok(ids) => ids,
+        Err(error) => {
+            return MissingBackendSessionDisposition::Blocked(format!(
+                "{tool_label} session history for {cwd} could not be inspected: {error}"
+            ));
+        }
+    };
+    match narrowed.len() {
+        1 => MissingBackendSessionDisposition::RecordBackendSession(
+            narrowed.pop_first().expect("one narrowed backend session"),
+        ),
+        0 => MissingBackendSessionDisposition::Blocked(format!(
+            "{tool_label} has {count} resumable sessions for {cwd}, none opened after this agent started; choose one before restarting"
+        )),
+        _ => ambiguous(),
     }
 }
 
@@ -548,10 +661,15 @@ mod missing_backend_disposition_tests {
     fn claude_missing_backend_has_three_distinct_dispositions() {
         let session = json!({ "toolConfigKey": "claude", "worktreePath": "/repo/wt" });
         let decide = |result: Result<BTreeSet<String>, String>| {
-            missing_backend_session_disposition_from_ids(&session, "/repo", |tool, cwd| {
-                assert_eq!((tool, cwd), ("claude", "/repo/wt"));
-                result.clone()
-            })
+            missing_backend_session_disposition_from_ids(
+                &session,
+                "/repo",
+                true,
+                |tool, cwd, _created_after_ms| {
+                    assert_eq!((tool, cwd), ("claude", "/repo/wt"));
+                    result.clone()
+                },
+            )
         };
         assert_eq!(
             decide(Ok(BTreeSet::new())),
@@ -582,15 +700,171 @@ mod missing_backend_disposition_tests {
     fn known_backend_history_is_preserved_even_after_an_agent_error() {
         let session = json!({ "toolConfigKey": "claude", "backendSessionId": "known", "freshRelaunchAllowed": true });
         assert_eq!(
-            missing_backend_session_disposition_from_ids(&session, "/repo", |_, _| panic!(
-                "known identity needs no rediscovery"
-            )),
+            missing_backend_session_disposition_from_ids(
+                &session,
+                "/repo",
+                true,
+                |_, _, _| panic!("known identity needs no rediscovery")
+            ),
             MissingBackendSessionDisposition::Unchanged
         );
         assert!(!should_relaunch_agent_fresh(
             &session,
             Some(&json!({"activity": "error", "attention": "error"}))
         ));
+    }
+
+    /// Two transcripts in one checkout used to be the end of the road. The
+    /// one opened after the agent was is the agent's own.
+    #[test]
+    fn a_launch_time_floor_resolves_two_codex_transcripts() {
+        let session = json!({
+            "toolConfigKey": "codex",
+            "worktreePath": "/repo/wt",
+            "createdAt": "2026-08-15T00:00:00.000Z",
+        });
+        let disposition = missing_backend_session_disposition_from_ids(
+            &session,
+            "/repo",
+            true,
+            |_tool, _cwd, created_after_ms| {
+                Ok(if created_after_ms.is_some() {
+                    BTreeSet::from(["newer".to_owned()])
+                } else {
+                    BTreeSet::from(["older".to_owned(), "newer".to_owned()])
+                })
+            },
+        );
+        assert_eq!(
+            disposition,
+            MissingBackendSessionDisposition::RecordBackendSession("newer".into())
+        );
+    }
+
+    /// Narrowing to NOTHING is not an empty history.
+    ///
+    /// Every transcript here predates the agent, so its own is missing or
+    /// unreadable. Reading that as "no conversation exists" hands back a
+    /// fresh start and drops whatever is actually there -- and `0` is the arm
+    /// that already means AllowFreshRelaunch one level up, so the mistake
+    /// costs nothing to make.
+    #[test]
+    fn narrowing_away_every_candidate_refuses_rather_than_starting_fresh() {
+        let session = json!({
+            "toolConfigKey": "codex",
+            "worktreePath": "/repo/wt",
+            "createdAt": "2026-08-15T00:00:00.000Z",
+        });
+        let disposition = missing_backend_session_disposition_from_ids(
+            &session,
+            "/repo",
+            true,
+            |_tool, _cwd, created_after_ms| {
+                Ok(if created_after_ms.is_some() {
+                    BTreeSet::new()
+                } else {
+                    BTreeSet::from(["older".to_owned(), "other".to_owned()])
+                })
+            },
+        );
+        assert!(
+            matches!(disposition, MissingBackendSessionDisposition::Blocked(ref reason)
+                if reason.contains("none opened after this agent started")),
+            "{disposition:?}"
+        );
+    }
+
+    /// Narrowing to one is not proof that one is YOURS.
+    ///
+    /// A second id-less agent in the same checkout whose own transcript never
+    /// appeared -- codex died before writing `session_meta`, or it was pruned
+    /// -- leaves its neighbour's as the only survivor. Adopting it puts two
+    /// agents in one conversation, which is worse than the refusal it
+    /// replaces, so a shared checkout does not narrow at all.
+    #[test]
+    fn a_second_unidentified_agent_in_the_checkout_blocks_narrowing() {
+        let session = json!({
+            "toolConfigKey": "codex",
+            "worktreePath": "/repo/wt",
+            "createdAt": "2026-08-15T00:00:00.000Z",
+        });
+        let disposition = missing_backend_session_disposition_from_ids(
+            &session,
+            "/repo",
+            false,
+            |_tool, _cwd, _created_after_ms| {
+                Ok(BTreeSet::from(["older".to_owned(), "newer".to_owned()]))
+            },
+        );
+        assert!(
+            matches!(disposition, MissingBackendSessionDisposition::Blocked(ref reason)
+                if reason.contains("more than one")),
+            "{disposition:?}"
+        );
+    }
+
+    /// And the predicate that decides it, against a real topology.
+    #[test]
+    fn sole_claimant_counts_only_live_id_less_agents_in_the_same_checkout() {
+        let me = json!({ "id": "codex-me", "toolConfigKey": "codex", "worktreePath": "/wt", "status": "running" });
+        let case = |others: Value| {
+            let mut sessions = vec![me.clone()];
+            if let Value::Array(rows) = others {
+                sessions.extend(rows);
+            }
+            sole_unidentified_claimant(&json!({ "sessions": sessions }), &me, "/repo")
+        };
+
+        assert!(case(json!([])), "alone");
+        assert!(
+            !case(json!([
+                { "id": "codex-twin", "toolConfigKey": "codex", "worktreePath": "/wt", "status": "running" }
+            ])),
+            "a live id-less twin in the same checkout"
+        );
+        assert!(
+            case(json!([
+                { "id": "codex-elsewhere", "toolConfigKey": "codex", "worktreePath": "/other", "status": "running" }
+            ])),
+            "another checkout cannot take this one's transcript"
+        );
+        assert!(
+            case(json!([
+                { "id": "codex-gone", "toolConfigKey": "codex", "worktreePath": "/wt", "status": "offline" }
+            ])),
+            "a dead agent is not competing for it"
+        );
+        assert!(
+            case(json!([
+                { "id": "codex-known", "toolConfigKey": "codex", "worktreePath": "/wt",
+                  "status": "running", "backendSessionId": "already-has-one" }
+            ])),
+            "an agent that already knows its own conversation is not a claimant"
+        );
+        assert!(
+            case(json!([
+                { "id": "claude-other", "toolConfigKey": "claude", "worktreePath": "/wt", "status": "running" }
+            ])),
+            "a different tool does not write codex transcripts"
+        );
+    }
+
+    /// Without a `createdAt` there is no floor, so the old refusal stands
+    /// rather than a guess at which transcript is newest.
+    #[test]
+    fn no_launch_time_leaves_the_ambiguity_refused() {
+        let session = json!({ "toolConfigKey": "codex", "worktreePath": "/repo/wt" });
+        let disposition = missing_backend_session_disposition_from_ids(
+            &session,
+            "/repo",
+            true,
+            |_tool, _cwd, _created_after_ms| Ok(BTreeSet::from(["a".to_owned(), "b".to_owned()])),
+        );
+        assert!(
+            matches!(disposition, MissingBackendSessionDisposition::Blocked(ref reason)
+                if reason.contains("2 possible resumable sessions")),
+            "{disposition:?}"
+        );
     }
 
     #[test]
@@ -600,16 +874,20 @@ mod missing_backend_disposition_tests {
                 missing_backend_session_disposition_from_ids(
                     &json!({"toolConfigKey": tool}),
                     "/repo",
-                    |_, _| panic!("no exact backend store exists")
+                    true,
+                    |_, _, _| panic!("no exact backend store exists")
                 ),
                 MissingBackendSessionDisposition::AllowFreshRelaunch
             );
         }
         for session in [json!({"toolConfigKey": "custom"}), json!({})] {
             assert!(matches!(
-                missing_backend_session_disposition_from_ids(&session, "/repo", |_, _| panic!(
-                    "no supported store exists"
-                )),
+                missing_backend_session_disposition_from_ids(
+                    &session,
+                    "/repo",
+                    true,
+                    |_, _, _| panic!("no supported store exists")
+                ),
                 MissingBackendSessionDisposition::Blocked(_)
             ));
         }

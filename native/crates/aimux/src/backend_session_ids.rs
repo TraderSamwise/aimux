@@ -32,6 +32,14 @@ pub struct AgentIdentityError {
 pub struct BackendSessionDiscoveryOptions {
     pub claude_projects_dir: Option<PathBuf>,
     pub codex_sessions_dir: Option<PathBuf>,
+    /// Only rollouts CREATED at or after this instant.
+    ///
+    /// Read from the rollout's own `session_meta` timestamp, which never
+    /// changes, and only from the file's mtime when the record carries none.
+    /// mtime alone cannot answer this: a rollout is appended to for as long
+    /// as its conversation lives, so an hour-old transcript still being
+    /// written looks newer than a launch that just happened. That is why this
+    /// field existed and neither production caller ever set it.
     pub codex_since_ms: Option<u128>,
     pub codex_exclude_backend_session_ids: BTreeSet<String>,
 }
@@ -308,6 +316,18 @@ pub fn discover_backend_session_id_with_options(
     }
 }
 
+/// The tools whose own store `discover_backend_session_id_with_options`
+/// knows how to read.
+///
+/// This lists exactly the arms of that match, and a test pins the two
+/// together rather than trusting whoever edits the match next. The pairing
+/// matters because a tool declared resumable with no arm here and no
+/// `sessionIdFlag` has no way to ever learn its conversation id, and the
+/// restart guard then waits for an id that nothing can supply.
+pub fn backend_session_id_is_discoverable(tool_config_key: Option<&str>) -> bool {
+    matches!(tool_config_key, Some("claude") | Some("codex"))
+}
+
 pub fn claude_transcript_path(
     cwd: &str,
     backend_session_id: &str,
@@ -454,6 +474,81 @@ pub fn discover_codex_backend_session_id(
     }
 }
 
+/// Whether a codex conversation exists for a checkout, as three answers
+/// rather than two.
+///
+/// "No transcripts" and "could not look" are not the same fact, and
+/// `codex_backend_session_ids_for_cwd` returns `Ok(empty)` for both -- the
+/// store being absent reads exactly like the store being empty. A restart
+/// guard that treats the second as the first waves through an agent whose
+/// conversation it simply failed to find, which is the whole class of mistake
+/// this module's cwd-mismatch comment already warns about.
+///
+/// What `Unknown` actually detects is the store this process resolves being
+/// absent or unreadable. It does NOT detect a store that exists but is the
+/// wrong one: if the agent wrote under a different `CODEX_HOME` than the
+/// daemon resolves, the scan succeeds, matches nothing, and the answer is
+/// `ConfirmedAbsent` -- confidently wrong. Agents inherit the daemon's
+/// `CODEX_HOME` through `managed_launch_env`'s allowlist, which is the only
+/// reason that is not a live hazard today. Anything that lets the two diverge
+/// has to be paired with a real check, not with this enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexConversationPresence {
+    /// At least one transcript names this checkout.
+    Present,
+    /// The store was read, and nothing in it names this checkout.
+    ConfirmedAbsent,
+    /// The store could not be read, or is not where this process is looking.
+    Unknown,
+}
+
+pub fn codex_conversation_presence(
+    cwd: &str,
+    options: &BackendSessionDiscoveryOptions,
+) -> CodexConversationPresence {
+    codex_conversation_presence_since(cwd, options.codex_since_ms, options)
+}
+
+/// Presence for ONE session rather than for a checkout.
+///
+/// `since_ms` is that session's launch instant. Asking without it answers a
+/// question nobody has: a reused checkout accumulates a transcript per agent
+/// that ever ran there, so "this checkout has a conversation" is true the
+/// moment the second agent starts and stays true forever. A restart guard
+/// built on that refuses on behalf of conversations belonging to agents that
+/// exited days ago.
+///
+/// Codex writes no rollout at all until its first turn -- measured at +3m19s
+/// after launch on a real spawn -- so a freshly started agent legitimately
+/// owns nothing, and `ConfirmedAbsent` is the true answer for it however
+/// many older transcripts the checkout holds.
+///
+/// A `None` floor restores the checkout-wide question, which is the more
+/// cautious direction and so the right fallback for a session whose
+/// `createdAt` will not parse.
+pub fn codex_conversation_presence_since(
+    cwd: &str,
+    since_ms: Option<u128>,
+    options: &BackendSessionDiscoveryOptions,
+) -> CodexConversationPresence {
+    let sessions_dir = codex_sessions_dir(options.codex_sessions_dir.as_deref());
+    if !sessions_dir.exists() {
+        return CodexConversationPresence::Unknown;
+    }
+    let mut scoped = options.clone();
+    scoped.codex_since_ms = since_ms;
+    match codex_scan_for_cwd(cwd, &scoped) {
+        Ok(scan) if !scan.ids.is_empty() => CodexConversationPresence::Present,
+        // A transcript naming this checkout that we could not date is not an
+        // absent one. Discovery excludes it because including it would adopt
+        // the wrong conversation; the guard must not read that exclusion as
+        // proof there is nothing to lose.
+        Ok(scan) if scan.undateable > 0 => CodexConversationPresence::Unknown,
+        Ok(_) => CodexConversationPresence::ConfirmedAbsent,
+        Err(_) => CodexConversationPresence::Unknown,
+    }
+}
+
 pub fn codex_backend_session_ids_for_cwd(
     cwd: &str,
     options: &BackendSessionDiscoveryOptions,
@@ -462,15 +557,39 @@ pub fn codex_backend_session_ids_for_cwd(
     if !sessions_dir.exists() {
         return Ok(BTreeSet::new());
     }
-    let mut ids = BTreeSet::new();
-    collect_codex_session_ids_for_cwd(&sessions_dir, cwd, &mut ids, options)?;
-    Ok(ids)
+    Ok(codex_scan_for_cwd(cwd, options)?.ids)
+}
+
+/// What a scan of the codex store found for one checkout.
+///
+/// `ids` and `undateable` are different answers, not one answer and a detail.
+/// A scan that matched nothing and a scan that matched a transcript it could
+/// not date are the difference between "this session owns no conversation"
+/// and "this session may own one and I could not tell", and a restart guard
+/// has to treat those differently.
+#[derive(Debug, Default)]
+pub struct CodexCwdScan {
+    pub ids: BTreeSet<String>,
+    pub undateable: usize,
+}
+
+pub fn codex_scan_for_cwd(
+    cwd: &str,
+    options: &BackendSessionDiscoveryOptions,
+) -> Result<CodexCwdScan, String> {
+    let sessions_dir = codex_sessions_dir(options.codex_sessions_dir.as_deref());
+    if !sessions_dir.exists() {
+        return Ok(CodexCwdScan::default());
+    }
+    let mut scan = CodexCwdScan::default();
+    collect_codex_session_ids_for_cwd(&sessions_dir, cwd, &mut scan, options)?;
+    Ok(scan)
 }
 
 fn collect_codex_session_ids_for_cwd(
     dir: &Path,
     cwd: &str,
-    ids: &mut BTreeSet<String>,
+    scan: &mut CodexCwdScan,
     options: &BackendSessionDiscoveryOptions,
 ) -> Result<(), String> {
     let entries = fs::read_dir(dir).map_err(|error| {
@@ -491,16 +610,11 @@ fn collect_codex_session_ids_for_cwd(
             .file_type()
             .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?;
         if file_type.is_dir() {
-            collect_codex_session_ids_for_cwd(&path, cwd, ids, options)?;
+            collect_codex_session_ids_for_cwd(&path, cwd, scan, options)?;
             continue;
         }
         if !file_type.is_file()
             || path.extension().and_then(|value| value.to_str()) != Some("jsonl")
-        {
-            continue;
-        }
-        if let Some(since_ms) = options.codex_since_ms
-            && modified_ms(&path).is_none_or(|mtime| mtime < since_ms)
         {
             continue;
         }
@@ -520,14 +634,69 @@ fn collect_codex_session_ids_for_cwd(
             continue;
         };
         if !is_uuid(&id)
-            || string_field(payload, "cwd").as_deref() != Some(cwd)
+            || !string_field(payload, "cwd")
+                .as_deref()
+                .is_some_and(|recorded| is_same_checkout(recorded, cwd))
             || options.codex_exclude_backend_session_ids.contains(&id)
         {
             continue;
         }
-        ids.insert(id);
+        // The floor is applied AFTER the checkout matches, so that a
+        // transcript we cannot date can be reported as exactly that -- an
+        // undateable transcript belonging to THIS checkout. Filtering first
+        // discarded it before anyone knew whose it was.
+        match (
+            options.codex_since_ms,
+            codex_rollout_created_ms(&record, &path),
+        ) {
+            // No floor asked for: the question is checkout-wide and every
+            // matching transcript counts, dated or not.
+            (None, _) => {
+                scan.ids.insert(id);
+            }
+            // Dated, and older than this session: somebody else's.
+            (Some(since_ms), Some(created)) if created < since_ms => {}
+            (Some(_), Some(_)) => {
+                scan.ids.insert(id);
+            }
+            // Undateable. Not absent, and not confirmed present either -- the
+            // scan could not tell, and saying "absent" here is the answer that
+            // loses a real conversation.
+            (Some(_), None) => {
+                scan.undateable += 1;
+            }
+        }
     }
     Ok(())
+}
+
+/// Do these two spellings name the same checkout?
+///
+/// Trailing slashes first, the way the Claude path already compares: a
+/// `worktreePath` can carry one -- user-supplied task worktrees do -- and
+/// comparing byte-for-byte made a checkout that HAS a conversation read as
+/// having none.
+///
+/// Then symlinks, which matter more here than they look. On macOS `/tmp` and
+/// `/var` are symlinks into `/private`, and a process records the path it
+/// resolved rather than the one it was handed, so the same directory reaches
+/// this comparison under two spellings. A mismatch used to be harmless --
+/// the session stayed at risk and the restart was refused -- but a guard that
+/// treats "found nothing" as "nothing to lose" turns it into a killed
+/// conversation. Canonicalising costs a stat on a path that already failed to
+/// match, and only when both sides still exist.
+fn is_same_checkout(recorded: &str, cwd: &str) -> bool {
+    let recorded = recorded.trim_end_matches('/');
+    let cwd = cwd.trim_end_matches('/');
+    if recorded == cwd {
+        return true;
+    }
+    match (fs::canonicalize(recorded), fs::canonicalize(cwd)) {
+        (Ok(left), Ok(right)) => left == right,
+        // A checkout that is gone cannot be canonicalised, and two paths that
+        // did not match as strings are not the same one on that evidence.
+        _ => false,
+    }
 }
 
 fn identity_from_session(
@@ -595,6 +764,34 @@ fn read_first_line(path: &Path) -> Result<Option<String>, String> {
             .map(Some)
             .map_err(|error| format!("failed to decode {}: {error}", path.display()))
     }
+}
+
+/// When a rollout was CREATED, from the record that says so.
+///
+/// `session_meta` carries its own `timestamp`, written once when codex opens
+/// the conversation. The file's mtime is the fallback and is a different fact
+/// -- the last time anything was appended -- so it is only consulted when the
+/// record has no timestamp of its own, which real codex rollouts always do.
+/// `None` means the creation instant is UNKNOWN, never that the rollout is
+/// old. Both callers must keep those apart: discovery excludes an undateable
+/// rollout, because including it adopts the wrong conversation, while the
+/// restart guard counts it through `CodexCwdScan::undateable` and answers
+/// `Unknown`, because reading that same exclusion as absence is what loses a
+/// real conversation.
+fn codex_rollout_created_ms(record: &Value, path: &Path) -> Option<u128> {
+    match string_field(record, "timestamp") {
+        // A timestamp that will not parse is not an absent one. Falling
+        // through to mtime here would quietly reinstate the bug this filter
+        // exists to fix, in the direction that INCLUDES the wrong rollout.
+        Some(timestamp) => iso_timestamp_ms(&timestamp),
+        None => modified_ms(path),
+    }
+}
+
+pub fn iso_timestamp_ms(value: &str) -> Option<u128> {
+    let parsed =
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()?;
+    u128::try_from(parsed.unix_timestamp_nanos() / 1_000_000).ok()
 }
 
 fn modified_ms(path: &Path) -> Option<u128> {

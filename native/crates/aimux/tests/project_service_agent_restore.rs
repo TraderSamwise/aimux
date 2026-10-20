@@ -627,6 +627,7 @@ impl ProjectLifecycleRuntime for StubLifecycleRuntime {
     fn codex_backend_session_ids_for_cwd(
         &mut self,
         _cwd: &str,
+        _created_after_ms: Option<u128>,
     ) -> Result<BTreeSet<String>, String> {
         Ok(BTreeSet::new())
     }

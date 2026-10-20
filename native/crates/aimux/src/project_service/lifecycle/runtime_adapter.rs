@@ -416,8 +416,18 @@ pub trait ProjectLifecycleRuntime {
     ) -> Result<BTreeSet<String>, String> {
         Err("runtime does not support Claude transcript discovery".into())
     }
-    fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String> {
-        codex_backend_session_ids_for_cwd(cwd, &BackendSessionDiscoveryOptions::default())
+    fn codex_backend_session_ids_for_cwd(
+        &mut self,
+        cwd: &str,
+        created_after_ms: Option<u128>,
+    ) -> Result<BTreeSet<String>, String> {
+        codex_backend_session_ids_for_cwd(
+            cwd,
+            &BackendSessionDiscoveryOptions {
+                codex_since_ms: created_after_ms,
+                ..BackendSessionDiscoveryOptions::default()
+            },
+        )
     }
     /// An unavailable registry is distinct from a successful empty lookup: a
     /// missing backend id must not turn a failed inspection into a fresh start.
@@ -482,7 +492,11 @@ pub(crate) trait AsyncProjectLifecycleRuntime {
     ) -> Result<BTreeSet<String>, String> {
         Err("runtime does not support Claude transcript discovery".into())
     }
-    fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String>;
+    fn codex_backend_session_ids_for_cwd(
+        &mut self,
+        cwd: &str,
+        created_after_ms: Option<u128>,
+    ) -> Result<BTreeSet<String>, String>;
     async fn claude_background_session_ids(
         &mut self,
         _cwd: &str,
@@ -880,8 +894,18 @@ impl AsyncProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
         }
     }
 
-    fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String> {
-        codex_backend_session_ids_for_cwd(cwd, &BackendSessionDiscoveryOptions::default())
+    fn codex_backend_session_ids_for_cwd(
+        &mut self,
+        cwd: &str,
+        created_after_ms: Option<u128>,
+    ) -> Result<BTreeSet<String>, String> {
+        codex_backend_session_ids_for_cwd(
+            cwd,
+            &BackendSessionDiscoveryOptions {
+                codex_since_ms: created_after_ms,
+                ..BackendSessionDiscoveryOptions::default()
+            },
+        )
     }
 
     async fn kill_window(&mut self, window_id: &str) -> Result<(), String> {

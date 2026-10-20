@@ -1,12 +1,18 @@
 use aimux::backend_session_ids::{
-    BackendSessionDiscoveryOptions, build_agent_identity_error_payload,
-    build_agent_identity_payload, claude_backend_session_ids_for_cwd, claude_transcript_path,
+    BackendSessionDiscoveryOptions, CodexConversationPresence, backend_session_id_is_discoverable,
+    build_agent_identity_error_payload, build_agent_identity_payload,
+    claude_backend_session_ids_for_cwd, claude_transcript_path, codex_conversation_presence,
+    codex_conversation_presence_since, codex_scan_for_cwd,
     discover_backend_session_id_with_options, discover_claude_backend_session_id,
     discover_codex_backend_session_id, relocate_claude_transcript, render_agent_identity_lines,
     resolve_agent_identity, resolve_agent_identity_with_options,
 };
+use aimux::config::default_config;
+use aimux::tool_capabilities::{
+    exact_backend_resume_unacquirable_reason, supports_exact_backend_resume,
+};
 use serde_json::json;
-use std::fs::{create_dir_all, remove_dir_all, write};
+use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -314,6 +320,30 @@ fn claude_history_does_not_silently_drop_a_transcript_that_cannot_be_inspected()
     remove_dir_all(projects_dir).unwrap();
 }
 
+fn write_codex_transcript_at(
+    sessions_dir: &Path,
+    day: &str,
+    uuid: &str,
+    cwd: &str,
+    timestamp: &str,
+) {
+    let dir = sessions_dir.join("2026").join("08").join(day);
+    create_dir_all(&dir).expect("mkdir");
+    let path = dir.join(format!("rollout-2026-08-{day}T00-00-00-{uuid}.jsonl"));
+    write(
+        &path,
+        format!(
+            "{}\n",
+            json!({
+                "timestamp": timestamp,
+                "type": "session_meta",
+                "payload": { "id": uuid, "cwd": cwd, "originator": "codex-tui" },
+            })
+        ),
+    )
+    .expect("write codex transcript");
+}
+
 fn write_codex_transcript(sessions_dir: &Path, day: &str, uuid: &str, cwd: &str) {
     let dir = sessions_dir.join("2026").join("08").join(day);
     create_dir_all(&dir).expect("mkdir");
@@ -340,4 +370,575 @@ fn temp_dir(prefix: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
     create_dir_all(&path).expect("mkdir temp");
     path
+}
+
+/// A reused checkout has a transcript per conversation, which is why
+/// `refuses_ambiguous_codex_transcripts` exists: by cwd alone, "which of these
+/// belongs to this agent" has no answer, and a worktree you had worked in
+/// twice could not be restored at all.
+///
+/// It is answerable by time. The agent's own conversation is the one OPENED
+/// after the agent was, and `session_meta` carries the instant it was opened.
+#[test]
+fn a_launch_time_floor_resolves_what_cwd_alone_cannot() {
+    let temp = temp_dir("aimux-codex-floor");
+    let sessions_dir = temp.join("sessions");
+    write_codex_transcript_at(
+        &sessions_dir,
+        "14",
+        UUID_A,
+        "/repo",
+        "2026-08-14T00:00:00.000Z",
+    );
+    write_codex_transcript_at(
+        &sessions_dir,
+        "15",
+        UUID_B,
+        "/repo",
+        "2026-08-15T12:00:00.000Z",
+    );
+
+    let unfiltered = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        discover_codex_backend_session_id("/repo", &unfiltered),
+        None,
+        "by cwd alone the two are still indistinguishable"
+    );
+
+    // An agent launched between them: only the later conversation is its own.
+    let floor = iso_ms("2026-08-15T00:00:00.000Z");
+    let narrowed = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        codex_since_ms: Some(floor),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        discover_codex_backend_session_id("/repo", &narrowed),
+        Some(UUID_B.into())
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+/// The floor reads the rollout's OWN timestamp, never the file's mtime.
+///
+/// mtime is a different fact: a transcript is appended to for as long as its
+/// conversation lives, so an old one someone is still talking in looks newer
+/// than a launch that just happened. Filtering on mtime -- which is what this
+/// option did before, and why neither production caller ever set it -- hands
+/// back the wrong conversation here.
+#[test]
+fn the_floor_ignores_a_stale_transcript_that_is_still_being_written() {
+    let temp = temp_dir("aimux-codex-mtime");
+    let sessions_dir = temp.join("sessions");
+    let old = sessions_dir
+        .join("2026")
+        .join("08")
+        .join("14")
+        .join(format!("rollout-2026-08-14T00-00-00-{UUID_A}.jsonl"));
+    write_codex_transcript_at(
+        &sessions_dir,
+        "14",
+        UUID_A,
+        "/repo",
+        "2026-08-14T00:00:00.000Z",
+    );
+    // Touched now: the conversation is old, the file is not.
+    write(&old, read_to_string(&old).expect("read back")).expect("touch");
+
+    // The control: without a floor this transcript IS discoverable, so the
+    // assertion below cannot pass because the fixture is broken.
+    let unfiltered = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        discover_codex_backend_session_id("/repo", &unfiltered),
+        Some(UUID_A.into()),
+        "the fixture has to be discoverable for the floor to mean anything"
+    );
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        codex_since_ms: Some(iso_ms("2026-08-15T00:00:00.000Z")),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        discover_codex_backend_session_id("/repo", &options),
+        None,
+        "a conversation opened before the floor is not this agent's, however \
+         recently it was written to"
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+fn iso_ms(value: &str) -> u128 {
+    aimux::backend_session_ids::iso_timestamp_ms(value).expect("parseable timestamp")
+}
+
+/// A timestamp that will not parse is not an absent one.
+///
+/// Falling through to mtime there reinstates the bug in the direction that
+/// INCLUDES the wrong rollout, which is how a stale conversation gets adopted.
+#[test]
+fn an_unparseable_timestamp_is_not_treated_as_a_missing_one() {
+    let temp = temp_dir("aimux-codex-badstamp");
+    let sessions_dir = temp.join("sessions");
+    write_codex_transcript_at(&sessions_dir, "14", UUID_A, "/repo", "not-a-timestamp");
+
+    // The control: with no floor it is found, so the refusal below is about
+    // the timestamp and not about the fixture.
+    let unfiltered = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        discover_codex_backend_session_id("/repo", &unfiltered),
+        Some(UUID_A.into())
+    );
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        codex_since_ms: Some(iso_ms("2026-08-01T00:00:00.000Z")),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        discover_codex_backend_session_id("/repo", &options),
+        None,
+        "an unreadable opening time cannot satisfy a floor"
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+/// Three answers, because "nothing here" and "could not look" are different
+/// facts and the guard that reads this decides whether a restart may proceed.
+#[test]
+fn presence_separates_an_empty_store_from_an_unreadable_one() {
+    let temp = temp_dir("aimux-codex-presence");
+    let sessions_dir = temp.join("sessions");
+
+    // Nothing created yet: the store is not there at all.
+    let missing = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        codex_conversation_presence("/repo", &missing),
+        CodexConversationPresence::Unknown,
+        "a store that is not where we are looking is not an empty one"
+    );
+
+    // A real store, holding somebody else's checkout.
+    write_codex_transcript(&sessions_dir, "14", UUID_A, "/elsewhere");
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        codex_conversation_presence("/repo", &options),
+        CodexConversationPresence::ConfirmedAbsent,
+        "read it, and this checkout genuinely has nothing in it"
+    );
+
+    write_codex_transcript(&sessions_dir, "15", UUID_B, "/repo");
+    assert_eq!(
+        codex_conversation_presence("/repo", &options),
+        CodexConversationPresence::Present
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+/// A symlinked checkout is the same checkout.
+///
+/// A process records the path it resolved, not the one it was handed, and on
+/// macOS `/tmp` and `/var` are symlinks into `/private`. While a mismatch only
+/// meant the restart was refused this was harmless; now that the guard reads
+/// "found nothing" as "nothing to lose", the same mismatch kills a live
+/// conversation.
+#[test]
+fn a_symlinked_checkout_is_the_same_checkout() {
+    let temp = temp_dir("aimux-codex-symlink");
+    let real = temp.join("real-checkout");
+    create_dir_all(&real).expect("mkdir checkout");
+    let link = temp.join("linked-checkout");
+    std::os::unix::fs::symlink(&real, &link).expect("symlink");
+
+    let sessions_dir = temp.join("sessions");
+    // Codex recorded the resolved path.
+    write_codex_transcript(&sessions_dir, "14", UUID_A, real.to_str().expect("utf8"));
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+
+    // Aimux asks with the path it handed over, which is the symlink.
+    assert_eq!(
+        discover_codex_backend_session_id(link.to_str().expect("utf8"), &options),
+        Some(UUID_A.into()),
+        "the same directory, reached by its other name"
+    );
+    assert_eq!(
+        codex_conversation_presence(link.to_str().expect("utf8"), &options),
+        CodexConversationPresence::Present,
+        "and the guard must not call that nothing to lose"
+    );
+
+    // The control: a genuinely different checkout is still absent, so this is
+    // not simply matching everything.
+    let other = temp.join("other-checkout");
+    create_dir_all(&other).expect("mkdir other");
+    assert_eq!(
+        codex_conversation_presence(other.to_str().expect("utf8"), &options),
+        CodexConversationPresence::ConfirmedAbsent
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+/// An undateable transcript is not an absent one.
+///
+/// Discovery drops a rollout whose `session_meta.timestamp` will not parse,
+/// because adopting it would reopen the wrong conversation. The restart guard
+/// reading that same exclusion as "nothing here to lose" is the direction that
+/// kills a live conversation, so presence answers `Unknown` instead.
+#[test]
+fn a_transcript_we_cannot_date_is_not_confirmed_absence() {
+    let temp = temp_dir("aimux-codex-undateable");
+    let sessions_dir = temp.join("sessions");
+    write_codex_transcript_at(&sessions_dir, "14", UUID_A, "/repo", "not-a-timestamp");
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+
+    // It names this checkout and it could not be dated.
+    let scan = codex_scan_for_cwd(
+        "/repo",
+        &BackendSessionDiscoveryOptions {
+            codex_since_ms: Some(iso_ms("2026-08-15T00:00:00.000Z")),
+            ..options.clone()
+        },
+    )
+    .expect("the store is readable");
+    assert!(scan.ids.is_empty(), "discovery still refuses to adopt it");
+    assert_eq!(scan.undateable, 1, "but the scan knows it was there");
+
+    assert_eq!(
+        codex_conversation_presence_since(
+            "/repo",
+            Some(iso_ms("2026-08-15T00:00:00.000Z")),
+            &options
+        ),
+        CodexConversationPresence::Unknown,
+        "could not tell is not the same as nothing to lose"
+    );
+
+    // The control: a dateable transcript below the floor really is absence,
+    // so Unknown is not simply what this fixture always returns.
+    let dateable = temp_dir("aimux-codex-dateable");
+    write_codex_transcript_at(
+        &dateable.join("sessions"),
+        "14",
+        UUID_B,
+        "/repo",
+        "2026-08-14T00:00:00.000Z",
+    );
+    assert_eq!(
+        codex_conversation_presence_since(
+            "/repo",
+            Some(iso_ms("2026-08-15T00:00:00.000Z")),
+            &BackendSessionDiscoveryOptions {
+                codex_sessions_dir: Some(dateable.join("sessions")),
+                ..BackendSessionDiscoveryOptions::default()
+            }
+        ),
+        CodexConversationPresence::ConfirmedAbsent
+    );
+
+    // And an undateable transcript naming a DIFFERENT checkout is not this
+    // checkout's problem -- the floor is applied after the cwd matches.
+    assert_eq!(
+        codex_conversation_presence_since(
+            "/elsewhere",
+            Some(iso_ms("2026-08-15T00:00:00.000Z")),
+            &options
+        ),
+        CodexConversationPresence::ConfirmedAbsent
+    );
+
+    remove_dir_all(temp).ok();
+    remove_dir_all(dateable).ok();
+}
+
+/// A conversation another session has claimed is not this session's.
+///
+/// The floor excludes transcripts older than the session; it says nothing
+/// about who owns the newer ones. A long-lived id-less agent whose neighbours
+/// opened conversations after it started saw theirs as possibly its own and
+/// refused every restart for ever -- the original bug, for exactly the agents
+/// most likely to share a checkout.
+#[test]
+fn a_conversation_another_session_claimed_is_not_this_ones() {
+    let temp = temp_dir("aimux-codex-claimed");
+    let sessions_dir = temp.join("sessions");
+    // The neighbour opened this one AFTER our session launched.
+    write_codex_transcript_at(
+        &sessions_dir,
+        "16",
+        UUID_B,
+        "/repo",
+        "2026-08-16T00:00:00.000Z",
+    );
+
+    let floor = Some(iso_ms("2026-08-15T00:00:00.000Z"));
+    let unclaimed = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        codex_conversation_presence_since("/repo", floor, &unclaimed),
+        CodexConversationPresence::Present,
+        "nobody has claimed it, so it could still be ours"
+    );
+
+    let claimed = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        codex_exclude_backend_session_ids: [UUID_B.to_owned()].into_iter().collect(),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        codex_conversation_presence_since("/repo", floor, &claimed),
+        CodexConversationPresence::ConfirmedAbsent,
+        "the neighbour's recorded id takes its conversation out of the running"
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+/// Declaring exact resume is not the same as being able to do it.
+///
+/// A tool whose `resumeArgs` carry `{sessionId}` is treated as exactly
+/// resumable, and the restart guard then holds a restart open until that
+/// session has a `backendSessionId`. If nothing can ever write one, the
+/// guard waits for ever -- which is precisely what codex did to every
+/// control-plane restart. So every tool that claims the capability has to
+/// have a way to acquire the id.
+#[test]
+fn every_exact_resume_tool_can_acquire_its_id() {
+    let config = default_config();
+    let tools = config
+        .get("tools")
+        .and_then(|tools| tools.as_object())
+        .expect("default config ships a tools object");
+    assert!(
+        tools.len() >= 3,
+        "the gate is vacuous if the default config stops shipping tools"
+    );
+
+    let mut checked = Vec::new();
+    for (tool_key, tool_config) in tools {
+        if !supports_exact_backend_resume(Some(tool_config)) {
+            continue;
+        }
+        checked.push(tool_key.clone());
+        assert_eq!(
+            exact_backend_resume_unacquirable_reason(tool_key, Some(tool_config)),
+            None,
+            "{tool_key} claims exact resume with no way to ever learn its conversation id"
+        );
+    }
+
+    // Named rather than counted, so a tool silently losing the declaration
+    // shows up here instead of shrinking the gate to nothing.
+    assert_eq!(
+        checked,
+        vec!["claude".to_owned(), "codex".to_owned()],
+        "these are the tools the gate is protecting"
+    );
+}
+
+/// The gate has to be able to fail.
+///
+/// Claude is told its id at launch and codex's is discoverable afterwards, so
+/// the real config cannot exercise the refusal. This is the shape that would
+/// reinstate the bug: the claim, with neither acquisition path.
+#[test]
+fn a_tool_declared_resumable_with_no_way_to_learn_its_id_is_named() {
+    let invented = json!({
+        "command": "newtool",
+        "resumeArgs": ["resume", "{sessionId}"],
+        "resumeByBackendSessionId": true,
+    });
+    assert!(
+        supports_exact_backend_resume(Some(&invented)),
+        "the fixture has to actually claim the capability or it proves nothing"
+    );
+
+    let reason = exact_backend_resume_unacquirable_reason("newtool", Some(&invented))
+        .expect("a tool with no sessionIdFlag and no discovery arm must be named");
+    assert!(reason.contains("newtool"), "{reason}");
+
+    // Give it the launch flag and the objection goes away.
+    let mut told_at_launch = invented.clone();
+    told_at_launch["sessionIdFlag"] = json!(["--session-id", "{sessionId}"]);
+    assert_eq!(
+        exact_backend_resume_unacquirable_reason("newtool", Some(&told_at_launch)),
+        None,
+        "being told the id at launch is an acquisition path"
+    );
+}
+
+/// The discoverable list and the discovery match must agree.
+///
+/// `backend_session_id_is_discoverable` is a hand-written list of the arms in
+/// `discover_backend_session_id_with_options`. Comparing the two against each
+/// other is the only thing that keeps them in step when someone adds an arm.
+#[test]
+fn the_discoverable_list_matches_what_discovery_actually_does() {
+    let temp = temp_dir("aimux-acquisition-parity");
+    let claude_dir = temp.join("claude");
+    let codex_dir = temp.join("codex");
+    let claude_transcript = claude_transcript_path("/repo", UUID_A, Some(&claude_dir));
+    create_dir_all(claude_transcript.parent().expect("parent")).expect("mkdir");
+    write(&claude_transcript, "{}\n").expect("write claude transcript");
+    write_codex_transcript(&codex_dir, "14", UUID_B, "/repo");
+
+    let options = BackendSessionDiscoveryOptions {
+        claude_projects_dir: Some(claude_dir),
+        codex_sessions_dir: Some(codex_dir),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+
+    for (tool_key, expected) in [
+        (Some("claude"), Some(UUID_A.to_owned())),
+        (Some("codex"), Some(UUID_B.to_owned())),
+        (Some("aider"), None),
+        (None, None),
+    ] {
+        let discovered =
+            discover_backend_session_id_with_options(tool_key, Some("/repo"), &options);
+        assert_eq!(
+            discovered, expected,
+            "discovery for {tool_key:?} is not what the parity table says"
+        );
+        assert_eq!(
+            backend_session_id_is_discoverable(tool_key),
+            discovered.is_some(),
+            "the discoverable list disagrees with discovery for {tool_key:?}"
+        );
+    }
+
+    remove_dir_all(temp).ok();
+}
+
+/// A reused checkout answers the wrong question.
+///
+/// Every agent that ever ran here left a transcript behind, so "this checkout
+/// has a conversation" is true from the second agent onward and stays true
+/// forever. What a restart guard needs is "does THIS session have one", and
+/// the session's launch instant is the only thing that separates them.
+#[test]
+fn presence_ignores_a_conversation_opened_before_the_session() {
+    let temp = temp_dir("aimux-codex-presence-floor");
+    let sessions_dir = temp.join("sessions");
+    // An earlier agent's transcript, same checkout...
+    write_codex_transcript_at(
+        &sessions_dir,
+        "14",
+        UUID_A,
+        "/repo",
+        "2026-08-14T09:00:00.000Z",
+    );
+    // ...and one opened after this session launched.
+    write_codex_transcript_at(
+        &sessions_dir,
+        "15",
+        UUID_B,
+        "/repo",
+        "2026-08-15T11:00:00.000Z",
+    );
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+
+    // Launched between the two: only the later transcript can be its own.
+    assert_eq!(
+        codex_conversation_presence_since(
+            "/repo",
+            Some(iso_ms("2026-08-15T10:00:00.000Z")),
+            &options
+        ),
+        CodexConversationPresence::Present,
+        "the transcript opened after launch is this session's"
+    );
+
+    // Launched after both: it owns nothing, however much the checkout holds.
+    assert_eq!(
+        codex_conversation_presence_since(
+            "/repo",
+            Some(iso_ms("2026-08-16T00:00:00.000Z")),
+            &options
+        ),
+        CodexConversationPresence::ConfirmedAbsent,
+        "an earlier agent's transcript is not this agent's to protect"
+    );
+
+    // The control: with no floor the checkout-wide question still answers
+    // Present, which is exactly what made the guard refuse for ever.
+    assert_eq!(
+        codex_conversation_presence_since("/repo", None, &options),
+        CodexConversationPresence::Present
+    );
+    assert_eq!(
+        codex_conversation_presence("/repo", &options),
+        CodexConversationPresence::Present,
+        "the floorless wrapper keeps its old meaning"
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+/// A trailing slash is the same checkout.
+///
+/// `worktreePath` can carry one -- a user-supplied task worktree does -- and
+/// comparing the recorded cwd byte-for-byte made a checkout that HAS a
+/// conversation read as having none. The guard reads that as "nothing to
+/// lose", which is the direction that loses it. The Claude path already
+/// trimmed; this one did not.
+#[test]
+fn a_trailing_slash_does_not_hide_a_conversation() {
+    let temp = temp_dir("aimux-codex-slash");
+    let sessions_dir = temp.join("sessions");
+    write_codex_transcript(&sessions_dir, "14", UUID_A, "/repo/wt");
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        codex_conversation_presence("/repo/wt/", &options),
+        CodexConversationPresence::Present,
+        "the same checkout, spelled with a slash"
+    );
+    assert_eq!(
+        discover_codex_backend_session_id("/repo/wt/", &options),
+        Some(UUID_A.into())
+    );
+    // And the control: a genuinely different checkout is still absent.
+    assert_eq!(
+        codex_conversation_presence("/repo/other", &options),
+        CodexConversationPresence::ConfirmedAbsent
+    );
+
+    remove_dir_all(temp).ok();
 }

@@ -6,6 +6,10 @@ pub use project_services::{
 };
 
 use crate::attachment_hosting::{AttachmentHostingResult, PublishedAttachmentHostInput};
+use crate::backend_session_ids::{
+    BackendSessionDiscoveryOptions, CodexConversationPresence, codex_conversation_presence_since,
+    iso_timestamp_ms,
+};
 use crate::cli_launcher::{
     AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
     get_aimux_current_cli_identity,
@@ -152,7 +156,9 @@ use crate::tmux::{
 };
 use crate::tmux_exec_metrics::get_tmux_exec_metrics;
 use crate::tmux_runtime_stop::list_managed_project_session_names;
-use crate::tool_capabilities::supports_exact_backend_resume;
+use crate::tool_capabilities::{
+    has_backend_session_id_acquisition_path, supports_exact_backend_resume,
+};
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -201,6 +207,10 @@ pub struct RealDaemonRuntime {
     restart_backend_id_capture_timeout: Duration,
     restart_backend_id_capture_poll: Duration,
     restart_backend_id_live_window_ids: Option<Result<LiveWindowIndex, String>>,
+    /// Test seam, like the live-window override above: the codex store is a
+    /// real directory in the user's home, and a test must not plant
+    /// transcripts in it or move `CODEX_HOME` out from under its neighbours.
+    restart_backend_id_codex_presence: Option<CodexConversationPresence>,
     restart_managed_tmux_project_roots: Option<Result<Vec<String>, String>>,
     runtime_coherence_tmux_provider: Arc<dyn Fn() -> RuntimeCoherenceTmux + Send + Sync>,
     started_instant: Instant,
@@ -1066,6 +1076,7 @@ impl RealDaemonRuntime {
                 RESTART_BACKEND_ID_CAPTURE_POLL_MS,
             ),
             restart_backend_id_live_window_ids: None,
+            restart_backend_id_codex_presence: None,
             restart_managed_tmux_project_roots: None,
             runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
@@ -1100,6 +1111,7 @@ impl RealDaemonRuntime {
                 RESTART_BACKEND_ID_CAPTURE_POLL_MS,
             ),
             restart_backend_id_live_window_ids: None,
+            restart_backend_id_codex_presence: None,
             restart_managed_tmux_project_roots: None,
             runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
@@ -2247,11 +2259,12 @@ impl RealDaemonRuntime {
         }
         let started = Instant::now();
         let mut next_at_risk_result = Some(at_risk_result);
+        let mut presence_cache = CodexPresenceCache::new();
         loop {
             let at_risk = if let Some(result) = next_at_risk_result.take() {
                 result
             } else {
-                self.restart_backend_id_at_risk_sessions(project_roots)
+                self.restart_backend_id_at_risk_sessions_cached(project_roots, &mut presence_cache)
             }
             .map_err(render_backend_id_tmux_query_refusal)?;
             if at_risk.is_empty() {
@@ -2284,14 +2297,30 @@ impl RealDaemonRuntime {
         &self,
         project_roots: &[String],
     ) -> Result<Vec<RestartBackendIdRisk>, String> {
+        self.restart_backend_id_at_risk_sessions_cached(project_roots, &mut BTreeMap::new())
+    }
+
+    /// The poll loop runs this every 250ms for up to 30s, and the scan behind
+    /// it walks every transcript in the codex store. One answer per checkout
+    /// per restart attempt, not one per poll -- and it cannot change usefully
+    /// in that window anyway, since nothing fills a codex id in while we wait.
+    fn restart_backend_id_at_risk_sessions_cached(
+        &self,
+        project_roots: &[String],
+        presence_cache: &mut CodexPresenceCache,
+    ) -> Result<Vec<RestartBackendIdRisk>, String> {
         let live_window_ids = match self.restart_backend_id_live_window_ids.clone() {
             Some(result) => result,
             None => TmuxRuntimeManager::new().try_live_windows(),
         }?;
-        Ok(restart_backend_id_at_risk_sessions_with_live_window_ids(
+        Ok(restart_backend_id_at_risk_sessions_with_presence_cache(
             &self.resolver,
             project_roots,
             Some(&live_window_ids),
+            &mut CodexPresenceLookup::with_forced(
+                self.restart_backend_id_codex_presence,
+                presence_cache,
+            ),
         ))
     }
 
@@ -6004,6 +6033,20 @@ fn restart_backend_id_guard_project_roots(
     ))
 }
 
+fn restart_backend_id_at_risk_sessions_with_cache(
+    resolver: &PathResolver,
+    project_roots: &[String],
+    presence_cache: &mut CodexPresenceCache,
+) -> Result<Vec<RestartBackendIdRisk>, String> {
+    let live_window_ids = TmuxRuntimeManager::new().try_live_windows()?;
+    Ok(restart_backend_id_at_risk_sessions_with_presence_cache(
+        resolver,
+        project_roots,
+        Some(&live_window_ids),
+        &mut CodexPresenceLookup::new(presence_cache),
+    ))
+}
+
 fn restart_backend_id_at_risk_sessions(
     resolver: &PathResolver,
     project_roots: &[String],
@@ -6016,10 +6059,127 @@ fn restart_backend_id_at_risk_sessions(
     ))
 }
 
+type CodexPresenceCache = BTreeMap<(String, Option<u128>), CodexConversationPresence>;
+
+/// One presence answer per (checkout, launch instant) for a whole restart
+/// attempt, plus the test seam that replaces the answer outright.
+///
+/// The seam has to be an explicit override rather than a pre-seeded cache
+/// entry, because the key is now derived from the session being examined. A
+/// test that seeded the map by project root would silently stop injecting the
+/// moment the key gained its second component, fall through to a real scan of
+/// whichever codex store the developer happens to have, and still pass.
+struct CodexPresenceLookup<'cache> {
+    forced: Option<CodexConversationPresence>,
+    cache: &'cache mut CodexPresenceCache,
+}
+
+impl<'cache> CodexPresenceLookup<'cache> {
+    fn new(cache: &'cache mut CodexPresenceCache) -> Self {
+        Self {
+            forced: None,
+            cache,
+        }
+    }
+
+    fn with_forced(
+        forced: Option<CodexConversationPresence>,
+        cache: &'cache mut CodexPresenceCache,
+    ) -> Self {
+        Self { forced, cache }
+    }
+
+    /// `claimed` is every `backendSessionId` the project's topology already
+    /// records. It is constant for one project across one restart attempt,
+    /// which is why it is not part of the cache key.
+    fn presence(
+        &mut self,
+        cwd: &str,
+        since_ms: Option<u128>,
+        claimed: &BTreeSet<String>,
+    ) -> CodexConversationPresence {
+        if let Some(forced) = self.forced {
+            return forced;
+        }
+        *self
+            .cache
+            .entry((cwd.to_owned(), since_ms))
+            .or_insert_with(|| {
+                codex_conversation_presence_since(
+                    cwd,
+                    since_ms,
+                    &BackendSessionDiscoveryOptions {
+                        codex_exclude_backend_session_ids: claimed.clone(),
+                        ..BackendSessionDiscoveryOptions::default()
+                    },
+                )
+            })
+    }
+}
+
+/// Does THIS session have a codex conversation, answered once per checkout
+/// and launch instant.
+///
+/// The scan walks every transcript under the codex store, and the guard is
+/// re-evaluated on a 250ms poll for up to 30s -- without a cache that is a
+/// hundred-odd full walks per restart. The answer cannot change usefully in
+/// that window either: codex has no hook that fills the id in while we wait,
+/// which is why the poll exists for claude and never helped codex.
+/// Every conversation id the project's topology already attributes to a
+/// session.
+///
+/// A transcript another session has claimed is not this session's, whenever
+/// it was written. Without this the floor excluded only conversations OLDER
+/// than the session, so a long-lived id-less agent whose neighbours opened
+/// conversations after it started read them as possibly its own and refused
+/// every restart for ever -- the original bug, surviving for exactly the
+/// agents most likely to sit in a shared checkout.
+///
+/// It helps only where the neighbour's id was actually recorded, which for
+/// codex is still the uncommon case. It is strictly better than not asking.
+fn claimed_backend_session_ids(topology: &Value) -> BTreeSet<String> {
+    list_topology_session_states(topology, None)
+        .iter()
+        .filter_map(|session| trimmed_value_string(session.get("backendSessionId")))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn codex_conversation_is_confirmed_absent(
+    session: &Value,
+    project_root: &str,
+    claimed: &BTreeSet<String>,
+    lookup: &mut CodexPresenceLookup<'_>,
+) -> bool {
+    let cwd = trimmed_value_string(session.get("worktreePath"))
+        .map(str::to_owned)
+        .unwrap_or_else(|| project_root.to_owned());
+    // The floor is this session's own launch. Asked without it, the question
+    // becomes "has anything ever run in this checkout", which a reused
+    // worktree answers yes to from its second agent onward and forever after.
+    let since_ms = trimmed_value_string(session.get("createdAt")).and_then(iso_timestamp_ms);
+    lookup.presence(&cwd, since_ms, claimed) == CodexConversationPresence::ConfirmedAbsent
+}
+
 fn restart_backend_id_at_risk_sessions_with_live_window_ids(
     resolver: &PathResolver,
     project_roots: &[String],
     live_window_ids: Option<&LiveWindowIndex>,
+) -> Vec<RestartBackendIdRisk> {
+    let mut presence_cache = CodexPresenceCache::new();
+    restart_backend_id_at_risk_sessions_with_presence_cache(
+        resolver,
+        project_roots,
+        live_window_ids,
+        &mut CodexPresenceLookup::new(&mut presence_cache),
+    )
+}
+
+fn restart_backend_id_at_risk_sessions_with_presence_cache(
+    resolver: &PathResolver,
+    project_roots: &[String],
+    live_window_ids: Option<&LiveWindowIndex>,
+    lookup: &mut CodexPresenceLookup<'_>,
 ) -> Vec<RestartBackendIdRisk> {
     let mut risks = Vec::new();
     for project_root in project_roots {
@@ -6042,6 +6202,7 @@ fn restart_backend_id_at_risk_sessions_with_live_window_ids(
             }
         };
         let config = load_config_for_project_with_resolver(resolver, project_root);
+        let claimed_backend_ids = claimed_backend_session_ids(&topology);
         for session in
             list_topology_session_states(&topology, Some(&["running", "idle", "starting"]))
         {
@@ -6055,6 +6216,39 @@ fn restart_backend_id_at_risk_sessions_with_live_window_ids(
                 continue;
             };
             if !supports_exact_backend_resume(Some(tool_config)) {
+                continue;
+            }
+            // Declaring the capability is not having it. A tool with no
+            // `sessionIdFlag` and no discovery arm cannot be told its id and
+            // cannot be found one, so the poll below would wait the full
+            // timeout and then refuse, for ever, on every restart. And there
+            // is nothing behind the refusal: without an id `resumeArgs`
+            // cannot be filled in, so aimux could never resume that
+            // conversation whether it restarts or not.
+            if !has_backend_session_id_acquisition_path(
+                Some(restart_guard_session_tool(&session)),
+                Some(tool_config),
+            ) {
+                continue;
+            }
+            // A guard is for something that can be LOST. Codex cannot be told
+            // its conversation id at launch -- the CLI has no flag for it --
+            // so every codex row is born without one and this guard refused
+            // every restart for the life of the agent, including for agents
+            // whose checkout holds no transcript at all. Protecting a
+            // conversation that does not exist is not caution, it is a
+            // control plane that cannot be restarted.
+            //
+            // Only a CONFIRMED absence clears it. Not being able to look is
+            // not the same as there being nothing there.
+            if restart_guard_session_tool(&session) == "codex"
+                && codex_conversation_is_confirmed_absent(
+                    &session,
+                    project_root,
+                    &claimed_backend_ids,
+                    lookup,
+                )
+            {
                 continue;
             }
             risks.push(RestartBackendIdRisk {
@@ -6139,9 +6333,16 @@ fn wait_for_restart_backend_id_capture_with_resolver(
     poll: Duration,
 ) -> Result<(), String> {
     let started = Instant::now();
+    // One presence answer per checkout and launch instant for the whole
+    // wait, not one per poll.
+    let mut presence_cache = CodexPresenceCache::new();
     loop {
-        let at_risk = restart_backend_id_at_risk_sessions(resolver, project_roots)
-            .map_err(render_backend_id_tmux_query_refusal)?;
+        let at_risk = restart_backend_id_at_risk_sessions_with_cache(
+            resolver,
+            project_roots,
+            &mut presence_cache,
+        )
+        .map_err(render_backend_id_tmux_query_refusal)?;
         if at_risk.is_empty() {
             return Ok(());
         }
@@ -7101,6 +7302,9 @@ mod tests {
             "@codex-pending",
             "aimux-test",
         )])));
+        // There IS a conversation here, which is the only reason refusing to
+        // restart protects anything.
+        runtime.restart_backend_id_codex_presence = Some(CodexConversationPresence::Present);
 
         let error = runtime
             .prepare_restart_control_plane_runtime(None, false, false)
@@ -7149,6 +7353,163 @@ mod tests {
         fixture.cleanup();
     }
 
+    /// The claimed set is what makes a neighbour's conversation theirs.
+    ///
+    /// It has to span every status, not just the live ones: a stopped or
+    /// graveyarded session still owns the transcript it recorded, and reading
+    /// only running rows would hand its conversation back to whichever live
+    /// agent shares the checkout.
+    #[test]
+    fn claimed_ids_span_every_session_status() {
+        let topology = json!({
+            "sessions": [
+                { "id": "a", "status": "running", "tool": "codex",
+                  "backendSessionId": "11111111-2222-3333-4444-555555555555" },
+                { "id": "b", "status": "graveyard", "tool": "codex",
+                  "backendSessionId": "66666666-7777-8888-9999-000000000000" },
+                { "id": "c", "status": "offline", "tool": "codex" },
+                { "id": "d", "status": "running", "tool": "codex",
+                  "backendSessionId": "   " },
+            ]
+        });
+
+        let claimed = claimed_backend_session_ids(&topology);
+
+        assert_eq!(
+            claimed,
+            BTreeSet::from([
+                "11111111-2222-3333-4444-555555555555".to_owned(),
+                "66666666-7777-8888-9999-000000000000".to_owned(),
+            ]),
+            "a graveyarded session still owns its conversation, and blank is not an id"
+        );
+    }
+
+    /// Waiting for an id that nothing can write is not caution.
+    ///
+    /// A custom tool can declare `resumeArgs` carrying a `{sessionId}` and so
+    /// be treated as exactly resumable, while having no `sessionIdFlag` to be
+    /// told an id and no discovery arm to be found one. The guard then waited
+    /// the full timeout and refused, on every restart, for the life of the
+    /// agent -- and nothing was behind the refusal, because without an id
+    /// `resumeArgs` can never be filled in either.
+    #[test]
+    fn a_tool_that_can_never_learn_its_id_does_not_block_a_restart() {
+        for (case, session_id_flag, expect_at_risk) in [
+            ("unacquirable", None, false),
+            (
+                "told-at-launch",
+                Some(json!(["--session-id", "{sessionId}"])),
+                true,
+            ),
+        ] {
+            let fixture = restart_service_fixture(&format!("restart-acquisition-{case}"));
+            let project = fixture.project_root.clone();
+            let mut tool = json!({
+                "command": "/bin/custom",
+                "args": [],
+                "enabled": true,
+                "resumeArgs": ["--resume", "{sessionId}"],
+                "resumeByBackendSessionId": true,
+            });
+            if let Some(flag) = session_id_flag {
+                tool["sessionIdFlag"] = flag;
+            }
+            let aimux_dir = Path::new(&project).join(".aimux");
+            fs::create_dir_all(&aimux_dir).expect("project aimux dir");
+            fs::write(
+                aimux_dir.join("config.json"),
+                serde_json::to_string(&json!({ "tools": { "custom": tool } }))
+                    .expect("config json"),
+            )
+            .expect("write project config");
+
+            fixture.persist_runtime_session_with_window(
+                "custom-one",
+                "custom",
+                "running",
+                None,
+                Some("@custom-one"),
+                None,
+            );
+
+            let risks = restart_backend_id_at_risk_sessions_with_presence_cache(
+                &fixture.resolver,
+                std::slice::from_ref(&project),
+                Some(&LiveWindowIndex::from_pairs([(
+                    "@custom-one",
+                    "aimux-test",
+                )])),
+                &mut CodexPresenceLookup::new(&mut CodexPresenceCache::new()),
+            );
+
+            assert_eq!(
+                !risks.is_empty(),
+                expect_at_risk,
+                "{case}: a tool is guarded only when its id can actually be acquired"
+            );
+            fixture.cleanup();
+        }
+    }
+
+    /// Which question did the guard ask?
+    ///
+    /// Both are seeded, with opposite answers, so a regression to the
+    /// checkout-wide question fails the assertion instead of quietly agreeing
+    /// with it. Seeding also keeps the developer's own codex store out of it.
+    #[test]
+    fn a_codex_agent_blocks_a_restart_only_for_its_own_conversation() {
+        let launched_at = "2026-10-20T10:06:15.404Z";
+        let launch_ms = iso_timestamp_ms(launched_at).expect("launch instant parses");
+
+        for (case, own, checkout_wide, expect_at_risk) in [
+            (
+                "own-absent",
+                CodexConversationPresence::ConfirmedAbsent,
+                CodexConversationPresence::Present,
+                false,
+            ),
+            (
+                "own-present",
+                CodexConversationPresence::Present,
+                CodexConversationPresence::ConfirmedAbsent,
+                true,
+            ),
+        ] {
+            let fixture = restart_service_fixture(&format!("restart-per-session-{case}"));
+            let project = fixture.project_root.clone();
+            fixture.persist_runtime_session_with_window(
+                "codex-reused-checkout",
+                "codex",
+                "running",
+                None,
+                Some("@codex-reused-checkout"),
+                Some(json!({ "createdAt": launched_at })),
+            );
+
+            let mut cache = CodexPresenceCache::from([
+                ((project.clone(), Some(launch_ms)), own),
+                ((project.clone(), None), checkout_wide),
+            ]);
+            let risks = restart_backend_id_at_risk_sessions_with_presence_cache(
+                &fixture.resolver,
+                std::slice::from_ref(&project),
+                Some(&LiveWindowIndex::from_pairs([(
+                    "@codex-reused-checkout",
+                    "aimux-test",
+                )])),
+                &mut CodexPresenceLookup::new(&mut cache),
+            );
+
+            assert_eq!(
+                !risks.is_empty(),
+                expect_at_risk,
+                "{case}: the guard consulted the wrong presence question"
+            );
+            fixture.cleanup();
+        }
+    }
+
     #[test]
     fn control_plane_restart_guard_covers_project_control_exact_resume_sessions() {
         let fixture = restart_service_fixture("restart-project-control-pending-backend-id");
@@ -7166,13 +7527,17 @@ mod tests {
             })),
         );
 
-        let risks = restart_backend_id_at_risk_sessions_with_live_window_ids(
+        let risks = restart_backend_id_at_risk_sessions_with_presence_cache(
             &fixture.resolver,
             std::slice::from_ref(&project),
             Some(&LiveWindowIndex::from_pairs([(
                 "@codex-overseer",
                 "aimux-test",
             )])),
+            &mut CodexPresenceLookup::with_forced(
+                Some(CodexConversationPresence::Present),
+                &mut CodexPresenceCache::new(),
+            ),
         );
 
         assert_eq!(
@@ -7183,6 +7548,83 @@ mod tests {
                 tool: "codex".to_owned(),
                 status: "running".to_owned(),
             }]
+        );
+        fixture.cleanup();
+    }
+
+    /// The restart that could never happen.
+    ///
+    /// Codex cannot be told its conversation id at launch, so every codex row
+    /// is born without one and this guard refused for the life of the agent --
+    /// including for an agent whose checkout holds no transcript at all. That
+    /// is what blocked a local install: one running codex agent, a worktree
+    /// with zero rollouts in it, and a control plane that could not restart.
+    #[test]
+    fn a_codex_agent_with_no_conversation_does_not_block_a_restart() {
+        let fixture = restart_service_fixture("restart-codex-no-conversation");
+        let project = fixture.project_root.clone();
+        fixture.persist_runtime_session_with_window(
+            "codex-nothing-to-lose",
+            "codex",
+            "running",
+            None,
+            Some("@codex-nothing-to-lose"),
+            None,
+        );
+
+        let risks = restart_backend_id_at_risk_sessions_with_presence_cache(
+            &fixture.resolver,
+            std::slice::from_ref(&project),
+            Some(&LiveWindowIndex::from_pairs([(
+                "@codex-nothing-to-lose",
+                "aimux-test",
+            )])),
+            &mut CodexPresenceLookup::with_forced(
+                Some(CodexConversationPresence::ConfirmedAbsent),
+                &mut CodexPresenceCache::new(),
+            ),
+        );
+
+        assert!(risks.is_empty(), "nothing to protect, so nothing to refuse");
+        fixture.cleanup();
+    }
+
+    /// Not being able to look is not the same as there being nothing there.
+    ///
+    /// `CODEX_HOME` pointed elsewhere for the agent and not for the daemon
+    /// makes every transcript invisible here while intact on disk, and the
+    /// scan returns the same empty answer either way. Waving the restart
+    /// through on that would drop the conversation this guard exists for.
+    #[test]
+    fn a_codex_store_that_cannot_be_read_still_blocks_a_restart() {
+        let fixture = restart_service_fixture("restart-codex-unknown-store");
+        let project = fixture.project_root.clone();
+        fixture.persist_runtime_session_with_window(
+            "codex-unknown",
+            "codex",
+            "running",
+            None,
+            Some("@codex-unknown"),
+            None,
+        );
+
+        let risks = restart_backend_id_at_risk_sessions_with_presence_cache(
+            &fixture.resolver,
+            std::slice::from_ref(&project),
+            Some(&LiveWindowIndex::from_pairs([(
+                "@codex-unknown",
+                "aimux-test",
+            )])),
+            &mut CodexPresenceLookup::with_forced(
+                Some(CodexConversationPresence::Unknown),
+                &mut CodexPresenceCache::new(),
+            ),
+        );
+
+        assert_eq!(
+            risks.len(),
+            1,
+            "an unreadable store is uncertainty, not absence"
         );
         fixture.cleanup();
     }
@@ -7377,6 +7819,9 @@ mod tests {
             "@codex-pending",
             "aimux-test",
         )])));
+        // There IS a conversation here, which is the only reason refusing to
+        // restart protects anything.
+        runtime.restart_backend_id_codex_presence = Some(CodexConversationPresence::Present);
 
         runtime
             .prepare_restart_control_plane_runtime(None, true, false)
