@@ -14,7 +14,7 @@ use aimux::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineSource, WorkOutlineStatus,
 };
 use aimux::tui_render::text::strip_ansi;
-use aimux::tui_render::theme::{PROGRESS_MARK, Tone, pill, visible_width};
+use aimux::tui_render::theme::{PROGRESS_MARK, Tone, style, visible_width};
 use serde_json::json;
 
 const GOLDEN: &str = include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
@@ -1035,15 +1035,15 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
     assert!(!plain.contains("08h5sgg…Ready"));
 }
 
-/// The badge takes its room from the parenthetical id, not from the name and
-/// not from the status cell.
+/// The count leaves the identity alone entirely.
 ///
-/// `COL_IDENTITY` is 16, so `claude (08h5sggs)` plus a badge does not fit. The
-/// parenthetical only disambiguates two agents of the same name, so it is what
-/// yields -- cutting the name instead produced `claude (08…` and cutting
-/// nothing would have shoved `Ready` out of its column.
+/// This test used to assert the opposite -- that the parenthetical id yielded
+/// to make room for a badge inside `COL_IDENTITY`, so `claude (08h5sggs)`
+/// rendered as `claude 3`. That WAS the design, and it meant the id went
+/// missing exactly when you most wanted to address that agent. The count has
+/// its own column now, so nothing has to yield.
 #[test]
-fn an_unread_badge_takes_its_room_from_the_parenthetical_not_the_name() {
+fn an_unread_count_leaves_the_agent_id_alone() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let mut snapshot = fixture.runtime_light.clone();
@@ -1086,17 +1086,17 @@ fn an_unread_badge_takes_its_room_from_the_parenthetical_not_the_name() {
     });
     let plain = strip_ansi(&result.frame);
 
-    // Anchored on the row's index cell. A bare `contains` also matched the
-    // trailing headline preview, which truncates for its own reasons -- so the
-    // old negative assertion fired on `headline-clau…` and said nothing about
-    // the name.
-    // This positive assertion is the whole claim. Three attempts at a negative
-    // one here were all unfireable -- with a 16-cell column and a 3-to-5 cell
-    // badge, `room` is 10 to 12 while `claude` is 6, so no truncation of the
-    // name can be produced at all. A negative that cannot fail is decoration.
+    let row = plain
+        .lines()
+        .find(|line| line.contains("(08h5sggs)"))
+        .unwrap_or_else(|| panic!("the id must survive the count, got {plain}"));
     assert!(
-        plain.contains("[1] claude 3 "),
-        "the badge sits beside a whole name, got {plain}"
+        row.contains("3 new"),
+        "and the count must still be on the row: {row}"
+    );
+    assert!(
+        row.find("(08h5sggs)") < row.find("3 new"),
+        "the count sits in its own column past the identity, not inside it: {row}"
     );
     assert!(plain.contains("Ready"));
     for line in frame_content_only(&result.frame).split("\r\n") {
@@ -3230,32 +3230,29 @@ fn a_semantic_block_without_notifications_still_badges_the_flat_count() {
     snapshot.worktree_groups[0].sessions[0].notification_unread_count = 4;
     let plain = strip_ansi(&row_frame(&snapshot));
 
-    assert!(
-        plain.contains("claude 4 "),
-        "the badge falls back, got {plain}"
-    );
+    assert!(plain.contains("4 new"), "the badge falls back, got {plain}");
 }
 
-/// The badge keeps a plain cell between itself and the status pill.
+/// The count keeps a plain cell between itself and whatever follows.
 ///
-/// `cols` concatenates columns with no gap and the status cell is itself
-/// reverse video, so a badge that filled its column ran straight into
-/// ` NEEDS INPUT ` as one continuous highlighted block -- and a needs-input
-/// agent with unread notifications is the case this whole change is about.
+/// `cols` concatenates columns with no gap, so a cell filled to its width runs
+/// straight into the next one. This used to be about the status pill, when the
+/// count lived in the identity column next to it; the count has its own column
+/// now, and the rule is the same -- `COL_UNREAD` is 8 and `99+ new` is 7.
 #[test]
-fn the_badge_does_not_run_into_the_status_pill() {
+fn the_count_does_not_run_into_the_next_column() {
     let snapshot = snapshot_with_semantic(Some(json!({
         "user": { "label": "needs_input", "attention": "needs_input" },
         "notifications": { "unreadCount": 2 },
         "presentation": { "statusLabel": "needs input", "compactHint": "on you", "attentionScore": 4 }
     })));
     let frame = row_frame(&snapshot);
-    let badge = pill("2", Tone::Accent);
-    let at = frame.find(&badge).expect("the row badges 2");
+    let count = style("2 new", Tone::Accent);
+    let at = frame.find(&count).expect("the row carries 2 new");
     assert!(
-        frame[at + badge.len()..].starts_with(' '),
-        "a plain cell has to follow the badge, got {:?}",
-        &frame[at..at + badge.len() + 12]
+        frame[at + count.len()..].starts_with(' '),
+        "a plain cell has to follow the count, got {:?}",
+        &frame[at..(at + count.len() + 12).min(frame.len())]
     );
 }
 
@@ -3266,15 +3263,15 @@ fn the_badge_does_not_run_into_the_status_pill() {
 /// replacing `pill` with plain text passed the whole suite. Nothing paired a
 /// stale or offline session with a non-zero unread count in either direction.
 #[test]
-fn the_badge_is_filled_amber_live_and_muted_once_it_is_stale_or_gone() {
+fn the_count_is_amber_live_and_muted_once_it_is_stale_or_gone() {
     let live = snapshot_with_semantic(Some(json!({
         "user": { "label": "ready", "attention": "normal" },
         "notifications": { "unreadCount": 4 },
         "presentation": { "statusLabel": "Ready", "compactHint": "4 unread", "attentionScore": 2 }
     })));
     assert!(
-        row_frame(&live).contains(&pill("4", Tone::Accent)),
-        "a live agent's badge is filled accent"
+        row_frame(&live).contains(&style("4 new", Tone::Accent)),
+        "a live agent's count is accent"
     );
 
     // A notice whose agent has moved on: still there, no longer shouting.
@@ -3283,18 +3280,18 @@ fn the_badge_is_filled_amber_live_and_muted_once_it_is_stale_or_gone() {
     stale.worktree_groups[0].sessions[0].notification_stale = true;
     let frame = row_frame(&stale);
     assert!(
-        frame.contains(&pill("4", Tone::Muted)),
+        frame.contains(&style("4 new", Tone::Muted)),
         "a stale notice is muted"
     );
-    assert!(!frame.contains(&pill("4", Tone::Accent)));
+    assert!(!frame.contains(&style("4 new", Tone::Accent)));
 
     // And an agent that is gone.
     let mut gone = live.clone();
     gone.sessions[0].status = SessionStatus::Offline;
     gone.worktree_groups[0].sessions[0].status = SessionStatus::Offline;
     assert!(
-        row_frame(&gone).contains(&pill("4", Tone::Muted)),
-        "an offline agent's badge is muted"
+        row_frame(&gone).contains(&style("4 new", Tone::Muted)),
+        "an offline agent's count is muted"
     );
 }
 
@@ -3310,7 +3307,7 @@ fn a_payload_with_no_semantic_block_still_badges_the_flat_count() {
     snapshot.sessions[0].notification_unread_count = 5;
     snapshot.worktree_groups[0].sessions[0].notification_unread_count = 5;
     let plain = strip_ansi(&row_frame(&snapshot));
-    assert!(plain.contains("claude 5 "), "got {plain}");
+    assert!(plain.contains("5 new"), "got {plain}");
 }
 
 /// The supervisor lane badges too, and nothing proved it.
@@ -3318,13 +3315,13 @@ fn a_payload_with_no_semantic_block_still_badges_the_flat_count() {
 /// Every session in the golden fixture has `unreadCount: 0`, so the lane was
 /// never rendered with a badge and dropping it there was free.
 #[test]
-fn the_supervisor_lane_badges_its_unread_count() {
+fn the_supervisor_lane_carries_its_unread_count() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let mut snapshot = fixture.runtime_full.clone();
     let mut overseer = snapshot.sessions[0].clone();
-    overseer.id = "claude-overseer".into();
-    overseer.label = Some("Overseer".into());
+    overseer.id = "claude-sup7id".into();
+    overseer.label = None;
     overseer.overseer = Some(true);
     overseer.scribe = Some(false);
     overseer.project_control = Some(true);
@@ -3372,9 +3369,18 @@ fn the_supervisor_lane_badges_its_unread_count() {
         preview_source: "output",
         scribe_preview_entries: &[],
     });
+    let plain = strip_ansi(&result.frame);
+    let row = plain
+        .lines()
+        .find(|line| line.contains("(sup7id)"))
+        .unwrap_or_else(|| panic!("the supervisor row keeps its id too, got {plain}"));
     assert!(
-        result.frame.contains(&pill("6", Tone::Accent)),
-        "the lane row carries the badge"
+        row.contains("6 new"),
+        "the lane row carries the count in its own column: {row}"
+    );
+    assert!(
+        row.find("(sup7id)") < row.find("6 new"),
+        "and past the identity, not inside it: {row}"
     );
 }
 
@@ -3495,7 +3501,7 @@ fn waiting_on_you_has_no_flat_fallback_on_purpose() {
     }
     let plain = strip_ansi(&row_frame(&snapshot));
     assert!(
-        plain.contains("claude 1 "),
+        plain.contains("1 new"),
         "the badge does fall back, got {plain}"
     );
     assert!(!plain.contains("waiting on you"), "and this one does not");
@@ -3581,5 +3587,65 @@ fn the_coordination_chips_render_and_keep_their_rank() {
     assert!(
         them < family,
         "waiting on them outranks a family count, got {plain}"
+    );
+}
+
+/// And the column is a COLUMN: two rows whose identities are different widths
+/// put their counts at the same x. That is the whole reason it does not trail
+/// the id -- a count that moved with the identity has to be hunted on every
+/// line, where an aligned one answers a whole lane in a single pass.
+#[test]
+fn unread_counts_line_up_across_rows() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    let mut short = snapshot.sessions[0].clone();
+    short.id = "claude-aa".into();
+    short.command = "claude".into();
+    short.label = None;
+    short.notification_unread_count = 2;
+    short.notification_stale = false;
+    let mut long = short.clone();
+    long.id = "claude-bbbbbbbb".into();
+    snapshot.sessions = vec![short.clone(), long.clone()];
+    snapshot.worktree_groups[0].sessions = vec![short, long];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 160,
+        rows: 60,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        focused_group_index: None,
+        runtime_label: Some("tmux"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+    let columns = plain
+        .lines()
+        .filter(|line| line.contains("(aa)") || line.contains("(bbbbbbbb)"))
+        .map(|line| {
+            line.find("2 new")
+                .unwrap_or_else(|| panic!("no count on {line}"))
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(columns.len(), 2, "both rows must render: {plain}");
+    assert_eq!(
+        columns[0], columns[1],
+        "the counts must share one x whatever the identity width: {plain}"
     );
 }

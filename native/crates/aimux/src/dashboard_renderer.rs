@@ -47,6 +47,16 @@ const COL_IDENTITY: usize = 16;
 const ROW_CHIP_BUDGET: usize = 2;
 const COL_STATUS: usize = 14;
 const COL_TIME: usize = 16;
+/// Wide enough for `99+ new` and the one plain cell every column keeps so a
+/// styled run never merges with the next one.
+///
+/// Spent only on a lane that HAS a count. A fixed column cost all eight cells
+/// on every row of every lane, where almost no row has unread at all, and it
+/// took them off the trailing chips: the recorded frame lost
+/// `missing exact resumable backend sessi…` down to `backe…`. Alignment is
+/// only ever read WITHIN a lane, so a lane with nothing to align needs no
+/// column.
+const COL_UNREAD: usize = 8;
 
 pub use crate::dashboard_navigation::DashboardNavLevel;
 
@@ -219,11 +229,16 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
     } else if has_worktrees(input) {
         render_navigation_grouped(input, &navigation_groups, &mut content, card_width);
     } else {
+        let identity_width = lane_identity_width(dashboard_sessions.iter().copied());
+        let rail_width = unread_rail_width(dashboard_sessions.iter().copied());
         for (index, session) in dashboard_sessions.iter().enumerate() {
             let selected = input.nav_level == DashboardNavLevel::Sessions
                 && input.selected_session_id == Some(session.id.as_str());
             let digit = (index < DASHBOARD_QUICK_JUMP_LIMIT).then_some(index + 1);
-            content.push(format!("  {}", agent_row(input, session, selected, digit)));
+            content.push(format!(
+                "  {}",
+                agent_row(input, session, selected, digit, identity_width, rail_width)
+            ));
         }
     }
     let mut footer_lines = Vec::new();
@@ -884,6 +899,7 @@ fn render_supervisor_group(
         .iter()
         .map(|entry| (entry.id, entry.digit))
         .collect::<BTreeMap<_, _>>();
+    let rail_width = unread_rail_width(group.sessions.iter().copied());
     let mut rows = group
         .sessions
         .iter()
@@ -894,6 +910,7 @@ fn render_supervisor_group(
                 session,
                 selected,
                 digit_by_id.get(session.id.as_str()).copied().flatten(),
+                rail_width,
             )
         })
         .collect::<Vec<_>>();
@@ -917,10 +934,38 @@ fn render_supervisor_group(
     lines.push(String::new());
 }
 
+/// The identity column for a whole LANE, not one row.
+///
+/// `agent_identity_column_width` sizes it per row, so one agent with a long id
+/// widened its own row and nothing else -- every column after it then started
+/// at a different x on that line. That was invisible while the columns after
+/// it were ragged anyway; it is not invisible once a count is meant to be read
+/// by scanning down one of them.
+fn lane_identity_width<'a>(sessions: impl IntoIterator<Item = &'a DashboardSession>) -> usize {
+    sessions
+        .into_iter()
+        .map(|session| agent_identity_column_width(session, &agent_identity(session)))
+        .max()
+        .unwrap_or(COL_IDENTITY)
+}
+
+/// The width this lane spends on unread counts: none, unless a row has one.
+fn unread_rail_width<'a>(sessions: impl IntoIterator<Item = &'a DashboardSession>) -> usize {
+    if sessions
+        .into_iter()
+        .any(|session| unread_count(session) > 0)
+    {
+        COL_UNREAD
+    } else {
+        0
+    }
+}
+
 fn supervisor_session_row(
     session: &DashboardSession,
     selected: bool,
     digit: Option<usize>,
+    rail_width: usize,
 ) -> String {
     let marker = if selected {
         style("▸", Tone::Accent)
@@ -930,7 +975,9 @@ fn supervisor_session_row(
     let digit = digit.map(|digit| format!("{digit}.")).unwrap_or_default();
     let role = style(supervisor_role_label(session), Tone::Strong);
     let dot = format!("{} ", session_status_dot(session));
-    let identity = identity_with_unread_badge(session, COL_IDENTITY);
+    let (name, suffix) = agent_identity_parts(session);
+    let identity = format!("{name}{suffix}");
+    let unread = unread_rail_cell(session);
     let status = session_status_cell(session, &derived_status_label(session));
     let time = session_time_text(session);
     let location = session
@@ -968,6 +1015,10 @@ fn supervisor_session_row(
         Column {
             content: &time,
             width: COL_TIME,
+        },
+        Column {
+            content: &unread,
+            width: rail_width,
         },
         Column {
             content: &location,
@@ -1033,6 +1084,8 @@ fn render_navigation_grouped(
             .iter()
             .map(|entry| (entry.id, entry.digit))
             .collect::<BTreeMap<_, _>>();
+        let identity_width = lane_identity_width(worktree.sessions.iter().copied());
+        let rail_width = unread_rail_width(worktree.sessions.iter().copied());
         let mut rows = Vec::new();
         for session in &worktree.sessions {
             let selected = input.nav_level == DashboardNavLevel::Sessions
@@ -1042,6 +1095,8 @@ fn render_navigation_grouped(
                 session,
                 selected,
                 digit_by_id.get(session.id.as_str()).copied().flatten(),
+                identity_width,
+                rail_width,
             ));
         }
         for service in &worktree.services {
@@ -1069,6 +1124,8 @@ fn agent_row(
     session: &DashboardSession,
     selected: bool,
     digit: Option<usize>,
+    identity_width: usize,
+    rail_width: usize,
 ) -> String {
     let select = if selected {
         format!("{} ", style("▸", Tone::Accent))
@@ -1079,8 +1136,12 @@ fn agent_row(
         .map(|digit| style(&format!("[{digit}]"), Tone::Muted))
         .unwrap_or_default();
     let dot = format!("{} ", session_status_dot(session));
-    let identity_width = agent_identity_column_width(session, &agent_identity(session));
-    let identity = identity_with_unread_badge(session, identity_width);
+    let (name, suffix) = agent_identity_parts(session);
+    // No truncation: `agent_identity_column_width` sizes the column to this
+    // very string, and `truncate_ansi` appends a reset even when it cuts
+    // nothing -- which is a byte the recorded Node frame does not have.
+    let identity = format!("{name}{suffix}");
+    let unread = unread_rail_cell(session);
     let status = session_status_cell(session, &derived_status_label(session));
     let grid = grid_cols(&[
         Column {
@@ -1106,6 +1167,10 @@ fn agent_row(
         Column {
             content: &session_time_text(session),
             width: COL_TIME,
+        },
+        Column {
+            content: &unread,
+            width: rail_width,
         },
     ]);
     let offline = is_session_offline(session);
@@ -1269,10 +1334,21 @@ fn unread_count(session: &DashboardSession) -> usize {
     published.max(session.notification_unread_count)
 }
 
-/// The app's unread badge: a filled count beside the agent name, nothing at
-/// zero, `99+` past two digits. Muted for an agent that is gone, or for a
-/// notice whose agent has since moved on.
-fn unread_badge(session: &DashboardSession) -> String {
+/// The unread count, in its own fixed column.
+///
+/// It used to be a pill rendered INTO the identity cell, which dropped the
+/// parenthetical id to make room -- so `claude (ec6r87)` became `claude [1]`
+/// and the id vanished exactly when you most wanted to address that agent.
+///
+/// A fixed column instead of trailing the identity, because the count is read
+/// by scanning a lane rather than by reading one row: at one x for every row
+/// the whole lane answers in a single pass, where a count that follows a
+/// variable-width identity sits at a different place on each line and has to
+/// be hunted.
+///
+/// Muted for an agent that is gone, or for a notice whose agent has since
+/// moved on, matching what the pill did.
+fn unread_rail_cell(session: &DashboardSession) -> String {
     let count = unread_count(session);
     if count == 0 {
         return String::new();
@@ -1283,33 +1359,7 @@ fn unread_badge(session: &DashboardSession) -> String {
     } else {
         Tone::Accent
     };
-    pill(&label, tone)
-}
-
-/// The column keeps its width and the identity yields to the badge, which is
-/// what the app's row does and what keeps every row's columns lined up.
-///
-/// The parenthetical id yields first: it only disambiguates two agents of the
-/// same name, and losing it beats cutting the name down to `codex (liv`.
-fn identity_with_unread_badge(session: &DashboardSession, width: usize) -> String {
-    let (name, suffix) = agent_identity_parts(session);
-    let badge = unread_badge(session);
-    if badge.is_empty() {
-        return format!("{name}{suffix}");
-    }
-    // One plain cell is reserved after the badge: `cols` concatenates columns
-    // with no gap, and the status cell is itself a reverse-video pill, so a
-    // badge that filled the column merged with it into one highlighted run.
-    // Reserving the width is the whole fix -- `pad_visible` fills the cell --
-    // so there is no trailing space here to go with it.
-    let room = width.saturating_sub(visible_width(&badge) + 1);
-    let identity = format!("{name}{suffix}");
-    let identity = if visible_width(&identity) > room {
-        name
-    } else {
-        identity
-    };
-    format!("{}{badge}", truncate_ansi(&identity, room))
+    style(&format!("{label} new"), tone)
 }
 
 /// The name, and the parenthetical id that disambiguates it. Separate because
