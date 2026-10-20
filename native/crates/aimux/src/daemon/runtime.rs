@@ -7,7 +7,8 @@ pub use project_services::{
 
 use crate::attachment_hosting::{AttachmentHostingResult, PublishedAttachmentHostInput};
 use crate::backend_session_ids::{
-    BackendSessionDiscoveryOptions, CodexConversationPresence, codex_conversation_presence,
+    BackendSessionDiscoveryOptions, CodexConversationPresence, codex_conversation_presence_since,
+    iso_timestamp_ms,
 };
 use crate::cli_launcher::{
     AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
@@ -2256,7 +2257,7 @@ impl RealDaemonRuntime {
         }
         let started = Instant::now();
         let mut next_at_risk_result = Some(at_risk_result);
-        let mut presence_cache = BTreeMap::new();
+        let mut presence_cache = CodexPresenceCache::new();
         loop {
             let at_risk = if let Some(result) = next_at_risk_result.take() {
                 result
@@ -2304,22 +2305,20 @@ impl RealDaemonRuntime {
     fn restart_backend_id_at_risk_sessions_cached(
         &self,
         project_roots: &[String],
-        presence_cache: &mut BTreeMap<String, CodexConversationPresence>,
+        presence_cache: &mut CodexPresenceCache,
     ) -> Result<Vec<RestartBackendIdRisk>, String> {
         let live_window_ids = match self.restart_backend_id_live_window_ids.clone() {
             Some(result) => result,
             None => TmuxRuntimeManager::new().try_live_windows(),
         }?;
-        if let Some(presence) = self.restart_backend_id_codex_presence {
-            for project_root in project_roots {
-                presence_cache.insert(project_root.clone(), presence);
-            }
-        }
         Ok(restart_backend_id_at_risk_sessions_with_presence_cache(
             &self.resolver,
             project_roots,
             Some(&live_window_ids),
-            presence_cache,
+            &mut CodexPresenceLookup::with_forced(
+                self.restart_backend_id_codex_presence,
+                presence_cache,
+            ),
         ))
     }
 
@@ -6035,14 +6034,14 @@ fn restart_backend_id_guard_project_roots(
 fn restart_backend_id_at_risk_sessions_with_cache(
     resolver: &PathResolver,
     project_roots: &[String],
-    presence_cache: &mut BTreeMap<String, CodexConversationPresence>,
+    presence_cache: &mut CodexPresenceCache,
 ) -> Result<Vec<RestartBackendIdRisk>, String> {
     let live_window_ids = TmuxRuntimeManager::new().try_live_windows()?;
     Ok(restart_backend_id_at_risk_sessions_with_presence_cache(
         resolver,
         project_roots,
         Some(&live_window_ids),
-        presence_cache,
+        &mut CodexPresenceLookup::new(presence_cache),
     ))
 }
 
@@ -6058,7 +6057,55 @@ fn restart_backend_id_at_risk_sessions(
     ))
 }
 
-/// Is there a codex conversation here at all, answered once per checkout.
+type CodexPresenceCache = BTreeMap<(String, Option<u128>), CodexConversationPresence>;
+
+/// One presence answer per (checkout, launch instant) for a whole restart
+/// attempt, plus the test seam that replaces the answer outright.
+///
+/// The seam has to be an explicit override rather than a pre-seeded cache
+/// entry, because the key is now derived from the session being examined. A
+/// test that seeded the map by project root would silently stop injecting the
+/// moment the key gained its second component, fall through to a real scan of
+/// whichever codex store the developer happens to have, and still pass.
+struct CodexPresenceLookup<'cache> {
+    forced: Option<CodexConversationPresence>,
+    cache: &'cache mut CodexPresenceCache,
+}
+
+impl<'cache> CodexPresenceLookup<'cache> {
+    fn new(cache: &'cache mut CodexPresenceCache) -> Self {
+        Self {
+            forced: None,
+            cache,
+        }
+    }
+
+    fn with_forced(
+        forced: Option<CodexConversationPresence>,
+        cache: &'cache mut CodexPresenceCache,
+    ) -> Self {
+        Self { forced, cache }
+    }
+
+    fn presence(&mut self, cwd: &str, since_ms: Option<u128>) -> CodexConversationPresence {
+        if let Some(forced) = self.forced {
+            return forced;
+        }
+        *self
+            .cache
+            .entry((cwd.to_owned(), since_ms))
+            .or_insert_with(|| {
+                codex_conversation_presence_since(
+                    cwd,
+                    since_ms,
+                    &BackendSessionDiscoveryOptions::default(),
+                )
+            })
+    }
+}
+
+/// Does THIS session have a codex conversation, answered once per checkout
+/// and launch instant.
 ///
 /// The scan walks every transcript under the codex store, and the guard is
 /// re-evaluated on a 250ms poll for up to 30s -- without a cache that is a
@@ -6068,15 +6115,16 @@ fn restart_backend_id_at_risk_sessions(
 fn codex_conversation_is_confirmed_absent(
     session: &Value,
     project_root: &str,
-    cache: &mut BTreeMap<String, CodexConversationPresence>,
+    lookup: &mut CodexPresenceLookup<'_>,
 ) -> bool {
     let cwd = trimmed_value_string(session.get("worktreePath"))
         .map(str::to_owned)
         .unwrap_or_else(|| project_root.to_owned());
-    let presence = *cache.entry(cwd.clone()).or_insert_with(|| {
-        codex_conversation_presence(&cwd, &BackendSessionDiscoveryOptions::default())
-    });
-    presence == CodexConversationPresence::ConfirmedAbsent
+    // The floor is this session's own launch. Asked without it, the question
+    // becomes "has anything ever run in this checkout", which a reused
+    // worktree answers yes to from its second agent onward and forever after.
+    let since_ms = trimmed_value_string(session.get("createdAt")).and_then(iso_timestamp_ms);
+    lookup.presence(&cwd, since_ms) == CodexConversationPresence::ConfirmedAbsent
 }
 
 fn restart_backend_id_at_risk_sessions_with_live_window_ids(
@@ -6084,12 +6132,12 @@ fn restart_backend_id_at_risk_sessions_with_live_window_ids(
     project_roots: &[String],
     live_window_ids: Option<&LiveWindowIndex>,
 ) -> Vec<RestartBackendIdRisk> {
-    let mut presence_cache = BTreeMap::new();
+    let mut presence_cache = CodexPresenceCache::new();
     restart_backend_id_at_risk_sessions_with_presence_cache(
         resolver,
         project_roots,
         live_window_ids,
-        &mut presence_cache,
+        &mut CodexPresenceLookup::new(&mut presence_cache),
     )
 }
 
@@ -6097,7 +6145,7 @@ fn restart_backend_id_at_risk_sessions_with_presence_cache(
     resolver: &PathResolver,
     project_roots: &[String],
     live_window_ids: Option<&LiveWindowIndex>,
-    presence_cache: &mut BTreeMap<String, CodexConversationPresence>,
+    lookup: &mut CodexPresenceLookup<'_>,
 ) -> Vec<RestartBackendIdRisk> {
     let mut risks = Vec::new();
     for project_root in project_roots {
@@ -6146,7 +6194,7 @@ fn restart_backend_id_at_risk_sessions_with_presence_cache(
             // Only a CONFIRMED absence clears it. Not being able to look is
             // not the same as there being nothing there.
             if restart_guard_session_tool(&session) == "codex"
-                && codex_conversation_is_confirmed_absent(&session, project_root, presence_cache)
+                && codex_conversation_is_confirmed_absent(&session, project_root, lookup)
             {
                 continue;
             }
@@ -6232,8 +6280,9 @@ fn wait_for_restart_backend_id_capture_with_resolver(
     poll: Duration,
 ) -> Result<(), String> {
     let started = Instant::now();
-    // One presence answer per checkout for the whole wait, not one per poll.
-    let mut presence_cache = BTreeMap::new();
+    // One presence answer per checkout and launch instant for the whole
+    // wait, not one per poll.
+    let mut presence_cache = CodexPresenceCache::new();
     loop {
         let at_risk = restart_backend_id_at_risk_sessions_with_cache(
             resolver,
@@ -7251,6 +7300,64 @@ mod tests {
         fixture.cleanup();
     }
 
+    /// Which question did the guard ask?
+    ///
+    /// Both are seeded, with opposite answers, so a regression to the
+    /// checkout-wide question fails the assertion instead of quietly agreeing
+    /// with it. Seeding also keeps the developer's own codex store out of it.
+    #[test]
+    fn a_codex_agent_blocks_a_restart_only_for_its_own_conversation() {
+        let launched_at = "2026-10-20T10:06:15.404Z";
+        let launch_ms = iso_timestamp_ms(launched_at).expect("launch instant parses");
+
+        for (case, own, checkout_wide, expect_at_risk) in [
+            (
+                "own-absent",
+                CodexConversationPresence::ConfirmedAbsent,
+                CodexConversationPresence::Present,
+                false,
+            ),
+            (
+                "own-present",
+                CodexConversationPresence::Present,
+                CodexConversationPresence::ConfirmedAbsent,
+                true,
+            ),
+        ] {
+            let fixture = restart_service_fixture(&format!("restart-per-session-{case}"));
+            let project = fixture.project_root.clone();
+            fixture.persist_runtime_session_with_window(
+                "codex-reused-checkout",
+                "codex",
+                "running",
+                None,
+                Some("@codex-reused-checkout"),
+                Some(json!({ "createdAt": launched_at })),
+            );
+
+            let mut cache = CodexPresenceCache::from([
+                ((project.clone(), Some(launch_ms)), own),
+                ((project.clone(), None), checkout_wide),
+            ]);
+            let risks = restart_backend_id_at_risk_sessions_with_presence_cache(
+                &fixture.resolver,
+                std::slice::from_ref(&project),
+                Some(&LiveWindowIndex::from_pairs([(
+                    "@codex-reused-checkout",
+                    "aimux-test",
+                )])),
+                &mut CodexPresenceLookup::new(&mut cache),
+            );
+
+            assert_eq!(
+                !risks.is_empty(),
+                expect_at_risk,
+                "{case}: the guard consulted the wrong presence question"
+            );
+            fixture.cleanup();
+        }
+    }
+
     #[test]
     fn control_plane_restart_guard_covers_project_control_exact_resume_sessions() {
         let fixture = restart_service_fixture("restart-project-control-pending-backend-id");
@@ -7275,7 +7382,10 @@ mod tests {
                 "@codex-overseer",
                 "aimux-test",
             )])),
-            &mut BTreeMap::from([(project.clone(), CodexConversationPresence::Present)]),
+            &mut CodexPresenceLookup::with_forced(
+                Some(CodexConversationPresence::Present),
+                &mut CodexPresenceCache::new(),
+            ),
         );
 
         assert_eq!(
@@ -7317,7 +7427,10 @@ mod tests {
                 "@codex-nothing-to-lose",
                 "aimux-test",
             )])),
-            &mut BTreeMap::from([(project.clone(), CodexConversationPresence::ConfirmedAbsent)]),
+            &mut CodexPresenceLookup::with_forced(
+                Some(CodexConversationPresence::ConfirmedAbsent),
+                &mut CodexPresenceCache::new(),
+            ),
         );
 
         assert!(risks.is_empty(), "nothing to protect, so nothing to refuse");
@@ -7350,7 +7463,10 @@ mod tests {
                 "@codex-unknown",
                 "aimux-test",
             )])),
-            &mut BTreeMap::from([(project.clone(), CodexConversationPresence::Unknown)]),
+            &mut CodexPresenceLookup::with_forced(
+                Some(CodexConversationPresence::Unknown),
+                &mut CodexPresenceCache::new(),
+            ),
         );
 
         assert_eq!(

@@ -494,11 +494,38 @@ pub fn codex_conversation_presence(
     cwd: &str,
     options: &BackendSessionDiscoveryOptions,
 ) -> CodexConversationPresence {
+    codex_conversation_presence_since(cwd, options.codex_since_ms, options)
+}
+
+/// Presence for ONE session rather than for a checkout.
+///
+/// `since_ms` is that session's launch instant. Asking without it answers a
+/// question nobody has: a reused checkout accumulates a transcript per agent
+/// that ever ran there, so "this checkout has a conversation" is true the
+/// moment the second agent starts and stays true forever. A restart guard
+/// built on that refuses on behalf of conversations belonging to agents that
+/// exited days ago.
+///
+/// Codex writes no rollout at all until its first turn -- measured at +3m19s
+/// after launch on a real spawn -- so a freshly started agent legitimately
+/// owns nothing, and `ConfirmedAbsent` is the true answer for it however
+/// many older transcripts the checkout holds.
+///
+/// A `None` floor restores the checkout-wide question, which is the more
+/// cautious direction and so the right fallback for a session whose
+/// `createdAt` will not parse.
+pub fn codex_conversation_presence_since(
+    cwd: &str,
+    since_ms: Option<u128>,
+    options: &BackendSessionDiscoveryOptions,
+) -> CodexConversationPresence {
     let sessions_dir = codex_sessions_dir(options.codex_sessions_dir.as_deref());
     if !sessions_dir.exists() {
         return CodexConversationPresence::Unknown;
     }
-    match codex_backend_session_ids_for_cwd(cwd, options) {
+    let mut scoped = options.clone();
+    scoped.codex_since_ms = since_ms;
+    match codex_backend_session_ids_for_cwd(cwd, &scoped) {
         Ok(ids) if ids.is_empty() => CodexConversationPresence::ConfirmedAbsent,
         Ok(_) => CodexConversationPresence::Present,
         Err(_) => CodexConversationPresence::Unknown,

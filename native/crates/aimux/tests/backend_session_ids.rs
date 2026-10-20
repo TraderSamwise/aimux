@@ -1,10 +1,10 @@
 use aimux::backend_session_ids::{
     BackendSessionDiscoveryOptions, CodexConversationPresence, build_agent_identity_error_payload,
     build_agent_identity_payload, claude_backend_session_ids_for_cwd, claude_transcript_path,
-    codex_conversation_presence, discover_backend_session_id_with_options,
-    discover_claude_backend_session_id, discover_codex_backend_session_id,
-    relocate_claude_transcript, render_agent_identity_lines, resolve_agent_identity,
-    resolve_agent_identity_with_options,
+    codex_conversation_presence, codex_conversation_presence_since,
+    discover_backend_session_id_with_options, discover_claude_backend_session_id,
+    discover_codex_backend_session_id, relocate_claude_transcript, render_agent_identity_lines,
+    resolve_agent_identity, resolve_agent_identity_with_options,
 };
 use serde_json::json;
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
@@ -544,6 +544,75 @@ fn presence_separates_an_empty_store_from_an_unreadable_one() {
     assert_eq!(
         codex_conversation_presence("/repo", &options),
         CodexConversationPresence::Present
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+/// A reused checkout answers the wrong question.
+///
+/// Every agent that ever ran here left a transcript behind, so "this checkout
+/// has a conversation" is true from the second agent onward and stays true
+/// forever. What a restart guard needs is "does THIS session have one", and
+/// the session's launch instant is the only thing that separates them.
+#[test]
+fn presence_ignores_a_conversation_opened_before_the_session() {
+    let temp = temp_dir("aimux-codex-presence-floor");
+    let sessions_dir = temp.join("sessions");
+    // An earlier agent's transcript, same checkout...
+    write_codex_transcript_at(
+        &sessions_dir,
+        "14",
+        UUID_A,
+        "/repo",
+        "2026-08-14T09:00:00.000Z",
+    );
+    // ...and one opened after this session launched.
+    write_codex_transcript_at(
+        &sessions_dir,
+        "15",
+        UUID_B,
+        "/repo",
+        "2026-08-15T11:00:00.000Z",
+    );
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+
+    // Launched between the two: only the later transcript can be its own.
+    assert_eq!(
+        codex_conversation_presence_since(
+            "/repo",
+            Some(iso_ms("2026-08-15T10:00:00.000Z")),
+            &options
+        ),
+        CodexConversationPresence::Present,
+        "the transcript opened after launch is this session's"
+    );
+
+    // Launched after both: it owns nothing, however much the checkout holds.
+    assert_eq!(
+        codex_conversation_presence_since(
+            "/repo",
+            Some(iso_ms("2026-08-16T00:00:00.000Z")),
+            &options
+        ),
+        CodexConversationPresence::ConfirmedAbsent,
+        "an earlier agent's transcript is not this agent's to protect"
+    );
+
+    // The control: with no floor the checkout-wide question still answers
+    // Present, which is exactly what made the guard refuse for ever.
+    assert_eq!(
+        codex_conversation_presence_since("/repo", None, &options),
+        CodexConversationPresence::Present
+    );
+    assert_eq!(
+        codex_conversation_presence("/repo", &options),
+        CodexConversationPresence::Present,
+        "the floorless wrapper keeps its old meaning"
     );
 
     remove_dir_all(temp).ok();
