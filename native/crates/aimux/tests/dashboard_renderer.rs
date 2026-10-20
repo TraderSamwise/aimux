@@ -3398,6 +3398,16 @@ fn the_supervisor_lane_carries_its_unread_count() {
         "and past the identity, not inside it: {}",
         strip_ansi(row)
     );
+    // ...and BEFORE the status cell, the same order the worktree row uses.
+    // Only `agent_row`'s order was pinned, by the narrow-card test; swapping
+    // the columns here alone passed all eighty tests, and the supervisor lane
+    // is the one the report came from.
+    let plain_row = strip_ansi(row);
+    assert!(
+        plain_row.find('6') < plain_row.find("Ready"),
+        "the count comes before the status cell, as it does in a worktree \
+         lane -- out past it the card truncates it away first: {plain_row}"
+    );
 }
 
 /// `waiting on you` reads the published answer, not the raw thread field.
