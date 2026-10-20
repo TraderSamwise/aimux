@@ -6089,7 +6089,15 @@ impl<'cache> CodexPresenceLookup<'cache> {
         Self { forced, cache }
     }
 
-    fn presence(&mut self, cwd: &str, since_ms: Option<u128>) -> CodexConversationPresence {
+    /// `claimed` is every `backendSessionId` the project's topology already
+    /// records. It is constant for one project across one restart attempt,
+    /// which is why it is not part of the cache key.
+    fn presence(
+        &mut self,
+        cwd: &str,
+        since_ms: Option<u128>,
+        claimed: &BTreeSet<String>,
+    ) -> CodexConversationPresence {
         if let Some(forced) = self.forced {
             return forced;
         }
@@ -6100,7 +6108,10 @@ impl<'cache> CodexPresenceLookup<'cache> {
                 codex_conversation_presence_since(
                     cwd,
                     since_ms,
-                    &BackendSessionDiscoveryOptions::default(),
+                    &BackendSessionDiscoveryOptions {
+                        codex_exclude_backend_session_ids: claimed.clone(),
+                        ..BackendSessionDiscoveryOptions::default()
+                    },
                 )
             })
     }
@@ -6114,9 +6125,30 @@ impl<'cache> CodexPresenceLookup<'cache> {
 /// hundred-odd full walks per restart. The answer cannot change usefully in
 /// that window either: codex has no hook that fills the id in while we wait,
 /// which is why the poll exists for claude and never helped codex.
+/// Every conversation id the project's topology already attributes to a
+/// session.
+///
+/// A transcript another session has claimed is not this session's, whenever
+/// it was written. Without this the floor excluded only conversations OLDER
+/// than the session, so a long-lived id-less agent whose neighbours opened
+/// conversations after it started read them as possibly its own and refused
+/// every restart for ever -- the original bug, surviving for exactly the
+/// agents most likely to sit in a shared checkout.
+///
+/// It helps only where the neighbour's id was actually recorded, which for
+/// codex is still the uncommon case. It is strictly better than not asking.
+fn claimed_backend_session_ids(topology: &Value) -> BTreeSet<String> {
+    list_topology_session_states(topology, None)
+        .iter()
+        .filter_map(|session| trimmed_value_string(session.get("backendSessionId")))
+        .map(str::to_owned)
+        .collect()
+}
+
 fn codex_conversation_is_confirmed_absent(
     session: &Value,
     project_root: &str,
+    claimed: &BTreeSet<String>,
     lookup: &mut CodexPresenceLookup<'_>,
 ) -> bool {
     let cwd = trimmed_value_string(session.get("worktreePath"))
@@ -6126,7 +6158,7 @@ fn codex_conversation_is_confirmed_absent(
     // becomes "has anything ever run in this checkout", which a reused
     // worktree answers yes to from its second agent onward and forever after.
     let since_ms = trimmed_value_string(session.get("createdAt")).and_then(iso_timestamp_ms);
-    lookup.presence(&cwd, since_ms) == CodexConversationPresence::ConfirmedAbsent
+    lookup.presence(&cwd, since_ms, claimed) == CodexConversationPresence::ConfirmedAbsent
 }
 
 fn restart_backend_id_at_risk_sessions_with_live_window_ids(
@@ -6170,6 +6202,7 @@ fn restart_backend_id_at_risk_sessions_with_presence_cache(
             }
         };
         let config = load_config_for_project_with_resolver(resolver, project_root);
+        let claimed_backend_ids = claimed_backend_session_ids(&topology);
         for session in
             list_topology_session_states(&topology, Some(&["running", "idle", "starting"]))
         {
@@ -6209,7 +6242,12 @@ fn restart_backend_id_at_risk_sessions_with_presence_cache(
             // Only a CONFIRMED absence clears it. Not being able to look is
             // not the same as there being nothing there.
             if restart_guard_session_tool(&session) == "codex"
-                && codex_conversation_is_confirmed_absent(&session, project_root, lookup)
+                && codex_conversation_is_confirmed_absent(
+                    &session,
+                    project_root,
+                    &claimed_backend_ids,
+                    lookup,
+                )
             {
                 continue;
             }
@@ -7313,6 +7351,38 @@ mod tests {
         assert!(launcher.calls().is_empty());
         assert!(launcher.terminations().is_empty());
         fixture.cleanup();
+    }
+
+    /// The claimed set is what makes a neighbour's conversation theirs.
+    ///
+    /// It has to span every status, not just the live ones: a stopped or
+    /// graveyarded session still owns the transcript it recorded, and reading
+    /// only running rows would hand its conversation back to whichever live
+    /// agent shares the checkout.
+    #[test]
+    fn claimed_ids_span_every_session_status() {
+        let topology = json!({
+            "sessions": [
+                { "id": "a", "status": "running", "tool": "codex",
+                  "backendSessionId": "11111111-2222-3333-4444-555555555555" },
+                { "id": "b", "status": "graveyard", "tool": "codex",
+                  "backendSessionId": "66666666-7777-8888-9999-000000000000" },
+                { "id": "c", "status": "offline", "tool": "codex" },
+                { "id": "d", "status": "running", "tool": "codex",
+                  "backendSessionId": "   " },
+            ]
+        });
+
+        let claimed = claimed_backend_session_ids(&topology);
+
+        assert_eq!(
+            claimed,
+            BTreeSet::from([
+                "11111111-2222-3333-4444-555555555555".to_owned(),
+                "66666666-7777-8888-9999-000000000000".to_owned(),
+            ]),
+            "a graveyarded session still owns its conversation, and blank is not an id"
+        );
     }
 
     /// Waiting for an id that nothing can write is not caution.

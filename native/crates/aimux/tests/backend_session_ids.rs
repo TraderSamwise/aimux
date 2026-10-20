@@ -2,10 +2,10 @@ use aimux::backend_session_ids::{
     BackendSessionDiscoveryOptions, CodexConversationPresence, backend_session_id_is_discoverable,
     build_agent_identity_error_payload, build_agent_identity_payload,
     claude_backend_session_ids_for_cwd, claude_transcript_path, codex_conversation_presence,
-    codex_conversation_presence_since, discover_backend_session_id_with_options,
-    discover_claude_backend_session_id, discover_codex_backend_session_id,
-    relocate_claude_transcript, render_agent_identity_lines, resolve_agent_identity,
-    resolve_agent_identity_with_options,
+    codex_conversation_presence_since, codex_scan_for_cwd,
+    discover_backend_session_id_with_options, discover_claude_backend_session_id,
+    discover_codex_backend_session_id, relocate_claude_transcript, render_agent_identity_lines,
+    resolve_agent_identity, resolve_agent_identity_with_options,
 };
 use aimux::config::default_config;
 use aimux::tool_capabilities::{
@@ -549,6 +549,127 @@ fn presence_separates_an_empty_store_from_an_unreadable_one() {
     assert_eq!(
         codex_conversation_presence("/repo", &options),
         CodexConversationPresence::Present
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+/// An undateable transcript is not an absent one.
+///
+/// Discovery drops a rollout whose `session_meta.timestamp` will not parse,
+/// because adopting it would reopen the wrong conversation. The restart guard
+/// reading that same exclusion as "nothing here to lose" is the direction that
+/// kills a live conversation, so presence answers `Unknown` instead.
+#[test]
+fn a_transcript_we_cannot_date_is_not_confirmed_absence() {
+    let temp = temp_dir("aimux-codex-undateable");
+    let sessions_dir = temp.join("sessions");
+    write_codex_transcript_at(&sessions_dir, "14", UUID_A, "/repo", "not-a-timestamp");
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+
+    // It names this checkout and it could not be dated.
+    let scan = codex_scan_for_cwd(
+        "/repo",
+        &BackendSessionDiscoveryOptions {
+            codex_since_ms: Some(iso_ms("2026-08-15T00:00:00.000Z")),
+            ..options.clone()
+        },
+    )
+    .expect("the store is readable");
+    assert!(scan.ids.is_empty(), "discovery still refuses to adopt it");
+    assert_eq!(scan.undateable, 1, "but the scan knows it was there");
+
+    assert_eq!(
+        codex_conversation_presence_since(
+            "/repo",
+            Some(iso_ms("2026-08-15T00:00:00.000Z")),
+            &options
+        ),
+        CodexConversationPresence::Unknown,
+        "could not tell is not the same as nothing to lose"
+    );
+
+    // The control: a dateable transcript below the floor really is absence,
+    // so Unknown is not simply what this fixture always returns.
+    let dateable = temp_dir("aimux-codex-dateable");
+    write_codex_transcript_at(
+        &dateable.join("sessions"),
+        "14",
+        UUID_B,
+        "/repo",
+        "2026-08-14T00:00:00.000Z",
+    );
+    assert_eq!(
+        codex_conversation_presence_since(
+            "/repo",
+            Some(iso_ms("2026-08-15T00:00:00.000Z")),
+            &BackendSessionDiscoveryOptions {
+                codex_sessions_dir: Some(dateable.join("sessions")),
+                ..BackendSessionDiscoveryOptions::default()
+            }
+        ),
+        CodexConversationPresence::ConfirmedAbsent
+    );
+
+    // And an undateable transcript naming a DIFFERENT checkout is not this
+    // checkout's problem -- the floor is applied after the cwd matches.
+    assert_eq!(
+        codex_conversation_presence_since(
+            "/elsewhere",
+            Some(iso_ms("2026-08-15T00:00:00.000Z")),
+            &options
+        ),
+        CodexConversationPresence::ConfirmedAbsent
+    );
+
+    remove_dir_all(temp).ok();
+    remove_dir_all(dateable).ok();
+}
+
+/// A conversation another session has claimed is not this session's.
+///
+/// The floor excludes transcripts older than the session; it says nothing
+/// about who owns the newer ones. A long-lived id-less agent whose neighbours
+/// opened conversations after it started saw theirs as possibly its own and
+/// refused every restart for ever -- the original bug, for exactly the agents
+/// most likely to share a checkout.
+#[test]
+fn a_conversation_another_session_claimed_is_not_this_ones() {
+    let temp = temp_dir("aimux-codex-claimed");
+    let sessions_dir = temp.join("sessions");
+    // The neighbour opened this one AFTER our session launched.
+    write_codex_transcript_at(
+        &sessions_dir,
+        "16",
+        UUID_B,
+        "/repo",
+        "2026-08-16T00:00:00.000Z",
+    );
+
+    let floor = Some(iso_ms("2026-08-15T00:00:00.000Z"));
+    let unclaimed = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        codex_conversation_presence_since("/repo", floor, &unclaimed),
+        CodexConversationPresence::Present,
+        "nobody has claimed it, so it could still be ours"
+    );
+
+    let claimed = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        codex_exclude_backend_session_ids: [UUID_B.to_owned()].into_iter().collect(),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        codex_conversation_presence_since("/repo", floor, &claimed),
+        CodexConversationPresence::ConfirmedAbsent,
+        "the neighbour's recorded id takes its conversation out of the running"
     );
 
     remove_dir_all(temp).ok();

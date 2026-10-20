@@ -198,9 +198,17 @@ fn missing_backend_session_disposition_from_ids(
 /// rollout's own `session_meta` timestamp, never the file's mtime, which keeps
 /// moving for as long as anyone is talking.
 ///
-/// Narrowing to NOTHING is not an empty history. It means every transcript
-/// here predates this agent, so its own is missing or unreadable -- which is a
-/// refusal, not a licence to start fresh and drop whatever is there.
+/// Narrowing to NOTHING means every transcript here predates this agent. For
+/// THIS caller that is a refusal rather than a licence to start fresh: it is
+/// being asked which conversation to resume, and it has no answer.
+///
+/// The restart guard reads the same state and correctly concludes the
+/// opposite, that there is nothing of this agent's to lose. The two are not
+/// in conflict because they are asked different questions -- "which one do I
+/// reopen" has no answer here, while "is there anything to protect" has the
+/// answer no. The guard only treats it that way once an undateable transcript
+/// naming the checkout has been ruled out, which is the case this comment
+/// used to fold in as "missing or unreadable".
 ///
 /// Narrowing to ONE is not proof that one is THIS agent's, either. If a second
 /// id-less agent shares the checkout and its own transcript is missing --

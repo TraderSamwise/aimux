@@ -537,9 +537,14 @@ pub fn codex_conversation_presence_since(
     }
     let mut scoped = options.clone();
     scoped.codex_since_ms = since_ms;
-    match codex_backend_session_ids_for_cwd(cwd, &scoped) {
-        Ok(ids) if ids.is_empty() => CodexConversationPresence::ConfirmedAbsent,
-        Ok(_) => CodexConversationPresence::Present,
+    match codex_scan_for_cwd(cwd, &scoped) {
+        Ok(scan) if !scan.ids.is_empty() => CodexConversationPresence::Present,
+        // A transcript naming this checkout that we could not date is not an
+        // absent one. Discovery excludes it because including it would adopt
+        // the wrong conversation; the guard must not read that exclusion as
+        // proof there is nothing to lose.
+        Ok(scan) if scan.undateable > 0 => CodexConversationPresence::Unknown,
+        Ok(_) => CodexConversationPresence::ConfirmedAbsent,
         Err(_) => CodexConversationPresence::Unknown,
     }
 }
@@ -552,15 +557,39 @@ pub fn codex_backend_session_ids_for_cwd(
     if !sessions_dir.exists() {
         return Ok(BTreeSet::new());
     }
-    let mut ids = BTreeSet::new();
-    collect_codex_session_ids_for_cwd(&sessions_dir, cwd, &mut ids, options)?;
-    Ok(ids)
+    Ok(codex_scan_for_cwd(cwd, options)?.ids)
+}
+
+/// What a scan of the codex store found for one checkout.
+///
+/// `ids` and `undateable` are different answers, not one answer and a detail.
+/// A scan that matched nothing and a scan that matched a transcript it could
+/// not date are the difference between "this session owns no conversation"
+/// and "this session may own one and I could not tell", and a restart guard
+/// has to treat those differently.
+#[derive(Debug, Default)]
+pub struct CodexCwdScan {
+    pub ids: BTreeSet<String>,
+    pub undateable: usize,
+}
+
+pub fn codex_scan_for_cwd(
+    cwd: &str,
+    options: &BackendSessionDiscoveryOptions,
+) -> Result<CodexCwdScan, String> {
+    let sessions_dir = codex_sessions_dir(options.codex_sessions_dir.as_deref());
+    if !sessions_dir.exists() {
+        return Ok(CodexCwdScan::default());
+    }
+    let mut scan = CodexCwdScan::default();
+    collect_codex_session_ids_for_cwd(&sessions_dir, cwd, &mut scan, options)?;
+    Ok(scan)
 }
 
 fn collect_codex_session_ids_for_cwd(
     dir: &Path,
     cwd: &str,
-    ids: &mut BTreeSet<String>,
+    scan: &mut CodexCwdScan,
     options: &BackendSessionDiscoveryOptions,
 ) -> Result<(), String> {
     let entries = fs::read_dir(dir).map_err(|error| {
@@ -581,7 +610,7 @@ fn collect_codex_session_ids_for_cwd(
             .file_type()
             .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?;
         if file_type.is_dir() {
-            collect_codex_session_ids_for_cwd(&path, cwd, ids, options)?;
+            collect_codex_session_ids_for_cwd(&path, cwd, scan, options)?;
             continue;
         }
         if !file_type.is_file()
@@ -596,11 +625,6 @@ fn collect_codex_session_ids_for_cwd(
             continue;
         };
         if string_field(&record, "type").as_deref() != Some("session_meta") {
-            continue;
-        }
-        if let Some(since_ms) = options.codex_since_ms
-            && codex_rollout_created_ms(&record, &path).is_none_or(|created| created < since_ms)
-        {
             continue;
         }
         let Some(payload) = record.get("payload") else {
@@ -622,7 +646,31 @@ fn collect_codex_session_ids_for_cwd(
         {
             continue;
         }
-        ids.insert(id);
+        // The floor is applied AFTER the checkout matches, so that a
+        // transcript we cannot date can be reported as exactly that -- an
+        // undateable transcript belonging to THIS checkout. Filtering first
+        // discarded it before anyone knew whose it was.
+        match (
+            options.codex_since_ms,
+            codex_rollout_created_ms(&record, &path),
+        ) {
+            // No floor asked for: the question is checkout-wide and every
+            // matching transcript counts, dated or not.
+            (None, _) => {
+                scan.ids.insert(id);
+            }
+            // Dated, and older than this session: somebody else's.
+            (Some(since_ms), Some(created)) if created < since_ms => {}
+            (Some(_), Some(_)) => {
+                scan.ids.insert(id);
+            }
+            // Undateable. Not absent, and not confirmed present either -- the
+            // scan could not tell, and saying "absent" here is the answer that
+            // loses a real conversation.
+            (Some(_), None) => {
+                scan.undateable += 1;
+            }
+        }
     }
     Ok(())
 }
@@ -700,6 +748,12 @@ fn read_first_line(path: &Path) -> Result<Option<String>, String> {
 /// the conversation. The file's mtime is the fallback and is a different fact
 /// -- the last time anything was appended -- so it is only consulted when the
 /// record has no timestamp of its own, which real codex rollouts always do.
+/// `None` means the creation instant is UNKNOWN, never that the rollout is
+/// old. Both callers must keep those apart: discovery excludes an undateable
+/// rollout, because including it adopts the wrong conversation, while the
+/// restart guard counts it through `CodexCwdScan::undateable` and answers
+/// `Unknown`, because reading that same exclusion as absence is what loses a
+/// real conversation.
 fn codex_rollout_created_ms(record: &Value, path: &Path) -> Option<u128> {
     match string_field(record, "timestamp") {
         // A timestamp that will not parse is not an absent one. Falling
