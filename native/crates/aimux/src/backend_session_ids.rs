@@ -462,6 +462,49 @@ pub fn discover_codex_backend_session_id(
     }
 }
 
+/// Whether a codex conversation exists for a checkout, as three answers
+/// rather than two.
+///
+/// "No transcripts" and "could not look" are not the same fact, and
+/// `codex_backend_session_ids_for_cwd` returns `Ok(empty)` for both -- the
+/// store being absent reads exactly like the store being empty. A restart
+/// guard that treats the second as the first waves through an agent whose
+/// conversation it simply failed to find, which is the whole class of mistake
+/// this module's cwd-mismatch comment already warns about.
+///
+/// What `Unknown` actually detects is the store this process resolves being
+/// absent or unreadable. It does NOT detect a store that exists but is the
+/// wrong one: if the agent wrote under a different `CODEX_HOME` than the
+/// daemon resolves, the scan succeeds, matches nothing, and the answer is
+/// `ConfirmedAbsent` -- confidently wrong. Agents inherit the daemon's
+/// `CODEX_HOME` through `managed_launch_env`'s allowlist, which is the only
+/// reason that is not a live hazard today. Anything that lets the two diverge
+/// has to be paired with a real check, not with this enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexConversationPresence {
+    /// At least one transcript names this checkout.
+    Present,
+    /// The store was read, and nothing in it names this checkout.
+    ConfirmedAbsent,
+    /// The store could not be read, or is not where this process is looking.
+    Unknown,
+}
+
+pub fn codex_conversation_presence(
+    cwd: &str,
+    options: &BackendSessionDiscoveryOptions,
+) -> CodexConversationPresence {
+    let sessions_dir = codex_sessions_dir(options.codex_sessions_dir.as_deref());
+    if !sessions_dir.exists() {
+        return CodexConversationPresence::Unknown;
+    }
+    match codex_backend_session_ids_for_cwd(cwd, options) {
+        Ok(ids) if ids.is_empty() => CodexConversationPresence::ConfirmedAbsent,
+        Ok(_) => CodexConversationPresence::Present,
+        Err(_) => CodexConversationPresence::Unknown,
+    }
+}
+
 pub fn codex_backend_session_ids_for_cwd(
     cwd: &str,
     options: &BackendSessionDiscoveryOptions,
@@ -527,8 +570,15 @@ fn collect_codex_session_ids_for_cwd(
         let Some(id) = string_field(payload, "id") else {
             continue;
         };
+        // Trailing slashes, the way the Claude path already compares. A
+        // `worktreePath` carrying one -- user-supplied task worktrees can --
+        // made a checkout that HAS a conversation read as having none, which
+        // is the direction that loses it.
         if !is_uuid(&id)
-            || string_field(payload, "cwd").as_deref() != Some(cwd)
+            || string_field(payload, "cwd")
+                .as_deref()
+                .map(|recorded| recorded.trim_end_matches('/'))
+                != Some(cwd.trim_end_matches('/'))
             || options.codex_exclude_backend_session_ids.contains(&id)
         {
             continue;

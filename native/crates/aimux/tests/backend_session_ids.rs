@@ -1,9 +1,10 @@
 use aimux::backend_session_ids::{
-    BackendSessionDiscoveryOptions, build_agent_identity_error_payload,
+    BackendSessionDiscoveryOptions, CodexConversationPresence, build_agent_identity_error_payload,
     build_agent_identity_payload, claude_backend_session_ids_for_cwd, claude_transcript_path,
-    discover_backend_session_id_with_options, discover_claude_backend_session_id,
-    discover_codex_backend_session_id, relocate_claude_transcript, render_agent_identity_lines,
-    resolve_agent_identity, resolve_agent_identity_with_options,
+    codex_conversation_presence, discover_backend_session_id_with_options,
+    discover_claude_backend_session_id, discover_codex_backend_session_id,
+    relocate_claude_transcript, render_agent_identity_lines, resolve_agent_identity,
+    resolve_agent_identity_with_options,
 };
 use serde_json::json;
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
@@ -504,6 +505,80 @@ fn an_unparseable_timestamp_is_not_treated_as_a_missing_one() {
         discover_codex_backend_session_id("/repo", &options),
         None,
         "an unreadable opening time cannot satisfy a floor"
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+/// Three answers, because "nothing here" and "could not look" are different
+/// facts and the guard that reads this decides whether a restart may proceed.
+#[test]
+fn presence_separates_an_empty_store_from_an_unreadable_one() {
+    let temp = temp_dir("aimux-codex-presence");
+    let sessions_dir = temp.join("sessions");
+
+    // Nothing created yet: the store is not there at all.
+    let missing = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        codex_conversation_presence("/repo", &missing),
+        CodexConversationPresence::Unknown,
+        "a store that is not where we are looking is not an empty one"
+    );
+
+    // A real store, holding somebody else's checkout.
+    write_codex_transcript(&sessions_dir, "14", UUID_A, "/elsewhere");
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        codex_conversation_presence("/repo", &options),
+        CodexConversationPresence::ConfirmedAbsent,
+        "read it, and this checkout genuinely has nothing in it"
+    );
+
+    write_codex_transcript(&sessions_dir, "15", UUID_B, "/repo");
+    assert_eq!(
+        codex_conversation_presence("/repo", &options),
+        CodexConversationPresence::Present
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+/// A trailing slash is the same checkout.
+///
+/// `worktreePath` can carry one -- a user-supplied task worktree does -- and
+/// comparing the recorded cwd byte-for-byte made a checkout that HAS a
+/// conversation read as having none. The guard reads that as "nothing to
+/// lose", which is the direction that loses it. The Claude path already
+/// trimmed; this one did not.
+#[test]
+fn a_trailing_slash_does_not_hide_a_conversation() {
+    let temp = temp_dir("aimux-codex-slash");
+    let sessions_dir = temp.join("sessions");
+    write_codex_transcript(&sessions_dir, "14", UUID_A, "/repo/wt");
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    assert_eq!(
+        codex_conversation_presence("/repo/wt/", &options),
+        CodexConversationPresence::Present,
+        "the same checkout, spelled with a slash"
+    );
+    assert_eq!(
+        discover_codex_backend_session_id("/repo/wt/", &options),
+        Some(UUID_A.into())
+    );
+    // And the control: a genuinely different checkout is still absent.
+    assert_eq!(
+        codex_conversation_presence("/repo/other", &options),
+        CodexConversationPresence::ConfirmedAbsent
     );
 
     remove_dir_all(temp).ok();
