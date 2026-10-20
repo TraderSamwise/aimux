@@ -743,12 +743,12 @@ fn every_exact_resume_tool_can_acquire_its_id() {
         "the gate is vacuous if the default config stops shipping tools"
     );
 
-    let mut checked = Vec::new();
+    let mut checked = std::collections::BTreeSet::new();
     for (tool_key, tool_config) in tools {
         if !supports_exact_backend_resume(Some(tool_config)) {
             continue;
         }
-        checked.push(tool_key.clone());
+        checked.insert(tool_key.clone());
         assert_eq!(
             exact_backend_resume_unacquirable_reason(tool_key, Some(tool_config)),
             None,
@@ -758,9 +758,11 @@ fn every_exact_resume_tool_can_acquire_its_id() {
 
     // Named rather than counted, so a tool silently losing the declaration
     // shows up here instead of shrinking the gate to nothing.
+    // A set, not a list: `preserve_order` means the config's key order would
+    // otherwise decide whether this assertion holds.
     assert_eq!(
         checked,
-        vec!["claude".to_owned(), "codex".to_owned()],
+        std::collections::BTreeSet::from(["claude".to_owned(), "codex".to_owned()]),
         "these are the tools the gate is protecting"
     );
 }

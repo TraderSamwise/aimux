@@ -8,7 +8,7 @@ pub use project_services::{
 use crate::attachment_hosting::{AttachmentHostingResult, PublishedAttachmentHostInput};
 use crate::backend_session_ids::{
     BackendSessionDiscoveryOptions, CodexConversationPresence, codex_conversation_presence_since,
-    iso_timestamp_ms,
+    discovery_tool_key_for_session, iso_timestamp_ms,
 };
 use crate::cli_launcher::{
     AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
@@ -6225,10 +6225,17 @@ fn restart_backend_id_at_risk_sessions_with_presence_cache(
             // is nothing behind the refusal: without an id `resumeArgs`
             // cannot be filled in, so aimux could never resume that
             // conversation whether it restarts or not.
-            if !has_backend_session_id_acquisition_path(
-                Some(restart_guard_session_tool(&session)),
-                Some(tool_config),
-            ) {
+            // Identity, not spelling. `restart_guard_session_tool` returns the
+            // raw `toolConfigKey`, but discovery resolves a tool through
+            // `discovery_tool_key_for_session`, which takes the command's
+            // basename and falls back to `command` itself. A project tool
+            // keyed `codex-high` whose command is `codex` IS discoverable, so
+            // asking about the spelling skipped the guard for a session whose
+            // conversation discovery could have recovered -- a restart waved
+            // through over something there was to lose.
+            let discovery_key = discovery_tool_key_for_session(&session);
+            if !has_backend_session_id_acquisition_path(discovery_key.as_deref(), Some(tool_config))
+            {
                 continue;
             }
             // A guard is for something that can be LOST. Codex cannot be told
@@ -6241,7 +6248,7 @@ fn restart_backend_id_at_risk_sessions_with_presence_cache(
             //
             // Only a CONFIRMED absence clears it. Not being able to look is
             // not the same as there being nothing there.
-            if restart_guard_session_tool(&session) == "codex"
+            if discovery_key.as_deref() == Some("codex")
                 && codex_conversation_is_confirmed_absent(
                     &session,
                     project_root,
@@ -7383,6 +7390,77 @@ mod tests {
             ]),
             "a graveyarded session still owns its conversation, and blank is not an id"
         );
+    }
+
+    /// A tool is identified by what it runs, not by what it is called.
+    ///
+    /// Discovery resolves a session through `discovery_tool_key_for_session`,
+    /// which takes the command's basename and falls back to `command` itself.
+    /// So a project tool keyed `codex-high` whose command is `codex` IS
+    /// discoverable, and its conversation IS recoverable. Asking the guard
+    /// about the raw spelling skipped it unconditionally and waved the restart
+    /// through over something there was to lose.
+    #[test]
+    fn the_guard_identifies_a_tool_by_its_command_not_its_key() {
+        for (case, tool_key, command, forced, expect_at_risk) in [
+            // Renamed codex: discoverable through the command fallback.
+            (
+                "renamed-codex",
+                "codex-high",
+                "codex",
+                Some(CodexConversationPresence::Present),
+                true,
+            ),
+            // Genuinely unknown tool: nothing can ever learn its id.
+            ("unknown-tool", "mystery", "/bin/mystery", None, false),
+        ] {
+            let fixture = restart_service_fixture(&format!("restart-identity-{case}"));
+            let project = fixture.project_root.clone();
+            let aimux_dir = Path::new(&project).join(".aimux");
+            fs::create_dir_all(&aimux_dir).expect("project aimux dir");
+            fs::write(
+                aimux_dir.join("config.json"),
+                serde_json::to_string(&json!({
+                    "tools": {
+                        tool_key: {
+                            "command": command,
+                            "args": [],
+                            "enabled": true,
+                            "resumeArgs": ["resume", "{sessionId}"],
+                            "resumeByBackendSessionId": true,
+                        }
+                    }
+                }))
+                .expect("config json"),
+            )
+            .expect("write project config");
+
+            fixture.persist_runtime_session_with_window(
+                "renamed-one",
+                tool_key,
+                "running",
+                None,
+                Some("@renamed-one"),
+                Some(json!({ "command": command })),
+            );
+
+            let risks = restart_backend_id_at_risk_sessions_with_presence_cache(
+                &fixture.resolver,
+                std::slice::from_ref(&project),
+                Some(&LiveWindowIndex::from_pairs([(
+                    "@renamed-one",
+                    "aimux-test",
+                )])),
+                &mut CodexPresenceLookup::with_forced(forced, &mut CodexPresenceCache::new()),
+            );
+
+            assert_eq!(
+                !risks.is_empty(),
+                expect_at_risk,
+                "{case}: the guard judged the tool by its spelling"
+            );
+            fixture.cleanup();
+        }
     }
 
     /// Waiting for an id that nothing can write is not caution.
