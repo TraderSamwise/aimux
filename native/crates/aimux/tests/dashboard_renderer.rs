@@ -3821,15 +3821,19 @@ fn the_flat_dashboard_carries_the_count_too() {
 /// cell on each side.
 ///
 /// `capped_count_label` stops at `99+` and the cell adds a leading space, so
-/// the content is 4 and the column is 5. Measured against a row whose TIME
-/// cell is non-empty, because the column that follows is the time: with an
-/// empty one its own padding supplies the gap and a too-narrow column passes.
+/// the content is 4 and the column is 5. BOTH neighbours have to be full for
+/// this to mean anything: an empty time cell's padding supplies the gap on
+/// the right, and the status cell's padding supplies it on the left. The
+/// first version of this test only filled the time cell, and dropping the
+/// leading space passed.
 #[test]
 fn the_column_holds_the_capped_count_with_a_cell_to_spare() {
     let mut snapshot = snapshot_with_semantic(Some(json!({
-        "user": { "label": "ready", "attention": "normal" },
+        // Fourteen characters, which fills COL_STATUS exactly: `row_state_label`
+        // falls through to this raw string, so an over-wide label is ordinary.
+        "user": { "label": "fourteen-chars", "attention": "normal" },
         "notifications": { "unreadCount": 150 },
-        "presentation": { "statusLabel": "Ready", "compactHint": "99+ unread", "attentionScore": 2 }
+        "presentation": { "statusLabel": "fourteen-chars", "compactHint": null, "attentionScore": 2 }
     })));
     for session in snapshot
         .sessions
@@ -3845,8 +3849,12 @@ fn the_column_holds_the_capped_count_with_a_cell_to_spare() {
         .find(|line| line.contains("99+"))
         .unwrap_or_else(|| panic!("the cap must render, got {plain}"));
     assert!(
+        row.contains("fourteen-chars"),
+        "the status cell must be full or the left guard proves nothing: {row}"
+    );
+    assert!(
         row.contains("output "),
-        "the time cell must be populated or this proves nothing: {row}"
+        "and the time cell, or the right guard proves nothing: {row}"
     );
     let at = row.find("99+").expect("the cap");
     assert!(
@@ -3856,5 +3864,63 @@ fn the_column_holds_the_capped_count_with_a_cell_to_spare() {
     assert!(
         row[at + 3..].starts_with(' '),
         "and follow it, or the time runs straight into it: {row}"
+    );
+}
+
+/// The count must survive a narrow card, because it is what the row is FOR.
+///
+/// Sitting after the time column it fell off the end first: at cols=100 with
+/// the details sidebar an agent with seven unread showed no count at all.
+/// Moving it before the time fixed that and nothing rendered a narrow frame
+/// to prove it -- the swap was reintroducible with the whole suite green.
+#[test]
+fn the_count_survives_a_narrow_card() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    for session in snapshot
+        .sessions
+        .iter_mut()
+        .chain(snapshot.worktree_groups[0].sessions.iter_mut())
+    {
+        session.id = "claude-ec6r87gg".into();
+        session.command = "claude".into();
+        session.label = None;
+        session.notification_unread_count = 7;
+        session.notification_stale = false;
+    }
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 100,
+        rows: 50,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        focused_group_index: None,
+        runtime_label: Some("tmux"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        // The narrowest the card ever gets: the sidebar takes the rest.
+        details_sidebar_visible: true,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+    let row = plain
+        .lines()
+        .find(|line| line.contains("(ec6r87gg)"))
+        .unwrap_or_else(|| panic!("the row must render at all, got {plain}"));
+    assert!(
+        row.split_whitespace().any(|token| token == "7"),
+        "the count must still be on a narrow row: {row}"
     );
 }
