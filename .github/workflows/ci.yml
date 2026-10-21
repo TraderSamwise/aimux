@@ -31,7 +31,14 @@ env:
   # is NOT available in workflow-level env: using it here is not a warning,
   # it rejects the whole file, and every job silently stops existing. That is
   # how this landed on master with CI reporting failure and zero jobs.
-  CARGO_TARGET_DIR: ${{ github.workspace }}/../aimux-cargo-target-ci
+  #
+  # A SIBLING of the workspace, never `<workspace>/..`. `Path::ancestors` is
+  # lexical, so a `..` leaves the checkout itself an ancestor of the target
+  # dir -- and the runtime version is resolved by walking the executable's
+  # ancestors for a package.json. With `..` the tests found the repo's own
+  # version instead of the one they planted, and two entrypoint tests failed
+  # comparing 0.1.70 against 9.8.7-test.
+  CARGO_TARGET_DIR: ${{ github.workspace }}-cargo-target-ci
 
 jobs:
   linux-packaging:
@@ -227,7 +234,7 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            ${{ github.workspace }}/../aimux-cargo-target-ci
+            ${{ github.workspace }}-cargo-target-ci
           key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-${{ hashFiles('native/crates/**/*.rs') }}
           restore-keys: |
             ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-
@@ -296,7 +303,7 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            ${{ github.workspace }}/../aimux-cargo-target-ci
+            ${{ github.workspace }}-cargo-target-ci
           key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-${{ hashFiles('native/crates/**/*.rs') }}
           restore-keys: |
             ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-
@@ -371,7 +378,7 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            ${{ github.workspace }}/../aimux-cargo-target-ci
+            ${{ github.workspace }}-cargo-target-ci
           key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-${{ hashFiles('native/crates/**/*.rs') }}
           restore-keys: |
             ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-

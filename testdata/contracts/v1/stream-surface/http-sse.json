@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "current sync Rust binary before async cutover",
-  "recorded_from_commit": "e951e001e",
+  "recorded_from_commit": "ada77c727",
   "normalization": [
     "temporary roots, project ids, pids, ports, timestamps and build stamps are replaced with stable placeholders",
     "HTTP status lines, header order, content type, connection mode, JSON error shapes and SSE frame ordering/framing are compared literally after that normalization",
@@ -190,6 +190,11 @@
               },
               {
                 "name": "agent-restore-snapshot",
+                "intervalMs": "<interval-ms-or-null>",
+                "hot": false
+              },
+              {
+                "name": "backend-session-id-capture",
                 "intervalMs": "<interval-ms-or-null>",
                 "hot": false
               },
@@ -768,6 +773,11 @@
                 },
                 {
                   "name": "agent-restore-snapshot",
+                  "intervalMs": "<interval-ms-or-null>",
+                  "hot": false
+                },
+                {
+                  "name": "backend-session-id-capture",
                   "intervalMs": "<interval-ms-or-null>",
                   "hot": false
                 },
