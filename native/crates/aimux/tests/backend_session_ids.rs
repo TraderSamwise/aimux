@@ -678,6 +678,43 @@ fn a_transcript_we_cannot_date_is_not_confirmed_absence() {
     remove_dir_all(dateable).ok();
 }
 
+/// A trailing slash must not hide a CLAUDE conversation either.
+///
+/// Claude names its project directory after its own process cwd, which never
+/// carries a trailing slash. A `worktreePath` can, and encoding it produced a
+/// directory Claude never wrote -- discovery found nothing and restore took
+/// the fresh-start path over live history. The codex scan was fixed for this;
+/// claude was not.
+#[test]
+fn a_trailing_slash_does_not_hide_a_claude_conversation() {
+    let projects_dir = temp_dir("aimux-claude-slash");
+    let transcript = claude_transcript_path("/repo/wt", UUID_A, Some(&projects_dir));
+    create_dir_all(transcript.parent().expect("parent")).expect("mkdir");
+    write(&transcript, "{}\n").expect("write transcript");
+
+    let options = BackendSessionDiscoveryOptions {
+        claude_projects_dir: Some(projects_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+
+    assert_eq!(
+        discover_claude_backend_session_id("/repo/wt/", Some(&projects_dir)),
+        Some(UUID_A.into()),
+        "the same checkout, spelled with a slash"
+    );
+    assert_eq!(
+        discover_backend_session_id_with_options(Some("claude"), Some("/repo/wt/"), &options),
+        Some(UUID_A.into())
+    );
+    // The control: a genuinely different checkout is still absent.
+    assert_eq!(
+        discover_claude_backend_session_id("/repo/other", Some(&projects_dir)),
+        None
+    );
+
+    remove_dir_all(projects_dir).ok();
+}
+
 /// A record naming this checkout that we cannot identify is uncertainty.
 ///
 /// `undateable` used to be reached only by the floor arm, so every earlier

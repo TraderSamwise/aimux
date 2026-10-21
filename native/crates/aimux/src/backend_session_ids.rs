@@ -448,7 +448,7 @@ pub fn claude_backend_session_ids_for_cwd(
             }
         }
         if let Some(recorded) = recorded_cwd
-            && recorded.trim_end_matches('/') != cwd.trim_end_matches('/')
+            && !is_same_checkout(&recorded, cwd)
         {
             return Err(format!(
                 "Claude transcript {} records cwd {recorded:?}, but discovery requested {cwd:?}; this may be relocated history or a colliding project directory, so its backend identity must be chosen explicitly",
@@ -705,10 +705,11 @@ fn collect_codex_session_ids_for_cwd(
 
 /// Do these two spellings name the same checkout?
 ///
-/// Trailing slashes first, the way the Claude path already compares: a
-/// `worktreePath` can carry one -- user-supplied task worktrees do -- and
-/// comparing byte-for-byte made a checkout that HAS a conversation read as
-/// having none.
+/// Trailing slashes first: a `worktreePath` can carry one -- user-supplied
+/// task worktrees do -- and comparing byte-for-byte made a checkout that HAS
+/// a conversation read as having none. The Claude path did NOT already do
+/// this, whatever an earlier version of this comment claimed; it now shares
+/// this function.
 ///
 /// Then symlinks, which matter more here than they look. On macOS `/tmp` and
 /// `/var` are symlinks into `/private`, and a process records the path it
@@ -879,8 +880,15 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Claude names its project directory after its own process cwd, and
+/// `getcwd()` never returns a trailing slash -- of 35 real directories in a
+/// live store, none ends in `-`. A `worktreePath` CAN carry one, so asking
+/// with it encoded a directory Claude never wrote, discovery found nothing,
+/// and restore started the agent fresh over live history. Trimming here
+/// agrees with what Claude writes rather than diverging from it.
 fn encode_claude_project_path(cwd: &str) -> String {
-    cwd.chars()
+    cwd.trim_end_matches('/')
+        .chars()
         .map(|character| {
             if character == '/' || character == '.' {
                 '-'
