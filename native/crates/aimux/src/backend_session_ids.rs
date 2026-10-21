@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 const MAX_FIRST_LINE_BYTES: usize = 1024 * 1024;
+/// What codex records for the interactive session aimux launches.
+const CODEX_TUI_ORIGINATOR: &str = "codex-tui";
+/// What a headless `codex exec` run records. Never an aimux agent.
+const CODEX_EXEC_ORIGINATOR: &str = "codex_exec";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedAgentIdentity {
@@ -664,6 +668,25 @@ fn collect_codex_session_ids_for_cwd(
         if !is_same_checkout(&recorded_cwd, cwd) {
             continue;
         }
+        // Who opened this conversation decides whether it can be an aimux
+        // agent's at all, and the three answers are different.
+        match string_field(payload, "originator").as_deref() {
+            // The interactive codex aimux launches -- and a rollout that
+            // records no originator, which is how the older ones look. Those
+            // are still restorable and the discovery contract expects them.
+            Some(CODEX_TUI_ORIGINATOR) | None => {}
+            // A headless `codex exec` run. A real conversation, but never an
+            // agent's: no topology row owns it, so the sibling count cannot
+            // see it -- 7 of 233 in a real store -- and an idle agent would
+            // otherwise adopt somebody else's history.
+            Some(CODEX_EXEC_ORIGINATOR) => continue,
+            // Something nobody has seen yet. It names this checkout, so it
+            // may well be ours, and "absent" is the answer that loses it.
+            Some(_) => {
+                scan.undateable += 1;
+                continue;
+            }
+        }
         // From here the record names THIS checkout, so a failure to get a
         // usable identity out of it is this checkout's uncertainty and does
         // fail closed.
@@ -719,7 +742,7 @@ fn collect_codex_session_ids_for_cwd(
 /// treats "found nothing" as "nothing to lose" turns it into a killed
 /// conversation. Canonicalising costs a stat on a path that already failed to
 /// match, and only when both sides still exist.
-fn is_same_checkout(recorded: &str, cwd: &str) -> bool {
+pub fn is_same_checkout(recorded: &str, cwd: &str) -> bool {
     let recorded = recorded.trim_end_matches('/');
     let cwd = cwd.trim_end_matches('/');
     if recorded == cwd {
@@ -886,7 +909,7 @@ fn home_dir() -> PathBuf {
 /// with it encoded a directory Claude never wrote, discovery found nothing,
 /// and restore started the agent fresh over live history. Trimming here
 /// agrees with what Claude writes rather than diverging from it.
-fn encode_claude_project_path(cwd: &str) -> String {
+pub fn encode_claude_project_path(cwd: &str) -> String {
     cwd.trim_end_matches('/')
         .chars()
         .map(|character| {

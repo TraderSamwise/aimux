@@ -125,9 +125,11 @@ pub(crate) fn backend_session_claimed_by_other(
 /// calls worse than refusing. A deny-list also fails closed when a new status
 /// appears, where an allow-list would silently stop counting it.
 ///
-/// Graveyarded siblings are excluded deliberately: their checkout is gone, so
-/// they will not come back to claim anything, and counting them would mean a
-/// checkout that ever held an agent could never narrow again.
+/// Graveyarded siblings are excluded deliberately -- not because the checkout
+/// is gone, which graveyarding a session does not do, but because the stop and
+/// resume routes refuse them outright, so they cannot come back to claim
+/// anything. Counting them would mean a checkout that ever held an agent could
+/// never narrow again.
 pub(crate) fn sole_unidentified_claimant(
     topology: &Value,
     session: &Value,
@@ -143,9 +145,17 @@ pub(crate) fn sole_unidentified_claimant(
         .filter(|other| string_field(other, "status") != "graveyard")
         .filter(|other| trimmed_string(other.get("backendSessionId")).is_none())
         .filter(|other| tool_config_key_for_session(other) == tool)
+        // Compared the way DISCOVERY compares checkouts, not by raw string.
+        // Two rows whose `worktreePath` differ only by a trailing slash -- or
+        // by /tmp versus /private/tmp -- each saw no sibling in "their"
+        // checkout while both scans resolved to the same directory, so both
+        // could adopt the same transcript in one pass.
         .all(|other| {
-            trimmed_string(other.get("worktreePath")).unwrap_or_else(|| project_root.to_owned())
-                != cwd
+            !crate::backend_session_ids::is_same_checkout(
+                &trimmed_string(other.get("worktreePath"))
+                    .unwrap_or_else(|| project_root.to_owned()),
+                &cwd,
+            )
         })
 }
 

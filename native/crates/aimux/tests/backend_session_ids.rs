@@ -711,6 +711,14 @@ fn a_trailing_slash_does_not_hide_a_claude_conversation() {
         discover_claude_backend_session_id("/repo/other", Some(&projects_dir)),
         None
     );
+    // And one encoding, not two. A second untrimmed copy of the encoder used
+    // to live beside the relocation route, so once discovery began trimming
+    // the two disagreed about which directory a trailing-slash checkout meant
+    // -- silently, because that caller discards its result.
+    assert_eq!(
+        claude_transcript_path("/repo/wt/", UUID_A, Some(&projects_dir)),
+        claude_transcript_path("/repo/wt", UUID_A, Some(&projects_dir)),
+    );
 
     remove_dir_all(projects_dir).ok();
 }

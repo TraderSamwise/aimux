@@ -68,17 +68,11 @@ fn claude_projects_dir() -> PathBuf {
     base.join("projects")
 }
 
-fn encode_claude_project_path(cwd: &str) -> String {
-    cwd.chars()
-        .map(|char| {
-            if char == '/' || char == '.' {
-                '-'
-            } else {
-                char
-            }
-        })
-        .collect()
-}
+/// One encoder, not two. This was a second copy that did not trim a trailing
+/// slash, so once discovery started trimming, relocation wrote
+/// `-repo-wt-` while discovery read `-repo-wt` -- and the caller discards the
+/// result with `let _ =`, so the two would have disagreed in silence.
+use crate::backend_session_ids::encode_claude_project_path;
 
 pub(super) fn clear_session_transcript_path(project_state_dir: &Path, session_id: &str) {
     let _ = mutate_metadata_state(project_state_dir, |state| {

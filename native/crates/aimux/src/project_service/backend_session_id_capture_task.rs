@@ -234,6 +234,12 @@ fn capture_once(
     // A session that is gone stops being remembered, so a reused id starts
     // from a clean slate rather than inheriting a predecessor's backoff.
     misses.retain(|session_id, _| seen.contains(session_id));
+    // Belt and braces for the claimant check: if two rows ever did reach the
+    // same conversation in one pass, giving it to both is the one outcome
+    // worse than giving it to neither, and the recorder cannot catch it
+    // because neither row has an id yet.
+    let mut taken = BTreeSet::new();
+    captured.retain(|(_, backend_session_id)| taken.insert(backend_session_id.clone()));
     if captured.is_empty() {
         return (Ok(()), misses);
     }
@@ -312,6 +318,16 @@ mod tests {
     }
 
     fn write_rollout(sessions_dir: &std::path::Path, uuid: &str, cwd: &str, timestamp: &str) {
+        write_rollout_from(sessions_dir, uuid, cwd, timestamp, "codex-tui");
+    }
+
+    fn write_rollout_from(
+        sessions_dir: &std::path::Path,
+        uuid: &str,
+        cwd: &str,
+        timestamp: &str,
+        originator: &str,
+    ) {
         let dir = sessions_dir.join("2026").join("10").join("20");
         create_dir_all(&dir).expect("rollout dir");
         write(
@@ -321,7 +337,7 @@ mod tests {
                 json!({
                     "timestamp": timestamp,
                     "type": "session_meta",
-                    "payload": { "id": uuid, "cwd": cwd, "originator": "codex-tui" },
+                    "payload": { "id": uuid, "cwd": cwd, "originator": originator },
                 })
             ),
         )
@@ -431,6 +447,62 @@ mod tests {
         assert_eq!(
             capturable_backend_session_id(&topology, &me, "/repo", &options(&store)),
             None
+        );
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// A headless `codex exec` run is nobody's agent conversation.
+    ///
+    /// It leaves a rollout in the checkout that no topology row owns, so the
+    /// sibling count cannot see it -- 7 of 233 in a real store -- and an idle
+    /// agent would otherwise adopt somebody else's history.
+    #[test]
+    fn a_headless_codex_run_is_never_captured() {
+        let store = temp_store("headless");
+        write_rollout_from(
+            &store,
+            THEIRS,
+            "/repo",
+            "2026-10-20T11:00:00.000Z",
+            "codex_exec",
+        );
+        let me = session("codex-me", "2026-10-20T10:00:00.000Z");
+        let topology = json!({ "sessions": [me.clone()] });
+
+        assert_eq!(
+            capturable_backend_session_id(&topology, &me, "/repo", &options(&store)),
+            None,
+            "a codex_exec rollout is not an agent's conversation"
+        );
+
+        // The control: the same rollout written by the interactive codex that
+        // aimux launches IS this agent's and is captured.
+        let mine = temp_store("headless-control");
+        write_rollout(&mine, MINE, "/repo", "2026-10-20T11:00:00.000Z");
+        assert_eq!(
+            capturable_backend_session_id(&topology, &me, "/repo", &options(&mine)),
+            Some(MINE.to_owned())
+        );
+        std::fs::remove_dir_all(store).ok();
+        std::fs::remove_dir_all(mine).ok();
+    }
+
+    /// Two rows spelling one checkout differently are still one checkout.
+    #[test]
+    fn a_sibling_in_the_same_checkout_spelled_differently_still_counts() {
+        let store = temp_store("spelling");
+        write_rollout(&store, MINE, "/repo/wt", "2026-10-20T11:00:00.000Z");
+        let mut me = session("codex-me", "2026-10-20T10:00:00.000Z");
+        me["worktreePath"] = Value::String("/repo/wt".into());
+        let mut twin = session("codex-twin", "2026-10-20T10:00:00.000Z");
+        // The trailing slash a user-supplied task worktree produces.
+        twin["worktreePath"] = Value::String("/repo/wt/".into());
+        let topology = json!({ "sessions": [me.clone(), twin] });
+
+        assert_eq!(
+            capturable_backend_session_id(&topology, &me, "/repo", &options(&store)),
+            None,
+            "the twin shares this checkout, it is just spelled with a slash"
         );
         std::fs::remove_dir_all(store).ok();
     }
