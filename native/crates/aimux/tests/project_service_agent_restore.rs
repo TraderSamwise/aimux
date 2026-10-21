@@ -63,6 +63,63 @@ fn unsafe_exit_leaves_a_snapshot_that_becomes_a_restore_offer() {
     assert_eq!(session_ids(&offer), AGENT_IDS);
 }
 
+/// A second restart of the same agents must ask again.
+///
+/// The snapshot id changes only when the SET of agents changes, so the same
+/// agents killed twice carry the same id both times. The acknowledgement was
+/// keyed on that id alone, so one accepted offer muted every restart that
+/// followed -- twenty agents went offline with no prompt because the id had
+/// been minted a day earlier and acknowledged by a restore that did not work.
+///
+/// Driven through the ack file rather than the restore route: the route also
+/// writes a retry offer when a restore fails, and that short-circuits the
+/// derive before it ever consults the acknowledgement.
+#[test]
+fn an_acknowledgement_is_spent_by_the_boot_that_made_it() {
+    let project = TestProject::new("ack-per-boot");
+    project.run_task();
+    let snapshot = project.snapshot().expect("agents recorded while running");
+    let snapshot_id = snapshot["id"].as_str().expect("snapshot id").to_owned();
+
+    // An acknowledgement made during THIS boot still answers for it.
+    project.simulate_process_death();
+    project.seed_prompt_gates("boot-1");
+    project.write_ack(&snapshot_id, Some("boot-1"));
+    project.run_task_with_no_live_windows();
+    assert!(
+        project.offer().is_none(),
+        "an offer acknowledged in this boot must not come back in it"
+    );
+
+    // The same agents, killed again. Same set, so the same snapshot id --
+    // which is exactly the trap -- but a new boot, so a new occasion.
+    project.simulate_process_death();
+    let gate = project.seed_prompt_gates("boot-2");
+    assert_eq!(
+        gate["snapshotId"], snapshot["id"],
+        "the same agents still carry the same snapshot id"
+    );
+    project.run_task_with_no_live_windows();
+    let offer = project
+        .offer()
+        .expect("a second restart of the same agents must be offered again");
+    assert_eq!(offer["snapshotId"], snapshot["id"]);
+    assert_eq!(session_ids(&offer), AGENT_IDS);
+
+    // And the shape found on a real machine: an ack written before the boot
+    // was recorded cannot be attributed to one, so it is spent rather than
+    // muting for ever.
+    project.remove_offer();
+    project.simulate_process_death();
+    project.seed_prompt_gates("boot-3");
+    project.write_ack(&snapshot_id, None);
+    project.run_task_with_no_live_windows();
+    assert!(
+        project.offer().is_some(),
+        "an undatable acknowledgement must not mute a restart for ever"
+    );
+}
+
 #[test]
 fn clean_exit_leaves_no_snapshot_and_no_restore_offer() {
     let project = TestProject::new("clean-exit");
@@ -279,6 +336,29 @@ impl TestProject {
             serde_json::to_string_pretty(&snapshot).expect("serialize snapshot"),
         )
         .expect("write snapshot");
+    }
+
+    /// The acknowledgement as the product writes it, so the test drives the
+    /// same file the derive reads.
+    fn write_ack(&self, snapshot_id: &str, daemon_boot_id: Option<&str>) {
+        let mut ack = json!({
+            "version": 1,
+            "snapshotId": snapshot_id,
+            "source": "last-online",
+            "acknowledgedAt": "2026-10-21T00:00:00.000Z",
+        });
+        if let Some(daemon_boot_id) = daemon_boot_id {
+            ack["daemonBootId"] = json!(daemon_boot_id);
+        }
+        fs::write(
+            self.state_dir.join("agent-restore-offer-ack.json"),
+            serde_json::to_string_pretty(&ack).expect("serialize ack"),
+        )
+        .expect("write ack");
+    }
+
+    fn remove_offer(&self) {
+        let _ = fs::remove_file(self.state_dir.join("agent-restore-offer.json"));
     }
 
     fn seed_prompt_gates(&self, daemon_boot_id: &str) -> Value {

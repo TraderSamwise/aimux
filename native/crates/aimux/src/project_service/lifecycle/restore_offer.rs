@@ -272,15 +272,32 @@ pub(super) fn reconcile_agent_restore_offer(
     Some(updated)
 }
 
+/// The boot the prompt gate was seeded for, which is what an acknowledgement
+/// is answering. Read from the gate rather than recomputed, so the two cannot
+/// disagree about which occasion this is.
+fn current_daemon_boot_id(project_state_dir: &Path) -> Option<String> {
+    trimmed_string(
+        Value::Object(read_json_object(&agent_restore_prompt_gate_path(
+            project_state_dir,
+        )))
+        .get("daemonBootId"),
+    )
+}
+
 pub(super) fn acknowledge_agent_restore_offer(project_state_dir: &Path) {
     if let Some(offer) = read_agent_restore_offer(project_state_dir) {
         let snapshot_id = string_field(&offer, "snapshotId");
         if !snapshot_id.is_empty() {
+            // Stamped with the boot it answered. Without this the ack named
+            // only a set of agents, and the set does not change when they are
+            // killed and restarted, so one acknowledgement muted every
+            // restart that followed.
             let _ = write_json_atomic(
                 agent_restore_ack_path(project_state_dir),
                 &json!({
                     "version": 1,
                     "snapshotId": snapshot_id,
+                    "daemonBootId": current_daemon_boot_id(project_state_dir),
                     "source": "last-online",
                     "acknowledgedAt": now_iso(),
                 }),
