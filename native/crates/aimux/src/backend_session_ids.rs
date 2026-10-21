@@ -538,13 +538,7 @@ pub fn codex_conversation_presence_since(
     let mut scoped = options.clone();
     scoped.codex_since_ms = since_ms;
     match codex_scan_for_cwd(cwd, &scoped) {
-        Ok(scan) if !scan.ids.is_empty() => CodexConversationPresence::Present,
-        // A transcript naming this checkout that we could not date is not an
-        // absent one. Discovery excludes it because including it would adopt
-        // the wrong conversation; the guard must not read that exclusion as
-        // proof there is nothing to lose.
-        Ok(scan) if scan.undateable > 0 => CodexConversationPresence::Unknown,
-        Ok(_) => CodexConversationPresence::ConfirmedAbsent,
+        Ok(scan) => presence_from_scan(&scan),
         Err(_) => CodexConversationPresence::Unknown,
     }
 }
@@ -570,7 +564,28 @@ pub fn codex_backend_session_ids_for_cwd(
 #[derive(Debug, Default)]
 pub struct CodexCwdScan {
     pub ids: BTreeSet<String>,
+    /// Transcripts naming this checkout whose identity or creation instant
+    /// could not be read. Uncertainty about THIS checkout, so it blocks.
     pub undateable: usize,
+    /// Rollouts that could not be attributed to any checkout. Not this
+    /// checkout's uncertainty, so it does not block -- but it is an error,
+    /// not an empty result, so the caller reports it rather than dropping it.
+    pub unreadable: Vec<PathBuf>,
+}
+
+/// The one place the three answers are decided.
+pub fn presence_from_scan(scan: &CodexCwdScan) -> CodexConversationPresence {
+    if !scan.ids.is_empty() {
+        CodexConversationPresence::Present
+    } else if scan.undateable > 0 {
+        // A transcript naming this checkout that we could not date or
+        // identify is not an absent one. Discovery excludes it because
+        // including it would adopt the wrong conversation; the guard must not
+        // read that exclusion as proof there is nothing to lose.
+        CodexConversationPresence::Unknown
+    } else {
+        CodexConversationPresence::ConfirmedAbsent
+    }
 }
 
 pub fn codex_scan_for_cwd(
@@ -618,27 +633,45 @@ fn collect_codex_session_ids_for_cwd(
         {
             continue;
         }
+        // Everything down to the checkout comparison is UNATTRIBUTABLE on
+        // failure: only line 1 carries `cwd` -- later lines do not, and the
+        // filename holds a timestamp and a uuid and nothing else -- so a
+        // record we cannot read is a record we cannot assign to any checkout.
+        // Counting those as uncertain for THIS checkout would mean one
+        // corrupt rollout blocked every restart in every checkout for ever,
+        // which is the refusal this whole module exists to stop. They are
+        // counted and surfaced instead, so they are never silently absorbed.
         let Some(line) = read_first_line(&path)? else {
+            scan.unreadable.push(path.clone());
             continue;
         };
         let Ok(record) = serde_json::from_str::<Value>(&line) else {
+            scan.unreadable.push(path.clone());
             continue;
         };
         if string_field(&record, "type").as_deref() != Some("session_meta") {
+            scan.unreadable.push(path.clone());
             continue;
         }
         let Some(payload) = record.get("payload") else {
+            scan.unreadable.push(path.clone());
             continue;
         };
-        let Some(id) = string_field(payload, "id") else {
+        let Some(recorded_cwd) = string_field(payload, "cwd") else {
+            scan.unreadable.push(path.clone());
             continue;
         };
-        if !is_uuid(&id)
-            || !string_field(payload, "cwd")
-                .as_deref()
-                .is_some_and(|recorded| is_same_checkout(recorded, cwd))
-            || options.codex_exclude_backend_session_ids.contains(&id)
-        {
+        if !is_same_checkout(&recorded_cwd, cwd) {
+            continue;
+        }
+        // From here the record names THIS checkout, so a failure to get a
+        // usable identity out of it is this checkout's uncertainty and does
+        // fail closed.
+        let Some(id) = string_field(payload, "id").filter(|id| is_uuid(id)) else {
+            scan.undateable += 1;
+            continue;
+        };
+        if options.codex_exclude_backend_session_ids.contains(&id) {
             continue;
         }
         // The floor is applied AFTER the checkout matches, so that a

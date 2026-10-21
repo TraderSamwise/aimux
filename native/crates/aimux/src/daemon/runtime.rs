@@ -7,8 +7,8 @@ pub use project_services::{
 
 use crate::attachment_hosting::{AttachmentHostingResult, PublishedAttachmentHostInput};
 use crate::backend_session_ids::{
-    BackendSessionDiscoveryOptions, CodexConversationPresence, codex_conversation_presence_since,
-    discovery_tool_key_for_session, iso_timestamp_ms,
+    BackendSessionDiscoveryOptions, CodexConversationPresence, codex_scan_for_cwd,
+    discovery_tool_key_for_session, iso_timestamp_ms, presence_from_scan,
 };
 use crate::cli_launcher::{
     AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
@@ -6129,14 +6129,45 @@ impl<'cache> CodexPresenceLookup<'cache> {
             .cache
             .entry((cwd.to_owned(), since_ms))
             .or_insert_with(|| {
-                codex_conversation_presence_since(
-                    cwd,
-                    since_ms,
-                    &BackendSessionDiscoveryOptions {
-                        codex_exclude_backend_session_ids: claimed.clone(),
-                        ..options
-                    },
-                )
+                let scoped = BackendSessionDiscoveryOptions {
+                    codex_since_ms: since_ms,
+                    codex_exclude_backend_session_ids: claimed.clone(),
+                    ..options
+                };
+                match codex_scan_for_cwd(cwd, &scoped) {
+                    Ok(scan) => {
+                        // Not this checkout's uncertainty, so it does not
+                        // block -- but a rollout we could not read is an
+                        // error, and an error that nobody ever sees is how
+                        // this class survives.
+                        if !scan.unreadable.is_empty() {
+                            log_at(
+                                LogLevel::Warn,
+                                "codex rollouts could not be attributed to any checkout",
+                                "daemon",
+                                Some(json!({
+                                    "count": scan.unreadable.len(),
+                                    "paths": scan
+                                        .unreadable
+                                        .iter()
+                                        .take(5)
+                                        .map(|path| path.display().to_string())
+                                        .collect::<Vec<_>>(),
+                                })),
+                            );
+                        }
+                        presence_from_scan(&scan)
+                    }
+                    Err(error) => {
+                        log_at(
+                            LogLevel::Warn,
+                            "codex store could not be read for the restart guard",
+                            "daemon",
+                            Some(json!({ "cwd": cwd, "error": error })),
+                        );
+                        CodexConversationPresence::Unknown
+                    }
+                }
             })
     }
 }
