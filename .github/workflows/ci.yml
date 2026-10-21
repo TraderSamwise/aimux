@@ -26,7 +26,12 @@ env:
   # output stream: Disk quota exceeded" -- which names a random test crate and
   # looks like a compile error. Two plausible-sounding guesses (debug info,
   # preinstalled toolchains) were wrong; printing `df` found it in one run.
-  CARGO_TARGET_DIR: ${{ runner.temp }}/aimux-cargo-target-ci
+  #
+  # `github.workspace` and not `runner.temp`, which is the natural choice and
+  # is NOT available in workflow-level env: using it here is not a warning,
+  # it rejects the whole file, and every job silently stops existing. That is
+  # how this landed on master with CI reporting failure and zero jobs.
+  CARGO_TARGET_DIR: ${{ github.workspace }}/../aimux-cargo-target-ci
 
 jobs:
   linux-packaging:
@@ -222,7 +227,7 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            ${{ runner.temp }}/aimux-cargo-target-ci
+            ${{ github.workspace }}/../aimux-cargo-target-ci
           key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-${{ hashFiles('native/crates/**/*.rs') }}
           restore-keys: |
             ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-
@@ -291,7 +296,7 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            ${{ runner.temp }}/aimux-cargo-target-ci
+            ${{ github.workspace }}/../aimux-cargo-target-ci
           key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-${{ hashFiles('native/crates/**/*.rs') }}
           restore-keys: |
             ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-
@@ -366,7 +371,7 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            ${{ runner.temp }}/aimux-cargo-target-ci
+            ${{ github.workspace }}/../aimux-cargo-target-ci
           key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-${{ hashFiles('native/crates/**/*.rs') }}
           restore-keys: |
             ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-
