@@ -11,7 +11,7 @@
 //! appears -- codex writes none until its first turn -- so the row carries it
 //! from then on and exact resume stops being a guess.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -46,10 +46,32 @@ const CAPTURABLE_STATUSES: &[&str] = &["running", "idle"];
 #[derive(Default)]
 pub struct BackendSessionIdCaptureTask {
     options: BackendSessionDiscoveryOptions,
+    /// Consecutive runs that found nothing for a session, so a codex agent
+    /// that never takes a turn stops costing a full store walk every tick.
+    ///
+    /// "No transcript yet" is a level, not an edge: it stays true for as long
+    /// as the agent sits at its prompt, which can be days. The first runs
+    /// after a session appears are cheap and frequent, then this backs off to
+    /// a slow reminder, and any run that succeeds removes the entry.
+    misses: BTreeMap<String, u32>,
 }
+
+/// After this many consecutive misses a session is only retried every
+/// `BACKOFF_RUNS` runs. At the 15s cadence that is a check every five minutes
+/// for an agent that is simply idle at its prompt.
+const MISSES_BEFORE_BACKOFF: u32 = 4;
+const BACKOFF_RUNS: u32 = 20;
 
 pub fn backend_session_id_capture_task() -> Box<dyn PeriodicTask> {
     Box::new(BackendSessionIdCaptureTask::default())
+}
+
+/// Whether a session with this many consecutive misses is scanned this run.
+///
+/// One definition, so the task and its test cannot disagree about the cadence
+/// they are each describing.
+fn should_scan(missed: u32) -> bool {
+    missed < MISSES_BEFORE_BACKOFF || (missed - MISSES_BEFORE_BACKOFF).is_multiple_of(BACKOFF_RUNS)
 }
 
 /// Every conversation id the topology already attributes to a session.
@@ -149,6 +171,7 @@ impl PeriodicTask for BackendSessionIdCaptureTask {
 
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         let options = self.options.clone();
+        let misses = std::mem::take(&mut self.misses);
         Box::pin(async move {
             let topology_path = runtime_topology_path(context.project_state_dir());
             let project_root = context.project_root().to_string_lossy().into_owned();
@@ -156,12 +179,15 @@ impl PeriodicTask for BackendSessionIdCaptureTask {
             // candidate costs a walk of the codex store, which blocks in the
             // kernel and would stall every other periodic task sharing the
             // runtime.
-            spawn_blocking_named(
+            let outcome = spawn_blocking_named(
                 scoped_task_name("backend-session-id-capture", "scan", "project"),
-                move || capture_once(&topology_path, &project_root, &options),
+                move || capture_once(&topology_path, &project_root, &options, misses),
             )
             .await
-            .map_err(|error| format!("backend session id capture did not run: {error}"))?
+            .map_err(|error| format!("backend session id capture did not run: {error}"))?;
+            let (result, misses) = outcome;
+            self.misses = misses;
+            result
         })
     }
 }
@@ -170,49 +196,99 @@ fn capture_once(
     topology_path: &std::path::Path,
     project_root: &str,
     options: &BackendSessionDiscoveryOptions,
-) -> Result<(), String> {
-    let topology = read_runtime_topology(topology_path)
-        .map_err(|error| format!("backend session id capture topology unavailable: {error}"))?;
+    mut misses: BTreeMap<String, u32>,
+) -> (Result<(), String>, BTreeMap<String, u32>) {
+    let topology = match read_runtime_topology(topology_path) {
+        Ok(topology) => topology,
+        Err(error) => {
+            return (
+                Err(format!(
+                    "backend session id capture topology unavailable: {error}"
+                )),
+                misses,
+            );
+        }
+    };
     let mut captured = Vec::new();
+    let mut seen = BTreeSet::new();
     for session in list_topology_session_states(&topology, Some(CAPTURABLE_STATUSES)) {
         let Some(session_id) = session.get("id").and_then(Value::as_str) else {
             continue;
         };
-        if let Some(backend_session_id) =
-            capturable_backend_session_id(&topology, &session, project_root, options)
-        {
-            captured.push((session_id.to_owned(), backend_session_id));
+        seen.insert(session_id.to_owned());
+        let missed = misses.get(session_id).copied().unwrap_or(0);
+        if !should_scan(missed) {
+            misses.insert(session_id.to_owned(), missed.saturating_add(1));
+            continue;
+        }
+        match capturable_backend_session_id(&topology, &session, project_root, options) {
+            Some(backend_session_id) => {
+                misses.remove(session_id);
+                captured.push((session_id.to_owned(), backend_session_id));
+            }
+            None => {
+                misses.insert(session_id.to_owned(), missed.saturating_add(1));
+            }
         }
     }
+    // A session that is gone stops being remembered, so a reused id starts
+    // from a clean slate rather than inheriting a predecessor's backoff.
+    misses.retain(|session_id, _| seen.contains(session_id));
     if captured.is_empty() {
-        return Ok(());
+        return (Ok(()), misses);
     }
     let now = now_iso();
     let recorded = captured.clone();
-    update_runtime_topology(topology_path, |mut topology| {
+    let mut refused: Vec<Value> = Vec::new();
+    let write = update_runtime_topology(topology_path, |mut topology| {
         for (session_id, backend_session_id) in &captured {
-            let _ = record_topology_backend_session_id_at(
+            // Re-applied under the lock, where the row may already have gained
+            // an id. The recorder refuses to replace a DIFFERENT one, which is
+            // what keeps a raced decision from overwriting the truth -- but a
+            // refusal is a real outcome, not a no-op, so it is reported rather
+            // than dropped on the floor.
+            if let Err(error) = record_topology_backend_session_id_at(
                 &mut topology,
                 session_id,
                 backend_session_id,
                 &now,
-            );
+            ) {
+                refused.push(json!({ "session": session_id, "reason": error }));
+            }
         }
         topology
-    })
-    .map_err(|error| format!("backend session id capture could not write topology: {error}"))?;
-    log_at(
-        LogLevel::Info,
-        "recorded codex conversation ids for live agents",
-        "project-service",
-        Some(json!({
-            "sessions": recorded
-                .iter()
-                .map(|(session_id, _)| session_id.clone())
-                .collect::<Vec<_>>(),
-        })),
-    );
-    Ok(())
+    });
+    if let Err(error) = write {
+        return (
+            Err(format!(
+                "backend session id capture could not write topology: {error}"
+            )),
+            misses,
+        );
+    }
+    if !refused.is_empty() {
+        log_at(
+            LogLevel::Warn,
+            "a codex conversation id could not be recorded",
+            "project-service",
+            Some(json!({ "refused": refused })),
+        );
+    }
+    let written = recorded.len().saturating_sub(refused.len());
+    if written > 0 {
+        log_at(
+            LogLevel::Info,
+            "recorded codex conversation ids for live agents",
+            "project-service",
+            Some(json!({
+                "sessions": recorded
+                    .iter()
+                    .map(|(session_id, _)| session_id.clone())
+                    .collect::<Vec<_>>(),
+            })),
+        );
+    }
+    (Ok(()), misses)
 }
 
 #[cfg(test)]
@@ -357,6 +433,26 @@ mod tests {
             None
         );
         std::fs::remove_dir_all(store).ok();
+    }
+
+    /// An agent that never takes a turn stops costing a store walk every tick.
+    #[test]
+    fn a_session_that_keeps_missing_is_backed_off_and_recovers() {
+        let mut misses = BTreeMap::new();
+        let mut scans = 0;
+        // The level never becomes actionable: no transcript ever appears.
+        for _ in 0..60 {
+            let missed = misses.get("codex-idle").copied().unwrap_or(0);
+            if should_scan(missed) {
+                scans += 1;
+            }
+            misses.insert("codex-idle".to_owned(), missed + 1);
+        }
+        assert!(
+            scans < 10,
+            "60 runs should not mean 60 store walks, got {scans}"
+        );
+        assert!(scans >= 4, "the first runs stay eager, got {scans}");
     }
 
     /// Claude is told its id at launch, so there is nothing to acquire.
