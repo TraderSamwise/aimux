@@ -100,11 +100,52 @@ pub fn render_core_worktree_create_lines(payload: &Value) -> Vec<String> {
     }
 }
 
+/// What prune could NOT clean, named rather than left out.
+///
+/// `git worktree prune` only clears git's own records. A worktree row whose
+/// checkout is gone and which git was never told about is invisible to it, so
+/// this reported "no stale entries" while exactly those rows sat on screen
+/// flagged as missing. The remedy is a different verb, so the message says
+/// which one.
+fn worktree_prune_orphan_lines(payload: &Value) -> Vec<String> {
+    if let Some(reason) = field(payload, "orphanedRowsError").and_then(Value::as_str) {
+        return vec![format!(
+            "Could not check whether any worktree row has lost its checkout: {reason}"
+        )];
+    }
+    let orphaned = array(payload, "orphanedRows");
+    if orphaned.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = vec![format!(
+        "{} worktree row{} no checkout on disk. git was never told about {}, so prune cannot clear {}:",
+        orphaned.len(),
+        if orphaned.len() == 1 {
+            " has"
+        } else {
+            "s have"
+        },
+        if orphaned.len() == 1 { "it" } else { "them" },
+        if orphaned.len() == 1 { "it" } else { "them" },
+    )];
+    for worktree in orphaned.iter().take(20) {
+        lines.push(format!("  {}", js_string(field(worktree, "path"))));
+    }
+    lines.push(
+        "Clear one with `aimux worktree remove <path>`, or `aimux worktree graveyard <path>` to keep it recoverable."
+            .into(),
+    );
+    lines
+}
+
 pub fn render_core_worktree_prune_lines(payload: &Value) -> Vec<String> {
     let entries = array(payload, "entries");
     let dry_run = field(payload, "dryRun").and_then(Value::as_bool) != Some(false);
+    let orphan_lines = worktree_prune_orphan_lines(payload);
     if entries.is_empty() {
-        return vec!["Worktree metadata prune found no stale entries.".into()];
+        let mut lines = vec!["git worktree prune found no stale metadata.".to_owned()];
+        lines.extend(orphan_lines);
+        return lines;
     }
     let mut lines = vec![format!(
         "Worktree metadata prune {} {} stale entr{}.",
@@ -122,6 +163,7 @@ pub fn render_core_worktree_prune_lines(payload: &Value) -> Vec<String> {
             if entries.len() - 20 == 1 { "y" } else { "ies" }
         ));
     }
+    lines.extend(orphan_lines);
     lines
 }
 

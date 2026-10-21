@@ -245,6 +245,28 @@ pub fn worktree_create_text_route(
     )
 }
 
+/// Worktree rows whose checkout is gone, which `git worktree prune` cannot
+/// see because git was never told about them.
+fn orphaned_worktree_rows(
+    runtime: &mut impl DaemonWorktreeTextRuntime,
+    project: &str,
+) -> Result<Vec<Value>, String> {
+    let result = runtime.get_project_service_json(project, project_routes::WORKTREES);
+    let json = match result {
+        ProjectServiceJsonResult::Ok { json, .. } => json,
+        _ => return Err("the project service did not answer the worktree list".to_owned()),
+    };
+    let worktrees = json
+        .get("worktrees")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "worktree list did not contain a worktrees array".to_owned())?;
+    Ok(worktrees
+        .iter()
+        .filter(|worktree| worktree.get("status").and_then(Value::as_str) == Some("missing"))
+        .cloned()
+        .collect())
+}
+
 pub fn worktree_prune_text_route(
     runtime: &mut impl DaemonWorktreeTextRuntime,
     route_url: &DaemonRouteUrl,
@@ -256,10 +278,26 @@ pub fn worktree_prune_text_route(
     };
     let project_root = runtime.resolve_project_root(&project);
     let dry_run = boolean_param(route_url, body, "dryRun", true);
+    // `git worktree prune` only cleans git's own records. A worktree aimux
+    // knows about whose checkout is gone, and which git was never told about,
+    // is invisible to it -- so prune reported "no stale entries" with rows
+    // sitting in the dashboard flagged as missing. Reporting success while
+    // the thing the user is looking at persists is the wrapper lying.
+    let orphaned = orphaned_worktree_rows(runtime, &project);
     let payload = match runtime.prune_git_worktree_metadata(&project_root, dry_run) {
         Ok(mut payload) => {
             if let Some(map) = payload.as_object_mut() {
                 map.insert("projectRoot".into(), Value::String(project_root));
+                match orphaned {
+                    Ok(rows) => {
+                        map.insert("orphanedRows".into(), Value::Array(rows));
+                    }
+                    // Could not ask is not the same as none: say so rather
+                    // than letting the absence read as a clean bill.
+                    Err(reason) => {
+                        map.insert("orphanedRowsError".into(), Value::String(reason));
+                    }
+                }
             }
             payload
         }
