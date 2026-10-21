@@ -20,6 +20,7 @@ use crate::async_runtime::{scoped_task_name, spawn_blocking_named};
 use crate::backend_session_ids::{
     BackendSessionDiscoveryOptions, codex_backend_session_ids_for_cwd,
     discovery_tool_key_for_session, iso_timestamp_ms, record_topology_backend_session_id_at,
+    replace_topology_backend_session_id_at,
 };
 use crate::debug_logging::{LogLevel, log_at};
 use crate::project_service::lifecycle::now_iso;
@@ -102,19 +103,29 @@ fn claimed_backend_session_ids(topology: &Value) -> BTreeSet<String> {
 ///
 /// So the floor is mandatory here, not a fallback. A row whose `createdAt`
 /// will not parse is left alone rather than guessed at.
+/// What this session's conversation should be recorded as, if that can be
+/// settled -- whether or not one is recorded already.
+///
+/// Capture used to be one-shot: the field was written once and never looked
+/// at again. An agent that opened a SECOND conversation afterwards -- codex
+/// `/new` -- kept pointing at the first for the rest of its life, because the
+/// recorder refuses to replace a differing id and restore stops rediscovering
+/// once the row has one. Before capture existed, restore saw two transcripts
+/// and refused visibly; afterwards it silently reopened the wrong one, which
+/// is strictly worse and is the regression this closes.
+///
+/// Resolving the second conversation needs the session's OWN current id out
+/// of the candidate set: with it in, `/new` leaves two transcripts above the
+/// floor and the count refuses. Taking it out leaves exactly the one the
+/// agent moved to -- and every other guard still applies, so a conversation
+/// another row owns, or a checkout with a second id-less agent, is still
+/// refused rather than guessed at.
 pub(crate) fn capturable_backend_session_id(
     topology: &Value,
     session: &Value,
     project_root: &str,
     options: &BackendSessionDiscoveryOptions,
 ) -> Option<String> {
-    if session
-        .get("backendSessionId")
-        .and_then(Value::as_str)
-        .is_some_and(|id| !id.trim().is_empty())
-    {
-        return None;
-    }
     let status = session.get("status").and_then(Value::as_str)?;
     if !CAPTURABLE_STATUSES.contains(&status) {
         return None;
@@ -132,20 +143,30 @@ pub(crate) fn capturable_backend_session_id(
     if !sole_unidentified_claimant(topology, session, project_root) {
         return None;
     }
+    let recorded = session
+        .get("backendSessionId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
     let cwd = session
         .get("worktreePath")
         .and_then(Value::as_str)
         .map(str::to_owned)
         .unwrap_or_else(|| project_root.to_owned());
+    // Every conversation a row already records, this session's own included
+    // -- which is what lets a newer one be seen behind the current id rather
+    // than the pair reading as ambiguous.
+    let excluded = claimed_backend_session_ids(topology);
     let scoped = BackendSessionDiscoveryOptions {
         codex_since_ms: Some(since_ms),
-        codex_exclude_backend_session_ids: claimed_backend_session_ids(topology),
+        codex_exclude_backend_session_ids: excluded,
         ..options.clone()
     };
     let ids = codex_backend_session_ids_for_cwd(&cwd, &scoped).ok()?;
-    // None yet means the agent has not taken a turn. More than one means it
-    // cannot be settled, and the restart guard keeps refusing, which is the
-    // honest outcome rather than a coin flip.
+    // None yet means the agent has not taken a turn, or has not opened
+    // another. More than one means it cannot be settled, and the restart
+    // guard keeps refusing, which is the honest outcome rather than a coin
+    // flip.
     if ids.len() != 1 {
         return None;
     }
@@ -153,7 +174,7 @@ pub(crate) fn capturable_backend_session_id(
     if backend_session_claimed_by_other(topology, session, &id).is_some() {
         return None;
     }
-    Some(id)
+    (Some(id.as_str()) != recorded).then_some(id)
 }
 
 impl PeriodicTask for BackendSessionIdCaptureTask {
@@ -224,7 +245,11 @@ fn capture_once(
         match capturable_backend_session_id(&topology, &session, project_root, options) {
             Some(backend_session_id) => {
                 misses.remove(session_id);
-                captured.push((session_id.to_owned(), backend_session_id));
+                let replacing = session
+                    .get("backendSessionId")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !id.trim().is_empty());
+                captured.push((session_id.to_owned(), backend_session_id, replacing));
             }
             None => {
                 misses.insert(session_id.to_owned(), missed.saturating_add(1));
@@ -239,7 +264,7 @@ fn capture_once(
     // worse than giving it to neither, and the recorder cannot catch it
     // because neither row has an id yet.
     let mut taken = BTreeSet::new();
-    captured.retain(|(_, backend_session_id)| taken.insert(backend_session_id.clone()));
+    captured.retain(|(_, backend_session_id, _)| taken.insert(backend_session_id.clone()));
     if captured.is_empty() {
         return (Ok(()), misses);
     }
@@ -247,18 +272,31 @@ fn capture_once(
     let recorded = captured.clone();
     let mut refused: Vec<Value> = Vec::new();
     let write = update_runtime_topology(topology_path, |mut topology| {
-        for (session_id, backend_session_id) in &captured {
+        for (session_id, backend_session_id, replacing) in &captured {
             // Re-applied under the lock, where the row may already have gained
             // an id. The recorder refuses to replace a DIFFERENT one, which is
             // what keeps a raced decision from overwriting the truth -- but a
             // refusal is a real outcome, not a no-op, so it is reported rather
             // than dropped on the floor.
-            if let Err(error) = record_topology_backend_session_id_at(
-                &mut topology,
-                session_id,
-                backend_session_id,
-                &now,
-            ) {
+            // A refresh is the one case where replacing is the point: the
+            // agent moved to a new conversation of its own, established under
+            // the same floor, exclusions and sole-claimant checks.
+            let outcome = if *replacing {
+                replace_topology_backend_session_id_at(
+                    &mut topology,
+                    session_id,
+                    backend_session_id,
+                    &now,
+                )
+            } else {
+                record_topology_backend_session_id_at(
+                    &mut topology,
+                    session_id,
+                    backend_session_id,
+                    &now,
+                )
+            };
+            if let Err(error) = outcome {
                 refused.push(json!({ "session": session_id, "reason": error }));
             }
         }
@@ -289,7 +327,7 @@ fn capture_once(
             Some(json!({
                 "sessions": recorded
                     .iter()
-                    .map(|(session_id, _)| session_id.clone())
+                    .map(|(session_id, _, _)| session_id.clone())
                     .collect::<Vec<_>>(),
             })),
         );
@@ -503,6 +541,86 @@ mod tests {
             capturable_backend_session_id(&topology, &me, "/repo", &options(&store)),
             None,
             "the twin shares this checkout, it is just spelled with a slash"
+        );
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// `/new` must not leave the row pointing at the old conversation.
+    ///
+    /// Capture was one-shot, the recorder refuses to replace a differing id,
+    /// and restore stops rediscovering once a row has one -- so an agent that
+    /// opened a second conversation kept pointing at the first for life. That
+    /// is worse than before capture existed, when restore saw two transcripts
+    /// and refused visibly instead of silently reopening the wrong one.
+    #[test]
+    fn an_agent_that_opened_a_new_conversation_is_moved_to_it() {
+        let store = temp_store("new-conversation");
+        write_rollout(&store, MINE, "/repo", "2026-10-20T11:00:00.000Z");
+        write_rollout(&store, THEIRS, "/repo", "2026-10-20T12:00:00.000Z");
+        let mut me = session("codex-me", "2026-10-20T10:00:00.000Z");
+        me["backendSessionId"] = Value::String(MINE.into());
+        let topology = json!({ "sessions": [me.clone()] });
+
+        assert_eq!(
+            capturable_backend_session_id(&topology, &me, "/repo", &options(&store)),
+            Some(THEIRS.to_owned()),
+            "the conversation it moved to"
+        );
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// A settled row is left alone, so a refresh cannot churn.
+    #[test]
+    fn a_row_already_pointing_at_its_only_conversation_is_not_rewritten() {
+        let store = temp_store("settled");
+        write_rollout(&store, MINE, "/repo", "2026-10-20T11:00:00.000Z");
+        let mut me = session("codex-me", "2026-10-20T10:00:00.000Z");
+        me["backendSessionId"] = Value::String(MINE.into());
+        let topology = json!({ "sessions": [me.clone()] });
+
+        assert_eq!(
+            capturable_backend_session_id(&topology, &me, "/repo", &options(&store)),
+            None,
+            "nothing changed, so nothing to write"
+        );
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// A refresh obeys the same guards as a first capture.
+    #[test]
+    fn a_refresh_still_refuses_what_a_capture_would() {
+        let store = temp_store("refresh-guards");
+        write_rollout(&store, MINE, "/repo", "2026-10-20T11:00:00.000Z");
+        write_rollout(&store, THEIRS, "/repo", "2026-10-20T12:00:00.000Z");
+        let mut me = session("codex-me", "2026-10-20T10:00:00.000Z");
+        me["backendSessionId"] = Value::String(MINE.into());
+
+        // A second id-less agent in the checkout could own the newer one.
+        let twin = session("codex-twin", "2026-10-20T10:00:00.000Z");
+        assert_eq!(
+            capturable_backend_session_id(
+                &json!({ "sessions": [me.clone(), twin] }),
+                &me,
+                "/repo",
+                &options(&store)
+            ),
+            None,
+            "a second id-less agent shares the checkout"
+        );
+
+        // And a conversation another row already owns is not available.
+        let mut owner = session("codex-owner", "2026-10-20T10:30:00.000Z");
+        owner["status"] = Value::String("offline".into());
+        owner["backendSessionId"] = Value::String(THEIRS.into());
+        assert_eq!(
+            capturable_backend_session_id(
+                &json!({ "sessions": [me.clone(), owner] }),
+                &me,
+                "/repo",
+                &options(&store)
+            ),
+            None,
+            "the newer conversation belongs to a sibling"
         );
         std::fs::remove_dir_all(store).ok();
     }
