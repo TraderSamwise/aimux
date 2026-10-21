@@ -21,8 +21,14 @@ sha2 = "0.10"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 tokio = { version = "1.40", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
-# Async websocket client for the relay. Keep rustls native roots aligned with
-# the blocking HTTPS uploader so the binary still carries one TLS stack.
+# Async websocket client for the relay. One TLS stack (rustls) across both,
+# but NOT one root set, which an earlier version of this comment claimed:
+# tungstenite reads the OS trust store through rustls-native-certs, while ureq
+# below compiles Mozilla's set in. They fail differently and are fixed
+# differently -- the OS one by an OS update, this one only by a dependency
+# bump and a re-release. The eMudhra compromise of 2026-10 is the worked
+# example: macOS blocked the intermediates on the 19th, and our uploader went
+# on trusting the withdrawn root until webpki-roots was bumped.
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 # Blocking HTTPS for relay attachment uploads. rustls again, so there is one
 # TLS stack in the binary and no system openssl on any target.
