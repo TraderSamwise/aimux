@@ -234,6 +234,17 @@ jobs:
     # fixture and contract coverage.
     env:
       AIMUX_DAEMON_PORT: "47390"
+      # This job links around 240 test binaries and restores two cargo caches
+      # on top of them, and it reached the runner's disk ceiling: rustc died
+      # with "IO failure on output stream: Disk quota exceeded" partway through
+      # the test targets, which surfaces as a compile failure naming a random
+      # test crate and says nothing about the cause. Full debug info is most of
+      # a debug test binary's size and almost none of its value here --
+      # line tables still give a backtrace with file and line, which is what
+      # anyone reading a CI failure actually uses. Shrinking what this job
+      # produces leaves what gets compiled unchanged.
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v4
 
