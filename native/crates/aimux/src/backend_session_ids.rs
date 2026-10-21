@@ -103,6 +103,56 @@ pub fn record_topology_backend_session_id_at(
     Ok(json!({ "sessionId": session_id, "backendSessionId": selected }))
 }
 
+/// Replace a conversation id that is no longer the session's.
+///
+/// `record_topology_backend_session_id_at` refuses this on purpose: for every
+/// other writer, disagreeing with a recorded id means two writers reached
+/// different conclusions and the existing one should win. The one case where
+/// replacing is right is an agent that moved to a NEW conversation of its
+/// own, which only the capture task can establish -- it holds the launch
+/// floor, the sibling exclusions and the sole-claimant check that make the
+/// newer transcript unambiguously the same agent's.
+///
+/// Separately named rather than a flag on the recorder, so a future caller
+/// has to decide it means this and cannot reach it by passing `true`.
+pub fn replace_topology_backend_session_id_at(
+    topology: &mut Value,
+    session_id: &str,
+    backend_session_id: &str,
+    now: &str,
+) -> Result<Value, String> {
+    let session_id = session_id.trim();
+    let backend_session_id = backend_session_id.trim();
+    if session_id.is_empty() {
+        return Err("sessionId is required".into());
+    }
+    if backend_session_id.is_empty() {
+        return Err("backendSessionId is required".into());
+    }
+    let Some(sessions) = topology.get_mut("sessions").and_then(Value::as_array_mut) else {
+        return Err(format!(
+            "Agent \"{session_id}\" is not managed in runtime topology"
+        ));
+    };
+    let Some(session) = sessions
+        .iter_mut()
+        .find(|entry| string_field(entry, "id").as_deref() == Some(session_id))
+    else {
+        return Err(format!(
+            "Agent \"{session_id}\" is not managed in runtime topology"
+        ));
+    };
+    let previous = string_field(session, "backendSessionId");
+    session["backendSessionId"] = Value::String(backend_session_id.to_owned());
+    session["updatedAt"] = Value::String(now.to_owned());
+    topology["generatedAt"] = Value::String(now.to_owned());
+    Ok(json!({
+        "sessionId": session_id,
+        "backendSessionId": backend_session_id,
+        "previousBackendSessionId": previous,
+    }))
+}
+
 pub fn reconcile_offline_backend_session_ids(
     project_root: impl AsRef<Path>,
     project_state_dir: impl AsRef<Path>,
