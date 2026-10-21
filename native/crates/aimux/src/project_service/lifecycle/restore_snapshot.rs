@@ -338,7 +338,7 @@ pub(crate) fn derive_agent_restore_offer(
     {
         return Ok(None);
     }
-    if acknowledged_snapshot_id(project_state_dir).as_deref() == Some(snapshot_id.as_str()) {
+    if acknowledgement_still_applies(project_state_dir, &gate, &snapshot_id) {
         remove_agent_restore_offer(project_state_dir);
         return Ok(None);
     }
@@ -476,11 +476,38 @@ fn offer_matches_prompt_gate(project_state_dir: &Path, project_id: &str, offer: 
         .is_some_and(|gate| string_field(&gate, "snapshotId") == string_field(offer, "snapshotId"))
 }
 
-fn acknowledged_snapshot_id(project_state_dir: &Path) -> Option<String> {
-    trimmed_string(
-        Value::Object(read_json_object(&agent_restore_ack_path(project_state_dir)))
-            .get("snapshotId"),
-    )
+/// Whether a previous acknowledgement still answers THIS offer.
+///
+/// An ack answers one occasion, not a set of agents for ever. The snapshot id
+/// changes only when the SET of agents changes, so the same agents killed by a
+/// second restart carry the same id as the first -- and an ack from the first
+/// silently muted every restart after it. That is how twenty agents went
+/// offline with no prompt: the id was minted a day earlier, acknowledged by a
+/// restore that did not work, and every later restart matched it.
+///
+/// The prompt gate beside it is already re-seeded on each daemon boot, which
+/// is exactly the unit of "a new occasion". The ack now carries the same
+/// stamp, so one from a previous boot is spent rather than permanent.
+fn acknowledgement_still_applies(
+    project_state_dir: &Path,
+    gate: &Value,
+    snapshot_id: &str,
+) -> bool {
+    let ack = Value::Object(read_json_object(&agent_restore_ack_path(project_state_dir)));
+    if trimmed_string(ack.get("snapshotId")).as_deref() != Some(snapshot_id) {
+        return false;
+    }
+    match (
+        trimmed_string(ack.get("daemonBootId")),
+        trimmed_string(gate.get("daemonBootId")),
+    ) {
+        (Some(acknowledged), Some(current)) => acknowledged == current,
+        // An ack written before this field existed, or a gate with no boot to
+        // compare against, cannot be attributed to an occasion. Treating it as
+        // spent costs one extra prompt; treating it as current is what left
+        // the user with no prompt at all.
+        _ => false,
+    }
 }
 
 /// Which agents the snapshot holds, not what order they were listed in. The
