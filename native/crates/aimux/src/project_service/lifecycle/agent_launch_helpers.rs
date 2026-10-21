@@ -109,12 +109,25 @@ pub(super) fn backend_session_claimed_by_other(
 }
 
 /// Whether this agent is the only one in its checkout that could claim a
-/// transcript -- live, same tool, and with no conversation recorded yet.
+/// transcript -- restorable, same tool, and with no conversation recorded
+/// yet.
 ///
 /// Two such agents cannot be told apart by time alone: if one's own transcript
 /// never appeared, the other's survives the floor and gets adopted. Counting
 /// them is the whole check, and it needs the topology, which only the callers
 /// of this module have.
+///
+/// "Restorable" is everything that is not graveyarded, rather than a list of
+/// the statuses that are. An OFFLINE sibling is the case this missed: it can
+/// be restored into its old conversation, so it can still claim one, and
+/// leaving it out made this agent look like the only claimant and adopt its
+/// transcript -- two agents in one conversation, which the narrowing below
+/// calls worse than refusing. A deny-list also fails closed when a new status
+/// appears, where an allow-list would silently stop counting it.
+///
+/// Graveyarded siblings are excluded deliberately: their checkout is gone, so
+/// they will not come back to claim anything, and counting them would mean a
+/// checkout that ever held an agent could never narrow again.
 fn sole_unidentified_claimant(topology: &Value, session: &Value, project_root: &str) -> bool {
     let cwd =
         trimmed_string(session.get("worktreePath")).unwrap_or_else(|| project_root.to_owned());
@@ -123,10 +136,7 @@ fn sole_unidentified_claimant(topology: &Value, session: &Value, project_root: &
     array_field(topology, "sessions")
         .into_iter()
         .filter(|other| string_field(other, "id") != session_id)
-        .filter(|other| {
-            crate::project_service::session_visibility::LIVE_SESSION_STATUSES
-                .contains(&string_field(other, "status").as_str())
-        })
+        .filter(|other| string_field(other, "status") != "graveyard")
         .filter(|other| trimmed_string(other.get("backendSessionId")).is_none())
         .filter(|other| tool_config_key_for_session(other) == tool)
         .all(|other| {
@@ -805,7 +815,7 @@ mod missing_backend_disposition_tests {
 
     /// And the predicate that decides it, against a real topology.
     #[test]
-    fn sole_claimant_counts_only_live_id_less_agents_in_the_same_checkout() {
+    fn sole_claimant_counts_restorable_id_less_agents_in_the_same_checkout() {
         let me = json!({ "id": "codex-me", "toolConfigKey": "codex", "worktreePath": "/wt", "status": "running" });
         let case = |others: Value| {
             let mut sessions = vec![me.clone()];
@@ -829,10 +839,22 @@ mod missing_backend_disposition_tests {
             "another checkout cannot take this one's transcript"
         );
         assert!(
-            case(json!([
-                { "id": "codex-gone", "toolConfigKey": "codex", "worktreePath": "/wt", "status": "offline" }
+            !case(json!([
+                { "id": "codex-offline", "toolConfigKey": "codex", "worktreePath": "/wt", "status": "offline" }
             ])),
-            "a dead agent is not competing for it"
+            "an offline agent can be restored into its conversation, so it is still a claimant"
+        );
+        assert!(
+            case(json!([
+                { "id": "codex-buried", "toolConfigKey": "codex", "worktreePath": "/wt", "status": "graveyard" }
+            ])),
+            "a graveyarded agent's checkout is gone, so it will never come back for it"
+        );
+        assert!(
+            !case(json!([
+                { "id": "codex-odd", "toolConfigKey": "codex", "worktreePath": "/wt", "status": "something-new" }
+            ])),
+            "an unrecognised status counts, so a new one fails closed rather than silently"
         );
         assert!(
             case(json!([
