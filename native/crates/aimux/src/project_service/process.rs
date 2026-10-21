@@ -41,6 +41,7 @@ use crate::plugin_project_service_host::{
 use crate::project_api_contract::{project_api_views_for_mutation_route, routes};
 use crate::project_service::agent_input_delivery::agent_input_delivery_task;
 use crate::project_service::agent_restore_task::agent_restore_snapshot_task;
+use crate::project_service::backend_session_id_capture_task::backend_session_id_capture_task;
 use crate::project_service::builtin_metadata_task::builtin_metadata_task;
 use crate::project_service::loop_watcher_task::loop_watcher_task;
 use crate::project_service::retired_worktree_reaper::retired_worktree_reaper_task;
@@ -1912,6 +1913,7 @@ pub fn project_service_periodic_tasks_for_context(
     periodic_tasks.push(window_reconciliation_task());
     periodic_tasks.push(retired_worktree_reaper_task());
     periodic_tasks.push(worktree_presence_reconciler_task());
+    periodic_tasks.push(backend_session_id_capture_task());
     append_stability_doctor_test_wedge_task(&mut periodic_tasks);
     periodic_tasks
 }

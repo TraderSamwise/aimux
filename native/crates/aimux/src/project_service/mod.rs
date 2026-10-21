@@ -7,6 +7,7 @@ pub mod agent_restore_task;
 pub mod agent_roles;
 pub mod agents;
 pub mod attachments;
+pub mod backend_session_id_capture_task;
 pub mod builtin_metadata_task;
 pub mod controls;
 pub mod coordination_mutations;

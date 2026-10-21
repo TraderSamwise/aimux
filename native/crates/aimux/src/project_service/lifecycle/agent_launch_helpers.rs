@@ -89,7 +89,7 @@ pub(super) fn missing_backend_session_disposition_async_runtime(
     }
 }
 
-pub(super) fn backend_session_claimed_by_other(
+pub(crate) fn backend_session_claimed_by_other(
     topology: &Value,
     session: &Value,
     backend_id: &str,
@@ -128,7 +128,11 @@ pub(super) fn backend_session_claimed_by_other(
 /// Graveyarded siblings are excluded deliberately: their checkout is gone, so
 /// they will not come back to claim anything, and counting them would mean a
 /// checkout that ever held an agent could never narrow again.
-fn sole_unidentified_claimant(topology: &Value, session: &Value, project_root: &str) -> bool {
+pub(crate) fn sole_unidentified_claimant(
+    topology: &Value,
+    session: &Value,
+    project_root: &str,
+) -> bool {
     let cwd =
         trimmed_string(session.get("worktreePath")).unwrap_or_else(|| project_root.to_owned());
     let tool = tool_config_key_for_session(session);
