@@ -28,16 +28,22 @@ use std::fs;
 
 const PROJECT_ROOT: &str = "/repo";
 
-/// Window order, creation order and worktree grouping all disagree on purpose.
-/// `overseer` is created LAST but holds the lowest window; `wt-early` is
-/// created first but sits late; the two worktrees interleave, because agents in
-/// one worktree do not own a contiguous block of tmux windows.
+/// Class, window order, creation order and worktree grouping all disagree on
+/// purpose. The overseer holds a MIDDLE window and must still lead; `wt-early`
+/// is created first but sits late; the two worktrees interleave, because agents
+/// in one worktree do not own a contiguous block of tmux windows.
+///
+/// `class` is stored the way the project service stores it, flags and all,
+/// because a fixture that carries only a lane is exactly how this test went
+/// quiet: every agent read as a coder, the class term did nothing, and the
+/// assertion below was satisfied by pure window order.
 struct Agent {
     id: &'static str,
     window_index: i64,
     created_at: &'static str,
     worktree: &'static str,
     supervisor: bool,
+    class: &'static str,
 }
 
 const AGENTS: &[Agent] = &[
@@ -47,6 +53,7 @@ const AGENTS: &[Agent] = &[
         created_at: "2026-01-09T00:00:00.000Z",
         worktree: PROJECT_ROOT,
         supervisor: true,
+        class: "overseer",
     },
     Agent {
         id: "wt-late",
@@ -54,6 +61,7 @@ const AGENTS: &[Agent] = &[
         created_at: "2026-01-05T00:00:00.000Z",
         worktree: "/repo/.aimux/worktrees/feature",
         supervisor: false,
+        class: "coder",
     },
     Agent {
         id: "main-mid",
@@ -61,6 +69,7 @@ const AGENTS: &[Agent] = &[
         created_at: "2026-01-03T00:00:00.000Z",
         worktree: PROJECT_ROOT,
         supervisor: false,
+        class: "coder",
     },
     Agent {
         id: "wt-early",
@@ -68,6 +77,7 @@ const AGENTS: &[Agent] = &[
         created_at: "2026-01-01T00:00:00.000Z",
         worktree: "/repo/.aimux/worktrees/feature",
         supervisor: false,
+        class: "coder",
     },
     Agent {
         id: "main-last",
@@ -75,6 +85,7 @@ const AGENTS: &[Agent] = &[
         created_at: "2026-01-07T00:00:00.000Z",
         worktree: PROJECT_ROOT,
         supervisor: false,
+        class: "coder",
     },
     Agent {
         id: "main-tail",
@@ -82,21 +93,60 @@ const AGENTS: &[Agent] = &[
         created_at: "2026-01-02T00:00:00.000Z",
         worktree: PROJECT_ROOT,
         supervisor: false,
+        class: "coder",
+    },
+    // An overseer whose stored lane is a WORKTREE, holding the last window in
+    // it. Without this the only overseer sits in the supervisor plane, and
+    // Exposé hoists that plane by partitioning on the lane -- so the overseer
+    // led there whatever the comparator said, and the switch list filters
+    // plane agents out entirely. Both arms were insensitive to class. This one
+    // is not hoisted and is not filtered, and an overseer is the one control
+    // class `use_expose_role_visibility` still shows, so the group it sits in
+    // has to lift it on class alone.
+    Agent {
+        id: "wt-overseer",
+        window_index: 8,
+        created_at: "2026-01-08T00:00:00.000Z",
+        worktree: "/repo/.aimux/worktrees/feature",
+        supervisor: false,
+        class: "overseer",
     },
 ];
 
-/// The ungrouped list every surface starts from: pure tmux window order. The
-/// overseer sits in the middle of it on purpose, so "the supervisor plane comes
-/// first" is a claim about GROUPING that this order cannot accidentally satisfy.
-/// Nothing here is creation order, and nothing groups by worktree.
+/// The ungrouped list every surface starts from: class, then tmux window
+/// order. The overseer holds window 4 and leads anyway, so a surface that
+/// orders by window alone cannot accidentally satisfy this -- it would put the
+/// overseer between `wt-early` at 3 and `main-last` at 5. Nothing here is
+/// creation order, and nothing groups by worktree.
 const CANONICAL: &[&str] = &[
+    "overseer",
+    "wt-overseer",
     "wt-late",
     "main-mid",
     "wt-early",
-    "overseer",
     "main-last",
     "main-tail",
 ];
+
+/// The flags the project service actually stores for each class. A lane is
+/// not a class -- `agent_class` reads these, and a fixture carrying only a
+/// lane leaves every agent on the coder rung.
+fn class_flags(agent: &Agent) -> Vec<(&'static str, Value)> {
+    match agent.class {
+        "overseer" => vec![
+            ("overseer", json!(true)),
+            ("projectControl", json!(true)),
+            ("role", json!("overseer")),
+        ],
+        "scribe" => vec![
+            ("scribe", json!(true)),
+            ("projectControl", json!(true)),
+            ("role", json!("scribe")),
+        ],
+        "control" => vec![("projectControl", json!(true)), ("role", json!("control"))],
+        _ => Vec::new(),
+    }
+}
 
 fn lane(agent: &Agent) -> Value {
     if agent.supervisor {
@@ -113,7 +163,7 @@ fn topology() -> Value {
     let sessions = ordered
         .iter()
         .map(|agent| {
-            json!({
+            let mut session = json!({
                 "id": agent.id,
                 "nodeId": format!("node-{}", agent.id),
                 "tool": "claude",
@@ -126,7 +176,11 @@ fn topology() -> Value {
                 "status": "running",
                 "createdAt": agent.created_at,
                 "updatedAt": agent.created_at,
-            })
+            });
+            for (key, value) in class_flags(agent) {
+                session[key] = value;
+            }
+            session
         })
         .collect::<Vec<_>>();
     let nodes = ordered
@@ -193,15 +247,21 @@ fn metadata_sessions() -> BTreeMap<String, Value> {
     AGENTS
         .iter()
         .map(|agent| {
-            (
-                agent.id.to_owned(),
-                json!({
+            (agent.id.to_owned(), {
+                let mut metadata = json!({
                     "id": agent.id,
                     "lane": lane(agent),
                     "worktreePath": agent.worktree,
                     "createdAt": agent.created_at,
-                }),
-            )
+                });
+                // Promotion and demotion write metadata state, not the
+                // topology file, so this is where the flags have to be for
+                // the surfaces that merge them.
+                for (key, value) in class_flags(agent) {
+                    metadata[key] = value;
+                }
+                metadata
+            })
         })
         .collect()
 }

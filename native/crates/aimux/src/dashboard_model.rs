@@ -368,7 +368,10 @@ pub fn is_dashboard_scribe_session(session: &DashboardSession) -> bool {
     crate::team_contract::is_scribe_session(Some(&dashboard_session_classifier_probe(session)))
 }
 
-fn dashboard_session_classifier_probe(session: &DashboardSession) -> Value {
+/// The five fields every classification of an agent's authority reads, lifted
+/// off a typed row. Shared so the navigation order keys on the same JSON the
+/// overseer and scribe checks do, rather than a second copy of the field list.
+pub(crate) fn dashboard_session_classifier_probe(session: &DashboardSession) -> Value {
     let mut probe = Map::new();
     if let Some(role) = session
         .role

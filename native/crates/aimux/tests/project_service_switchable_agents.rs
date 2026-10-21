@@ -99,9 +99,15 @@ fn filters_project_control_and_keeps_services_in_worktree_scope() {
     };
     let items =
         list_switchable_agent_items(&entries, &metadata, &context, &expose_visible, &last_used);
+    // `boss` is an overseer and leads although it holds window 2 and `coder`
+    // holds window 1: class decides, the window decides within a class. The
+    // flag lives in the metadata map rather than on the window, so this also
+    // says the list merges the stored control flags before ordering -- reading
+    // the raw window metadata would leave `boss` on the coder rung.
+    // `shell-1` is a service, which is a partition rather than a rung.
     assert_eq!(
         ids(&items),
-        vec!["coder".to_owned(), "boss".to_owned(), "shell-1".to_owned()]
+        vec!["boss".to_owned(), "coder".to_owned(), "shell-1".to_owned()]
     );
 }
 

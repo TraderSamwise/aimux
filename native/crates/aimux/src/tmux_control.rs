@@ -159,6 +159,12 @@ struct NavItem {
     session_id: String,
     worktree_path: String,
     supervisor_plane: bool,
+    /// The authority fields off the window's own metadata, kept as JSON
+    /// because that is what the shared comparator classifies. NOT derived
+    /// from `supervisor_plane`: that is the plane the agent is SHOWN in, and
+    /// a stored lane wins there, so an overseer moved out of the supervisor
+    /// plane has `projectControl: true` with `supervisor_plane: false`.
+    control_flags: Value,
     attention: String,
     unseen_count: i64,
     status_text: String,
@@ -1291,6 +1297,7 @@ impl TmuxControl {
                 .unwrap_or(&self.options.project_root)
                 .to_owned();
             let supervisor_plane = is_supervisor_plane_meta(&meta, &team);
+            let control_flags = control_flags_from_meta(&meta, &team);
             items.push(NavItem {
                 window_id: window_id.to_owned(),
                 window_index: parts[1].parse().unwrap_or(0),
@@ -1306,6 +1313,7 @@ impl TmuxControl {
                     .to_owned(),
                 worktree_path: worktree,
                 supervisor_plane,
+                control_flags,
                 attention: meta
                     .get("attention")
                     .and_then(Value::as_str)
@@ -2443,8 +2451,41 @@ fn sort_teammates(items: &mut [NavItem]) {
     });
 }
 
+/// The authority fields the shared class ladder reads, lifted off a window's
+/// metadata. `projectControl: false` is kept rather than dropped, because it
+/// is what suppresses a stale legacy role on a demoted agent.
+fn control_flags_from_meta(meta: &Value, team: &Value) -> Value {
+    let mut flags = Map::new();
+    for key in ["overseer", "scribe", "projectControl"] {
+        if let Some(value) = meta.get(key).and_then(Value::as_bool) {
+            flags.insert(key.to_owned(), Value::Bool(value));
+        }
+    }
+    if let Some(role) = meta
+        .get("role")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|role| !role.is_empty())
+    {
+        flags.insert("role".into(), Value::String(role.to_owned()));
+    }
+    if team.get("role").is_some() {
+        flags.insert("team".into(), team.clone());
+    }
+    Value::Object(flags)
+}
+
+/// The comparator keys on class as well as window position, so the probe
+/// carries the authority fields too. Without them every item read as a coder,
+/// which is indistinguishable from a list with no control agents in it -- so
+/// `n`/`p` would have cycled in window order while the screen showed class
+/// order.
 fn nav_item_order_probe(item: &NavItem) -> Value {
-    let mut probe = Map::new();
+    let mut probe = item
+        .control_flags
+        .as_object()
+        .cloned()
+        .unwrap_or_else(Map::new);
     probe.insert("id".into(), Value::String(item.session_id.clone()));
     probe.insert("tmuxWindowIndex".into(), Value::from(item.window_index));
     if !item.created_at.is_empty() {
@@ -2603,6 +2644,92 @@ fn expose_popup_command(context: &Path, socket: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    /// The probe handed to the shared comparator has to classify the same way
+    /// the window's own metadata does.
+    ///
+    /// A probe missing the authority fields does not fail -- it reads as a
+    /// coder, which is exactly what a list with no control agents in it reads
+    /// as. So the gap is invisible at the call site and only shows up as
+    /// `n`/`p` cycling in a different order than the screen. Comparing the
+    /// probe's class against the metadata's class is what makes the gap fail.
+    #[test]
+    fn the_nav_probe_classifies_the_same_way_its_metadata_does() {
+        let cases = [
+            (
+                "overseer",
+                json!({ "sessionId": "a", "overseer": true, "projectControl": true }),
+                json!({}),
+            ),
+            (
+                "scribe",
+                json!({ "sessionId": "b", "scribe": true, "projectControl": true }),
+                json!({}),
+            ),
+            (
+                "control",
+                json!({ "sessionId": "c", "projectControl": true }),
+                json!({}),
+            ),
+            (
+                "control",
+                json!({ "sessionId": "d", "projectControl": true, "role": "qa" }),
+                json!({}),
+            ),
+            ("coder", json!({ "sessionId": "e" }), json!({})),
+            // A legacy role carried on the team rather than the session.
+            (
+                "overseer",
+                json!({ "sessionId": "f" }),
+                json!({ "role": "overseer" }),
+            ),
+            // Demoted: the explicit false has to survive into the probe, or
+            // the stale team role promotes it again.
+            (
+                "coder",
+                json!({ "sessionId": "g", "projectControl": false }),
+                json!({ "role": "overseer" }),
+            ),
+        ];
+
+        for (expected, meta, team) in cases {
+            let item = NavItem {
+                window_id: "@1".to_owned(),
+                window_index: 1,
+                kind: "agent".to_owned(),
+                session_id: meta
+                    .get("sessionId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+                worktree_path: "/repo".to_owned(),
+                supervisor_plane: false,
+                control_flags: control_flags_from_meta(&meta, &team),
+                attention: String::new(),
+                unseen_count: 0,
+                status_text: String::new(),
+                team: team.clone(),
+                created_at: String::new(),
+                alive: true,
+            };
+            let probe = nav_item_order_probe(&item);
+            assert_eq!(
+                crate::team_contract::agent_class(Some(&probe)),
+                expected,
+                "probe class for {meta}"
+            );
+            // And the probe agrees with classifying the metadata directly,
+            // which is the invariant rather than the literal expectation.
+            let mut direct = meta.as_object().cloned().unwrap_or_else(Map::new);
+            direct.insert("team".into(), team);
+            assert_eq!(
+                crate::team_contract::agent_class(Some(&probe)),
+                crate::team_contract::agent_class(Some(&Value::Object(direct))),
+                "probe disagrees with its own metadata for {expected}"
+            );
+        }
+    }
 
     #[test]
     fn only_a_window_carrying_an_agent_is_viewable() {

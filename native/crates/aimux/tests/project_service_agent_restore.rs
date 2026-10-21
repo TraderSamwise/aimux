@@ -542,6 +542,31 @@ impl TestProject {
             .expect("write topology");
     }
 
+    /// Promote a session in METADATA only, which is where promotion actually
+    /// writes: nothing puts `overseer`, `scribe` or `projectControl` into the
+    /// topology file. `mark_overseer` writes the topology, which the snapshot
+    /// could read without merging anything; this is the shape that catches a
+    /// snapshot ordering agents off the raw row.
+    fn mark_overseer_in_metadata_only(&self, session_id: &str) {
+        let path = aimux::daemon_state::metadata_state_path(&self.state_dir);
+        let mut state = if path.exists() {
+            serde_json::from_str::<Value>(&fs::read_to_string(&path).expect("read metadata"))
+                .expect("parse metadata")
+        } else {
+            json!({ "version": 1, "sessions": {} })
+        };
+        state["sessions"][session_id] = json!({
+            "id": session_id,
+            "overseer": true,
+            "projectControl": true,
+        });
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&state).expect("serialize metadata"),
+        )
+        .expect("write metadata");
+    }
+
     /// Move a session to a terminal status without going through stop, which
     /// is how the graveyard sweep and worktree cleanup finish a session.
     fn set_session_status(&self, session_id: &str, status: &str) {
@@ -845,4 +870,34 @@ fn the_snapshot_records_agents_in_tmux_window_order() {
     // this id, and reordering must not mint a new one.
     assert_eq!(second["id"], first["id"]);
     assert_eq!(second["createdAt"], first["createdAt"]);
+}
+
+/// The snapshot is the order the windows come back in, so it orders by class
+/// first like every other surface -- and it has to merge the stored control
+/// flags to see a class at all.
+///
+/// Nothing writes `overseer`, `scribe` or `projectControl` into the topology
+/// file: `upsert_agent_topology` persists `role`, `lane`, `roleState` and
+/// `team`, and promotion and demotion write metadata state. Ordering the raw
+/// topology rows therefore read every agent as a coder, so the ladder was
+/// inert here while every other surface had it.
+#[test]
+fn the_snapshot_orders_an_overseer_first_from_metadata_alone() {
+    let project = TestProject::new("snapshot-class-order");
+    project.run_task();
+    assert_eq!(
+        session_ids(&project.snapshot().expect("snapshot recorded")),
+        vec!["claude-one", "codex-two"],
+        "two coders, so the window order decides"
+    );
+
+    // codex-two holds the later window and is promoted in metadata only.
+    project.mark_overseer_in_metadata_only("codex-two");
+    project.run_task();
+
+    assert_eq!(
+        session_ids(&project.snapshot().expect("snapshot recorded")),
+        vec!["codex-two", "claude-one"],
+        "the overseer leads although its window is still the later one"
+    );
 }

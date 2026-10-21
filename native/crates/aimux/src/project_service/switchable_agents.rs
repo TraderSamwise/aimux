@@ -711,7 +711,7 @@ fn build_switchable_agent_items(
             .map(str::to_owned),
         teammate_parent_session_id: teammate_parent_session_id.clone(),
     });
-    let mut managed = entries
+    let managed = entries
         .iter()
         .filter(|entry| {
             let metadata = metadata_with_stored_control_flags(&entry.metadata, metadata_sessions);
@@ -727,12 +727,20 @@ fn build_switchable_agent_items(
             })
         })
         .collect::<Vec<_>>();
+    // The order probe is built once per entry instead of inside the
+    // comparator. Merging the stored control flags is a map clone, and doing
+    // it inside `sort_by` pays for it on every comparison to answer a
+    // question that cannot change mid-sort.
+    let mut managed = managed
+        .into_iter()
+        .map(|entry| (switchable_order_probe(entry, metadata_sessions), entry))
+        .collect::<Vec<_>>();
     managed.sort_by(|left, right| {
-        compare_switchable_windows(left, right, teammate_parent_session_id.as_deref())
+        compare_switchable_windows(&left.0, &right.0, teammate_parent_session_id.as_deref())
     });
     managed
         .into_iter()
-        .map(|entry| managed_window_item(entry, metadata_sessions, context, last_used))
+        .map(|(_, entry)| managed_window_item(entry, metadata_sessions, context, last_used))
         .collect()
 }
 
@@ -1111,35 +1119,41 @@ fn current_window_is_project_control(
 /// `team.order`, a roster position someone assigned, which is the one thing
 /// here that could move an agent independently of its window.
 fn compare_switchable_windows(
-    left: &ManagedWindowEntry,
-    right: &ManagedWindowEntry,
+    left: &Value,
+    right: &Value,
     teammate_parent_session_id: Option<&str>,
 ) -> std::cmp::Ordering {
     if teammate_parent_session_id.is_none() {
-        let kind_rank = |entry: &ManagedWindowEntry| {
-            i32::from(string_field(&entry.metadata, "kind") == Some("service"))
-        };
+        let kind_rank = |probe: &Value| i32::from(string_field(probe, "kind") == Some("service"));
         let rank = kind_rank(left).cmp(&kind_rank(right));
         if rank != std::cmp::Ordering::Equal {
             return rank;
         }
     }
-    crate::team_contract::compare_agent_canonical_order(
-        &switchable_order_probe(left),
-        &switchable_order_probe(right),
-    )
+    crate::team_contract::compare_agent_canonical_order(left, right)
 }
 
 /// The comparator reads one JSON value; a managed entry keeps its window on
 /// the target and its identity on the metadata.
-fn switchable_order_probe(entry: &ManagedWindowEntry) -> Value {
-    let mut probe = Map::new();
+///
+/// Built from the stored-flag merge rather than from `entry.metadata` alone.
+/// The comparator keys on class now, and the raw `@aimux-meta` on a tmux
+/// window is only written at launch and refreshed on a tick, so a demoted
+/// agent still reads as an overseer there -- and an entry carrying no
+/// authority fields at all is indistinguishable from a coder, which would
+/// have left this list ordering by window while the dashboard ordered by
+/// class.
+fn switchable_order_probe(
+    entry: &ManagedWindowEntry,
+    metadata_sessions: &BTreeMap<String, Value>,
+) -> Value {
+    let merged = metadata_with_stored_control_flags(&entry.metadata, metadata_sessions);
+    let mut probe = merged.as_object().cloned().unwrap_or_else(Map::new);
     probe.insert("target".into(), entry.target.clone());
-    for key in ["id", "sessionId", "createdAt"] {
-        if let Some(value) = entry.metadata.get(key) {
-            let key = if key == "sessionId" { "id" } else { key };
-            probe.entry(key.to_owned()).or_insert_with(|| value.clone());
-        }
+    // The metadata names the session `sessionId`; the comparator's id
+    // tie-break and its windowless branch both read `id`.
+    if let Some(session_id) = probe.get("sessionId").cloned() {
+        probe.entry("id".to_owned()).or_insert(session_id);
     }
     Value::Object(probe)
 }

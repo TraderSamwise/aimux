@@ -946,18 +946,14 @@ fn entries_for_group_services<'a>(
 }
 
 /// Dashboard movement walks the list the dashboard renders, so it orders the
-/// same way: tmux window position, then creation time for anything with no
-/// window. Sorting it createdAt-descending here made `j`/`k` step through a
-/// different sequence than the one on screen.
+/// same way: class, then tmux window position, then creation time for
+/// anything with no window. Sorting it createdAt-descending here made `j`/`k`
+/// step through a different sequence than the one on screen.
 fn sort_sessions_by_created(sessions: &mut [&DashboardSession]) {
     sessions.sort_by(|left, right| {
         crate::team_contract::compare_agent_canonical_order(
-            &navigation_order_probe(left.tmux_window_index, left.created_at.as_deref(), &left.id),
-            &navigation_order_probe(
-                right.tmux_window_index,
-                right.created_at.as_deref(),
-                &right.id,
-            ),
+            &navigation_order_probe(left),
+            &navigation_order_probe(right),
         )
     });
 }
@@ -965,29 +961,44 @@ fn sort_sessions_by_created(sessions: &mut [&DashboardSession]) {
 fn sort_services_by_created(services: &mut [&DashboardService]) {
     services.sort_by(|left, right| {
         crate::team_contract::compare_agent_canonical_order(
-            &navigation_order_probe(left.tmux_window_index, left.created_at.as_deref(), &left.id),
-            &navigation_order_probe(
-                right.tmux_window_index,
-                right.created_at.as_deref(),
-                &right.id,
-            ),
+            &navigation_service_order_probe(left),
+            &navigation_service_order_probe(right),
         )
     });
 }
 
-/// The comparator reads JSON, and these are typed rows, so hand it the three
-/// fields it keys on rather than a second implementation of the same rule.
-pub(crate) fn navigation_order_probe(
-    tmux_window_index: Option<usize>,
-    created_at: Option<&str>,
-    id: &str,
-) -> Value {
-    let mut probe = serde_json::Map::new();
-    probe.insert("id".into(), Value::String(id.to_owned()));
-    if let Some(window_index) = tmux_window_index {
+/// The comparator reads JSON and these are typed rows, so hand it the fields
+/// it keys on rather than a second implementation of the same rule.
+///
+/// It keys on class as well as position now, so the probe has to carry the
+/// authority fields too. Handing over only the window index left `j`/`k`
+/// stepping in window order while the rows on screen were in class order --
+/// the probe being short is indistinguishable from every agent being a coder.
+pub(crate) fn navigation_order_probe(session: &DashboardSession) -> Value {
+    let mut probe = crate::dashboard_model::dashboard_session_classifier_probe(session)
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    probe.insert("id".into(), Value::String(session.id.clone()));
+    if let Some(window_index) = session.tmux_window_index {
         probe.insert("tmuxWindowIndex".into(), Value::from(window_index));
     }
-    if let Some(created_at) = created_at {
+    if let Some(created_at) = session.created_at.as_deref() {
+        probe.insert("createdAt".into(), Value::String(created_at.to_owned()));
+    }
+    Value::Object(probe)
+}
+
+/// A service has no class -- there is no such thing as an overseer service --
+/// so its probe carries position only and every service lands on one rung.
+/// Services are partitioned from agents by the caller, not by the comparator.
+fn navigation_service_order_probe(service: &DashboardService) -> Value {
+    let mut probe = serde_json::Map::new();
+    probe.insert("id".into(), Value::String(service.id.clone()));
+    if let Some(window_index) = service.tmux_window_index {
+        probe.insert("tmuxWindowIndex".into(), Value::from(window_index));
+    }
+    if let Some(created_at) = service.created_at.as_deref() {
         probe.insert("createdAt".into(), Value::String(created_at.to_owned()));
     }
     Value::Object(probe)
@@ -1158,4 +1169,84 @@ fn active_session_id(host: &Value) -> Option<Value> {
         .get(index)?
         .get("id")
         .cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Movement keys walk the rows the dashboard renders, and the comparator
+    /// they share now keys on class. So the probe has to classify the same way
+    /// the row it was built from does.
+    ///
+    /// A probe missing the authority fields does not fail -- it reads as a
+    /// coder, which is indistinguishable from a list holding no control
+    /// agents. Nothing at the call site shows the gap, so the gate is the
+    /// agreement itself rather than a particular order.
+    #[test]
+    fn the_navigation_probe_classifies_the_same_way_its_row_does() {
+        // Built by deserializing, because that is how a row actually
+        // arrives, and because `DashboardSession` has no `Default` to fake.
+        let row = |flags: Value| -> DashboardSession {
+            let mut value = json!({
+                "index": 0,
+                "id": "agent",
+                "command": "claude",
+                "status": "running",
+                "active": false,
+                "tmuxWindowIndex": 3,
+                "createdAt": "2026-01-01T00:00:00.000Z",
+            });
+            for (key, flag) in flags.as_object().expect("flag object") {
+                value[key] = flag.clone();
+            }
+            serde_json::from_value(value).expect("dashboard session row")
+        };
+
+        let cases = [
+            (
+                "overseer",
+                row(json!({ "overseer": true, "projectControl": true })),
+            ),
+            (
+                "scribe",
+                row(json!({ "scribe": true, "projectControl": true })),
+            ),
+            ("control", row(json!({ "projectControl": true }))),
+            (
+                "control",
+                row(json!({ "projectControl": true, "role": "qa" })),
+            ),
+            ("coder", row(json!({}))),
+            ("overseer", row(json!({ "role": "overseer" }))),
+            // Demoted: the explicit false has to reach the probe, or the stale
+            // role promotes the agent back.
+            (
+                "coder",
+                row(json!({ "role": "overseer", "projectControl": false })),
+            ),
+        ];
+
+        for (expected, session) in cases {
+            let probe = navigation_order_probe(&session);
+            assert_eq!(
+                crate::team_contract::agent_class(Some(&probe)),
+                expected,
+                "probe class for {probe}"
+            );
+            // The invariant, rather than the literal expectation above: the
+            // probe and the row it came from are the same agent.
+            assert_eq!(
+                crate::team_contract::agent_class(Some(&probe)),
+                crate::team_contract::agent_class(Some(
+                    &crate::dashboard_model::dashboard_session_classifier_probe(&session)
+                )),
+                "probe disagrees with its own row for {expected}"
+            );
+            // Position still has to survive, or the order inside a class is
+            // whatever the input order happened to be.
+            assert_eq!(probe["tmuxWindowIndex"], json!(3));
+            assert_eq!(probe["id"], json!("agent"));
+        }
+    }
 }

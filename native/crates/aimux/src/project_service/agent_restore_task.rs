@@ -175,12 +175,51 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
                     ));
                 }
             };
-            let mut candidate_sessions =
+            let metadata = match try_load_metadata_state(&project_state_dir) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    log_lifecycle_always(
+                        "agent restore snapshot skipped",
+                        "agent-restore",
+                        Some(json!({ "reason": "metadata unreadable", "error": error })),
+                    );
+                    return Err(format!(
+                        "agent restore snapshot metadata unavailable: {error}"
+                    ));
+                }
+            };
+            let candidate_sessions =
                 list_topology_session_states(&topology, Some(ONLINE_SESSION_STATUSES));
             // The restore replays this array in order, creating one window per
             // entry, so the array is the order tmux hands back after a restart.
             // Recorded in topology order it walked every agent somewhere new.
-            candidate_sessions.sort_by(compare_agent_canonical_order);
+            //
+            // Sorted on the stored-flag merge, not on the topology row. The
+            // comparator keys on class, and nothing writes `overseer`,
+            // `scribe` or `projectControl` into the topology file -- only
+            // `role`, `lane`, `roleState` and `team` are persisted there, and
+            // promotion and demotion write metadata state alone. On the raw
+            // row a control agent is indistinguishable from a coder and a
+            // demoted agent still reads as an overseer, so the metadata has
+            // to be loaded before this sort rather than after it.
+            // Merged once per row, not inside the comparator: the merge clones
+            // the session object, and `sort_by` would pay for it on every
+            // comparison to answer a question that cannot change mid-sort.
+            let mut ordered = candidate_sessions
+                .into_iter()
+                .map(|session| {
+                    let merged = session_with_stored_control_flags(
+                        &session,
+                        metadata.sessions.get(&string_field(&session, "id")),
+                    );
+                    (merged, session)
+                })
+                .collect::<Vec<_>>();
+            ordered.sort_by(|left, right| compare_agent_canonical_order(&left.0, &right.0));
+            let candidate_sessions = ordered
+                .into_iter()
+                .map(|(_, session)| session)
+                .collect::<Vec<_>>();
             // Topology status is durable, not live: a session whose window died
             // with the service still reads `running` until something reconciles it.
             // But when topology has no session that even claims to be online, tmux
@@ -209,19 +248,6 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
                             "agent restore snapshot tmux live windows unavailable: {error}"
                         ));
                     }
-                }
-            };
-            let metadata = match try_load_metadata_state(&project_state_dir) {
-                Ok(metadata) => metadata,
-                Err(error) => {
-                    log_lifecycle_always(
-                        "agent restore snapshot skipped",
-                        "agent-restore",
-                        Some(json!({ "reason": "metadata unreadable", "error": error })),
-                    );
-                    return Err(format!(
-                        "agent restore snapshot metadata unavailable: {error}"
-                    ));
                 }
             };
             let sessions = candidate_sessions
