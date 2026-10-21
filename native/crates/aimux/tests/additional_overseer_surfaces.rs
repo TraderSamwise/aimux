@@ -34,7 +34,10 @@ fn ids(rows: &[Value]) -> Vec<String> {
         .collect()
 }
 
-fn observe(project: &Project, count: usize, demote: bool) -> Value {
+/// `expected_supervisor` is per-case because the lane is ordered by class now,
+/// and demotion changes an agent's class. Window order was the same list for
+/// every case precisely because it ignored what the agents were.
+fn observe(project: &Project, count: usize, demote: bool, expected_supervisor: &[&str]) -> Value {
     let root = project.0.to_string_lossy().into_owned();
     let feature = project.0.join("feature").to_string_lossy().into_owned();
     let supervisor = json!({ "kind": "supervisor" });
@@ -262,10 +265,10 @@ fn observe(project: &Project, count: usize, demote: bool) -> Value {
     let supervisor_ids = ids(state["supervisorLane"]["sessions"]
         .as_array()
         .expect("supervisor sessions"));
-    assert_eq!(
-        supervisor_ids,
-        ["control", "beta", "scribe", "contradictory", "alpha"]
-    );
+    // Class, then window position. The overseers lead whatever windows they
+    // hold, the control session follows, then the scribe, then anything
+    // demoted to a coder -- which is why `demote` changes this list.
+    assert_eq!(supervisor_ids, expected_supervisor);
     assert_eq!(tui_groups[0]["ids"], json!(supervisor_ids));
     let rendered = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
@@ -337,9 +340,26 @@ fn additional_overseer_identity_order_and_rendering_match_across_surfaces() {
     )));
     fs::create_dir_all(project.0.join("feature")).expect("create isolated project");
     let cases = vec![
-        observe(&project, 2, false),
-        observe(&project, 3, false),
-        observe(&project, 3, true),
+        observe(
+            &project,
+            2,
+            false,
+            &["beta", "alpha", "control", "scribe", "contradictory"],
+        ),
+        observe(
+            &project,
+            3,
+            false,
+            &["beta", "alpha", "control", "scribe", "contradictory"],
+        ),
+        // `beta` is demoted here, so it drops from the overseer rung to the
+        // coder rung and falls behind the scribe it used to lead.
+        observe(
+            &project,
+            3,
+            true,
+            &["alpha", "control", "scribe", "beta", "contradictory"],
+        ),
     ];
     let probe = project.0.join("surfaces.json");
     fs::write(

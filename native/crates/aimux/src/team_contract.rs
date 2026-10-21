@@ -194,20 +194,33 @@ pub fn agent_should_show_in_expose(session: Option<&Value>) -> bool {
     agent_role_definition(&role).should_show_in_expose
 }
 
-/// The one place an agent sits, everywhere: its tmux window position.
+/// Where an agent sits, everywhere: its class, then its tmux window position.
 ///
-/// Not role, not team, not status, not how recently it printed something. The
-/// tmux window order is the order Sam already navigates with the prefix keys
-/// and already sees in his own tmux session, so making it canonical means the
-/// dashboard, the footer chips, Exposé, the GUI and `prefix n`/`p` cannot
-/// disagree with what tmux shows -- and moving a window moves the agent
-/// everywhere at once.
+/// Class leads because the lanes are read as a hierarchy. The supervisor lane
+/// is the case that made this obvious -- the overseer is the agent you look
+/// for first, and a scribe that happened to open a lower-numbered window
+/// should not render above it -- but it is not special, so the ladder applies
+/// in every plane: overseer, then any other control role, then scribe, then
+/// coder.
+///
+/// Inside one class the tmux window order decides, which is the order Sam
+/// already navigates with the prefix keys and already sees in his own tmux
+/// session. So moving a window still moves the agent on every surface at
+/// once; it just cannot move it past a different class.
+///
+/// The rank comes from `agent_class_rank`, which classifies through the same
+/// `is_overseer_session` / `is_scribe_session` / `is_project_control_session`
+/// helpers every other answer about an agent's authority goes through. A
+/// ladder keyed on the role string would place the spellings someone thought
+/// of and quietly drop `qa` or `reviewer` onto the coder rung.
 ///
 /// An agent with no live window has no tmux position, so it sorts after every
-/// agent that does, by `createdAt` and then `id`. Both are immutable, which is
-/// the whole requirement: a key that can change under you moves the agent
-/// while you are looking at it. `lastUsedAt`, attention rank and arrival index
-/// all do; these do not.
+/// agent that does -- whatever its class, because an offline overseer belongs
+/// at the bottom with the other offline agents and not at the top of the
+/// lane. Within that group class leads again, then `createdAt`, then `id`.
+/// Both are immutable, which is the whole requirement: a key that can change
+/// under you moves the agent while you are looking at it. `lastUsedAt`,
+/// attention rank and arrival index all do; these do not.
 ///
 /// A surface may FILTER, PARTITION, TRUNCATE or INDEX this order -- the
 /// dashboard splits online from offline, the chips take the first few, Exposé
@@ -222,11 +235,54 @@ pub fn compare_agent_canonical_order(left: &Value, right: &Value) -> std::cmp::O
         })
 }
 
-/// `(0, window_index, 0)` for an agent holding a tmux window, so window order
-/// decides. `(1, 0, created_at)` for one without, so windowless agents follow
-/// in creation order instead of being compared on a window index they do not
-/// have.
-fn agent_canonical_sort_key(session: &Value) -> (u8, i64, u128) {
+/// Which rung of the ladder an agent occupies.
+///
+/// Keyed on the same identity helpers the rest of this file classifies with,
+/// never on the role string. `agent_role` is free-form -- a control session
+/// can display `control`, `qa` or `reviewer`, and `project_control_display_role`
+/// hands back whatever it was given -- so a ladder written as a list of
+/// spellings would place the roles someone thought of and drop the rest onto
+/// the coder rung. `is_project_control_session` is the fact that actually
+/// decides the control rung, so that is what this reads.
+///
+/// Note this is the agent's CLASS, not the word the supervisor lane prints in
+/// its role column. `dashboard_renderer::supervisor_role_label` says `control`
+/// for anything rendered in that lane which is not an overseer or a scribe,
+/// including an agent that was demoted and is still shown there. That is a
+/// statement about lane membership; this is a statement about authority, and
+/// for a demoted agent they legitimately differ.
+pub fn agent_class(session: Option<&Value>) -> &'static str {
+    if is_overseer_session(session) {
+        return "overseer";
+    }
+    // Before the generic control check, because a scribe is also a
+    // project-control session and would otherwise take the control rung.
+    if is_scribe_session(session) {
+        return "scribe";
+    }
+    if is_project_control_session(session) {
+        return "control";
+    }
+    "coder"
+}
+
+/// The ladder Sam asked for: overseer, control, scribe, coder.
+pub fn agent_class_rank(session: Option<&Value>) -> u8 {
+    match agent_class(session) {
+        "overseer" => 0,
+        "control" => 1,
+        "scribe" => 2,
+        _ => 3,
+    }
+}
+
+/// `(0, class, window_index, 0)` for an agent holding a tmux window, so class
+/// leads and window order decides within it. `(1, class, 0, created_at)` for
+/// one without, so offline agents trail every online agent whatever their
+/// class, and follow the same ladder among themselves before falling back to
+/// creation order instead of a window index they do not have.
+fn agent_canonical_sort_key(session: &Value) -> (u8, u8, i64, u128) {
+    let class = agent_class_rank(Some(session));
     if let Some(window_index) = session
         .get("tmuxWindowIndex")
         .and_then(Value::as_i64)
@@ -242,12 +298,12 @@ fn agent_canonical_sort_key(session: &Value) -> (u8, i64, u128) {
                 .find_map(Value::as_i64)
         })
     {
-        return (0, window_index, 0);
+        return (0, class, window_index, 0);
     }
     let created_at = string_field(session, "createdAt")
         .and_then(crate::project_service::usage::parse_recency_timestamp)
         .unwrap_or(u128::MAX);
-    (1, 0, created_at)
+    (1, class, 0, created_at)
 }
 
 pub fn agent_lane(session: Option<&Value>) -> Value {

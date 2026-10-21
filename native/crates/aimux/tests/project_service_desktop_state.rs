@@ -134,15 +134,15 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
     assert_eq!(state["tasks"], json!({ "pending": 1, "assigned": 3 }));
 
     let sessions = state["sessions"].as_array().unwrap();
-    // Window order, not topology order: codex-live holds window 1 and boss
-    // window 3, and codex-cold is offline so it falls back to createdAt and
-    // lands last. `index` is a position in that order, which is what the TUI
-    // numbers agents from.
+    // Class order, then window order: `boss` is an overseer, so it leads even
+    // though codex-live holds window 1 and boss window 3. codex-cold is
+    // offline, which keeps it last whatever its class. `index` is a position
+    // in that order, which is what the TUI numbers agents from.
     assert_eq!(
         ids(sessions),
         vec![
-            "codex-live".to_owned(),
             "boss".to_owned(),
+            "codex-live".to_owned(),
             "codex-cold".to_owned(),
         ]
     );
@@ -154,7 +154,7 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
                 session["index"].as_i64().unwrap()
             ))
             .collect::<Vec<_>>(),
-        vec![("codex-live", 0), ("boss", 1), ("codex-cold", 2)]
+        vec![("boss", 0), ("codex-live", 1), ("codex-cold", 2)]
     );
     let live = find(sessions, "codex-live");
     assert_eq!(live["status"], "running");
@@ -305,7 +305,7 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
 }
 
 #[test]
-fn lanes_render_in_tmux_window_order_not_role_order() {
+fn lanes_render_in_class_order_then_tmux_window_order() {
     let topology = supervisor_lane_topology();
 
     let state = build_desktop_state_with_live_window_ids(
@@ -331,12 +331,14 @@ fn lanes_render_in_tmux_window_order_not_role_order() {
     );
 
     let supervisor_sessions = state["supervisorLane"]["sessions"].as_array().unwrap();
-    // scribe holds @1 and overseer holds @3, so the window order puts scribe
-    // first. Role order used to decide this, which is why the dashboard and
-    // the footer chips could disagree about the same two agents.
+    // The scribe holds @1 and the overseer holds @3, and the overseer still
+    // leads: class decides the lane, the window only decides within a class.
+    // This is the lane Sam reads as a hierarchy, so the window order losing
+    // here is the point -- a scribe that happened to open the lower-numbered
+    // window used to render above the overseer.
     assert_eq!(
         ids(supervisor_sessions),
-        vec!["scribe".to_owned(), "overseer".to_owned()]
+        vec!["overseer".to_owned(), "scribe".to_owned()]
     );
 
     let groups = state["worktreeGroups"].as_array().unwrap();
@@ -940,12 +942,15 @@ fn desktop_state_preview_query_controls_capture_and_session_snapshots() {
     .unwrap();
 
     assert_eq!(preview.status, 200);
-    // Captured in the order the sessions are listed, which is window order.
+    // Captured in the order the sessions are listed, which is class order and
+    // then window order: `boss` is an overseer on @3, so it is captured before
+    // the coder on @1. The capture order follows the list rather than leading
+    // it, so this moves whenever the one comparator moves.
     assert_eq!(
         runtime.calls,
         vec![
             (
-                "@1".to_owned(),
+                "@3".to_owned(),
                 CapturePaneOptions {
                     start_line: Some(-40),
                     end_line: None,
@@ -953,7 +958,7 @@ fn desktop_state_preview_query_controls_capture_and_session_snapshots() {
                 },
             ),
             (
-                "@3".to_owned(),
+                "@1".to_owned(),
                 CapturePaneOptions {
                     start_line: Some(-40),
                     end_line: None,
