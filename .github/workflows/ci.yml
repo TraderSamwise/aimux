@@ -155,6 +155,18 @@ jobs:
       - name: Install dependencies
         run: yarn --cwd app install --frozen-lockfile
 
+      # Pinned, because this job took whatever JDK the runner image shipped.
+      # That became 25, and `verify-android-native.sh` refuses it: Gradle 8.14
+      # supports 17-24. Nothing in the repo changed -- the image did -- and the
+      # job went red on every branch at once with a message about a Homebrew
+      # path that does not exist on a runner. The script names 21 as a version
+      # that works, so that is what this asks for.
+      - name: Install JDK for Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
