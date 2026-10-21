@@ -4,6 +4,7 @@ use aimux::project_service::usage::last_used_path;
 use aimux::project_service::worktrees::{GraveyardViewModelInput, build_graveyard_view_model};
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -141,6 +142,7 @@ fn graveyard_view_model_groups_and_caps_attached_agents() {
             "createdAt": "2026-01-01T00:00:11.000Z"
         })],
         last_used_by_id: json!({}),
+        metadata_sessions: BTreeMap::new(),
     });
 
     let worktree_row = model["rows"]
@@ -232,4 +234,169 @@ fn temp_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+/// Agents inside a worktree read down the class ladder, and the flags that
+/// decide the ladder live in metadata rather than in the topology row.
+///
+/// `upsert_agent_topology` persists an agent's `role` but not
+/// `projectControl`, and the control rung is the one that asks for
+/// `projectControl`. So a control agent ordered off the bare row is
+/// indistinguishable from a coder, which is why the model takes the stored
+/// flags and merges them.
+#[test]
+fn worktree_agents_read_down_the_class_ladder_from_stored_flags() {
+    // Deliberately reversed against the ladder: the coder is the most recently
+    // used and the newest, so recency alone would lead with it.
+    let agents = vec![
+        json!({
+            "id": "coder-1",
+            "worktreePath": "/repo/old",
+            "createdAt": "2026-01-01T00:00:09.000Z",
+        }),
+        json!({
+            "id": "scribe-1",
+            "worktreePath": "/repo/old",
+            "createdAt": "2026-01-01T00:00:03.000Z",
+        }),
+        json!({
+            "id": "control-1",
+            "worktreePath": "/repo/old",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+        }),
+        json!({
+            "id": "overseer-1",
+            "worktreePath": "/repo/old",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+        }),
+    ];
+    let worktree = json!({
+        "name": "old",
+        "path": "/repo/old",
+        "branch": "old",
+        "graveyardedAt": "2026-01-01T00:00:10.000Z",
+        "agents": [],
+        "services": []
+    });
+    let metadata_sessions = BTreeMap::from([
+        (
+            "overseer-1".to_owned(),
+            json!({ "overseer": true, "projectControl": true, "role": "overseer" }),
+        ),
+        (
+            "scribe-1".to_owned(),
+            json!({ "scribe": true, "projectControl": true, "role": "scribe" }),
+        ),
+        // The control rung: project control with no overseer or scribe flag,
+        // which is what a supervisor-target launch stores.
+        (
+            "control-1".to_owned(),
+            json!({ "projectControl": true, "role": "control" }),
+        ),
+    ]);
+
+    let ordered = |metadata_sessions: BTreeMap<String, Value>| {
+        let model = build_graveyard_view_model(GraveyardViewModelInput {
+            agents: agents.clone(),
+            worktrees: vec![worktree.clone()],
+            parent_sessions: vec![],
+            teammates: vec![],
+            last_used_by_id: json!({
+                "coder-1": { "lastUsedAt": "2026-02-01T00:00:00.000Z" }
+            }),
+            metadata_sessions,
+        });
+        model["rows"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .find(|row| row["kind"] == "worktree")
+            .expect("worktree row")["attachedAgents"]
+            .as_array()
+            .expect("attached agents")
+            .iter()
+            .map(|view| view["entry"]["id"].as_str().unwrap_or_default().to_owned())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        ordered(metadata_sessions),
+        ["overseer-1", "control-1", "scribe-1", "coder-1"],
+        "class leads, although the coder is both the newest and the most recently used"
+    );
+
+    // Without the stored flags there is no class to read, so the screen falls
+    // back to the recency order it had before the ladder existed rather than
+    // inventing one.
+    assert_eq!(
+        ordered(BTreeMap::new()),
+        ["coder-1", "scribe-1", "control-1", "overseer-1"],
+        "most recently used first, then newest first"
+    );
+}
+
+/// The orphan list is a second ordering path through this model, and it needs
+/// the ladder too.
+///
+/// An agent with no `worktreePath` is not claimed by any worktree, so it lands
+/// under "Orphaned Agents" through `sort_agents` rather than through the
+/// attached-agent comparator. Those rows carry the action keys the screen is
+/// driven by, so an order that only held for attached agents would renumber
+/// half the screen differently from the other half.
+#[test]
+fn orphaned_agents_read_down_the_same_class_ladder() {
+    let agents = vec![
+        json!({ "id": "orphan-coder", "createdAt": "2026-01-01T00:00:09.000Z" }),
+        json!({ "id": "orphan-scribe", "createdAt": "2026-01-01T00:00:03.000Z" }),
+        json!({ "id": "orphan-overseer", "createdAt": "2026-01-01T00:00:01.000Z" }),
+    ];
+    let model = build_graveyard_view_model(GraveyardViewModelInput {
+        agents,
+        worktrees: vec![],
+        parent_sessions: vec![],
+        teammates: vec![],
+        // The coder is the most recently used, so recency alone leads with it.
+        last_used_by_id: json!({
+            "orphan-coder": { "lastUsedAt": "2026-02-01T00:00:00.000Z" }
+        }),
+        metadata_sessions: BTreeMap::from([
+            (
+                "orphan-overseer".to_owned(),
+                json!({ "overseer": true, "projectControl": true, "role": "overseer" }),
+            ),
+            (
+                "orphan-scribe".to_owned(),
+                json!({ "scribe": true, "projectControl": true, "role": "scribe" }),
+            ),
+        ]),
+    });
+
+    let rows = model["rows"].as_array().expect("rows");
+    let ordered = rows
+        .iter()
+        .filter(|row| row["kind"] == "orphan-agent")
+        .map(|row| row["entry"]["id"].as_str().unwrap_or_default().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ordered,
+        ["orphan-overseer", "orphan-scribe", "orphan-coder"],
+        "class leads, although the coder is the most recently used"
+    );
+
+    // The action keys follow the rows, so they have to follow the class order
+    // too rather than being assigned off some earlier sequence.
+    let numbered = rows
+        .iter()
+        .filter(|row| row["kind"] == "orphan-agent")
+        .filter_map(|row| {
+            Some((
+                row["entry"]["id"].as_str()?.to_owned(),
+                row["actionNumber"].as_i64()?,
+            ))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        numbered.windows(2).all(|pair| pair[0].1 < pair[1].1),
+        "action numbers ascend with the rendered order: {numbered:?}"
+    );
 }

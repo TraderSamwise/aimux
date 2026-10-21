@@ -89,22 +89,22 @@
     {
       "file": "native/crates/aimux/src/project_service/worktrees.rs",
       "function": "collect_attached_agents",
-      "reason": "Graveyard and resurrect picker. These agents are offline and have no tmux window, and 'which did I use last' is how you find the one to bring back."
+      "reason": "Graveyard and resurrect picker. Class leads -- overseer, control, scribe, coder, from the stored flags the view model merges in -- and recency is the tiebreak under it. These agents are offline with no tmux window, so the canonical comparator would fall through to createdAt ascending and turn 'which did I use last' into oldest-first."
     },
     {
       "file": "native/crates/aimux/src/project_service/worktrees.rs",
       "function": "collect_attached_services",
-      "reason": "Services in the graveyard picker, ordered most recently used."
+      "reason": "Services in the graveyard picker, ordered most recently used. A service has no class, so the ladder does not apply to them."
     },
     {
       "file": "native/crates/aimux/src/project_service/worktrees.rs",
       "function": "group_standalone_agents_by_worktree",
-      "reason": "Graveyard picker again: offline agents with no window, most recently used first."
+      "reason": "Graveyard picker again: class leads, then most recently used first among offline agents with no window."
     },
     {
       "file": "native/crates/aimux/src/project_service/worktrees.rs",
       "function": "sort_agents",
-      "reason": "Graveyard picker again: offline agents with no window, most recently used first."
+      "reason": "Graveyard picker again: class leads, then most recently used first among offline agents with no window."
     },
     {
       "file": "native/crates/aimux/src/project_service/worktrees.rs",

@@ -1,5 +1,5 @@
 use serde_json::{Map, Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{
@@ -10,6 +10,8 @@ use crate::runtime_topology::{
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 use super::usage::load_last_used_state;
+use crate::daemon_state::try_load_metadata_state;
+use crate::team_contract::session_with_stored_control_flags;
 
 use crate::runtime_topology::LIVE_WORKTREE_STATUSES;
 const MAX_VISIBLE_ATTACHED_AGENTS_PER_WORKTREE: usize = 5;
@@ -57,6 +59,12 @@ pub fn route_worktree_read_request(
         .collect::<Vec<_>>();
     let last_used = load_last_used_state(&project_state_dir);
     let last_used_by_id = last_used.get("items").cloned().unwrap_or_else(|| json!({}));
+    // Unreadable metadata is not an empty one: it would silently flatten every
+    // agent onto the coder rung. The rows still render, ordered by recency
+    // alone, which is the order this screen had before the ladder existed.
+    let metadata_sessions = try_load_metadata_state(&project_state_dir)
+        .map(|state| state.sessions)
+        .unwrap_or_default();
     Some(json_response(
         200,
         json!({
@@ -69,6 +77,7 @@ pub fn route_worktree_read_request(
                 parent_sessions,
                 teammates,
                 last_used_by_id,
+                metadata_sessions,
             }),
         }),
     ))
@@ -81,9 +90,57 @@ pub struct GraveyardViewModelInput {
     pub parent_sessions: Vec<Value>,
     pub teammates: Vec<Value>,
     pub last_used_by_id: Value,
+    /// Stored control flags, keyed by session id.
+    ///
+    /// The class ladder needs them: `upsert_agent_topology` persists an
+    /// agent's `role` but not `projectControl`, and the control rung is the
+    /// one that asks for `projectControl`. So on a topology row alone a
+    /// control agent reads as a coder, while an overseer and a scribe still
+    /// resolve through their legacy role. Promotion and demotion write
+    /// metadata state, which is what this carries.
+    pub metadata_sessions: BTreeMap<String, Value>,
+}
+
+/// The rung each agent sits on, worked out once per id rather than inside a
+/// comparator that would re-merge on every comparison.
+fn class_ranks_by_id(
+    agents: &[Value],
+    metadata_sessions: &BTreeMap<String, Value>,
+) -> BTreeMap<String, u8> {
+    agents
+        .iter()
+        .filter_map(|agent| {
+            let id = string_field(agent, "id")?;
+            let merged = session_with_stored_control_flags(agent, metadata_sessions.get(id));
+            Some((
+                id.to_owned(),
+                crate::team_contract::agent_class_rank(Some(&merged)),
+            ))
+        })
+        .collect()
+}
+
+/// Coder, for anything this map has never heard of. A row with no id cannot be
+/// looked up, and ranking it as a control agent on that basis would promote
+/// the one row we know least about.
+fn class_rank_of(ranks: &BTreeMap<String, u8>, agent: &Value) -> u8 {
+    string_field(agent, "id")
+        .and_then(|id| ranks.get(id).copied())
+        .unwrap_or(3)
 }
 
 pub fn build_graveyard_view_model(input: GraveyardViewModelInput) -> Value {
+    // Every agent this model can render, from all three places they arrive:
+    // the flat graveyard list, the orphan teammates, and the agents a worktree
+    // carries itself.
+    let class_ranks = {
+        let mut every_agent = input.agents.clone();
+        every_agent.extend(input.teammates.iter().cloned());
+        for worktree in &input.worktrees {
+            every_agent.extend(array_field(worktree, "agents").iter().cloned());
+        }
+        class_ranks_by_id(&every_agent, &input.metadata_sessions)
+    };
     let mut rows = Vec::new();
     let mut selectable_rows = Vec::new();
     let mut flat_agents_claimed_by_worktree = BTreeSet::new();
@@ -91,9 +148,18 @@ pub fn build_graveyard_view_model(input: GraveyardViewModelInput) -> Value {
 
     if !input.worktrees.is_empty() {
         rows.push(json!({ "kind": "section", "label": "Worktrees" }));
-        for worktree in sort_worktrees(&input.worktrees, &input.agents, &input.last_used_by_id) {
-            let attached_agents =
-                collect_attached_agents(&worktree, &input.agents, &input.last_used_by_id);
+        for worktree in sort_worktrees(
+            &input.worktrees,
+            &input.agents,
+            &input.last_used_by_id,
+            &class_ranks,
+        ) {
+            let attached_agents = collect_attached_agents(
+                &worktree,
+                &input.agents,
+                &input.last_used_by_id,
+                &class_ranks,
+            );
             let attached_agent_ids = attached_agents
                 .iter()
                 .filter_map(|agent| {
@@ -182,8 +248,11 @@ pub fn build_graveyard_view_model(input: GraveyardViewModelInput) -> Value {
         })
         .cloned()
         .collect::<Vec<_>>();
-    let agents_by_worktree =
-        group_standalone_agents_by_worktree(&standalone_agents, &input.last_used_by_id);
+    let agents_by_worktree = group_standalone_agents_by_worktree(
+        &standalone_agents,
+        &input.last_used_by_id,
+        &class_ranks,
+    );
     if !agents_by_worktree.is_empty() {
         rows.push(json!({ "kind": "section", "label": "Agents by Worktree" }));
         for (worktree_path, agents) in agents_by_worktree {
@@ -221,7 +290,7 @@ pub fn build_graveyard_view_model(input: GraveyardViewModelInput) -> Value {
         .collect::<Vec<_>>();
     if !orphan_agents.is_empty() {
         rows.push(json!({ "kind": "section", "label": "Orphaned Agents" }));
-        for agent in sort_agents(&orphan_agents, &input.last_used_by_id) {
+        for agent in sort_agents(&orphan_agents, &input.last_used_by_id, &class_ranks) {
             let mut row = json!({
                 "kind": "orphan-agent",
                 "entry": agent,
@@ -242,19 +311,22 @@ pub fn build_graveyard_view_model(input: GraveyardViewModelInput) -> Value {
         }
     }
 
-    let orphan_teammates =
-        select_orphan_teammates(&input.teammates, &collect_known_parent_ids(&input))
-            .into_iter()
-            .filter(|session| {
-                string_field(session, "id").is_some_and(|id| {
-                    !rendered_agent_ids.contains(id)
-                        && !input
-                            .agents
-                            .iter()
-                            .any(|agent| string_field(agent, "id") == Some(id))
-                })
-            })
-            .collect::<Vec<_>>();
+    let orphan_teammates = select_orphan_teammates(
+        &input.teammates,
+        &collect_known_parent_ids(&input),
+        &class_ranks,
+    )
+    .into_iter()
+    .filter(|session| {
+        string_field(session, "id").is_some_and(|id| {
+            !rendered_agent_ids.contains(id)
+                && !input
+                    .agents
+                    .iter()
+                    .any(|agent| string_field(agent, "id") == Some(id))
+        })
+    })
+    .collect::<Vec<_>>();
     if !orphan_teammates.is_empty() {
         rows.push(json!({ "kind": "section", "label": "Orphaned Teammates" }));
         for teammate in orphan_teammates {
@@ -327,17 +399,18 @@ fn sort_worktrees(
     worktrees: &[Value],
     flat_agents: &[Value],
     last_used_by_id: &Value,
+    class_ranks: &BTreeMap<String, u8>,
 ) -> Vec<Value> {
     let mut sorted = worktrees.to_vec();
     sorted.sort_by(|left, right| {
         let left_sort = worktree_sort_timestamp(
             left,
-            &collect_attached_agents(left, flat_agents, last_used_by_id),
+            &collect_attached_agents(left, flat_agents, last_used_by_id, class_ranks),
             &collect_attached_services(left, last_used_by_id),
         );
         let right_sort = worktree_sort_timestamp(
             right,
-            &collect_attached_agents(right, flat_agents, last_used_by_id),
+            &collect_attached_agents(right, flat_agents, last_used_by_id, class_ranks),
             &collect_attached_services(right, last_used_by_id),
         );
         compare_timestamp_desc(right_sort.as_deref(), left_sort.as_deref()).then_with(|| {
@@ -353,6 +426,7 @@ fn collect_attached_agents(
     worktree: &Value,
     flat_agents: &[Value],
     last_used_by_id: &Value,
+    class_ranks: &BTreeMap<String, u8>,
 ) -> Vec<Value> {
     let mut by_id = Map::new();
     for agent in array_field(worktree, "agents") {
@@ -377,7 +451,14 @@ fn collect_attached_agents(
         by_id.insert(id.to_owned(), view);
     }
     let mut agents = by_id.into_values().collect::<Vec<_>>();
-    agents.sort_by(compare_agent_or_service_view);
+    agents.sort_by(|left, right| {
+        class_rank_of(class_ranks, left.get("entry").unwrap_or(left))
+            .cmp(&class_rank_of(
+                class_ranks,
+                right.get("entry").unwrap_or(right),
+            ))
+            .then_with(|| compare_view_recency(left, right))
+    });
     agents
 }
 
@@ -394,13 +475,17 @@ fn collect_attached_services(worktree: &Value, last_used_by_id: &Value) -> Vec<V
             view
         })
         .collect::<Vec<_>>();
-    services.sort_by(compare_agent_or_service_view);
+    // A service has no class -- there is no such thing as an overseer service
+    // -- so recency alone decides, and services are a separate list from the
+    // agents rather than interleaved with them.
+    services.sort_by(compare_view_recency);
     services
 }
 
 fn group_standalone_agents_by_worktree(
     agents: &[Value],
     last_used_by_id: &Value,
+    class_ranks: &BTreeMap<String, u8>,
 ) -> Vec<(String, Vec<Value>)> {
     let mut paths = BTreeSet::new();
     for agent in agents {
@@ -416,19 +501,35 @@ fn group_standalone_agents_by_worktree(
                 .filter(|agent| string_field(agent, "worktreePath") == Some(path.as_str()))
                 .cloned()
                 .collect::<Vec<_>>();
-            entries.sort_by(|left, right| compare_recency_or_created(left, right, last_used_by_id));
+            entries.sort_by(|left, right| {
+                class_rank_of(class_ranks, left)
+                    .cmp(&class_rank_of(class_ranks, right))
+                    .then_with(|| compare_recency_or_created(left, right, last_used_by_id))
+            });
             (path, entries)
         })
         .collect()
 }
 
-fn sort_agents(agents: &[Value], last_used_by_id: &Value) -> Vec<Value> {
+fn sort_agents(
+    agents: &[Value],
+    last_used_by_id: &Value,
+    class_ranks: &BTreeMap<String, u8>,
+) -> Vec<Value> {
     let mut sorted = agents.to_vec();
-    sorted.sort_by(|left, right| compare_recency_or_created(left, right, last_used_by_id));
+    sorted.sort_by(|left, right| {
+        class_rank_of(class_ranks, left)
+            .cmp(&class_rank_of(class_ranks, right))
+            .then_with(|| compare_recency_or_created(left, right, last_used_by_id))
+    });
     sorted
 }
 
-fn select_orphan_teammates(teammates: &[Value], known_parent_ids: &BTreeSet<String>) -> Vec<Value> {
+fn select_orphan_teammates(
+    teammates: &[Value],
+    known_parent_ids: &BTreeSet<String>,
+    class_ranks: &BTreeMap<String, u8>,
+) -> Vec<Value> {
     let mut by_id = Map::new();
     for teammate in teammates {
         let Some(parent_session_id) = team_string_field(teammate, "parentSessionId") else {
@@ -444,7 +545,15 @@ fn select_orphan_teammates(teammates: &[Value], known_parent_ids: &BTreeSet<Stri
         }
     }
     let mut selected = by_id.into_values().collect::<Vec<_>>();
-    selected.sort_by(crate::team_contract::compare_agent_canonical_order);
+    // Leading with the rank rather than letting the shared comparator read the
+    // row: these are topology rows, and `projectControl` is not in the
+    // topology file, so a control teammate ordered off the bare row reads as a
+    // coder -- the same gap the probe surfaces had.
+    selected.sort_by(|left, right| {
+        class_rank_of(class_ranks, left)
+            .cmp(&class_rank_of(class_ranks, right))
+            .then_with(|| crate::team_contract::compare_agent_canonical_order(left, right))
+    });
     selected
 }
 
@@ -492,7 +601,14 @@ fn worktree_sort_timestamp(
     best
 }
 
-fn compare_agent_or_service_view(left: &Value, right: &Value) -> std::cmp::Ordering {
+/// The recency tail every list on this screen falls back to, once class has
+/// had its say.
+///
+/// Class leads at each sort site rather than being folded in here, and that is
+/// deliberate: `scripts/audit-agent-ordering.mjs` resolves one level of named
+/// comparator from the sort call, so a sort that delegated twice would hide
+/// its `lastUsedAt` read from the gate whose whole job is to find it.
+fn compare_view_recency(left: &Value, right: &Value) -> std::cmp::Ordering {
     let left_entry = left.get("entry").unwrap_or(left);
     let right_entry = right.get("entry").unwrap_or(right);
     compare_timestamp_desc(
