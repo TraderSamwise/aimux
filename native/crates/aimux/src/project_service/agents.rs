@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::backend_session_ids::discovery_tool_key_for_session;
 use crate::config::load_config_for_known_project_root;
 use crate::daemon_state::try_load_metadata_state;
 use crate::debug_logging::{LogLevel, log_always_at};
@@ -994,7 +995,17 @@ pub fn describe_session_restorability(
     if let Some(reason) = exact_backend_resume_blocked_reason(tool_key, tool_config) {
         return Some(blocked_restorability(&reason));
     }
-    if missing_backend && matches!(tool_key, "claude" | "codex") {
+    // Identity, not spelling: discovery resolves `codex-high` (command
+    // `codex`) through the command fallback, so the raw key would deny
+    // discovery to a session that has it.
+    //
+    // NOT also rejecting a tool that claims exact resume with no acquisition
+    // path, although spawn warns about exactly that. Doing so here returns a
+    // blocked restorability, which removes the session's restart options
+    // too -- and a conversation that cannot be exact-resumed can still be
+    // relaunched. The two surfaces genuinely do disagree today and that is
+    // worth fixing, but not by taking a working capability away.
+    if missing_backend && discovery_tool_key_for_session(session).is_some() {
         // Ready means the route may attempt discovery. It does not authorize
         // a fresh start: only a successful empty inspection can do that.
         return Some(json!({ "restoreState": "ready" }));

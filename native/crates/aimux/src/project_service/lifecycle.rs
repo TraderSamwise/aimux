@@ -12,7 +12,7 @@ use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname
 use super::lifecycle_mutation_queue::{LifecycleMutationError, lifecycle_transition_for_route};
 use super::router::ProjectServiceRequestContext;
 
-mod agent_launch_helpers;
+pub(crate) mod agent_launch_helpers;
 mod agent_launch_routes;
 mod agent_management;
 mod agent_session_launch;

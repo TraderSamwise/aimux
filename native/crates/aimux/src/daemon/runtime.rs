@@ -7,8 +7,8 @@ pub use project_services::{
 
 use crate::attachment_hosting::{AttachmentHostingResult, PublishedAttachmentHostInput};
 use crate::backend_session_ids::{
-    BackendSessionDiscoveryOptions, CodexConversationPresence, codex_conversation_presence_since,
-    iso_timestamp_ms,
+    BackendSessionDiscoveryOptions, CodexConversationPresence, codex_scan_for_cwd,
+    discovery_tool_key_for_session, iso_timestamp_ms, presence_from_scan,
 };
 use crate::cli_launcher::{
     AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
@@ -6071,6 +6071,12 @@ type CodexPresenceCache = BTreeMap<(String, Option<u128>), CodexConversationPres
 /// whichever codex store the developer happens to have, and still pass.
 struct CodexPresenceLookup<'cache> {
     forced: Option<CodexConversationPresence>,
+    /// Where to look, so a test can point the REAL scan at a store it
+    /// controls. Without this the floor and the claimed set were composed
+    /// onto `::default()` inside a closure nothing could execute, so both
+    /// wirings compiled and neither was proven: deleting the exclusion, or
+    /// making the call floorless, failed no test.
+    discovery_options: BackendSessionDiscoveryOptions,
     cache: &'cache mut CodexPresenceCache,
 }
 
@@ -6078,6 +6084,7 @@ impl<'cache> CodexPresenceLookup<'cache> {
     fn new(cache: &'cache mut CodexPresenceCache) -> Self {
         Self {
             forced: None,
+            discovery_options: BackendSessionDiscoveryOptions::default(),
             cache,
         }
     }
@@ -6086,7 +6093,23 @@ impl<'cache> CodexPresenceLookup<'cache> {
         forced: Option<CodexConversationPresence>,
         cache: &'cache mut CodexPresenceCache,
     ) -> Self {
-        Self { forced, cache }
+        Self {
+            forced,
+            discovery_options: BackendSessionDiscoveryOptions::default(),
+            cache,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_discovery_options(
+        discovery_options: BackendSessionDiscoveryOptions,
+        cache: &'cache mut CodexPresenceCache,
+    ) -> Self {
+        Self {
+            forced: None,
+            discovery_options,
+            cache,
+        }
     }
 
     /// `claimed` is every `backendSessionId` the project's topology already
@@ -6101,18 +6124,50 @@ impl<'cache> CodexPresenceLookup<'cache> {
         if let Some(forced) = self.forced {
             return forced;
         }
+        let options = self.discovery_options.clone();
         *self
             .cache
             .entry((cwd.to_owned(), since_ms))
             .or_insert_with(|| {
-                codex_conversation_presence_since(
-                    cwd,
-                    since_ms,
-                    &BackendSessionDiscoveryOptions {
-                        codex_exclude_backend_session_ids: claimed.clone(),
-                        ..BackendSessionDiscoveryOptions::default()
-                    },
-                )
+                let scoped = BackendSessionDiscoveryOptions {
+                    codex_since_ms: since_ms,
+                    codex_exclude_backend_session_ids: claimed.clone(),
+                    ..options
+                };
+                match codex_scan_for_cwd(cwd, &scoped) {
+                    Ok(scan) => {
+                        // Not this checkout's uncertainty, so it does not
+                        // block -- but a rollout we could not read is an
+                        // error, and an error that nobody ever sees is how
+                        // this class survives.
+                        if !scan.unreadable.is_empty() {
+                            log_at(
+                                LogLevel::Warn,
+                                "codex rollouts could not be attributed to any checkout",
+                                "daemon",
+                                Some(json!({
+                                    "count": scan.unreadable.len(),
+                                    "paths": scan
+                                        .unreadable
+                                        .iter()
+                                        .take(5)
+                                        .map(|path| path.display().to_string())
+                                        .collect::<Vec<_>>(),
+                                })),
+                            );
+                        }
+                        presence_from_scan(&scan)
+                    }
+                    Err(error) => {
+                        log_at(
+                            LogLevel::Warn,
+                            "codex store could not be read for the restart guard",
+                            "daemon",
+                            Some(json!({ "cwd": cwd, "error": error })),
+                        );
+                        CodexConversationPresence::Unknown
+                    }
+                }
             })
     }
 }
@@ -6225,10 +6280,17 @@ fn restart_backend_id_at_risk_sessions_with_presence_cache(
             // is nothing behind the refusal: without an id `resumeArgs`
             // cannot be filled in, so aimux could never resume that
             // conversation whether it restarts or not.
-            if !has_backend_session_id_acquisition_path(
-                Some(restart_guard_session_tool(&session)),
-                Some(tool_config),
-            ) {
+            // Identity, not spelling. `restart_guard_session_tool` returns the
+            // raw `toolConfigKey`, but discovery resolves a tool through
+            // `discovery_tool_key_for_session`, which takes the command's
+            // basename and falls back to `command` itself. A project tool
+            // keyed `codex-high` whose command is `codex` IS discoverable, so
+            // asking about the spelling skipped the guard for a session whose
+            // conversation discovery could have recovered -- a restart waved
+            // through over something there was to lose.
+            let discovery_key = discovery_tool_key_for_session(&session);
+            if !has_backend_session_id_acquisition_path(discovery_key.as_deref(), Some(tool_config))
+            {
                 continue;
             }
             // A guard is for something that can be LOST. Codex cannot be told
@@ -6241,7 +6303,7 @@ fn restart_backend_id_at_risk_sessions_with_presence_cache(
             //
             // Only a CONFIRMED absence clears it. Not being able to look is
             // not the same as there being nothing there.
-            if restart_guard_session_tool(&session) == "codex"
+            if discovery_key.as_deref() == Some("codex")
                 && codex_conversation_is_confirmed_absent(
                     &session,
                     project_root,
@@ -7385,6 +7447,277 @@ mod tests {
         );
     }
 
+    fn write_codex_rollout(sessions_dir: &Path, uuid: &str, cwd: &str, timestamp: &str) {
+        let dir = sessions_dir.join("2026").join("10").join("20");
+        fs::create_dir_all(&dir).expect("codex sessions dir");
+        fs::write(
+            dir.join(format!("rollout-2026-10-20T00-00-00-{uuid}.jsonl")),
+            format!(
+                "{}\n",
+                json!({
+                    "timestamp": timestamp,
+                    "type": "session_meta",
+                    "payload": { "id": uuid, "cwd": cwd, "originator": "codex-tui" },
+                })
+            ),
+        )
+        .expect("write codex rollout");
+    }
+
+    /// The floor has to be applied by the code that runs, not by a seeded map.
+    ///
+    /// The previous test for this seeded both cache keys and asserted which
+    /// one was read, which proves the key derivation and nothing about the
+    /// scan. This drives the real scan against a store the test owns, so
+    /// making the production call floorless fails here.
+    #[test]
+    fn the_guard_applies_the_launch_floor_against_a_real_store() {
+        for (case, rollout_at, expect_at_risk) in [
+            ("opened-before-launch", "2026-10-20T09:00:00.000Z", false),
+            ("opened-after-launch", "2026-10-20T11:00:00.000Z", true),
+        ] {
+            let fixture = restart_service_fixture(&format!("restart-real-floor-{case}"));
+            let project = fixture.project_root.clone();
+            let sessions_dir = fixture.root.join("codex-sessions");
+            write_codex_rollout(
+                &sessions_dir,
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                &project,
+                rollout_at,
+            );
+            fixture.persist_runtime_session_with_window(
+                "codex-floored",
+                "codex",
+                "running",
+                None,
+                Some("@codex-floored"),
+                Some(json!({ "createdAt": "2026-10-20T10:00:00.000Z" })),
+            );
+
+            let risks = restart_backend_id_at_risk_sessions_with_presence_cache(
+                &fixture.resolver,
+                std::slice::from_ref(&project),
+                Some(&LiveWindowIndex::from_pairs([(
+                    "@codex-floored",
+                    "aimux-test",
+                )])),
+                &mut CodexPresenceLookup::with_discovery_options(
+                    BackendSessionDiscoveryOptions {
+                        codex_sessions_dir: Some(sessions_dir),
+                        ..BackendSessionDiscoveryOptions::default()
+                    },
+                    &mut CodexPresenceCache::new(),
+                ),
+            );
+
+            assert_eq!(
+                !risks.is_empty(),
+                expect_at_risk,
+                "{case}: the launch floor was not applied by the scan"
+            );
+            fixture.cleanup();
+        }
+    }
+
+    /// And the claimed set has to reach the scan, not just exist.
+    ///
+    /// Deleting the exclusion from the production call used to fail nothing,
+    /// because the only test for it handed the set to the options by hand.
+    #[test]
+    fn the_guard_excludes_a_conversation_a_sibling_already_claims() {
+        const SIBLING_CONVERSATION: &str = "ffffffff-1111-2222-3333-444444444444";
+
+        for (case, sibling_claims_it, expect_at_risk) in [
+            ("unclaimed", false, true),
+            ("claimed-by-a-sibling", true, false),
+        ] {
+            let fixture = restart_service_fixture(&format!("restart-claimed-{case}"));
+            let project = fixture.project_root.clone();
+            let sessions_dir = fixture.root.join("codex-sessions");
+            // Opened after our session launched, so the floor alone keeps it.
+            write_codex_rollout(
+                &sessions_dir,
+                SIBLING_CONVERSATION,
+                &project,
+                "2026-10-20T11:00:00.000Z",
+            );
+            fixture.persist_runtime_session_with_window(
+                "codex-unidentified",
+                "codex",
+                "running",
+                None,
+                Some("@codex-unidentified"),
+                Some(json!({ "createdAt": "2026-10-20T10:00:00.000Z" })),
+            );
+            if sibling_claims_it {
+                fixture.append_runtime_session(
+                    "codex-sibling",
+                    "codex",
+                    "running",
+                    Some(SIBLING_CONVERSATION),
+                );
+            }
+
+            let risks = restart_backend_id_at_risk_sessions_with_presence_cache(
+                &fixture.resolver,
+                std::slice::from_ref(&project),
+                Some(&LiveWindowIndex::from_pairs([(
+                    "@codex-unidentified",
+                    "aimux-test",
+                )])),
+                &mut CodexPresenceLookup::with_discovery_options(
+                    BackendSessionDiscoveryOptions {
+                        codex_sessions_dir: Some(sessions_dir),
+                        ..BackendSessionDiscoveryOptions::default()
+                    },
+                    &mut CodexPresenceCache::new(),
+                ),
+            );
+            assert_eq!(
+                !risks.is_empty(),
+                expect_at_risk,
+                "{case}: a conversation another session owns was counted as this one's"
+            );
+            fixture.cleanup();
+        }
+    }
+
+    /// Two agents in one checkout do not share an answer.
+    ///
+    /// Presence is cached per restart attempt, and the key has to carry the
+    /// launch instant as well as the checkout. Keyed by checkout alone, the
+    /// second agent inherits the first's answer, which is wrong in whichever
+    /// direction the first happened to land -- here it would mark an agent at
+    /// risk over a conversation that predates it.
+    #[test]
+    fn two_agents_in_one_checkout_get_their_own_answers() {
+        let fixture = restart_service_fixture("restart-shared-checkout");
+        let project = fixture.project_root.clone();
+        let sessions_dir = fixture.root.join("codex-sessions");
+        // One transcript, opened between the two launches.
+        write_codex_rollout(
+            &sessions_dir,
+            "12121212-3434-5656-7878-909090909090",
+            &project,
+            "2026-10-20T10:30:00.000Z",
+        );
+        // Launched before it: the transcript could be this one's.
+        fixture.persist_runtime_session_with_window(
+            "codex-earlier",
+            "codex",
+            "running",
+            None,
+            Some("@codex-earlier"),
+            Some(json!({ "createdAt": "2026-10-20T10:00:00.000Z" })),
+        );
+        // Launched after it: it cannot be.
+        fixture.append_runtime_session_with_window(
+            "codex-later",
+            "codex",
+            "running",
+            None,
+            Some("@codex-later"),
+            Some(json!({ "createdAt": "2026-10-20T11:00:00.000Z" })),
+        );
+
+        let risks = restart_backend_id_at_risk_sessions_with_presence_cache(
+            &fixture.resolver,
+            std::slice::from_ref(&project),
+            Some(&LiveWindowIndex::from_pairs([
+                ("@codex-earlier", "aimux-test"),
+                ("@codex-later", "aimux-test"),
+            ])),
+            &mut CodexPresenceLookup::with_discovery_options(
+                BackendSessionDiscoveryOptions {
+                    codex_sessions_dir: Some(sessions_dir),
+                    ..BackendSessionDiscoveryOptions::default()
+                },
+                &mut CodexPresenceCache::new(),
+            ),
+        );
+
+        assert_eq!(
+            risks
+                .iter()
+                .map(|risk| risk.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["codex-earlier"],
+            "the two agents shared one cached answer"
+        );
+        fixture.cleanup();
+    }
+
+    /// A tool is identified by what it runs, not by what it is called.
+    ///
+    /// Discovery resolves a session through `discovery_tool_key_for_session`,
+    /// which takes the command's basename and falls back to `command` itself.
+    /// So a project tool keyed `codex-high` whose command is `codex` IS
+    /// discoverable, and its conversation IS recoverable. Asking the guard
+    /// about the raw spelling skipped it unconditionally and waved the restart
+    /// through over something there was to lose.
+    #[test]
+    fn the_guard_identifies_a_tool_by_its_command_not_its_key() {
+        for (case, tool_key, command, forced, expect_at_risk) in [
+            // Renamed codex: discoverable through the command fallback.
+            (
+                "renamed-codex",
+                "codex-high",
+                "codex",
+                Some(CodexConversationPresence::Present),
+                true,
+            ),
+            // Genuinely unknown tool: nothing can ever learn its id.
+            ("unknown-tool", "mystery", "/bin/mystery", None, false),
+        ] {
+            let fixture = restart_service_fixture(&format!("restart-identity-{case}"));
+            let project = fixture.project_root.clone();
+            let aimux_dir = Path::new(&project).join(".aimux");
+            fs::create_dir_all(&aimux_dir).expect("project aimux dir");
+            fs::write(
+                aimux_dir.join("config.json"),
+                serde_json::to_string(&json!({
+                    "tools": {
+                        tool_key: {
+                            "command": command,
+                            "args": [],
+                            "enabled": true,
+                            "resumeArgs": ["resume", "{sessionId}"],
+                            "resumeByBackendSessionId": true,
+                        }
+                    }
+                }))
+                .expect("config json"),
+            )
+            .expect("write project config");
+
+            fixture.persist_runtime_session_with_window(
+                "renamed-one",
+                tool_key,
+                "running",
+                None,
+                Some("@renamed-one"),
+                Some(json!({ "command": command })),
+            );
+
+            let risks = restart_backend_id_at_risk_sessions_with_presence_cache(
+                &fixture.resolver,
+                std::slice::from_ref(&project),
+                Some(&LiveWindowIndex::from_pairs([(
+                    "@renamed-one",
+                    "aimux-test",
+                )])),
+                &mut CodexPresenceLookup::with_forced(forced, &mut CodexPresenceCache::new()),
+            );
+
+            assert_eq!(
+                !risks.is_empty(),
+                expect_at_risk,
+                "{case}: the guard judged the tool by its spelling"
+            );
+            fixture.cleanup();
+        }
+    }
+
     /// Waiting for an id that nothing can write is not caution.
     ///
     /// A custom tool can declare `resumeArgs` carrying a `{sessionId}` and so
@@ -7447,64 +7780,6 @@ mod tests {
                 !risks.is_empty(),
                 expect_at_risk,
                 "{case}: a tool is guarded only when its id can actually be acquired"
-            );
-            fixture.cleanup();
-        }
-    }
-
-    /// Which question did the guard ask?
-    ///
-    /// Both are seeded, with opposite answers, so a regression to the
-    /// checkout-wide question fails the assertion instead of quietly agreeing
-    /// with it. Seeding also keeps the developer's own codex store out of it.
-    #[test]
-    fn a_codex_agent_blocks_a_restart_only_for_its_own_conversation() {
-        let launched_at = "2026-10-20T10:06:15.404Z";
-        let launch_ms = iso_timestamp_ms(launched_at).expect("launch instant parses");
-
-        for (case, own, checkout_wide, expect_at_risk) in [
-            (
-                "own-absent",
-                CodexConversationPresence::ConfirmedAbsent,
-                CodexConversationPresence::Present,
-                false,
-            ),
-            (
-                "own-present",
-                CodexConversationPresence::Present,
-                CodexConversationPresence::ConfirmedAbsent,
-                true,
-            ),
-        ] {
-            let fixture = restart_service_fixture(&format!("restart-per-session-{case}"));
-            let project = fixture.project_root.clone();
-            fixture.persist_runtime_session_with_window(
-                "codex-reused-checkout",
-                "codex",
-                "running",
-                None,
-                Some("@codex-reused-checkout"),
-                Some(json!({ "createdAt": launched_at })),
-            );
-
-            let mut cache = CodexPresenceCache::from([
-                ((project.clone(), Some(launch_ms)), own),
-                ((project.clone(), None), checkout_wide),
-            ]);
-            let risks = restart_backend_id_at_risk_sessions_with_presence_cache(
-                &fixture.resolver,
-                std::slice::from_ref(&project),
-                Some(&LiveWindowIndex::from_pairs([(
-                    "@codex-reused-checkout",
-                    "aimux-test",
-                )])),
-                &mut CodexPresenceLookup::new(&mut cache),
-            );
-
-            assert_eq!(
-                !risks.is_empty(),
-                expect_at_risk,
-                "{case}: the guard consulted the wrong presence question"
             );
             fixture.cleanup();
         }
@@ -11009,6 +11284,103 @@ mod tests {
                 None,
                 None,
             );
+        }
+
+        /// Add a second session row. `persist_runtime_session_with_window`
+        /// rewrites `sessions` wholesale, so a sibling needs appending.
+        fn append_runtime_session(
+            &self,
+            session_id: &str,
+            tool: &str,
+            status: &str,
+            backend_session_id: Option<&str>,
+        ) {
+            self.append_runtime_session_with_window(
+                session_id,
+                tool,
+                status,
+                backend_session_id,
+                None,
+                None,
+            );
+        }
+
+        fn append_runtime_session_with_window(
+            &self,
+            session_id: &str,
+            tool: &str,
+            status: &str,
+            backend_session_id: Option<&str>,
+            window_id: Option<&str>,
+            extra_session_fields: Option<Value>,
+        ) {
+            let mut resolver = self.resolver.clone();
+            let path = runtime_topology_path(resolver.project_state_dir_for(&self.project_root));
+            let mut topology = read_runtime_topology(path.clone()).expect("read runtime topology");
+            let mut session = json!({
+                "id": session_id,
+                "nodeId": format!("node-{session_id}"),
+                "status": status,
+                "tool": tool,
+                "toolConfigKey": tool,
+                "command": tool,
+                "createdAt": "then",
+                "updatedAt": "now",
+            });
+            if let Some(backend_session_id) = backend_session_id {
+                session["backendSessionId"] = Value::String(backend_session_id.to_owned());
+            }
+            if let Some(window_id) = window_id {
+                session["tmuxTarget"] = json!({
+                    "sessionName": "aimux-test",
+                    "windowId": window_id,
+                    "windowIndex": 0,
+                    "windowName": session_id,
+                    "paneDead": null
+                });
+            }
+            if let Some(Value::Object(fields)) = extra_session_fields {
+                let session_object = session.as_object_mut().expect("session object");
+                for (key, value) in fields {
+                    session_object.insert(key, value);
+                }
+            }
+            // A session whose nodeId names no node is pruned by
+            // `coerce_runtime_topology` on the way back in, so the row needs
+            // its node too or the append silently does nothing.
+            topology
+                .get_mut("nodes")
+                .and_then(Value::as_array_mut)
+                .expect("nodes array")
+                .push(json!({
+                    "id": format!("node-{session_id}"),
+                    "rigId": "rig",
+                    "logicalId": format!("session:{session_id}"),
+                    "toolConfigKey": tool,
+                    "cwd": self.project_root,
+                    "createdAt": "then",
+                }));
+            if let Some(window_id) = window_id {
+                topology
+                    .get_mut("bindings")
+                    .and_then(Value::as_array_mut)
+                    .expect("bindings array")
+                    .push(json!({
+                        "id": format!("tmux:session:{session_id}"),
+                        "nodeId": format!("node-{session_id}"),
+                        "tmuxSession": "aimux-test",
+                        "tmuxWindowId": window_id,
+                        "tmuxWindowIndex": 0,
+                        "tmuxWindowName": session_id,
+                        "updatedAt": "now",
+                    }));
+            }
+            topology
+                .get_mut("sessions")
+                .and_then(Value::as_array_mut)
+                .expect("sessions array")
+                .push(session);
+            write_runtime_topology(path, &topology).expect("write runtime topology");
         }
 
         fn persist_runtime_session_with_window(

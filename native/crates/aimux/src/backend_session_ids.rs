@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 const MAX_FIRST_LINE_BYTES: usize = 1024 * 1024;
+/// What codex records for the interactive session aimux launches.
+const CODEX_TUI_ORIGINATOR: &str = "codex-tui";
+/// What a headless `codex exec` run records. Never an aimux agent.
+const CODEX_EXEC_ORIGINATOR: &str = "codex_exec";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedAgentIdentity {
@@ -448,7 +452,7 @@ pub fn claude_backend_session_ids_for_cwd(
             }
         }
         if let Some(recorded) = recorded_cwd
-            && recorded.trim_end_matches('/') != cwd.trim_end_matches('/')
+            && !is_same_checkout(&recorded, cwd)
         {
             return Err(format!(
                 "Claude transcript {} records cwd {recorded:?}, but discovery requested {cwd:?}; this may be relocated history or a colliding project directory, so its backend identity must be chosen explicitly",
@@ -538,13 +542,7 @@ pub fn codex_conversation_presence_since(
     let mut scoped = options.clone();
     scoped.codex_since_ms = since_ms;
     match codex_scan_for_cwd(cwd, &scoped) {
-        Ok(scan) if !scan.ids.is_empty() => CodexConversationPresence::Present,
-        // A transcript naming this checkout that we could not date is not an
-        // absent one. Discovery excludes it because including it would adopt
-        // the wrong conversation; the guard must not read that exclusion as
-        // proof there is nothing to lose.
-        Ok(scan) if scan.undateable > 0 => CodexConversationPresence::Unknown,
-        Ok(_) => CodexConversationPresence::ConfirmedAbsent,
+        Ok(scan) => presence_from_scan(&scan),
         Err(_) => CodexConversationPresence::Unknown,
     }
 }
@@ -570,7 +568,28 @@ pub fn codex_backend_session_ids_for_cwd(
 #[derive(Debug, Default)]
 pub struct CodexCwdScan {
     pub ids: BTreeSet<String>,
+    /// Transcripts naming this checkout whose identity or creation instant
+    /// could not be read. Uncertainty about THIS checkout, so it blocks.
     pub undateable: usize,
+    /// Rollouts that could not be attributed to any checkout. Not this
+    /// checkout's uncertainty, so it does not block -- but it is an error,
+    /// not an empty result, so the caller reports it rather than dropping it.
+    pub unreadable: Vec<PathBuf>,
+}
+
+/// The one place the three answers are decided.
+pub fn presence_from_scan(scan: &CodexCwdScan) -> CodexConversationPresence {
+    if !scan.ids.is_empty() {
+        CodexConversationPresence::Present
+    } else if scan.undateable > 0 {
+        // A transcript naming this checkout that we could not date or
+        // identify is not an absent one. Discovery excludes it because
+        // including it would adopt the wrong conversation; the guard must not
+        // read that exclusion as proof there is nothing to lose.
+        CodexConversationPresence::Unknown
+    } else {
+        CodexConversationPresence::ConfirmedAbsent
+    }
 }
 
 pub fn codex_scan_for_cwd(
@@ -618,27 +637,64 @@ fn collect_codex_session_ids_for_cwd(
         {
             continue;
         }
+        // Everything down to the checkout comparison is UNATTRIBUTABLE on
+        // failure: only line 1 carries `cwd` -- later lines do not, and the
+        // filename holds a timestamp and a uuid and nothing else -- so a
+        // record we cannot read is a record we cannot assign to any checkout.
+        // Counting those as uncertain for THIS checkout would mean one
+        // corrupt rollout blocked every restart in every checkout for ever,
+        // which is the refusal this whole module exists to stop. They are
+        // counted and surfaced instead, so they are never silently absorbed.
         let Some(line) = read_first_line(&path)? else {
+            scan.unreadable.push(path.clone());
             continue;
         };
         let Ok(record) = serde_json::from_str::<Value>(&line) else {
+            scan.unreadable.push(path.clone());
             continue;
         };
         if string_field(&record, "type").as_deref() != Some("session_meta") {
+            scan.unreadable.push(path.clone());
             continue;
         }
         let Some(payload) = record.get("payload") else {
+            scan.unreadable.push(path.clone());
             continue;
         };
-        let Some(id) = string_field(payload, "id") else {
+        let Some(recorded_cwd) = string_field(payload, "cwd") else {
+            scan.unreadable.push(path.clone());
             continue;
         };
-        if !is_uuid(&id)
-            || !string_field(payload, "cwd")
-                .as_deref()
-                .is_some_and(|recorded| is_same_checkout(recorded, cwd))
-            || options.codex_exclude_backend_session_ids.contains(&id)
-        {
+        if !is_same_checkout(&recorded_cwd, cwd) {
+            continue;
+        }
+        // Who opened this conversation decides whether it can be an aimux
+        // agent's at all, and the three answers are different.
+        match string_field(payload, "originator").as_deref() {
+            // The interactive codex aimux launches -- and a rollout that
+            // records no originator, which is how the older ones look. Those
+            // are still restorable and the discovery contract expects them.
+            Some(CODEX_TUI_ORIGINATOR) | None => {}
+            // A headless `codex exec` run. A real conversation, but never an
+            // agent's: no topology row owns it, so the sibling count cannot
+            // see it -- 7 of 233 in a real store -- and an idle agent would
+            // otherwise adopt somebody else's history.
+            Some(CODEX_EXEC_ORIGINATOR) => continue,
+            // Something nobody has seen yet. It names this checkout, so it
+            // may well be ours, and "absent" is the answer that loses it.
+            Some(_) => {
+                scan.undateable += 1;
+                continue;
+            }
+        }
+        // From here the record names THIS checkout, so a failure to get a
+        // usable identity out of it is this checkout's uncertainty and does
+        // fail closed.
+        let Some(id) = string_field(payload, "id").filter(|id| is_uuid(id)) else {
+            scan.undateable += 1;
+            continue;
+        };
+        if options.codex_exclude_backend_session_ids.contains(&id) {
             continue;
         }
         // The floor is applied AFTER the checkout matches, so that a
@@ -672,10 +728,11 @@ fn collect_codex_session_ids_for_cwd(
 
 /// Do these two spellings name the same checkout?
 ///
-/// Trailing slashes first, the way the Claude path already compares: a
-/// `worktreePath` can carry one -- user-supplied task worktrees do -- and
-/// comparing byte-for-byte made a checkout that HAS a conversation read as
-/// having none.
+/// Trailing slashes first: a `worktreePath` can carry one -- user-supplied
+/// task worktrees do -- and comparing byte-for-byte made a checkout that HAS
+/// a conversation read as having none. The Claude path did NOT already do
+/// this, whatever an earlier version of this comment claimed; it now shares
+/// this function.
 ///
 /// Then symlinks, which matter more here than they look. On macOS `/tmp` and
 /// `/var` are symlinks into `/private`, and a process records the path it
@@ -685,7 +742,7 @@ fn collect_codex_session_ids_for_cwd(
 /// treats "found nothing" as "nothing to lose" turns it into a killed
 /// conversation. Canonicalising costs a stat on a path that already failed to
 /// match, and only when both sides still exist.
-fn is_same_checkout(recorded: &str, cwd: &str) -> bool {
+pub fn is_same_checkout(recorded: &str, cwd: &str) -> bool {
     let recorded = recorded.trim_end_matches('/');
     let cwd = cwd.trim_end_matches('/');
     if recorded == cwd {
@@ -846,8 +903,15 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn encode_claude_project_path(cwd: &str) -> String {
-    cwd.chars()
+/// Claude names its project directory after its own process cwd, and
+/// `getcwd()` never returns a trailing slash -- of 35 real directories in a
+/// live store, none ends in `-`. A `worktreePath` CAN carry one, so asking
+/// with it encoded a directory Claude never wrote, discovery found nothing,
+/// and restore started the agent fresh over live history. Trimming here
+/// agrees with what Claude writes rather than diverging from it.
+pub fn encode_claude_project_path(cwd: &str) -> String {
+    cwd.trim_end_matches('/')
+        .chars()
         .map(|character| {
             if character == '/' || character == '.' {
                 '-'

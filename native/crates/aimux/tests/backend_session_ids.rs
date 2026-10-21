@@ -4,8 +4,8 @@ use aimux::backend_session_ids::{
     claude_backend_session_ids_for_cwd, claude_transcript_path, codex_conversation_presence,
     codex_conversation_presence_since, codex_scan_for_cwd,
     discover_backend_session_id_with_options, discover_claude_backend_session_id,
-    discover_codex_backend_session_id, relocate_claude_transcript, render_agent_identity_lines,
-    resolve_agent_identity, resolve_agent_identity_with_options,
+    discover_codex_backend_session_id, presence_from_scan, relocate_claude_transcript,
+    render_agent_identity_lines, resolve_agent_identity, resolve_agent_identity_with_options,
 };
 use aimux::config::default_config;
 use aimux::tool_capabilities::{
@@ -678,6 +678,148 @@ fn a_transcript_we_cannot_date_is_not_confirmed_absence() {
     remove_dir_all(dateable).ok();
 }
 
+/// A trailing slash must not hide a CLAUDE conversation either.
+///
+/// Claude names its project directory after its own process cwd, which never
+/// carries a trailing slash. A `worktreePath` can, and encoding it produced a
+/// directory Claude never wrote -- discovery found nothing and restore took
+/// the fresh-start path over live history. The codex scan was fixed for this;
+/// claude was not.
+#[test]
+fn a_trailing_slash_does_not_hide_a_claude_conversation() {
+    let projects_dir = temp_dir("aimux-claude-slash");
+    let transcript = claude_transcript_path("/repo/wt", UUID_A, Some(&projects_dir));
+    create_dir_all(transcript.parent().expect("parent")).expect("mkdir");
+    write(&transcript, "{}\n").expect("write transcript");
+
+    let options = BackendSessionDiscoveryOptions {
+        claude_projects_dir: Some(projects_dir.clone()),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+
+    assert_eq!(
+        discover_claude_backend_session_id("/repo/wt/", Some(&projects_dir)),
+        Some(UUID_A.into()),
+        "the same checkout, spelled with a slash"
+    );
+    assert_eq!(
+        discover_backend_session_id_with_options(Some("claude"), Some("/repo/wt/"), &options),
+        Some(UUID_A.into())
+    );
+    // The control: a genuinely different checkout is still absent.
+    assert_eq!(
+        discover_claude_backend_session_id("/repo/other", Some(&projects_dir)),
+        None
+    );
+    // And one encoding, not two. A second untrimmed copy of the encoder used
+    // to live beside the relocation route, so once discovery began trimming
+    // the two disagreed about which directory a trailing-slash checkout meant
+    // -- silently, because that caller discards its result.
+    assert_eq!(
+        claude_transcript_path("/repo/wt/", UUID_A, Some(&projects_dir)),
+        claude_transcript_path("/repo/wt", UUID_A, Some(&projects_dir)),
+    );
+
+    remove_dir_all(projects_dir).ok();
+}
+
+/// A record naming this checkout that we cannot identify is uncertainty.
+///
+/// `undateable` used to be reached only by the floor arm, so every earlier
+/// reject -- an id that is missing or not a uuid -- counted as neither
+/// present nor uncertain and the checkout read as confirmed empty.
+#[test]
+fn a_transcript_we_cannot_identify_is_not_confirmed_absence() {
+    let temp = temp_dir("aimux-codex-unidentifiable");
+    let sessions_dir = temp.join("sessions");
+    let dir = sessions_dir.join("2026").join("08").join("14");
+    create_dir_all(&dir).expect("mkdir");
+    // Names this checkout, but its id is not a uuid.
+    write(
+        dir.join("rollout-2026-08-14T00-00-00-broken.jsonl"),
+        format!(
+            "{}\n",
+            json!({
+                "timestamp": "2026-08-14T00:00:00.000Z",
+                "type": "session_meta",
+                "payload": { "id": "not-a-uuid", "cwd": "/repo" },
+            })
+        ),
+    )
+    .expect("write");
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    let scan = codex_scan_for_cwd("/repo", &options).expect("store readable");
+    assert!(scan.ids.is_empty(), "it is still not adoptable");
+    assert_eq!(scan.undateable, 1, "but it is this checkout's uncertainty");
+    assert!(
+        scan.unreadable.is_empty(),
+        "it was attributable, just unusable"
+    );
+    assert_eq!(
+        presence_from_scan(&scan),
+        CodexConversationPresence::Unknown
+    );
+
+    // The control: the same store asked about a different checkout is
+    // genuinely absent, so Unknown is not what this fixture always says.
+    let elsewhere = codex_scan_for_cwd("/elsewhere", &options).expect("store readable");
+    assert_eq!(elsewhere.undateable, 0);
+    assert_eq!(
+        presence_from_scan(&elsewhere),
+        CodexConversationPresence::ConfirmedAbsent
+    );
+
+    remove_dir_all(temp).ok();
+}
+
+/// A record we cannot attribute is reported, not absorbed -- and not blocking.
+///
+/// Only line 1 carries `cwd`, so a rollout whose first line will not parse
+/// belongs to no checkout we can name. Treating that as uncertainty for every
+/// checkout would let one corrupt file refuse every restart for ever, which
+/// is the refusal this module exists to stop.
+#[test]
+fn a_rollout_we_cannot_attribute_is_reported_not_absorbed() {
+    let temp = temp_dir("aimux-codex-unattributable");
+    let sessions_dir = temp.join("sessions");
+    let dir = sessions_dir.join("2026").join("08").join("14");
+    create_dir_all(&dir).expect("mkdir");
+    write(
+        dir.join("rollout-2026-08-14T00-00-00-partial.jsonl"),
+        "{\"timestamp\": \"2026-08-14T00:00:00.000Z\", \"type\": \"session_me",
+    )
+    .expect("write partial");
+    // And a healthy one for a different checkout, so the store is not empty.
+    write_codex_transcript(&sessions_dir, "15", UUID_A, "/elsewhere");
+
+    let options = BackendSessionDiscoveryOptions {
+        codex_sessions_dir: Some(sessions_dir),
+        ..BackendSessionDiscoveryOptions::default()
+    };
+    let scan = codex_scan_for_cwd("/repo", &options).expect("store readable");
+    assert_eq!(scan.unreadable.len(), 1, "the caller is told which file");
+    assert!(
+        scan.unreadable[0].to_string_lossy().contains("partial"),
+        "{:?}",
+        scan.unreadable
+    );
+    assert_eq!(
+        scan.undateable, 0,
+        "it is nobody's uncertainty in particular"
+    );
+    assert_eq!(
+        presence_from_scan(&scan),
+        CodexConversationPresence::ConfirmedAbsent,
+        "one corrupt file must not refuse every restart"
+    );
+
+    remove_dir_all(temp).ok();
+}
+
 /// A conversation another session has claimed is not this session's.
 ///
 /// The floor excludes transcripts older than the session; it says nothing
@@ -743,12 +885,12 @@ fn every_exact_resume_tool_can_acquire_its_id() {
         "the gate is vacuous if the default config stops shipping tools"
     );
 
-    let mut checked = Vec::new();
+    let mut checked = std::collections::BTreeSet::new();
     for (tool_key, tool_config) in tools {
         if !supports_exact_backend_resume(Some(tool_config)) {
             continue;
         }
-        checked.push(tool_key.clone());
+        checked.insert(tool_key.clone());
         assert_eq!(
             exact_backend_resume_unacquirable_reason(tool_key, Some(tool_config)),
             None,
@@ -758,9 +900,11 @@ fn every_exact_resume_tool_can_acquire_its_id() {
 
     // Named rather than counted, so a tool silently losing the declaration
     // shows up here instead of shrinking the gate to nothing.
+    // A set, not a list: `preserve_order` means the config's key order would
+    // otherwise decide whether this assertion holds.
     assert_eq!(
         checked,
-        vec!["claude".to_owned(), "codex".to_owned()],
+        std::collections::BTreeSet::from(["claude".to_owned(), "codex".to_owned()]),
         "these are the tools the gate is protecting"
     );
 }

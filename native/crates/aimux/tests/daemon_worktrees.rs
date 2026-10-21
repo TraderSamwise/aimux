@@ -15,6 +15,7 @@ struct FakeWorktreeRuntime {
     fail_prune: bool,
     empty_graveyard_status: bool,
     omit_graveyard_status: bool,
+    worktree_row_without_checkout: bool,
 }
 
 impl DaemonWorktreeTextRuntime for FakeWorktreeRuntime {
@@ -40,10 +41,19 @@ impl DaemonWorktreeTextRuntime for FakeWorktreeRuntime {
             ));
         }
         match route_path {
-            project_routes::WORKTREES => ProjectServiceJsonResult::ok(
-                "/repo",
-                json!({ "ok": true, "worktrees": [{ "name": "main", "branch": "master", "path": "/repo" }] }),
-            ),
+            project_routes::WORKTREES => {
+                let mut worktrees =
+                    vec![json!({ "name": "main", "branch": "master", "path": "/repo" })];
+                if self.worktree_row_without_checkout {
+                    worktrees.push(json!({
+                        "name": "gone",
+                        "branch": "gone",
+                        "path": "/repo/.aimux/worktrees/gone",
+                        "status": "missing"
+                    }));
+                }
+                ProjectServiceJsonResult::ok("/repo", json!({ "ok": true, "worktrees": worktrees }))
+            }
             project_routes::GRAVEYARD => ProjectServiceJsonResult::ok(
                 "/repo",
                 json!({ "ok": true, "entries": [{ "id": "claude-1", "tool": "claude" }], "worktrees": [] }),
@@ -282,6 +292,41 @@ fn worktree_list_and_create_match_text_and_json_contracts() {
             Some(json!({ "source": "https://github.com/openai/aimux/tree/feature/demo" })),
             None,
         )
+    );
+}
+
+/// Prune must not report success for rows it cannot touch.
+///
+/// `git worktree prune` only clears git's own records, so a worktree row
+/// whose checkout is gone -- and which git was never told about -- survived
+/// while the command said it had found nothing stale. The row stayed on
+/// screen flagged as missing and the message gave no way forward.
+#[test]
+fn worktree_prune_names_rows_it_cannot_clean() {
+    let mut runtime = FakeWorktreeRuntime {
+        worktree_row_without_checkout: true,
+        ..FakeWorktreeRuntime::default()
+    };
+    let pruned = route_worktree_text_request(
+        &mut runtime,
+        "POST",
+        &format!("{}?project=.", CORE_API_ROUTES.worktree_prune_text),
+        None,
+    )
+    .expect("worktree prune");
+    let body = text_body(pruned);
+    assert!(
+        body.contains("/repo/.aimux/worktrees/gone"),
+        "the row prune cannot clean is named: {body}"
+    );
+    assert!(
+        body.contains("aimux worktree remove"),
+        "and the verb that does clean it: {body}"
+    );
+    // The control: a worktree that still has its checkout is not named.
+    assert!(
+        !body.contains("\"/repo\"") && !body.contains("name: main"),
+        "a healthy worktree is not reported as orphaned: {body}"
     );
 }
 
