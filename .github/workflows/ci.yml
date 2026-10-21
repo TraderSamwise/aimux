@@ -255,8 +255,8 @@ jobs:
       # line tables still give a backtrace with file and line, which is what
       # anyone reading a CI failure actually uses. Shrinking what this job
       # produces leaves what gets compiled unchanged.
-      CARGO_PROFILE_TEST_DEBUG: line-tables-only
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
 
@@ -316,6 +316,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y tmux
+
+      # Printed because the last three failures here were "Disk quota
+      # exceeded" from rustc, which names a random test crate and tells you
+      # nothing. Whoever hits this next should see the number rather than
+      # infer it.
+      - name: Report disk before the build
+        run: df -h / /tmp
 
       - name: cargo test
         run: yarn native:test
