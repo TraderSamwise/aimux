@@ -400,3 +400,118 @@ fn orphaned_agents_read_down_the_same_class_ladder() {
         "action numbers ascend with the rendered order: {numbered:?}"
     );
 }
+
+/// The order has to be in the array, not only in the rows beside it.
+///
+/// The CLI renders `entries` and `worktrees` straight from this response, and
+/// the daemon's text route rebuilds the payload as `{entries, worktrees}` with
+/// no view model at all, so an order that lived only in `viewModel` reached
+/// the TUI and nothing else. The Expo graveyard reads `entries` too and never
+/// sorts.
+#[test]
+fn graveyard_route_orders_the_raw_entries_by_class() {
+    let project = temp_project("graveyard-route-class-order");
+    let state_dir = project.join("state");
+    // A second agent in the graveyarded worktree, so the nested list spans
+    // enough to prove an order. The shared fixture has one, and a one-agent
+    // list agrees with every ordering.
+    let mut topology = topology_fixture();
+    topology["nodes"]
+        .as_array_mut()
+        .expect("nodes")
+        .push(json!({
+            "id": "node-wt-overseer",
+            "rigId": "rig-1",
+            "logicalId": "agent-wt-overseer",
+            "toolConfigKey": "claude",
+            "createdAt": "2026-01-01T00:00:00.000Z"
+        }));
+    topology["sessions"]
+        .as_array_mut()
+        .expect("sessions")
+        .push(json!({
+            "id": "agent-wt-overseer",
+            "nodeId": "node-wt-overseer",
+            "status": "graveyard",
+            "command": "claude",
+            "worktreePath": "/repo/old",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "updatedAt": "2026-01-01T00:00:02.000Z"
+        }));
+    write_topology(&state_dir, topology);
+    create_dir_all(&state_dir).unwrap();
+    write(
+        last_used_path(&state_dir),
+        json!({
+            "version": 1,
+            // The coder is the most recently used, so recency alone leads with it.
+            "items": { "agent-attached": { "lastUsedAt": "2026-01-01T00:00:09.000Z" } },
+            "clients": {},
+            "projectRecentIds": []
+        })
+        .to_string(),
+    )
+    .unwrap();
+    // Promotion writes metadata state, never the topology file, so this is the
+    // only place the class can come from.
+    write(
+        aimux::daemon_state::metadata_state_path(&state_dir),
+        json!({
+            "version": 1,
+            "sessions": {
+                "agent-wt-overseer": {
+                    "id": "agent-wt-overseer",
+                    "overseer": true,
+                    "projectControl": true,
+                    "role": "overseer"
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(&context, "GET", routes::GRAVEYARD, None);
+    assert_eq!(response.status, 200);
+    let ids = response.body["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .map(|entry| entry["id"].as_str().unwrap_or_default().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        ["agent-wt-overseer", "agent-attached", "agent-orphan"],
+        "the overseer leads although agent-attached is the most recently used"
+    );
+
+    // The same payload carries a worktree's agents a second time, and the view
+    // model a third. All three have to read the same way.
+    let nested = response.body["worktrees"][0]["agents"]
+        .as_array()
+        .expect("nested worktree agents")
+        .iter()
+        .map(|agent| agent["id"].as_str().unwrap_or_default().to_owned())
+        .collect::<Vec<_>>();
+    let attached = response.body["viewModel"]["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .find(|row| row["kind"] == "worktree")
+        .expect("worktree row")["attachedAgents"]
+        .as_array()
+        .expect("attached agents")
+        .iter()
+        .map(|view| view["entry"]["id"].as_str().unwrap_or_default().to_owned())
+        .collect::<Vec<_>>();
+    assert!(
+        nested.len() >= 2,
+        "a one-agent worktree agrees with every order, so this would prove nothing: {nested:?}"
+    );
+    assert_eq!(
+        nested, attached,
+        "the nested agents array and the view model's attachedAgents are one order"
+    );
+    cleanup(project);
+}

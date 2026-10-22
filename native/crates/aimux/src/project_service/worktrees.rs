@@ -65,6 +65,30 @@ pub fn route_worktree_read_request(
     let metadata_sessions = try_load_metadata_state(&project_state_dir)
         .map(|state| state.sessions)
         .unwrap_or_default();
+    // The raw arrays are the answer, not just the view model beside them. The
+    // CLI renders `entries` and `worktrees` directly, and the daemon's text
+    // route rebuilds the payload without the view model at all, so an order
+    // that lived only in `viewModel` reached the TUI and nothing else. The
+    // view model re-sorts with the same comparators, so this is the same
+    // order, not a second one.
+    let class_ranks = graveyard_class_ranks(&entries, &worktrees, &teammates, &metadata_sessions);
+    let entries = sort_agents(&entries, &last_used_by_id, &class_ranks);
+    let worktrees = sort_worktrees(&worktrees, &entries, &last_used_by_id, &class_ranks)
+        .into_iter()
+        .map(|mut worktree| {
+            // This response carries a worktree's agents twice: here, and again
+            // as the view model's `attachedAgents`. Two orders for one fact in
+            // one payload is exactly what the ladder exists to stop, so the
+            // nested list takes the same keys -- class, then last used, then
+            // created, then id -- which is what `collect_attached_agents`
+            // sorts the view model's copy by.
+            if let Some(agents) = worktree.get("agents").and_then(Value::as_array).cloned() {
+                worktree["agents"] =
+                    Value::Array(sort_agents(&agents, &last_used_by_id, &class_ranks));
+            }
+            worktree
+        })
+        .collect::<Vec<_>>();
     Some(json_response(
         200,
         json!({
@@ -129,18 +153,34 @@ fn class_rank_of(ranks: &BTreeMap<String, u8>, agent: &Value) -> u8 {
         .unwrap_or(3)
 }
 
+/// Every agent this screen can render, from all three places they arrive: the
+/// flat graveyard list, the orphan teammates, and the agents a worktree
+/// carries itself.
+///
+/// The route and the view model both order agents, so they call this rather
+/// than each working the ladder out for itself. Same function, same inputs,
+/// so the arrays a client renders cannot disagree with the rows beside them.
+fn graveyard_class_ranks(
+    agents: &[Value],
+    worktrees: &[Value],
+    teammates: &[Value],
+    metadata_sessions: &BTreeMap<String, Value>,
+) -> BTreeMap<String, u8> {
+    let mut every_agent = agents.to_vec();
+    every_agent.extend(teammates.iter().cloned());
+    for worktree in worktrees {
+        every_agent.extend(array_field(worktree, "agents").iter().cloned());
+    }
+    class_ranks_by_id(&every_agent, metadata_sessions)
+}
+
 pub fn build_graveyard_view_model(input: GraveyardViewModelInput) -> Value {
-    // Every agent this model can render, from all three places they arrive:
-    // the flat graveyard list, the orphan teammates, and the agents a worktree
-    // carries itself.
-    let class_ranks = {
-        let mut every_agent = input.agents.clone();
-        every_agent.extend(input.teammates.iter().cloned());
-        for worktree in &input.worktrees {
-            every_agent.extend(array_field(worktree, "agents").iter().cloned());
-        }
-        class_ranks_by_id(&every_agent, &input.metadata_sessions)
-    };
+    let class_ranks = graveyard_class_ranks(
+        &input.agents,
+        &input.worktrees,
+        &input.teammates,
+        &input.metadata_sessions,
+    );
     let mut rows = Vec::new();
     let mut selectable_rows = Vec::new();
     let mut flat_agents_claimed_by_worktree = BTreeSet::new();
