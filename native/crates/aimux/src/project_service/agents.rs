@@ -675,13 +675,26 @@ pub fn topology_desktop_session_list_with_live_window_ids(
 
 pub fn topology_desktop_session_list_with_live_window_projection(
     topology: &Value,
-    _metadata_sessions: &BTreeMap<String, Value>,
+    metadata_sessions: &BTreeMap<String, Value>,
     tools: &Map<String, Value>,
     live_window_ids: LiveWindowIdsProjection<'_>,
 ) -> Vec<Value> {
     list_topology_session_states(topology, Some(ACTIVE_AGENT_STATUSES))
         .into_iter()
-        .map(|mut session| {
+        .map(|session| {
+            // Every caller already passes the stored sessions, and this took
+            // them and dropped them on the floor. A topology row carries an
+            // agent's `role` but never `projectControl`, so without the merge
+            // a control agent is indistinguishable from a coder here -- which
+            // is how the teammate list came to order one as a coder.
+            //
+            // This also brings the demotion half: an explicit stored
+            // `projectControl: false` now strips a stale role off these rows
+            // instead of leaving it to promote the agent again.
+            let mut session = session_with_stored_control_flags(
+                &session,
+                string_field(&session, "id").and_then(|id| metadata_sessions.get(id)),
+            );
             let mut status = string_field(&session, "status")
                 .unwrap_or("offline")
                 .to_owned();

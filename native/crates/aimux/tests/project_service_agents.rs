@@ -2244,3 +2244,64 @@ fn bulk_offline_system_route_handles_a_missing_tmux_session_while_another_surviv
     );
     cleanup(project);
 }
+
+/// A teammate on the control rung leads its coders, and the flag that puts it
+/// there lives in metadata rather than in the topology file.
+///
+/// Nothing persists `projectControl` to topology -- `upsert_agent_topology`
+/// writes `role`, `lane`, `roleState` and `team`, and promotion writes metadata
+/// state -- so a teammate ordered off the bare topology row reads as a coder
+/// whatever it actually is. The route merges the stored flags before ordering,
+/// and this is what holds that true. It matters because `select_direct_teammates`
+/// is a public function with one caller that does hand it raw rows; that caller
+/// looks its result up by id, so the order is irrelevant there, and that is the
+/// only reason the gap is harmless today.
+#[test]
+fn route_teammates_orders_a_project_control_teammate_ahead_of_a_coder() {
+    let project = temp_project("teammates-route-class-order");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&teammate_topology_fixture()).unwrap(),
+    )
+    .unwrap();
+    // `child-code` is created after `child-review` and neither holds a tmux
+    // window, so creation order alone leads with the reviewer.
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "child-code".into(),
+                // `projectControl: true` alone puts it on the control rung;
+                // a stored `role` would be inert here, so there isn't one.
+                // Note the published record still reports `role: "coder"`
+                // from `team.role` -- the rung is authority, not the label.
+                json!({ "id": "child-code", "projectControl": true }),
+            )]),
+        },
+    )
+    .unwrap();
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let response = route_project_service_request(
+        &context,
+        "GET",
+        "/agents/teammates?parentSessionId=parent",
+        None,
+    );
+    assert_eq!(response.status, 200);
+    let ordered = response.body["teammates"]
+        .as_array()
+        .expect("teammates")
+        .iter()
+        .map(|teammate| teammate["id"].as_str().unwrap_or_default().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ordered,
+        ["child-code", "child-review"],
+        "the control teammate leads although it was created later"
+    );
+    cleanup(project);
+}
