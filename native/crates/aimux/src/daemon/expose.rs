@@ -367,9 +367,12 @@ impl DaemonExposeFocusRuntime for SystemDaemonExposeFocusRuntime {
     }
 }
 
+/// Takes no session-prefix builder. It needed one when the route built tmux
+/// session names itself; now the targets carry their own `windowId` and the
+/// previews key on the state dir plus that id, so a prefix would be a value
+/// the caller computes and this throws away.
 pub fn expose_items_route(
     resolver: &mut PathResolver,
-    _session_prefix_for_project: impl Fn(&str) -> String,
     path: &str,
     projects_for_refresh: &[ProjectsRouteProject],
     hot_snapshots: &GlobalExposeHotSnapshotCoordinator,

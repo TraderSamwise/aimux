@@ -5002,7 +5002,6 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
         let projects = self.try_list_projects_for_route()?;
         expose_items_route(
             &mut self.resolver,
-            session_prefix_for_project,
             path,
             &projects,
             &self.global_expose_hot_snapshots,

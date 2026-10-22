@@ -963,7 +963,7 @@ pub fn run_tmux_expose_with_drivers(
     };
     let mut sort_mode = read_expose_ui_state(&options.project_state_dir).sort_mode;
     let mut footer_message: Option<String> = None;
-    let mut items = order_items(&view, &options.project_root, sort_mode);
+    let mut items = order_items(&view, sort_mode);
     let mut index = selected_or_current_index(&items, None, options.current_window_id.as_deref());
     let mut leader_pending = false;
     let mut pending_keys: Vec<ExposeKey> = Vec::new();
@@ -1023,7 +1023,7 @@ pub fn run_tmux_expose_with_drivers(
                 view_stale = false;
                 loading = false;
                 write_loaded_hot_snapshot(&options, scope, &view);
-                items = order_items(&view, &options.project_root, sort_mode);
+                items = order_items(&view, sort_mode);
                 captures = seed_preview_snapshots(&items);
                 capture_missing_previews(&items, &mut captures, capture);
                 index = selected_or_current_index(
@@ -1122,7 +1122,7 @@ pub fn run_tmux_expose_with_drivers(
                             view_stale = false;
                             loading = false;
                             write_loaded_hot_snapshot(&options, scope, &view);
-                            items = order_items(&view, &options.project_root, sort_mode);
+                            items = order_items(&view, sort_mode);
                             captures = seed_preview_snapshots(&items);
                             index = selected_or_current_index(
                                 &items,
@@ -1216,7 +1216,7 @@ pub fn run_tmux_expose_with_drivers(
                     loading,
                     message: footer_message.clone(),
                 };
-                items = order_items(&view, &options.project_root, sort_mode);
+                items = order_items(&view, sort_mode);
                 captures = seed_preview_snapshots(&items);
                 index = selected_window_id
                     .and_then(|window_id| {
@@ -1252,7 +1252,7 @@ pub fn run_tmux_expose_with_drivers(
                         loading,
                         message: footer_message.clone(),
                     };
-                    items = order_items(&view, &options.project_root, sort_mode);
+                    items = order_items(&view, sort_mode);
                     captures = seed_preview_snapshots(&items);
                     index = index.min(items.len().saturating_sub(1));
                     layout = render_grid_expose(
@@ -1281,7 +1281,7 @@ pub fn run_tmux_expose_with_drivers(
                         message: footer_message.clone(),
                     };
                     write_loaded_hot_snapshot(&options, scope, &view);
-                    items = order_items(&view, &options.project_root, sort_mode);
+                    items = order_items(&view, sort_mode);
                     captures = seed_preview_snapshots(&items);
                     index = selected_or_current_index(
                         &items,
@@ -1378,7 +1378,7 @@ pub fn run_tmux_expose_with_drivers(
                             message: footer_message.clone(),
                         };
                         write_loaded_hot_snapshot(&options, scope, &view);
-                        items = order_items(&view, &options.project_root, sort_mode);
+                        items = order_items(&view, sort_mode);
                         captures = seed_preview_snapshots(&items);
                         let _ = refresh_captures(&items, &mut captures, capture);
                     }
@@ -2108,11 +2108,21 @@ fn render_tile_at(input: RenderTileAtInput<'_>) -> String {
     })
 }
 
-fn order_items(
-    view: &ExposeScopeView,
-    _project_root: &Path,
-    sort_mode: ExposeSortMode,
-) -> Vec<Value> {
+/// The grid renders the list it was handed, and re-partitions it.
+///
+/// It took a project root for years and never read it, which reads like a
+/// dropped input and is not one: the only thing a root decides is worktree and
+/// project GROUPING, and that lives in the service's `order_expose_items`.
+///
+/// What this does do is re-apply the supervisor partition, and that is NOT
+/// redundant. The fetch paths hand over a list the service already ordered,
+/// but the hot-snapshot path does not -- `tmux_expose_hot_snapshot_worker`
+/// builds its items straight from `list_switchable_agent_items` and never
+/// calls `order_expose_items` -- so on that path this partition is the only
+/// thing putting the supervisor plane first. The grouping those items never
+/// got is a real gap, and a root could not close it anyway; it needs the
+/// worktree order the service reads from topology.
+fn order_items(view: &ExposeScopeView, sort_mode: ExposeSortMode) -> Vec<Value> {
     let items = &view.items;
     let mut ordered = items.to_vec();
     if sort_mode == ExposeSortMode::RecentOutput {
@@ -3029,7 +3039,7 @@ mod tests {
             sublabel: ExposeSublabel::Worktree,
         };
 
-        let ordered = order_items(&view, Path::new("/repo"), ExposeSortMode::Default);
+        let ordered = order_items(&view, ExposeSortMode::Default);
         let labels = ordered
             .iter()
             .map(|item| item.get("label").and_then(Value::as_str).unwrap_or(""))
@@ -3070,7 +3080,7 @@ mod tests {
             sublabel: ExposeSublabel::Worktree,
         };
 
-        let grid_order = order_items(&view, Path::new("/repo"), ExposeSortMode::RecentOutput)
+        let grid_order = order_items(&view, ExposeSortMode::RecentOutput)
             .iter()
             .map(|item| item["label"].as_str().unwrap_or("").to_owned())
             .collect::<Vec<_>>();
