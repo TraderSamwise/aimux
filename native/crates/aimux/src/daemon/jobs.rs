@@ -1146,12 +1146,26 @@ impl DaemonPeriodicTask for DaemonJobsPruneTask {
     }
 
     fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
+        // Walks the whole job store. Blocking file I/O on the async worker
+        // starves the daemon's accept loop, which its own health watchdog
+        // then reads as a wedge and ends the process over.
+        let jobs_dir = context.resolver.jobs_dir();
         Box::pin(async move {
-            let store = JobStore::new(context.resolver.jobs_dir());
-            store
-                .prune(DEFAULT_JOB_RETENTION, scheduler_now_ms().max(0) as u128)
-                .map(|_| ())
-                .map_err(|error| error.to_string())
+            crate::async_runtime::spawn_blocking_named(
+                crate::async_runtime::scoped_task_name(
+                    DAEMON_JOBS_PRUNE_TASK_NAME,
+                    "prune",
+                    "daemon",
+                ),
+                move || {
+                    JobStore::new(jobs_dir)
+                        .prune(DEFAULT_JOB_RETENTION, scheduler_now_ms().max(0) as u128)
+                        .map(|_| ())
+                        .map_err(|error| error.to_string())
+                },
+            )
+            .await
+            .map_err(|error| format!("jobs prune task did not finish: {error}"))?
         })
     }
 }
@@ -1168,12 +1182,26 @@ impl DaemonPeriodicTask for DaemonJobsReconcileTask {
     }
 
     fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
+        // Spawns tmux and waits for it. Inline on the async worker that is two
+        // of the daemon's two workers away from an unanswerable /health.
+        let jobs_dir = context.resolver.jobs_dir();
         Box::pin(async move {
-            let store = JobStore::new(context.resolver.jobs_dir());
-            let mut tmux = crate::tmux::TmuxRuntimeManager::new();
-            crate::jobs::reconcile_running_jobs(&store, &mut tmux)
-                .map(|_| ())
-                .map_err(|error| error.to_string())
+            crate::async_runtime::spawn_blocking_named(
+                crate::async_runtime::scoped_task_name(
+                    DAEMON_JOBS_RECONCILE_TASK_NAME,
+                    "reconcile",
+                    "daemon",
+                ),
+                move || {
+                    let store = JobStore::new(jobs_dir);
+                    let mut tmux = crate::tmux::TmuxRuntimeManager::new();
+                    crate::jobs::reconcile_running_jobs(&store, &mut tmux)
+                        .map(|_| ())
+                        .map_err(|error| error.to_string())
+                },
+            )
+            .await
+            .map_err(|error| format!("jobs reconcile task did not finish: {error}"))?
         })
     }
 }

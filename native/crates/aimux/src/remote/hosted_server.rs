@@ -648,7 +648,18 @@ impl DaemonPeriodicTask for HostedPruneTask {
     }
 
     fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
-        Box::pin(async move { context.run_hosted_prune() })
+        Box::pin(async move {
+            let prune = context.hosted_prune_callback()?;
+            crate::async_runtime::spawn_blocking_named(
+                crate::async_runtime::scoped_task_name(HOSTED_PRUNE_TASK_NAME, "prune", "daemon"),
+                move || match prune {
+                    Some(prune) => prune(),
+                    None => Ok(()),
+                },
+            )
+            .await
+            .map_err(|error| format!("hosted prune task did not finish: {error}"))?
+        })
     }
 }
 
@@ -664,7 +675,22 @@ impl DaemonPeriodicTask for HostedOutboxDrainTask {
     }
 
     fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
-        Box::pin(async move { context.run_hosted_outbox_drain() })
+        Box::pin(async move {
+            let drain = context.hosted_outbox_drain_callback()?;
+            crate::async_runtime::spawn_blocking_named(
+                crate::async_runtime::scoped_task_name(
+                    HOSTED_OUTBOX_DRAIN_TASK_NAME,
+                    "drain",
+                    "daemon",
+                ),
+                move || match drain {
+                    Some(drain) => drain(),
+                    None => Ok(()),
+                },
+            )
+            .await
+            .map_err(|error| format!("hosted outbox drain task did not finish: {error}"))?
+        })
     }
 }
 

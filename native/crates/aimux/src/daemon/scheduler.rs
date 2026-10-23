@@ -48,6 +48,26 @@ impl DaemonSchedulerContext {
         Ok(())
     }
 
+    /// The callback itself, so a periodic task can carry it onto the blocking
+    /// pool instead of running it on the async worker the listener needs.
+    pub fn hosted_prune_callback(&self) -> Result<Option<HostedPruneCallback>, String> {
+        Ok(self
+            .hosted_prune
+            .lock()
+            .map_err(|_| "daemon scheduler hosted prune lock poisoned".to_owned())?
+            .clone())
+    }
+
+    pub fn hosted_outbox_drain_callback(
+        &self,
+    ) -> Result<Option<HostedOutboxDrainCallback>, String> {
+        Ok(self
+            .hosted_outbox_drain
+            .lock()
+            .map_err(|_| "daemon scheduler hosted outbox lock poisoned".to_owned())?
+            .clone())
+    }
+
     pub fn run_hosted_prune(&self) -> Result<(), String> {
         let hosted_prune = self
             .hosted_prune

@@ -3438,11 +3438,26 @@ impl DaemonPeriodicTask for DaemonDiskMaintenanceTask {
     }
 
     fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
+        // Walks and prunes log and state trees. Inline on the async worker it
+        // holds the daemon's accept loop for the whole sweep.
+        let resolver = context.resolver.clone();
         Box::pin(async move {
-            match try_run_daemon_disk_maintenance_once(
-                &context.resolver,
-                DiskMaintenanceOptions::default(),
-            ) {
+            let swept = crate::async_runtime::spawn_blocking_named(
+                crate::async_runtime::scoped_task_name(
+                    DAEMON_DISK_MAINTENANCE_TASK_NAME,
+                    "sweep",
+                    "daemon",
+                ),
+                move || {
+                    try_run_daemon_disk_maintenance_once(
+                        &resolver,
+                        DiskMaintenanceOptions::default(),
+                    )
+                },
+            )
+            .await
+            .map_err(|error| format!("disk maintenance task did not finish: {error}"))?;
+            match swept {
                 Ok(interval) => {
                     self.next_interval_ms = interval.as_millis().min(u128::from(u64::MAX)) as u64;
                     Ok(())

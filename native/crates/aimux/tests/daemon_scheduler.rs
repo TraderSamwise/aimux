@@ -32,10 +32,14 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::fs;
+use std::future::poll_fn;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, Barrier};
+use std::task::Poll;
+use std::time::Duration;
 
 #[test]
 fn daemon_periodic_task_list_registers_every_migrated_task() {
@@ -503,6 +507,65 @@ fn daemon_process_health_task_does_not_panic_inside_an_async_task() {
     assert!(
         snapshot.get("daemonProcessInventory").is_some(),
         "the snapshot must carry a real inventory, not an error: {snapshot}"
+    );
+}
+
+/// A daemon periodic task that runs its body on the async worker holds the
+/// listener's accept loop with it. The daemon has two async workers, and its
+/// own health watchdog reads an unanswered `/health` as a wedge and ends the
+/// process over it -- five exits in forty-five minutes on one machine, each
+/// one taking whatever command was in flight with it. A blocking body also
+/// disables the task's own `timeout()`, because a future that never yields is
+/// never cancelled.
+///
+/// The one pool thread is occupied before the measurement, so a body that
+/// reached the pool cannot have run: the first poll of a task that hands its
+/// work over is `Pending`, and the first poll of a task that does the work
+/// inline is `Ready`.
+#[test]
+fn every_daemon_periodic_task_hands_its_body_to_the_blocking_pool() {
+    let fixture = DaemonSchedulerFixture::new("blocking-pool");
+    let context = DaemonSchedulerContext::new(fixture.resolver.clone(), daemon_info());
+    context
+        .set_hosted_prune(Arc::new(|| Ok(())))
+        .expect("hosted prune callback");
+    context
+        .set_hosted_outbox_drain(Arc::new(|| Ok(())))
+        .expect("hosted outbox drain callback");
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .expect("test runtime");
+    let release = Arc::new(Barrier::new(2));
+    let (started, pool_occupied) = mpsc::channel();
+    let held = Arc::clone(&release);
+    runtime.handle().spawn_blocking(move || {
+        started.send(()).expect("report the pool thread started");
+        held.wait();
+    });
+    pool_occupied
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the one blocking pool thread is occupied");
+
+    let mut ran_on_the_async_worker = Vec::new();
+    for mut task in daemon_periodic_tasks(active_expose_coordinator(false)) {
+        let name = task.name().to_owned();
+        // aimux-async-seam: test - sync test polls the task future once
+        let first_poll = runtime.block_on(async {
+            let mut future = task.run(&context);
+            poll_fn(|cx| Poll::Ready(future.as_mut().poll(cx))).await
+        });
+        if first_poll.is_ready() {
+            ran_on_the_async_worker.push(name);
+        }
+    }
+    release.wait();
+
+    assert!(
+        ran_on_the_async_worker.is_empty(),
+        "these daemon periodic tasks did their work on the async worker instead of handing it to the blocking pool: {ran_on_the_async_worker:?}"
     );
 }
 

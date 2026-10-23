@@ -234,7 +234,25 @@ impl DaemonPeriodicTask for GlobalExposeHotSnapshotTask {
     }
 
     fn run<'a>(&'a mut self, _context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
-        Box::pin(async move { self.coordinator.run_scheduler_refresh() })
+        // The refresh reads every active project's topology, metadata and
+        // preview snapshots synchronously. On the async worker that stalls the
+        // daemon's accept loop, and the task's own `timeout()` cannot fire
+        // either, because a blocking future is never yielded to the timer.
+        let coordinator = self.coordinator.clone();
+        Box::pin(async move {
+            crate::async_runtime::spawn_blocking_named(
+                crate::async_runtime::scoped_task_name(
+                    GLOBAL_EXPOSE_HOT_SNAPSHOT_TASK_NAME,
+                    "refresh",
+                    "daemon",
+                ),
+                move || coordinator.run_scheduler_refresh(),
+            )
+            .await
+            .map_err(|error| {
+                format!("global expose hot snapshot refresh did not finish: {error}")
+            })?
+        })
     }
 }
 
