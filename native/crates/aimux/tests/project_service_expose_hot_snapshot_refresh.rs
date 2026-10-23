@@ -5,10 +5,15 @@ use aimux::project_service::visual_clients::{
     PROJECT_EXPOSE_HOT_SNAPSHOT_REFRESH_TASK_NAME, ProjectExposeHotSnapshotRefreshTask,
     ProjectExposeHotSnapshotRefresher, ProjectHotSnapshotCoordinator, VisualClientLeaseRoute,
 };
+use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
+use aimux::tmux::{CapturePaneOptions, TmuxManagedWindow, TmuxTarget};
 use aimux::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
 use aimux::tmux_expose_hot_snapshot::{
     HotExposeScopeKey, HotExposeScopeWrite, read_hot_expose_scope_view,
     try_write_hot_expose_scope_views,
+};
+use aimux::tmux_expose_hot_snapshot_worker::{
+    ProjectExposeHotSnapshotRuntime, refresh_project_expose_hot_snapshots,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -327,4 +332,126 @@ fn temp_root(label: &str) -> PathBuf {
         std::process::id(),
         TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ))
+}
+
+/// The snapshot the worker writes has to be ordered the way the live route
+/// orders, because the grid renders the snapshot first and the route second.
+///
+/// The live project-service route runs `order_expose_items`, which groups by
+/// worktree in the dashboard's worktree order. The worker did not, so the grid
+/// showed one order for a frame and then replaced it with another. The
+/// fixture puts the two worktrees' windows in an order that interleaves them,
+/// so a snapshot that skipped the grouping cannot satisfy this.
+#[test]
+fn the_hot_snapshot_is_grouped_the_way_the_live_route_groups() {
+    let project = temp_root("hot-snapshot-grouping");
+    let state_dir = project.join("state");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    let root = project.to_string_lossy().into_owned();
+    let feature = project.join("feature").to_string_lossy().into_owned();
+    fs::write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&coerce_runtime_topology(&json!({
+            "version": 1,
+            "generatedAt": "2026-01-01T00:00:00.000Z",
+            "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": root,
+                "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+            "nodes": [
+                { "id": "n-main", "rigId": "rig-1", "logicalId": "main-1", "toolConfigKey": "claude", "cwd": root, "createdAt": "2026-01-01T00:00:00.000Z" },
+                { "id": "n-feat", "rigId": "rig-1", "logicalId": "feat-1", "toolConfigKey": "claude", "cwd": feature, "createdAt": "2026-01-01T00:00:00.000Z" }
+            ],
+            "edges": [], "bindings": [],
+            "sessions": [
+                { "id": "main-1", "nodeId": "n-main", "status": "running", "command": "claude", "worktreePath": root, "createdAt": "2026-01-01T00:00:01.000Z", "updatedAt": "2026-01-01T00:00:01.000Z" },
+                { "id": "feat-1", "nodeId": "n-feat", "status": "running", "command": "claude", "worktreePath": feature, "createdAt": "2026-01-01T00:00:02.000Z", "updatedAt": "2026-01-01T00:00:02.000Z" }
+            ],
+            "services": [],
+            "worktrees": [
+                { "id": "wt-feature", "rigId": "rig-1", "path": feature, "name": "feature", "status": "active", "branch": "feature", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+            ],
+            "worktreeGraveyard": [], "teamRoles": [], "remoteClients": [],
+            "lifecycleOperations": [], "exchangeRefs": []
+        })))
+        .expect("topology yaml"),
+    )
+    .expect("write topology");
+
+    // Interleaved on purpose: the feature window holds the lower index, so an
+    // ungrouped list leads with it.
+    let mut runtime = FakeExposeRuntime {
+        windows: vec![
+            managed_window("@1", 1, "feat-1", &feature),
+            managed_window("@2", 2, "main-1", &root),
+        ],
+    };
+    refresh_project_expose_hot_snapshots(&project, &state_dir, &mut runtime).expect("refresh");
+
+    let view = read_hot_expose_scope_view(
+        &state_dir,
+        &HotExposeScopeKey {
+            project_root: root.clone(),
+            scope: ExposeScope::Project,
+            worktree_key: None,
+            launch_window_id: None,
+        },
+    )
+    .expect("project scope snapshot");
+    let ids = view
+        .items
+        .iter()
+        .map(|item| item["id"].as_str().unwrap_or_default().to_owned())
+        .collect::<Vec<_>>();
+    assert!(
+        ids.len() >= 2,
+        "a one-item snapshot agrees with every grouping: {ids:?}"
+    );
+    assert_eq!(
+        ids,
+        ["main-1", "feat-1"],
+        "grouped by worktree in dashboard order, not by window index"
+    );
+}
+
+struct FakeExposeRuntime {
+    windows: Vec<TmuxManagedWindow>,
+}
+
+impl ProjectExposeHotSnapshotRuntime for FakeExposeRuntime {
+    fn list_project_managed_windows(
+        &mut self,
+        _project_root: &Path,
+    ) -> Result<Vec<TmuxManagedWindow>, String> {
+        Ok(self.windows.clone())
+    }
+
+    fn capture_target(
+        &mut self,
+        _target: &TmuxTarget,
+        _options: CapturePaneOptions,
+    ) -> Result<String, String> {
+        Ok(String::new())
+    }
+}
+
+fn managed_window(
+    window_id: &str,
+    window_index: i64,
+    session_id: &str,
+    worktree_path: &str,
+) -> TmuxManagedWindow {
+    TmuxManagedWindow {
+        target: TmuxTarget {
+            session_name: "aimux".into(),
+            window_id: window_id.into(),
+            window_index,
+            window_name: session_id.into(),
+            pane_dead: Some(false),
+        },
+        metadata: json!({
+            "sessionId": session_id,
+            "tool": "claude",
+            "kind": "agent",
+            "worktreePath": worktree_path,
+        }),
+    }
 }

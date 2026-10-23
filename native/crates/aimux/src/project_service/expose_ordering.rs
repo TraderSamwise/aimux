@@ -471,7 +471,7 @@ fn collapse_slashes(value: &str) -> String {
     output
 }
 
-fn clean_path_string(path: &str) -> String {
+pub fn clean_path_string(path: &str) -> String {
     path_clean(Path::new(path)).to_string_lossy().into_owned()
 }
 

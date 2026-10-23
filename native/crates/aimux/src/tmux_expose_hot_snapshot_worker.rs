@@ -1,4 +1,7 @@
 use crate::daemon_state::load_metadata_state;
+use crate::project_service::expose_ordering::{
+    ExposeOrderingOptions, clean_path_string, dashboard_worktree_order_paths, order_expose_items,
+};
 use crate::project_service::preview_snapshots::{DEFAULT_PREVIEW_MAX_CHARS, trailing_chars};
 use crate::project_service::switchable_agents::{
     AgentListScope, ManagedWindowEntry, SwitchableContext, SwitchableListOptions,
@@ -6,6 +9,7 @@ use crate::project_service::switchable_agents::{
 };
 use crate::project_service::tmux_metadata_sync::derive_recency_fields_for_window_metadata;
 use crate::project_service::usage::load_last_used_state;
+use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 use crate::tmux::{CapturePaneOptions, TmuxManagedWindow, TmuxRuntimeManager, TmuxTarget};
 use crate::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
 use crate::tmux_expose_hot_snapshot::{
@@ -14,7 +18,7 @@ use crate::tmux_expose_hot_snapshot::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 const EXPOSE_HOT_SNAPSHOT_MAX_LAUNCH_CONTEXTS: usize = 6;
@@ -90,6 +94,27 @@ pub fn refresh_project_expose_hot_snapshots(
             return Err(format!("tmux inventory failed: {error}"));
         }
     };
+    // One read per refresh pass, shared by every scope written below. An
+    // unreadable topology is not an empty one, but it is also not worth
+    // failing a cache refresh over: the snapshot then carries the comparator's
+    // order without the worktree grouping, which is what it carried before
+    // this call existed, and the live route corrects it on the next tick.
+    let expose_options = ExposeOrderingOptions {
+        worktree_order_by_project_root: read_runtime_topology(runtime_topology_path(
+            project_state_dir,
+        ))
+        .map(|topology| {
+            BTreeMap::from([(
+                clean_path_string(&project_root),
+                dashboard_worktree_order_paths(&project_root, &topology),
+            )])
+        })
+        .unwrap_or_default(),
+        sort_mode_recent_output: false,
+    };
+    // Bound once and used for both the ordering and the view it is written
+    // with, so a snapshot cannot be grouped one way and labelled another.
+    let project_sublabel = ExposeSublabel::Worktree;
     let project_items = list_project_switchable_items(
         ProjectSwitchableItemsInput {
             project_root: &project_root,
@@ -99,6 +124,8 @@ pub fn refresh_project_expose_hot_snapshots(
             scope: AgentListScope::All,
             live_launch_contexts: &live_launch_contexts,
             project_state_dir,
+            sublabel: project_sublabel.into(),
+            expose_options: &expose_options,
         },
         runtime,
         &captured_at,
@@ -114,7 +141,7 @@ pub fn refresh_project_expose_hot_snapshots(
         view: ExposeScopeView {
             scope: ExposeScope::Project,
             scope_label: "all worktrees".into(),
-            sublabel: ExposeSublabel::Worktree,
+            sublabel: project_sublabel,
             items: project_items,
         },
     }];
@@ -132,6 +159,7 @@ pub fn refresh_project_expose_hot_snapshots(
             .and_then(Value::as_str)
             .map(normalize_hot_snapshot_path)
             .unwrap_or_else(|| project_root.clone());
+        let worktree_sublabel = ExposeSublabel::None;
         let worktree_items = list_project_switchable_items(
             ProjectSwitchableItemsInput {
                 project_root: &project_root,
@@ -141,6 +169,8 @@ pub fn refresh_project_expose_hot_snapshots(
                 scope: AgentListScope::Worktree,
                 live_launch_contexts: &live_launch_contexts,
                 project_state_dir,
+                sublabel: worktree_sublabel.into(),
+                expose_options: &expose_options,
             },
             runtime,
             &captured_at,
@@ -156,7 +186,7 @@ pub fn refresh_project_expose_hot_snapshots(
             view: ExposeScopeView {
                 scope: ExposeScope::Worktree,
                 scope_label: "this worktree".into(),
-                sublabel: ExposeSublabel::None,
+                sublabel: worktree_sublabel,
                 items: worktree_items,
             },
         });
@@ -262,6 +292,15 @@ struct ProjectSwitchableItemsInput<'a> {
     scope: AgentListScope,
     live_launch_contexts: &'a [TmuxManagedWindow],
     project_state_dir: &'a Path,
+    /// The sublabel the snapshot will be written with. `order_expose_items`
+    /// branches on it, so the grouping a snapshot gets has to be the grouping
+    /// its own view claims -- passing the wrong one here would be a third
+    /// order rather than the shared one.
+    sublabel: crate::project_service::expose_ordering::ExposeSublabel,
+    /// Worktree order by project root, read once per refresh rather than once
+    /// per scope: this runs on the snapshot refresh path and every scope in a
+    /// pass wants the same answer out of the same topology file.
+    expose_options: &'a ExposeOrderingOptions,
 }
 
 fn list_project_switchable_items(
@@ -289,17 +328,28 @@ fn list_project_switchable_items(
         raw_labels: true,
         use_expose_role_visibility: true,
     };
-    list_switchable_agent_items(&entries, &metadata.sessions, &context, &options, &last_used)
-        .into_iter()
-        .map(|item| {
-            let mut serialized = serialize_fast_control_item(&item);
-            if let Some(object) = serialized.as_object_mut() {
-                object.insert("alive".into(), Value::Bool(item.alive));
-            }
-            attach_captured_preview(&mut serialized, runtime, captured_at, capture_cache);
-            serialized
-        })
-        .collect()
+    // The live route orders here and the worker did not, so the grid showed
+    // the snapshot's order for a frame and then corrected itself to the
+    // route's. Same comparator, same options, so the stale frame is now the
+    // order it is replaced by.
+    let items =
+        list_switchable_agent_items(&entries, &metadata.sessions, &context, &options, &last_used);
+    order_expose_items(
+        &items,
+        input.project_root,
+        input.sublabel,
+        input.expose_options,
+    )
+    .into_iter()
+    .map(|item| {
+        let mut serialized = serialize_fast_control_item(&item);
+        if let Some(object) = serialized.as_object_mut() {
+            object.insert("alive".into(), Value::Bool(item.alive));
+        }
+        attach_captured_preview(&mut serialized, runtime, captured_at, capture_cache);
+        serialized
+    })
+    .collect()
 }
 
 fn managed_window_entry(

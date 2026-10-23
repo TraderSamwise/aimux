@@ -59,6 +59,19 @@ pub enum ExposeSublabel {
     ProjectWorktree,
 }
 
+/// The service's ordering enum is a separate type with the same three
+/// variants. Converting rather than re-deciding means a view and the order it
+/// was grouped by are the same choice, not two literals that agree today.
+impl From<ExposeSublabel> for crate::project_service::expose_ordering::ExposeSublabel {
+    fn from(sublabel: ExposeSublabel) -> Self {
+        match sublabel {
+            ExposeSublabel::None => Self::None,
+            ExposeSublabel::Worktree => Self::Worktree,
+            ExposeSublabel::ProjectWorktree => Self::ProjectWorktree,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExposeSortMode {
