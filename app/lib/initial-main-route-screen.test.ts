@@ -40,10 +40,13 @@ describe("the landing screen", () => {
     expect(source).toContain("useAtomValue(acceptedSharedSessionsAtom)");
   });
 
-  it("tells the rule whether stored shares have been read", () => {
-    expect(source).toContain("sharesHydrated");
+  it("tells the rule what happened to the stored shares' read", () => {
+    // The full read state, not a boolean: a read that FAILED answers with the
+    // default empty list, and a count taken from that is a count from a
+    // fallback.
+    expect(source).toContain("sharesReadState");
     expect(source, "from the store, not a constant").toContain(
-      "useAtomValue(settingsHydratedAtom)",
+      "useAtomValue(settingsReadStateAtom)",
     );
   });
 

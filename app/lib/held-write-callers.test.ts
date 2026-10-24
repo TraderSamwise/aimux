@@ -65,3 +65,28 @@ describe("a security event from the relay", () => {
     );
   });
 });
+
+describe("the shared chats list", () => {
+  const shares = componentBody(
+    join(APP, "app", "(main)", "shares", "index.tsx"),
+    "export default function SharedChatsScreen(",
+  );
+
+  // `refresh` writes the shares it fetched and then calls
+  // `setHasHydrated(true)`, which switches off the loading state -- so a held
+  // write left the screen presenting the default empty list as loaded, saying
+  // nobody had shared anything.
+  it("does not fetch until the write could land", () => {
+    expect(shares).toContain("useAtomValue(settingsReadStateAtom)");
+    expect(shares).toMatch(
+      /if \(settingsReadState !== "read"\) return;[\s\S]{0,200}?void refresh\(\)/,
+    );
+    expect(shares, "and re-runs when the read lands").toMatch(
+      /\}, \[refresh, settingsReadState\]\)/,
+    );
+  });
+
+  it("and the manual refresh waits too", () => {
+    expect(shares).toContain('disabled={loading || settingsReadState !== "read"}');
+  });
+});

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import type { StorageReadState } from "@/lib/jotai-storage";
 import { isRelayUnavailableForProjectDiscovery } from "@/lib/project-connection-display";
 import type { RelayStatus } from "@/lib/relay-transport";
 
@@ -93,7 +94,15 @@ export function ownBackendSignal(
 export interface InitialMainRouteInput {
   isSignedIn: boolean;
   realSharedChatCount: number;
-  sharesHydrated: boolean;
+  /**
+   * What happened to the stored shares' read, in full.
+   *
+   * Not a boolean, because the count beside it is only as good as the read:
+   * a read that FAILED answers with the DEFAULT -- no shares -- and deciding
+   * from that is deciding from a fallback, which is the whole thing this
+   * refuses to do elsewhere.
+   */
+  sharesReadState: StorageReadState;
   ownBackend: OwnBackendSignal;
   waitExpired: boolean;
 }
@@ -112,9 +121,15 @@ export function initialMainRoute(input: InitialMainRouteInput): InitialMainRoute
   // Signed out has no shared chats to land on, whatever is cached.
   if (!input.isSignedIn) return "project";
 
-  const sharesUnknown = !input.sharesHydrated;
+  const sharesUnknown = input.sharesReadState === "unread";
   const backendUnknown = input.ownBackend === "unknown";
   if ((sharesUnknown || backendUnknown) && !input.waitExpired) return "pending";
+
+  // A shares read that FAILED has no count to offer, and waiting does not fix
+  // broken storage. Their own surface is the safe side, and it is not a
+  // consolation prize: a shared list built from a store that cannot be read
+  // would be empty anyway.
+  if (input.sharesReadState === "failed") return "project";
 
   // Expiry decides rather than hangs: an unread share list is no shares, and
   // a relay that never answered is a relay that is not there.

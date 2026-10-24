@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useRouter } from "expo-router";
-import { useAtom } from "jotai";
+import { useAtomValue, useAtom } from "jotai";
 import { MessageSquare, RefreshCw } from "lucide-react-native";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,11 @@ import {
   shouldApplySharedSessionHydrate,
 } from "@/lib/shared-sessions";
 import { sharedChatHref, useRouteShare } from "@/lib/use-route-share";
-import { acceptedSharedSessionsAtom, type ActiveSharedSession } from "@/stores/settings";
+import {
+  settingsReadStateAtom,
+  acceptedSharedSessionsAtom,
+  type ActiveSharedSession,
+} from "@/stores/settings";
 
 export default function SharedChatsScreen() {
   const router = useRouter();
@@ -27,6 +31,7 @@ export default function SharedChatsScreen() {
   const displayedShares = mergeActiveSharedSessions(shares, activeShare);
   const setSharesRef = useRef(setShares);
   const preservedEmptyHydrateRef = useRef(false);
+  const settingsReadState = useAtomValue(settingsReadStateAtom);
   const [hasHydrated, setHasHydrated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,10 +70,15 @@ export default function SharedChatsScreen() {
     }
   }, []);
 
+  // Not until the stored settings have been read. `refresh` WRITES the shares
+  // it fetched and then calls `setHasHydrated(true)`, which switches off the
+  // loading state -- so a held write left this screen presenting the default
+  // empty list as a loaded one, saying nobody had shared anything.
   useEffect(() => {
+    if (settingsReadState !== "read") return;
     const timer = setTimeout(() => void refresh(), 0);
     return () => clearTimeout(timer);
-  }, [refresh]);
+  }, [refresh, settingsReadState]);
 
   return (
     <Page>
@@ -77,7 +87,12 @@ export default function SharedChatsScreen() {
         title="Shared chats"
         subtitle="Chats shared with this account"
         actions={
-          <Button variant="outline" size="icon" onPress={() => void refresh()} disabled={loading}>
+          <Button
+            variant="outline"
+            size="icon"
+            onPress={() => void refresh()}
+            disabled={loading || settingsReadState !== "read"}
+          >
             <RefreshCw size={18} color="#fafafa" />
           </Button>
         }
