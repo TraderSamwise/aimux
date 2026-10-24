@@ -296,25 +296,19 @@ fn a_truncated_paste_is_never_complete() {
     ));
 }
 
-/// `[Pasted text #2]` is what Claude prints when the paste had no line breaks
-/// at all, and a thousand-character paragraph from the app collapses to
-/// exactly that. Refusing it leaves every one-paragraph prompt unverified for
-/// ever, so it counts -- but only against a draft that also has no line
-/// breaks, only when the marker was not already there, and only when the
-/// composer holds nothing else.
+/// `[Pasted text #2]` is what Claude prints when the paste had no line breaks,
+/// and it carries no size. For a draft with no breaks, "no breaks" is true of
+/// every prefix of it too, so accepting it certifies a paste that arrived
+/// half-length -- a failure `send_prompt_to_tmux` records as observed. A
+/// collapsed single-line Claude paste stays unverified; Codex counts
+/// characters and does not have this gap.
 #[test]
-fn a_single_line_paste_counts_for_a_single_line_draft() {
-    assert!(composer_shows_complete_prompt_draft(
+fn a_marker_carrying_no_measurement_is_not_complete() {
+    assert!(!composer_shows_complete_prompt_draft(
         &claude_pane_showing("[Pasted text #2]"),
         "a single line draft",
         Some("❯ ")
     ));
-}
-
-/// And not against a draft that has them: the marker says the paste had no
-/// line breaks, and this draft has three.
-#[test]
-fn a_single_line_paste_is_not_a_multi_line_draft() {
     assert!(!composer_shows_complete_prompt_draft(
         &claude_pane_showing("[Pasted text #2]"),
         MULTILINE_DRAFT,
@@ -546,4 +540,49 @@ fn an_unreadable_body_does_not_silence_the_stuck_draft_refusal() {
         composer_still_holds_prompt_text(&stuck, MULTILINE_DRAFT),
         "the draft is on screen; the body reader giving up does not change that"
     );
+}
+
+/// A draft whose first row is blank -- Shift+Enter, or pasted text that starts
+/// with a newline -- is still a draft. Reading it as an empty composer is
+/// reading it as one aimux may type into.
+#[test]
+fn a_blank_first_row_does_not_make_a_composer_empty() {
+    let pane = "──────────\n❯ \n\nwhat the user had typed\n──────────\n  sam@sam-mbp ~/cs/aimux master (1M context) [a title]";
+
+    assert_eq!(
+        prompt_submit_verification(true, pane, DRAFT),
+        Ok(PromptDeliveryVerification::Unverified),
+        "there is user text in this composer"
+    );
+}
+
+/// A draft containing a markdown rule, a line starting `gpt-`, or a keyboard
+/// hint is still that draft. Delimiting the composer by those spellings
+/// truncated the draft's own body and called a delivered prompt unverified.
+#[test]
+fn a_draft_that_looks_like_chrome_is_still_the_draft() {
+    let draft = "here is the diff\n---\ngpt-5 said something\npress enter to send is in my prompt";
+    let pane = format!(
+        "──────────\n❯ {draft}\n──────────\n  sam@sam-mbp ~/cs/aimux master (1M context) [a title]"
+    );
+
+    assert!(composer_shows_complete_prompt_draft(
+        &pane,
+        draft,
+        Some("❯ ")
+    ));
+}
+
+/// Codex closes its composer with a blank line rather than a rule, and the row
+/// under that is whatever it wants to say.
+#[test]
+fn a_codex_draft_is_read_to_its_own_end() {
+    let draft = "first line of the prompt\nsecond line of the prompt";
+    let pane = format!("› {draft}\n\n  GPT-6.1-Sol high · ~/cs/aimux · a task\n  Esc to interrupt");
+
+    assert!(composer_shows_complete_prompt_draft(
+        &pane,
+        draft,
+        Some("› ")
+    ));
 }

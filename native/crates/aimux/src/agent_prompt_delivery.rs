@@ -53,16 +53,15 @@ impl PromptDeliveryVerification {
 /// would certify a paste that never happened. A measurement already in the
 /// baseline says nothing about this attempt.
 pub fn composer_shows_complete_prompt_draft(pane: &str, draft: &str, before: Option<&str>) -> bool {
-    let normalized_draft = normalize_words(draft);
-    if normalized_draft.is_empty() {
+    if normalize_words(draft).is_empty() {
         return false;
     }
-    let Some(body) = current_composer_body(pane) else {
-        return false;
-    };
-    if normalize_words(&body) == normalized_draft {
+    if composer_rows_show_the_draft(pane, draft) {
         return true;
     }
+    let Some((body, _)) = composer_body_and_rows_below(pane) else {
+        return false;
+    };
     // No baseline means the pre-paste composer could not be read, and a
     // measurement is only evidence of THIS paste by not having been there
     // before. `composer_snapshot` ends in `.ok()` and the async baseline is
@@ -330,18 +329,18 @@ pub fn paste_measurements(composer: &str) -> Vec<PasteMeasurement> {
 /// pasted. It is not evidence and is not accepted.
 pub fn measurement_matches_draft(draft: &str, measurement: PasteMeasurement) -> bool {
     match measurement {
-        PasteMeasurement::Truncated => false,
+        PasteMeasurement::Truncated | PasteMeasurement::Lines(0) => false,
         // `[Pasted text #2]` is what Claude prints when the paste had no line
-        // breaks, and a prompt of a thousand characters on one line -- a
-        // paragraph from the app -- is collapsed to exactly that. Refusing it
-        // leaves every one-paragraph prompt unverified for ever, which is the
-        // complaint this change exists to answer. It is weak evidence on its
-        // own, so it is never on its own: the marker has to be one that was
-        // not in the composer before this paste, the composer has to hold
-        // nothing but markers, and the draft itself has to have no line
-        // breaks. What is left is a DIFFERENT single-line prompt pasted into
-        // this composer between the baseline and this read, which is the
-        // retry the baseline already covers.
+        // breaks. It was accepted here for a while, because a thousand-character
+        // paragraph from the app collapses to exactly that and refusing it
+        // leaves those prompts unverified. It certifies a TRUNCATED paste: for
+        // a draft with no breaks, "no breaks" is also true of every prefix of
+        // it, and a partial paste is still a new paste, still the only thing in
+        // the composer, and still measured `Lines(0)`. `send_prompt_to_tmux`
+        // records that exact failure as observed -- the head gone and the tail
+        // submitted. A marker that carries no size cannot tell them apart, so
+        // a collapsed single-line Claude paste stays unverified. Codex counts
+        // characters and does not have this gap.
         PasteMeasurement::Lines(count) => count == draft.matches('\n').count(),
         // Characters, as the binary names them. Accepting a byte count as well
         // gave every non-ASCII draft two right answers, one of which a
@@ -368,6 +367,58 @@ pub fn current_composer_body(pane: &str) -> Option<String> {
     // draft could be: a prompt wrapping past five rows stopped being readable
     // at all, which is the symptom this whole change exists to end.
     (rows_below <= COMPOSER_BOTTOM_ROWS).then_some(body)
+}
+
+/// Whether the composer's rows ARE the draft, row for row, from the marker
+/// down.
+///
+/// Delimiting the composer and comparing what was inside it needed a boundary,
+/// and every boundary was wrong for some real draft: a line of `---` in the
+/// prompt is a horizontal rule, a line starting `gpt-` is a model row, a blank
+/// line is Codex's end-of-composer. Each of those truncated a draft's own body
+/// and reported a delivered prompt as unverified. Walking the draft's rows
+/// against the pane's needs no boundary: what follows the last row of the
+/// draft is somebody else's business.
+fn composer_rows_show_the_draft(pane: &str, draft: &str) -> bool {
+    let rows = pane.lines().map(str::trim).collect::<Vec<_>>();
+    let Some(index) = rows
+        .iter()
+        .rposition(|row| starts_with_agent_prompt_marker(row))
+    else {
+        return false;
+    };
+    let first = strip_agent_prompt_marker(rows[index])
+        .unwrap_or_default()
+        .trim();
+    let mut expected = draft.lines().map(str::trim);
+    let Some(first_draft_row) = expected.next() else {
+        return false;
+    };
+    if normalize_words(first) != normalize_words(first_draft_row) {
+        return false;
+    }
+    let mut consumed = index;
+    let mut actual = rows[index + 1..].iter();
+    for draft_row in expected {
+        match actual.next() {
+            Some(row) if normalize_words(row) == normalize_words(draft_row) => consumed += 1,
+            _ => return false,
+        }
+    }
+    let tail = &rows[consumed + 1..];
+    // What sits under the draft's last row decides two things at once. It must
+    // not be more composer -- a composer holding the draft AND something else
+    // is not a composer holding the draft -- and there must not be much of it,
+    // because Claude renders submitted messages as `> text` and an echo of an
+    // identical prompt high in the transcript would otherwise read as the
+    // composer.
+    let next_is_a_boundary = tail.first().is_none_or(|row| {
+        row.is_empty()
+            || is_agent_input_horizontal_rule(row)
+            || is_agent_input_composer_tail_chrome(row)
+            || is_agent_input_composer_chrome_text(row)
+    });
+    next_is_a_boundary && tail.iter().filter(|row| !row.is_empty()).count() <= COMPOSER_BOTTOM_ROWS
 }
 
 /// The composer's text and how many rows sit under it.

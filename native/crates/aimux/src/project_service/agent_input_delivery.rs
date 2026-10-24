@@ -840,8 +840,9 @@ fn latest_composer_region_is_chrome_only(pane: &str) -> bool {
         return false;
     }
 
-    // The composer ends at the first blank line or horizontal rule under it,
-    // and what comes after is the agent's status area whatever it says.
+    // The composer ends at its own closing rule when the agent draws one, and
+    // at a blank line when it does not. What comes after is the agent's status
+    // area whatever it says.
     //
     // This used to require every row below to be a chrome spelling we had
     // enumerated, and that is not knowable: the status line is a
@@ -851,12 +852,30 @@ fn latest_composer_region_is_chrome_only(pane: &str) -> bool {
     // input. That both held queued delivery back and reported every submission
     // to that pane unverified. Claude closes its composer with a rule and
     // Codex with a blank line, which is structure rather than vocabulary.
-    lines[prompt_index + 1..]
+    let under = lines[prompt_index + 1..]
         .iter()
         .map(|line| line.trim())
-        .take_while(|line| !line.is_empty() && !is_agent_input_horizontal_rule(line))
+        .collect::<Vec<_>>();
+    // A blank row is only the end of the composer when the agent has no rule
+    // to close it with. Treating it as the end either way made `❯ `, a blank,
+    // and then what the user had typed read as an empty composer -- and an
+    // empty composer is one aimux types into.
+    let closes_with_a_rule = under
+        .iter()
+        .any(|line| is_agent_input_horizontal_rule(line));
+    under
+        .iter()
+        .take_while(|line| {
+            if closes_with_a_rule {
+                !is_agent_input_horizontal_rule(line)
+            } else {
+                !line.is_empty()
+            }
+        })
         .all(|line| {
-            is_agent_input_composer_chrome_text(line) || is_agent_input_composer_tail_chrome(line)
+            line.is_empty()
+                || is_agent_input_composer_chrome_text(line)
+                || is_agent_input_composer_tail_chrome(line)
         })
 }
 
