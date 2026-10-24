@@ -27,27 +27,36 @@ describe("the shared chat summary", () => {
   // `shareSummaryCheckedKey`, which switches the effect off for good. Latching
   // after a held write opened a shared chat that was absent from the list
   // `useRouteShare` resolves from.
-  it("latches only once the writes could land", () => {
+  // The retry comes from the dependency, not from withholding the latch. The
+  // effect re-runs when the settings read lands, re-fetches, and the two
+  // writes land on that pass.
+  it("comes back round when the settings read lands", () => {
     expect(chat).toContain("useAtomValue(settingsReadStateAtom)");
-    expect(chat, "at the latch that follows the writes").toMatch(
-      /setLegacyActiveShare\(acceptedShare\);[\s\S]{0,700}?if \(settingsReadState !== "unread"\) \{\s*setShareSummaryCheckedKey\(shareSummaryRequestKey\);/,
-    );
-    expect(chat, "and re-runs when a read in flight arrives").toMatch(
-      /\}, \[[^\]]{0,400}settingsReadState,/,
+    expect(chat, "as a dependency of the effect that writes").toMatch(
+      /setShareSummaryCheckedKey\(shareSummaryRequestKey\);[\s\S]{0,1800}?\}, \[[^\]]{0,400}settingsReadState,/,
     );
   });
 
-  // The regression this replaced, and it was worse than the bug: gating the
-  // whole effect meant that with a settings read that never answers,
-  // `shareSummaryCheckedKey` was never set, `ownerShareStatusPending` never
-  // cleared, and the OWNER could not send a message in any chat -- silently,
+  // Nothing about a storage read may decide whether the owner can SEND.
+  // `shareSummaryCheckedKey` is that gate through `ownerShareStatusPending`,
+  // and two attempts at this got it wrong: gating the fetch stopped the key
+  // being set at all, and withholding the latch did the same on a canonical
+  // shared route, where `!isSharedSessionView` is true while the settings are
+  // unread. Either way the owner's composer accepted text and did nothing,
   // because `handleSendMessage` returns without setting an error.
-  it("does not gate the fetch itself, which is the owner's send gate", () => {
+  it("never lets a storage read hold the send gate", () => {
     const declaration = chat.slice(chat.indexOf("const shouldLoadShareSummary = Boolean("));
     expect(
       declaration.slice(0, declaration.indexOf(");")),
-      "the send gate must not wait on a read that may never answer",
+      "the fetch must not wait on a read that may never answer",
     ).not.toContain("settingsReadState");
+    // And the latch itself is unconditional.
+    expect(chat).toMatch(
+      /setLegacyActiveShare\(acceptedShare\);[\s\S]{0,900}?\n\s*setShareSummaryCheckedKey\(shareSummaryRequestKey\);/,
+    );
+    expect(chat, "no condition in front of it").not.toMatch(
+      /if \([^)]*settingsReadState[^)]*\)\s*\{\s*setShareSummaryCheckedKey/,
+    );
   });
 });
 
@@ -68,16 +77,25 @@ describe("a security event from the relay", () => {
 
   it("and is written once the inbox arrives", () => {
     expect(layout).toMatch(
-      /if \(securityEventsReadState !== "read"\) return;[\s\S]{0,400}?store\.set\(addSecurityEventAtom, event\)/,
+      /if \(securityEventsReadState === "unread"\) return;[\s\S]{0,600}?store\.set\(addSecurityEventAtom, event\)/,
     );
     expect(layout, "and the effect re-runs when it does").toMatch(
       /store\.set\(addSecurityEventAtom, event\);[\s\S]{0,120}\}, \[securityEventsReadState, store\]\)/,
     );
   });
 
+  // A read that FAILED will not arrive, so holding them only grows for the
+  // rest of the session -- and discarding them in silence is the habit this
+  // whole change exists to break.
+  it("stops holding them when the inbox cannot be read, and says so", () => {
+    expect(layout).toMatch(
+      /if \(securityEventsReadState === "failed"\) \{[\s\S]{0,400}?console\.warn\(/,
+    );
+  });
+
   it("empties what it kept, so nothing is stored twice", () => {
     expect(layout).toMatch(
-      /heldSecurityEventsRef\.current = \[\];[\s\S]{0,120}?for \(const event of held\)/,
+      /heldSecurityEventsRef\.current = \[\];[\s\S]{0,1200}?for \(const event of held\)/,
     );
   });
 });
@@ -100,6 +118,21 @@ describe("the shared chats list", () => {
     expect(shares, "and re-runs when the read lands").toMatch(
       /\}, \[refresh, settingsReadState\]\)/,
     );
+  });
+
+  // A read that FAILED is its own answer. `loading` starts true and only the
+  // fetch clears it, so skipping the fetch left a permanent "Loading shared
+  // chats..." -- a wrapper reporting a storage error as still loading, with
+  // the refresh button disabled so there was no way out of it.
+  it("says what happened instead of loading forever when the read failed", () => {
+    // Derived, not set in an effect: setting state there cascades renders, and
+    // the answer is a pure function of the read state.
+    expect(shares).toContain('const storageUnreadable = settingsReadState === "failed"');
+    expect(shares, "so the spinner stops").toContain(
+      "const visibleLoading = loading && !storageUnreadable",
+    );
+    expect(shares, "and the reason is shown").toMatch(/cannot read its stored shared chats/);
+    expect(shares, "through the card the screen already has").toContain("body={visibleError}");
   });
 
   it("and the manual refresh waits too", () => {

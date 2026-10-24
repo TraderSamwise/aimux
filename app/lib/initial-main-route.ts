@@ -121,15 +121,17 @@ export function initialMainRoute(input: InitialMainRouteInput): InitialMainRoute
   // Signed out has no shared chats to land on, whatever is cached.
   if (!input.isSignedIn) return "project";
 
+  // Before the wait, not after it. A shares read that FAILED has no count to
+  // offer and will not acquire one, so there is nothing for the wait to
+  // resolve -- waiting on the RELAY as well would spend the whole budget on a
+  // question already answered. Their own surface is the safe side, and it is
+  // not a consolation prize: a shared list built from a store that cannot be
+  // read would be empty anyway.
+  if (input.sharesReadState === "failed") return "project";
+
   const sharesUnknown = input.sharesReadState === "unread";
   const backendUnknown = input.ownBackend === "unknown";
   if ((sharesUnknown || backendUnknown) && !input.waitExpired) return "pending";
-
-  // A shares read that FAILED has no count to offer, and waiting does not fix
-  // broken storage. Their own surface is the safe side, and it is not a
-  // consolation prize: a shared list built from a store that cannot be read
-  // would be empty anyway.
-  if (input.sharesReadState === "failed") return "project";
 
   // Expiry decides rather than hangs: an unread share list is no shares, and
   // a relay that never answered is a relay that is not there.

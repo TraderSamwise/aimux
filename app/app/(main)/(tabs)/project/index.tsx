@@ -204,7 +204,9 @@ function unresolvedSelectionCopy(selection: UnresolvedSelection): EmptyCardCopy 
   const { ref, reason } = selection;
   if (reason === "host-quiet") {
     return {
-      title: `Waiting for ${ref.machineId}`,
+      // A machineless ref has no host to name -- it reaches here when nothing
+      // in the snapshot has the path at all.
+      title: ref.machineId ? `Waiting for ${ref.machineId}` : "Waiting for this project's host",
       body: `${ref.path} is the project you had open. It will load when its host answers; pick another from the sidebar to move on.`,
     };
   }

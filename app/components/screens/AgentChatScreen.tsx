@@ -1925,18 +1925,16 @@ export default function ChatScreen() {
             });
             setLegacyActiveShare(acceptedShare);
           }
-          // Latched only once those two writes could land. They are held until
-          // the stored settings have been read, and latching regardless is
-          // what recorded the key after a dropped write and switched this
-          // effect off for good -- leaving a shared chat open but absent from
-          // the list `useRouteShare` resolves from.
+          // Latched unconditionally, because this key is the owner's SEND gate
+          // through `ownerShareStatusPending` -- and that keys on
+          // `!isSharedSessionView`, which is false on a canonical shared route
+          // while the settings are unread, so withholding the latch there
+          // left an owner unable to send on their own share link.
           //
-          // A read still in flight gets another pass when it arrives, because
-          // the read state is a dependency below. A read that FAILED latches
-          // anyway: nothing is coming, and this key is the send gate.
-          if (settingsReadState !== "unread") {
-            setShareSummaryCheckedKey(shareSummaryRequestKey);
-          }
+          // The retry does not need the latch withheld: `settingsReadState` is
+          // a dependency of this effect, so a read still in flight brings it
+          // back round, and the two writes above land on that pass.
+          setShareSummaryCheckedKey(shareSummaryRequestKey);
         }
         return;
       }

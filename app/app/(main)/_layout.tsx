@@ -253,10 +253,18 @@ export default function MainLayout() {
 
   // Store the security events that arrived before the inbox could be read.
   useEffect(() => {
-    if (securityEventsReadState !== "read") return;
+    if (securityEventsReadState === "unread") return;
     const held = heldSecurityEventsRef.current;
     if (held.length === 0) return;
     heldSecurityEventsRef.current = [];
+    if (securityEventsReadState === "failed") {
+      // Nothing can be written, so holding them only grows for the session.
+      // Said out loud rather than discarded in silence.
+      console.warn(
+        `[aimux] discarded ${held.length} security event(s): the stored inbox could not be read`,
+      );
+      return;
+    }
     for (const event of held) store.set(addSecurityEventAtom, event);
   }, [securityEventsReadState, store]);
 

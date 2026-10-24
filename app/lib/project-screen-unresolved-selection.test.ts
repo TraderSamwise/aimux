@@ -191,14 +191,23 @@ describe("unresolvedProjectSelection", () => {
     ).toMatchObject({ reason: "ambiguous" });
   });
 
-  it("reports not-on-host when a machineless path is nowhere", () => {
+  // Not `not-on-host`: without a machine there is no host to have lost it, and
+  // a `?project=` link whose host is merely offline would be told its checkout
+  // was deleted. The type's doc promises a machineless ref is never "gone".
+  it("waits rather than calling a machineless path gone", () => {
     expect(
       unresolvedProjectSelection({
         ...base,
         effectiveRefKey: projectKey({ path: "/repo/gone" }),
         projects: [{ machineId: "mbp", path: "/repo/aimux" }],
       }),
-    ).toMatchObject({ reason: "not-on-host" });
+    ).toMatchObject({ reason: "host-quiet" });
+  });
+
+  // And the copy for it has no machine to name.
+  it("has a title for a quiet host it cannot name", () => {
+    expect(copy).toContain("ref.machineId ? `Waiting for ${ref.machineId}`");
+    expect(copy).toContain("Waiting for this project's host");
   });
 
   // A share's project root is the OWNER's, carries no machine, and the

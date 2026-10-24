@@ -73,9 +73,13 @@ export function unresolvedProjectSelection(input: {
   }
   // No machine named. Exactly one match would have RESOLVED through
   // `uniqueProjectRefForPath`, so an unresolved one means none have the path
-  // or several do -- and several is a question for the user, not a loss.
+  // or several do. Several is a question for the user; NONE is not "gone"
+  // either -- without a machine there is no host to have lost it, and a
+  // `?project=` link whose host is simply offline would be told the checkout
+  // was deleted. `not-on-host` is only ever said about a machine that is
+  // listed, which is what the type's doc promises.
   const matches = input.projects.filter((project) => project.path === ref.path).length;
-  return { ref, reason: matches > 1 ? "ambiguous" : "not-on-host" };
+  return { ref, reason: matches > 1 ? "ambiguous" : "host-quiet" };
 }
 
 // What a project is called when the daemon has not named it -- the last

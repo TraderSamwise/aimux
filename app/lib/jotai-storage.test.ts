@@ -55,7 +55,7 @@ describe("readBeforeWriteAtom", () => {
 
     expect(landed, "the caller is told it did not land").toBe(false);
     expect(written, "and nothing reached storage").toEqual([]);
-    // Naming the key matters: five atoms go through this helper, and a warning
+    // Naming the key matters: four atoms go through this helper, and a warning
     // that does not say which one was lost cannot be acted on.
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("aimux-test-key"));
 

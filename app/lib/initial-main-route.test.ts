@@ -106,8 +106,13 @@ describe("initialMainRoute", () => {
       "not even when the backend is known absent, because the count is unknown",
     ).toBe("project");
     expect(
-      initialMainRoute({ ...base, sharesReadState: "failed", waitExpired: false }),
-      "and it does not wait for a read that will not arrive",
+      initialMainRoute({
+        ...base,
+        sharesReadState: "failed",
+        ownBackend: "unknown",
+        waitExpired: false,
+      }),
+      "and it does not spend the wait on a relay either, since the answer is already settled",
     ).toBe("project");
   });
 
