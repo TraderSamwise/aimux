@@ -994,6 +994,14 @@ pub struct NavigationOrder {
     pub(crate) services_by_path: BTreeMap<String, Vec<usize>>,
     pub(crate) session_path_order: Vec<String>,
     pub(crate) service_path_order: Vec<String>,
+    /// How many rows there were, checked separately from the hash.
+    ///
+    /// A hash collision on two different lists is vanishingly unlikely, but the
+    /// consequence would be indexing a shorter list and panicking the TUI.
+    /// Comparing the lengths is free and makes that unreachable: every stored
+    /// index is below the length it was built from.
+    sessions_len: usize,
+    services_len: usize,
     /// What the snapshot's rows were when this was worked out.
     ///
     /// Checked on every read rather than trusted. `SnapshotMemo`'s contract
@@ -1008,9 +1016,15 @@ pub struct NavigationOrder {
 
 /// Cheap enough to recompute per read, which is what makes the memo safe.
 ///
-/// Hashing the ids in order costs microseconds against the milliseconds of
-/// sorting them, and it catches any mutation -- a row removed, added, or
-/// swapped -- rather than only the ones that change the count.
+/// Every field the ORDER depends on, not just identity: the bucket comes from
+/// `worktree_path`, membership from `is_project_control_session`, and the sort
+/// from the classifier fields plus `tmux_window_index` and `created_at`.
+/// Hashing identity alone would have let a role or a window index change in
+/// place and be answered from a stale ordering.
+///
+/// The raw fields rather than `dashboard_session_classifier_probe`, which
+/// builds a `serde_json` object -- the very cost this change removed from the
+/// comparator, and not one to reintroduce per read.
 fn navigation_fingerprint(snapshot: &DesktopStateSnapshot) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -1018,11 +1032,39 @@ fn navigation_fingerprint(snapshot: &DesktopStateSnapshot) -> u64 {
     for session in &snapshot.sessions {
         session.id.hash(&mut hasher);
         session.worktree_path.hash(&mut hasher);
+        session.role.hash(&mut hasher);
+        session.overseer.hash(&mut hasher);
+        session.scribe.hash(&mut hasher);
+        session.project_control.hash(&mut hasher);
+        session.tmux_window_index.hash(&mut hasher);
+        session.created_at.hash(&mut hasher);
+        // Neither `team` nor `lane` is `Hash` -- one is a struct, the other a
+        // `serde_json::Value`. The fields the classifier reads off them are,
+        // and this is a fingerprint rather than a key.
+        session
+            .team
+            .as_ref()
+            .map(|team| {
+                (
+                    team.team_id.as_str(),
+                    team.parent_session_id.as_str(),
+                    team.role.as_deref(),
+                    team.label.as_deref(),
+                )
+            })
+            .hash(&mut hasher);
+        session
+            .lane
+            .as_ref()
+            .map(ToString::to_string)
+            .hash(&mut hasher);
     }
     snapshot.services.len().hash(&mut hasher);
     for service in &snapshot.services {
         service.id.hash(&mut hasher);
         service.worktree_path.hash(&mut hasher);
+        service.tmux_window_index.hash(&mut hasher);
+        service.created_at.hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -1037,23 +1079,39 @@ pub static NAVIGATION_ORDER_BUILDS: AtomicUsize = AtomicUsize::new(0);
 fn navigation_order(snapshot: &DesktopStateSnapshot) -> std::borrow::Cow<'_, NavigationOrder> {
     let cached = snapshot
         .navigation_order
-        .get_or_init(|| build_navigation_order(snapshot));
-    if cached.fingerprint == navigation_fingerprint(snapshot) {
+        .get_or_init(|| build_navigation_order(snapshot, main_checkout_verdicts(snapshot)));
+    if cached.sessions_len == snapshot.sessions.len()
+        && cached.services_len == snapshot.services.len()
+        && cached.fingerprint == navigation_fingerprint(snapshot)
+    {
         return std::borrow::Cow::Borrowed(cached);
     }
-    // The snapshot changed under the answer. A `OnceLock` cannot be refilled
-    // through a shared reference, so this one is worked out and dropped --
-    // correct, and no slower than having no memo at all.
-    std::borrow::Cow::Owned(build_navigation_order(snapshot))
+    // The snapshot changed under the answer, so this one is worked out and
+    // dropped -- a `OnceLock` cannot be refilled through a shared reference.
+    //
+    // With FRESH verdicts, not the memoised ones. Those were worked out before
+    // the change too, and a path the change introduced is simply absent from
+    // them -- which `unwrap_or(false)` reads as "not the main checkout", so a
+    // main-checkout agent would be grouped as its own orphan worktree. A
+    // rebuild that trusts half of what it is rebuilding away is not a rebuild.
+    std::borrow::Cow::Owned(build_navigation_order(
+        snapshot,
+        &build_main_checkout_verdicts(snapshot),
+    ))
 }
 
-fn build_navigation_order(snapshot: &DesktopStateSnapshot) -> NavigationOrder {
+fn build_navigation_order(
+    snapshot: &DesktopStateSnapshot,
+    verdicts: &BTreeMap<String, bool>,
+) -> NavigationOrder {
     NAVIGATION_ORDER_BUILDS.fetch_add(1, Ordering::Relaxed);
     let mut order = NavigationOrder {
         fingerprint: navigation_fingerprint(snapshot),
+        sessions_len: snapshot.sessions.len(),
+        services_len: snapshot.services.len(),
         ..NavigationOrder::default()
     };
-    let main_checkout_paths = main_checkout_verdicts(snapshot);
+    let main_checkout_paths = verdicts;
     let is_main_path = |path: &str| main_checkout_paths.get(path).copied().unwrap_or(false);
 
     // Indices from the start, so nothing has to search the list for a row it
@@ -1106,6 +1164,27 @@ fn build_navigation_order(snapshot: &DesktopStateSnapshot) -> NavigationOrder {
 /// some 3,800 object constructions for 240 rows, and most of the cost of
 /// building the grouping at all. Decorating once is the same order of
 /// comparisons and a fraction of the allocation.
+/// The canonical agent order, decorated once per row.
+///
+/// Three surfaces sort by this rule and each built its probe inside its own
+/// comparator. One of them was the dashboard grouping, where it cost
+/// milliseconds; the other two are short teammate lists where it costs little
+/// -- but they carried a verbatim copy of the same comment, and two copies of
+/// an ordering rule is how the dashboard and the footer chips came to disagree
+/// about agent order in the first place.
+pub fn sort_sessions_by_canonical_order(sessions: &mut [&DashboardSession]) {
+    let mut decorated: Vec<(Value, &DashboardSession)> = sessions
+        .iter()
+        .map(|session| (navigation_order_probe(session), *session))
+        .collect();
+    decorated.sort_by(|(left, _), (right, _)| {
+        crate::team_contract::compare_agent_canonical_order(left, right)
+    });
+    for (slot, (_, session)) in sessions.iter_mut().zip(decorated) {
+        *slot = session;
+    }
+}
+
 fn sort_session_indices(sessions: &[DashboardSession], indices: &mut [usize]) {
     let mut decorated: Vec<(Value, usize)> = indices
         .iter()

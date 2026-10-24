@@ -2846,12 +2846,7 @@ fn selected_teammates<'a>(input: &'a DashboardRenderInput<'_>) -> Vec<&'a Dashbo
     // Teammate rows render in the same tmux screen as the footer chips, so
     // they take the same order. `team.order` was a roster position someone
     // assigned; the class and the window an agent runs in are what decide now.
-    teammates.sort_by(|left, right| {
-        crate::team_contract::compare_agent_canonical_order(
-            &crate::dashboard_navigation::navigation_order_probe(left),
-            &crate::dashboard_navigation::navigation_order_probe(right),
-        )
-    });
+    crate::dashboard_navigation::sort_sessions_by_canonical_order(&mut teammates);
     teammates
 }
 
