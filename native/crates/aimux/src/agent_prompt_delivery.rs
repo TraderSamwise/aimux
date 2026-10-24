@@ -19,9 +19,10 @@ pub const POLL_MS: u64 = 250;
 pub const MAX_POLL_ATTEMPTS: u32 = 20;
 pub const SETTLE_BEFORE_SUBMIT_MS: u64 = 200;
 pub const VERIFY_AFTER_SUBMIT_MS: u64 = 700;
-/// How far above the bottom of a capture the composer can be and still be the
-/// composer. Measured on both agents: four non-empty rows for Claude, three for
-/// Codex.
+/// How many non-empty rows may sit under a composer and still leave it the
+/// composer. Measured on both agents: three under Claude's draft (its closing
+/// rule, a status line, a hint row) and three under Codex's (a blank, a model
+/// line, a hint row), with room for the ones we have not seen.
 const COMPOSER_BOTTOM_ROWS: usize = 8;
 /// Node sliced the signature to its last 240 characters.
 const SIGNATURE_CHARS: usize = 240;
@@ -208,7 +209,6 @@ pub fn composer_still_holds_prompt_text(pane: &str, draft: &str) -> bool {
     // prompt still sitting on screen to a quiet "unverified".
     composer_body_and_rows_below(pane)
         .map(|(body, _)| body)
-        .or_else(|| current_composer_text(pane))
         .is_some_and(|composer| text_contains_prompt_draft(&composer, draft, PasteMarker::Ignored))
 }
 
@@ -330,11 +330,25 @@ pub fn paste_measurements(composer: &str) -> Vec<PasteMeasurement> {
 /// pasted. It is not evidence and is not accepted.
 pub fn measurement_matches_draft(draft: &str, measurement: PasteMeasurement) -> bool {
     match measurement {
-        PasteMeasurement::Truncated | PasteMeasurement::Lines(0) => false,
+        PasteMeasurement::Truncated => false,
+        // `[Pasted text #2]` is what Claude prints when the paste had no line
+        // breaks, and a prompt of a thousand characters on one line -- a
+        // paragraph from the app -- is collapsed to exactly that. Refusing it
+        // leaves every one-paragraph prompt unverified for ever, which is the
+        // complaint this change exists to answer. It is weak evidence on its
+        // own, so it is never on its own: the marker has to be one that was
+        // not in the composer before this paste, the composer has to hold
+        // nothing but markers, and the draft itself has to have no line
+        // breaks. What is left is a DIFFERENT single-line prompt pasted into
+        // this composer between the baseline and this read, which is the
+        // retry the baseline already covers.
         PasteMeasurement::Lines(count) => count == draft.matches('\n').count(),
-        // Chars or bytes: the binary prints "chars" but the unit is not
-        // provable from outside, and a partial paste matches neither.
-        PasteMeasurement::Chars(count) => count == draft.chars().count() || count == draft.len(),
+        // Characters, as the binary names them. Accepting a byte count as well
+        // gave every non-ASCII draft two right answers, one of which a
+        // truncated paste can hit -- and Codex has no truncation spelling, so
+        // the count is the only guard there is. A byte count that differs is
+        // an unverified delivery, which is the honest direction.
+        PasteMeasurement::Chars(count) => count == draft.chars().count(),
     }
 }
 

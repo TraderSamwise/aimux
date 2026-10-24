@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::agent_prompt_delivery::{
     current_composer_text, is_agent_input_composer_chrome_text,
-    is_agent_input_composer_tail_chrome, strip_agent_prompt_marker,
+    is_agent_input_composer_tail_chrome, is_agent_input_horizontal_rule, strip_agent_prompt_marker,
 };
 use crate::atomic_write::write_json_atomic;
 use crate::backlog_metrics::{
@@ -834,35 +834,30 @@ fn latest_composer_region_is_chrome_only(pane: &str) -> bool {
         return false;
     };
 
-    if !prompt_text.is_empty() {
-        return is_agent_input_composer_chrome_text(prompt_text)
-            && lines[prompt_index + 1..]
-                .iter()
-                .all(|line| is_agent_input_composer_tail_chrome(line.trim()));
+    // Text on the marker line is the user's, unless it is the composer saying
+    // it is empty.
+    if !prompt_text.is_empty() && !is_agent_input_composer_chrome_text(prompt_text) {
+        return false;
     }
 
-    let mut non_chrome_tail = lines[prompt_index + 1..]
+    // The composer ends at the first blank line or horizontal rule under it,
+    // and what comes after is the agent's status area whatever it says.
+    //
+    // This used to require every row below to be a chrome spelling we had
+    // enumerated, and that is not knowable: the status line is a
+    // user-configured `statusLine` command, so one row we have never seen --
+    // "Context low (23% remaining) · Run /compact", an update notice, a
+    // compaction banner -- made an EMPTY composer read as unsubmitted user
+    // input. That both held queued delivery back and reported every submission
+    // to that pane unverified. Claude closes its composer with a rule and
+    // Codex with a blank line, which is structure rather than vocabulary.
+    lines[prompt_index + 1..]
         .iter()
         .map(|line| line.trim())
-        .filter(|line| !line.is_empty())
-        .filter(|line| !is_agent_input_composer_tail_chrome(line));
-
-    let Some(first) = non_chrome_tail.next() else {
-        // Nothing but chrome under an empty prompt line is the emptiest a
-        // composer gets. Reading that as "not chrome only" sent the question to
-        // `current_composer_text`, which answers with the first line under the
-        // marker -- on a real Claude pane the user's own status line:
-        //
-        //   ❯
-        //   ──────────────────────────────
-        //   sam@sam-mbp ~/cs/... (1M context) [AWS migration]
-        //   ⏵⏵ bypass permissions on (shift+tab to cycle)
-        //
-        // so an empty composer read as unsubmitted user input, which holds
-        // delivery back and reports every submission unverified.
-        return true;
-    };
-    is_agent_input_composer_chrome_text(first) && non_chrome_tail.next().is_none()
+        .take_while(|line| !line.is_empty() && !is_agent_input_horizontal_rule(line))
+        .all(|line| {
+            is_agent_input_composer_chrome_text(line) || is_agent_input_composer_tail_chrome(line)
+        })
 }
 
 fn load_delivery_state(path: &Path) -> Result<AgentInputDeliveryState, String> {

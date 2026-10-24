@@ -297,13 +297,48 @@ fn a_truncated_paste_is_never_complete() {
 }
 
 /// `[Pasted text #2]` is what Claude prints when the paste had no line breaks
-/// at all. It carries no size, so it would certify every single-line draft
-/// ever pasted.
+/// at all, and a thousand-character paragraph from the app collapses to
+/// exactly that. Refusing it leaves every one-paragraph prompt unverified for
+/// ever, so it counts -- but only against a draft that also has no line
+/// breaks, only when the marker was not already there, and only when the
+/// composer holds nothing else.
 #[test]
-fn a_marker_carrying_no_measurement_is_not_complete() {
-    assert!(!composer_shows_complete_prompt_draft(
+fn a_single_line_paste_counts_for_a_single_line_draft() {
+    assert!(composer_shows_complete_prompt_draft(
         &claude_pane_showing("[Pasted text #2]"),
         "a single line draft",
+        Some("❯ ")
+    ));
+}
+
+/// And not against a draft that has them: the marker says the paste had no
+/// line breaks, and this draft has three.
+#[test]
+fn a_single_line_paste_is_not_a_multi_line_draft() {
+    assert!(!composer_shows_complete_prompt_draft(
+        &claude_pane_showing("[Pasted text #2]"),
+        MULTILINE_DRAFT,
+        Some("❯ ")
+    ));
+}
+
+/// A non-ASCII draft measured in bytes is not measured in characters. Codex
+/// has no truncation spelling, so the count is the only guard there is.
+#[test]
+fn a_byte_count_is_not_a_character_count() {
+    let draft = "héllo wörld — a draft with multi-byte characters";
+    let as_chars = draft.chars().count();
+    let as_bytes = draft.len();
+    assert_ne!(as_chars, as_bytes, "the fixture must actually differ");
+
+    assert!(composer_shows_complete_prompt_draft(
+        &claude_pane_showing(&format!("[Pasted Content {as_chars} chars]")),
+        draft,
+        Some("❯ ")
+    ));
+    assert!(!composer_shows_complete_prompt_draft(
+        &claude_pane_showing(&format!("[Pasted Content {as_bytes} chars]")),
+        draft,
         Some("❯ ")
     ));
 }
@@ -400,6 +435,12 @@ fn a_draft_with_more_text_in_the_composer_is_not_the_whole_composer() {
 }
 
 /// And the unknown status row itself must not cost a verification.
+///
+/// The first version of this test only drove the completeness reader, and the
+/// emptiness path -- which is the one that decides `Verified` and the one that
+/// holds queued delivery back -- was still demanding every row under the
+/// composer be a chrome spelling we had enumerated. It would have passed with
+/// that half left broken.
 #[test]
 fn an_unrecognised_status_row_does_not_make_a_pane_unverifiable() {
     let pane = format!("❯ {MULTILINE_DRAFT}\n──────────\n  some status row we have never seen");
@@ -409,6 +450,31 @@ fn an_unrecognised_status_row_does_not_make_a_pane_unverifiable() {
         MULTILINE_DRAFT,
         Some("❯ ")
     ));
+}
+
+/// The whole route, on a pane whose status row we do not recognise: an empty
+/// composer under an unknown row is an empty composer.
+#[test]
+fn an_unrecognised_status_row_does_not_block_a_submission() {
+    let pane = "──────────\n❯ \n──────────\n  Context low (23% remaining) · Run /compact to continue\n  ⏵⏵ bypass permissions on (shift+tab to cycle)";
+
+    assert_eq!(
+        prompt_submit_verification(true, pane, DRAFT),
+        Ok(PromptDeliveryVerification::Verified)
+    );
+}
+
+/// Codex has no rule to close its composer; a blank line does it. The row
+/// below is the model line, and the one below that is whatever Codex feels
+/// like telling us.
+#[test]
+fn an_unrecognised_codex_hint_row_does_not_block_a_submission() {
+    let pane = "› Ask Codex to do anything\n\n  GPT-6.1-Sol high · ~/cs/aimux · a task\n  Esc to interrupt · something we have never parsed";
+
+    assert_eq!(
+        prompt_submit_verification(true, pane, DRAFT),
+        Ok(PromptDeliveryVerification::Verified)
+    );
 }
 
 /// A draft tall enough to wrap is still a draft. Counting the composer's
