@@ -3,6 +3,9 @@ use serde_json::{Map, Value, json};
 #[derive(Debug, Clone, Default)]
 pub struct SessionSemanticsInput {
     pub status: String,
+    /// Input queued for this agent that has not been delivered yet. Distinct
+    /// from `thread_pending_count`, which counts runtime-exchange messages.
+    pub queued_input_count: i64,
     pub restore_notice: Option<String>,
     pub pending_action: Option<String>,
     pub activity: Option<String>,
@@ -99,6 +102,7 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
             thread_unread_count,
             activity_new_count,
             pending_delivery_count,
+            queued_input_count: input.queued_input_count,
             waiting_on_them_count,
             family_count,
         });
@@ -154,6 +158,13 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
         "pendingDeliveryCount".into(),
         Value::from(pending_delivery_count),
     );
+    // Only when there is some: every recorded snapshot predates this field.
+    if input.queued_input_count > 0 {
+        semantic.insert(
+            "queuedInputCount".into(),
+            Value::from(input.queued_input_count),
+        );
+    }
     semantic.insert("waitingOnMeCount".into(), Value::from(waiting_on_me_count));
     semantic.insert(
         "waitingOnThemCount".into(),

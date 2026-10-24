@@ -219,6 +219,13 @@ pub struct DashboardSession {
     pub thread_waiting_on_them_count: usize,
     #[serde(default)]
     pub thread_pending_count: usize,
+    /// Input queued for this agent and not delivered yet. A different fact
+    /// from `thread_pending_count`, which counts runtime-exchange messages.
+    ///
+    /// Absent rather than zero on the wire: every recorded snapshot predates
+    /// it, and a count of nothing has nothing to say.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub queued_input_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

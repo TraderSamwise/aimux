@@ -1154,6 +1154,13 @@ fn dashboard_session(
     if let Some(delivery) = &input_delivery {
         item.insert("inputDelivery".into(), delivery.clone());
     }
+    let queued_input_count = metadata
+        .and_then(|metadata| metadata.pointer("/queuedInput/count"))
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    if queued_input_count > 0 {
+        item.insert("queuedInputCount".into(), Value::from(queued_input_count));
+    }
     let semantic = derive_session_semantics(SessionSemanticsInput {
         status: raw_status.to_owned(),
         restore_notice: restore_notice(session),
@@ -1166,6 +1173,7 @@ fn dashboard_session(
         latest_notification_text: notifications.latest_text.clone(),
         thread_unread_count: thread.unread,
         thread_pending_count: thread.pending,
+        queued_input_count,
         thread_waiting_on_me_count: thread.waiting_on_me,
         thread_waiting_on_them_count: thread.waiting_on_them,
         workflow_on_me_count: workflow.on_me,

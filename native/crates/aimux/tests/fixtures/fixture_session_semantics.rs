@@ -152,6 +152,9 @@ fn semantic_observation(semantic: &Value, _raw_status: &str) -> Value {
 fn semantics_input(input: &Value) -> SessionSemanticsInput {
     SessionSemanticsInput {
         status: string(input, "status").unwrap_or_else(|| "idle".into()),
+        // The recorded TypeScript cases predate queued input entirely, so it
+        // reads zero and the captured outputs stay comparable.
+        queued_input_count: integer(input, "queuedInputCount"),
         restore_notice: string(input, "restoreNotice"),
         pending_action: string(input, "pendingAction"),
         activity: string(input, "activity"),

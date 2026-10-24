@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,7 +15,9 @@ use crate::atomic_write::write_json_atomic;
 use crate::backlog_metrics::{
     AGENT_INPUT_DELIVERY_BACKLOG, BacklogMetricSnapshot, backlog_metric, record_backlog_error,
 };
+use crate::daemon_state::{metadata_state_path, save_metadata_state, try_load_metadata_state};
 use crate::debug_logging::{LogLevel, log_at};
+use crate::state_update_lock::acquire_state_update_lock;
 
 use super::agent_output::{
     AgentOutputCaptureRuntime, LiveSessionTarget, deliver_prompt_to_tmux_async_for_tool,
@@ -106,6 +108,11 @@ struct AgentInputDeliveryState {
 
 enum QueuedDeliveryTarget {
     Deliverable(LiveSessionTarget),
+    /// The agent is not running, so there is nothing to deliver into yet. A
+    /// wait, not a failure: the input stays queued and the agent's own row
+    /// carries it, and it goes in when the agent comes back.
+    Waiting(String),
+    /// Something broke. We could not ask whether the agent is running.
     Blocked(String),
 }
 
@@ -304,7 +311,12 @@ pub fn enqueue_agent_input_delivery(
     }
     state.pending.push(pending.clone());
     let depth = state.pending.len();
+    let saved_pending = state.pending.clone();
     save_delivery_state(&path, state)?;
+    // Published here as well as after a tick, so a message to an agent that is
+    // not running reads as waiting the moment it is queued rather than on the
+    // next pass.
+    publish_queued_input_counts(context, &saved_pending);
     backlog_metric(
         AGENT_INPUT_DELIVERY_BACKLOG,
         Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
@@ -374,6 +386,16 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
         }
         let target = match resolve_queued_delivery_target(context, &pending) {
             QueuedDeliveryTarget::Deliverable(target) => target,
+            QueuedDeliveryTarget::Waiting(reason) => {
+                log_at(
+                    LogLevel::Debug,
+                    "Agent input waiting for its agent",
+                    "agent-input-delivery",
+                    Some(json!({ "sessionId": pending.session_id, "message": reason })),
+                );
+                remaining.push(pending);
+                continue;
+            }
             QueuedDeliveryTarget::Blocked(reason) => {
                 record_agent_input_delivery_failure(
                     context,
@@ -469,9 +491,11 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
         pending: remaining,
     };
     let depth = state.pending.len();
+    let saved_pending = state.pending.clone();
     match save_delivery_state(&path, state) {
         Ok(()) => {
             clear_agent_input_delivery_queue_failure(context, QUEUE_SAVE_OPERATION);
+            publish_queued_input_counts(context, &saved_pending);
             backlog_metric(
                 AGENT_INPUT_DELIVERY_BACKLOG,
                 Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
@@ -553,6 +577,19 @@ pub async fn run_pending_agent_input_deliveries_async(
         }
         let target = match resolve_queued_delivery_target(context, &pending) {
             QueuedDeliveryTarget::Deliverable(target) => target,
+            QueuedDeliveryTarget::Waiting(reason) => {
+                // No `failures.push` either: an agent that is not running is
+                // not a failed tick, and reporting one every half second is
+                // how a wait became an error on every project.
+                log_at(
+                    LogLevel::Debug,
+                    "Agent input waiting for its agent",
+                    "agent-input-delivery",
+                    Some(json!({ "sessionId": pending.session_id, "message": reason })),
+                );
+                remaining.push(pending);
+                continue;
+            }
             QueuedDeliveryTarget::Blocked(reason) => {
                 record_agent_input_delivery_failure(
                     context,
@@ -684,9 +721,11 @@ pub async fn run_pending_agent_input_deliveries_async(
         pending: deduplicate_pending_agent_input_deliveries(pending),
     };
     let depth = state.pending.len();
+    let saved_pending = state.pending.clone();
     match save_delivery_state(&path, state) {
         Ok(()) => {
             clear_agent_input_delivery_queue_failure(context, QUEUE_SAVE_OPERATION);
+            publish_queued_input_counts(context, &saved_pending);
             backlog_metric(
                 AGENT_INPUT_DELIVERY_BACKLOG,
                 Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
@@ -731,8 +770,8 @@ fn resolve_queued_delivery_target(
 ) -> QueuedDeliveryTarget {
     match resolve_live_session_target(context, &pending.session_id) {
         Ok(Some(target)) => QueuedDeliveryTarget::Deliverable(target),
-        Ok(None) => QueuedDeliveryTarget::Blocked(format!(
-            "Kept queued input for {} because runtime topology has no live tmux window for that session; refused stale queued tmux target {}",
+        Ok(None) => QueuedDeliveryTarget::Waiting(format!(
+            "Holding queued input for {} until it is running again; the runtime topology has no live tmux window for it and the queued target {} is stale",
             pending.session_id, pending.window_id
         )),
         Err(error) => QueuedDeliveryTarget::Blocked(format!(
@@ -1010,6 +1049,132 @@ fn record_agent_input_delivery_queue_failure(
             message,
             ..OperationFailureInput::default()
         },
+    );
+}
+
+/// What the agent row needs to say "your message is waiting".
+///
+/// Nothing in production read the delivery queue except the task that drains
+/// it, so an input queued for an agent whose window is gone was invisible
+/// everywhere except a project-level failure banner -- which is the wrong
+/// surface for a wait, and the only reason that banner could not be removed.
+/// The count rides the session's own metadata, which every surface already
+/// reads.
+fn publish_queued_input_counts(
+    context: &ProjectServiceRequestContext,
+    pending: &[PendingAgentInputDelivery],
+) {
+    let mut counts: BTreeMap<&str, (i64, i64)> = BTreeMap::new();
+    for entry in pending {
+        let slot = counts
+            .entry(entry.session_id.as_str())
+            .or_insert((0, entry.created_at_ms));
+        slot.0 += 1;
+        slot.1 = slot.1.min(entry.created_at_ms);
+    }
+    let directory = context.project_state_dir();
+    // Nothing to do when nothing moved, and that is the steady state: this
+    // runs on every enqueue and every delivery tick, and taking a lock
+    // directory and rewriting session metadata twice a second inside the tick
+    // eats the budget the tick has for actually delivering. A test that
+    // asserts its queue drained started failing about one run in six until
+    // this was here.
+    let fingerprint = counts
+        .iter()
+        .map(|(session_id, (count, oldest))| format!("{session_id}:{count}:{oldest}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    {
+        static PUBLISHED: Mutex<BTreeMap<PathBuf, String>> = Mutex::new(BTreeMap::new());
+        let mut published = PUBLISHED.lock().unwrap_or_else(|error| error.into_inner());
+        if published.get(&directory) == Some(&fingerprint) {
+            return;
+        }
+        published.insert(directory.clone(), fingerprint);
+    }
+    // Reported, not swallowed. With the project-level banner gone for a wait,
+    // a metadata write that fails silently would leave Sam with no surface at
+    // all saying his message is queued.
+    let lock = match acquire_state_update_lock(&metadata_state_path(&directory)) {
+        Ok(lock) => lock,
+        Err(error) => {
+            record_agent_input_delivery_failure(
+                context,
+                None,
+                "Queued agent input could not be published",
+                format!("could not take the metadata lock: {error}"),
+            );
+            return;
+        }
+    };
+    let mut state = match try_load_metadata_state(&directory) {
+        Ok(state) => state,
+        Err(error) => {
+            record_agent_input_delivery_failure(
+                context,
+                None,
+                "Queued agent input could not be published",
+                format!("could not read session metadata: {error}"),
+            );
+            return;
+        }
+    };
+    let mut changed = false;
+    for (session_id, session) in state.sessions.iter_mut() {
+        let Some(object) = session.as_object_mut() else {
+            continue;
+        };
+        let wanted = counts
+            .get(session_id.as_str())
+            .map(|(count, oldest)| json!({ "count": count, "oldestCreatedAtMs": oldest }));
+        match wanted {
+            Some(value) => {
+                if object.get("queuedInput") != Some(&value) {
+                    object.insert("queuedInput".into(), value);
+                    changed = true;
+                }
+            }
+            None => {
+                if object.remove("queuedInput").is_some() {
+                    changed = true;
+                }
+            }
+        }
+    }
+    // Only sessions that already have a metadata row. Minting one for a
+    // session id with nothing behind it -- a deleted agent whose queue entry
+    // outlived it, since `delete_agent_assets` removes the metadata row and
+    // leaves the queue alone -- would re-create that row on every tick, and
+    // `plugin_project_service_host` reads a metadata row as a transcript
+    // source. A session with no row has no dashboard row either, so there is
+    // no surface the count could have reached anyway.
+    if !changed {
+        return;
+    }
+    if let Err(error) = lock.ensure_owned_for_commit() {
+        record_agent_input_delivery_failure(
+            context,
+            None,
+            "Queued agent input could not be published",
+            format!("lost the metadata lock before writing: {error}"),
+        );
+        return;
+    }
+    if let Err(error) = save_metadata_state(&directory, &state) {
+        record_agent_input_delivery_failure(
+            context,
+            None,
+            "Queued agent input could not be published",
+            format!("could not write session metadata: {error}"),
+        );
+        return;
+    }
+    context.project_events.publish_project_update(
+        context.project_root(),
+        crate::project_api_contract::invalidations::RUNTIME_SESSION.to_vec(),
+        "queued agent input changed".to_owned(),
+        None,
+        None,
     );
 }
 
