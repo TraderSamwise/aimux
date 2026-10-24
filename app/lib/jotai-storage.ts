@@ -183,22 +183,29 @@ export function storedValueAtom<Value extends NonNullable<unknown> | null>(
 export function readBeforeWriteAtom<Value extends NonNullable<unknown> | null>(
   stored: WritableAtom<Value | Promise<Value>, [Value], unknown>,
   whileUnread: Value,
-): WritableAtom<Value, [Value | ((current: Value) => Value)], void> {
+  /** The storage key, so a dropped write says WHICH one was lost. */
+  label: string,
+): WritableAtom<Value, [Value | ((current: Value) => Value)], boolean> {
   const readState = storageReadStateAtom(stored as Atom<unknown>);
   const value = storedValueAtom(stored, whileUnread);
   return atom(
     (get) => get(value),
     (get, set, update: Value | ((current: Value) => Value)) => {
       if (get(readState) !== "read") {
-        // Dropped, not deferred. Said out loud because a caller may have
-        // already told the user it worked -- the invite screen did -- and a
-        // silent drop is the kind of thing this whole change exists to stop.
-        console.warn("[aimux] dropped a persisted write issued before its value was read");
-        return;
+        // Dropped, not deferred, and it returns `false` so a caller that
+        // cannot be asked again can keep what it was going to write. Said out
+        // loud as well, naming the key, because a caller may already have told
+        // the user it worked -- the invite screen did -- and a silent drop is
+        // the kind of thing this whole change exists to stop.
+        console.warn(
+          `[aimux] dropped a write to ${label}: issued before its stored value had been read`,
+        );
+        return false;
       }
       const next =
         typeof update === "function" ? (update as (current: Value) => Value)(get(value)) : update;
       set(stored, next);
+      return true;
     },
   );
 }

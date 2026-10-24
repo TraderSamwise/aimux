@@ -54,6 +54,7 @@ export const securityEventsReadStateAtom = storageReadStateAtom(asyncSecurityEve
 export const securityEventsAtom = readBeforeWriteAtom(
   asyncSecurityEventsAtom,
   NO_SECURITY_EVENTS as SecurityInboxEvent[],
+  "aimux-security-events",
 );
 
 export const addSecurityEventAtom = atom(null, (get, set, event: SecurityEventRecord) => {

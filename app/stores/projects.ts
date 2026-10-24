@@ -124,6 +124,7 @@ const NO_REMEMBERED_AGENTS: Readonly<Record<string, string>> = Object.freeze({})
 const storedLastAgentAtom = readBeforeWriteAtom<Record<string, string>>(
   lastAgentStorageAtom,
   NO_REMEMBERED_AGENTS as Record<string, string>,
+  "aimux-last-agent-by-project",
 );
 
 export const lastAgentByProjectAtom = atom(

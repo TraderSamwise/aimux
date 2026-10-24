@@ -142,7 +142,11 @@ const asyncSettingsAtom = atomWithStorage<AppSettings>(
 // back. So a write before storage answered would store the DEFAULTS plus that
 // one field -- every other setting replaced. This is the single place that can
 // hold them, which is why they all go through it.
-export const settingsAtom = readBeforeWriteAtom(asyncSettingsAtom, defaultSettings);
+export const settingsAtom = readBeforeWriteAtom(
+  asyncSettingsAtom,
+  defaultSettings,
+  "aimux-settings",
+);
 
 // `settingsAtom` falls back to defaults until storage resolves, so an EMPTY
 // `acceptedShares` means either "no shared chats" or "not read yet". Anything

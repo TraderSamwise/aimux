@@ -59,6 +59,7 @@ const asyncNotificationLocalReadStateAtom = atomWithStorage<NotificationLocalRea
 export const notificationLocalReadStateAtom = readBeforeWriteAtom(
   asyncNotificationLocalReadStateAtom,
   defaultNotificationLocalReadState,
+  "aimux-notification-read-state",
 );
 
 export function notificationLocalReadKey(
