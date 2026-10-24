@@ -7,7 +7,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::agent_prompt_delivery::{current_composer_text, strip_agent_prompt_marker};
+use crate::agent_prompt_delivery::{
+    current_composer_text, is_agent_input_composer_chrome_text,
+    is_agent_input_composer_tail_chrome, strip_agent_prompt_marker,
+};
 use crate::atomic_write::write_json_atomic;
 use crate::backlog_metrics::{
     AGENT_INPUT_DELIVERY_BACKLOG, BacklogMetricSnapshot, backlog_metric, record_backlog_error,
@@ -813,7 +816,12 @@ pub fn pane_has_unsubmitted_agent_input(pane: &str) -> bool {
 
 fn has_user_composer_text(value: &str) -> bool {
     let text = value.trim();
-    !text.is_empty() && !is_empty_composer_placeholder(text)
+    // One spelling of "this is the composer telling you it is empty".
+    // `is_empty_composer_placeholder` matched the two placeholders
+    // case-sensitively while `is_agent_input_composer_chrome_text` matched the
+    // same two lowercased, and `current_composer_text` already filters them --
+    // three readings of one fact, one of them unreachable.
+    !text.is_empty() && !is_agent_input_composer_chrome_text(text)
 }
 
 fn latest_composer_region_is_chrome_only(pane: &str) -> bool {
@@ -855,91 +863,6 @@ fn latest_composer_region_is_chrome_only(pane: &str) -> bool {
         return true;
     };
     is_agent_input_composer_chrome_text(first) && non_chrome_tail.next().is_none()
-}
-
-fn is_agent_input_composer_chrome_text(text: &str) -> bool {
-    let normalized = text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase();
-    normalized.is_empty()
-        || matches!(
-            normalized.as_str(),
-            "ask codex to do anything" | "ask claude to do anything"
-        )
-        || normalized.contains("bypass permissions")
-        || (normalized.contains("shift+tab") && normalized.contains("cycle"))
-        || {
-            let mut words = normalized.split_whitespace();
-            matches!(words.next(), Some("press"))
-                && words.next().is_some_and(is_keyboard_hint_token)
-                && normalized.contains(" to ")
-                && (normalized.contains("message")
-                    || normalized.contains("prompt")
-                    || normalized.contains("composer")
-                    || normalized.contains("input")
-                    || normalized.contains("send")
-                    || normalized.contains("queue")
-                    || normalized.contains("edit")
-                    || normalized.contains("accept")
-                    || normalized.contains("cancel"))
-        }
-}
-
-fn is_keyboard_hint_token(token: &str) -> bool {
-    matches!(
-        token.trim_matches(|ch: char| matches!(ch, ',' | '.' | ':' | ';' | '(' | ')' | '[' | ']')),
-        "up" | "down"
-            | "left"
-            | "right"
-            | "tab"
-            | "enter"
-            | "return"
-            | "esc"
-            | "escape"
-            | "space"
-            | "backspace"
-            | "delete"
-            | "ctrl+c"
-            | "ctrl+d"
-            | "ctrl+j"
-            | "ctrl+o"
-            | "ctrl+r"
-            | "shift+tab"
-    )
-}
-
-fn is_agent_input_composer_tail_chrome(line: &str) -> bool {
-    if line.is_empty() {
-        return true;
-    }
-    let lower = line.to_ascii_lowercase();
-    is_agent_input_horizontal_rule(line)
-        || line.starts_with('⏵')
-        || line.starts_with('⧉')
-        || line.contains("[[aimux]")
-        || lower.contains("bypass permissions")
-        || lower.contains("shift+tab")
-        || lower.contains(" context)")
-        || lower.starts_with("gpt-")
-        || lower.starts_with("claude-")
-}
-
-fn is_agent_input_horizontal_rule(line: &str) -> bool {
-    let mut chars = line.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    matches!(first, '─' | '-') && chars.all(|character| character == first)
-}
-
-fn is_empty_composer_placeholder(text: &str) -> bool {
-    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    matches!(
-        normalized.as_str(),
-        "Ask Codex to do anything" | "Ask Claude to do anything"
-    )
 }
 
 fn load_delivery_state(path: &Path) -> Result<AgentInputDeliveryState, String> {

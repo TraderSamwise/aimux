@@ -38,11 +38,71 @@ impl PromptDeliveryVerification {
     }
 }
 
-pub fn composer_shows_complete_prompt_draft(pane: &str, draft: &str) -> bool {
+/// Whether the composer held the WHOLE draft before the carriage return.
+///
+/// Equality against one line of the composer was the only answer here, so a
+/// draft that wrapped, carried a newline, or collapsed into `[Pasted text #1
+/// +11 lines]` could never satisfy it -- which is every prompt sent from the
+/// app, and why no submission verified. The body answers the wrapped and
+/// multi-line cases; the agent's own measurement answers the collapsed one.
+///
+/// `before` is the composer as it looked BEFORE this paste, and it is what
+/// keeps a measurement honest. A retry leaves the previous attempt's marker
+/// sitting there, and that marker measures the same draft -- so a stale one
+/// would certify a paste that never happened. A measurement already in the
+/// baseline says nothing about this attempt.
+pub fn composer_shows_complete_prompt_draft(pane: &str, draft: &str, before: Option<&str>) -> bool {
     let normalized_draft = normalize_words(draft);
-    !normalized_draft.is_empty()
-        && current_composer_text(pane)
-            .is_some_and(|composer| normalize_words(&composer) == normalized_draft)
+    if normalized_draft.is_empty() {
+        return false;
+    }
+    let Some(body) = current_composer_body(pane) else {
+        return false;
+    };
+    if normalize_words(&body) == normalized_draft {
+        return true;
+    }
+    // No baseline means the pre-paste composer could not be read, and a
+    // measurement is only evidence of THIS paste by not having been there
+    // before. `composer_snapshot` ends in `.ok()` and the async baseline is
+    // `remaining_until(deadline).ok()?`, so the capture that fails is most
+    // likely the retry that left a stale marker sitting in the composer --
+    // exactly when a missing baseline would certify it. Two prompts with the
+    // same line-break count are indistinguishable to `Lines`, so this is not
+    // theoretical. Without a baseline, only the composer showing the draft
+    // itself counts.
+    let Some(baseline) = before
+        .and_then(current_composer_body)
+        .map(|baseline| paste_measurements(&baseline))
+    else {
+        return false;
+    };
+    // A measurement speaks for the whole composer only when the composer is
+    // nothing but markers. A prompt that QUOTES a marker -- this repository's
+    // own prompts do -- could otherwise certify a partial paste that happened
+    // to carry the right number.
+    if !body_is_only_paste_markers(&body) {
+        return false;
+    }
+    let measurements = paste_measurements(&body);
+    measurements
+        .iter()
+        .enumerate()
+        .filter(|(index, measurement)| {
+            // By count, not by presence: a retry that renders the same
+            // measurement twice has one new paste, and rejecting both would
+            // report a delivery that happened as unverified.
+            let seen_before = baseline
+                .iter()
+                .filter(|earlier| earlier == measurement)
+                .count();
+            let seen_here = measurements[..=*index]
+                .iter()
+                .filter(|earlier| earlier == measurement)
+                .count();
+            seen_here > seen_before
+        })
+        .any(|(_, measurement)| measurement_matches_draft(draft, *measurement))
 }
 
 pub fn prompt_submit_verification(
@@ -143,7 +203,12 @@ pub fn composer_shows_pasted_draft(pane: &str, draft: &str, before: Option<&str>
 /// prompt's own text still counts, so a draft genuinely left sitting in the
 /// composer is still caught.
 pub fn composer_still_holds_prompt_text(pane: &str, draft: &str) -> bool {
-    current_composer_text(pane)
+    // The whole composer, not its first line: a draft whose first line happens
+    // to read as chrome would otherwise leave this refusal silent and demote a
+    // prompt still sitting on screen to a quiet "unverified".
+    composer_body_and_rows_below(pane)
+        .map(|(body, _)| body)
+        .or_else(|| current_composer_text(pane))
         .is_some_and(|composer| text_contains_prompt_draft(&composer, draft, PasteMarker::Ignored))
 }
 
@@ -184,6 +249,146 @@ fn text_contains_prompt_draft(text: &str, draft: &str, paste_marker: PasteMarker
         .any(|fragment| normalized_pane.contains(fragment))
 }
 
+/// What an agent says it took, in its own rendering of a collapsed paste.
+///
+/// Both grammars were read out of the shipped binaries on 2026-10-24 rather
+/// than guessed. Claude builds its marker with
+/// `kL(e){return(e.match(/\r\n|\r|\n/g)||[]).length}` and
+/// `DX(e,n){if(n===0)return "[Pasted text #"+e+"]";return "[Pasted text #"+e+" +"+n+" lines]"}`,
+/// so the number is the count of line BREAKS in what it received, and a
+/// truncated paste gets a different spelling entirely. Codex renders
+/// `[Pasted Content <n> chars]`.
+///
+/// This is not inferring which tool is running from a spelling -- the tool
+/// printed a measurement of the text it holds, and the only question asked of
+/// it is whether that measurement is this draft's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PasteMeasurement {
+    /// Line breaks, from Claude.
+    Lines(usize),
+    /// Characters, from Codex.
+    Chars(usize),
+    /// The agent says it did NOT take the whole thing.
+    Truncated,
+}
+
+/// Whether the composer holds markers and nothing else.
+fn body_is_only_paste_markers(body: &str) -> bool {
+    let mut rest = body.trim();
+    let mut saw_marker = false;
+    while let Some(open) = rest.find('[') {
+        if !rest[..open].trim().is_empty() {
+            return false;
+        }
+        let Some(close) = rest[open..].find(']') else {
+            return false;
+        };
+        saw_marker = true;
+        rest = rest[open + close + 1..].trim_start();
+    }
+    saw_marker && rest.trim().is_empty()
+}
+
+/// Every paste measurement the composer is showing, in order.
+pub fn paste_measurements(composer: &str) -> Vec<PasteMeasurement> {
+    let lowered = composer.to_ascii_lowercase();
+    let mut measurements = Vec::new();
+    let mut rest = lowered.as_str();
+    while let Some(open) = rest.find('[') {
+        rest = &rest[open + 1..];
+        // `continue`, not `break`: a prompt that contains a bare `[` would
+        // otherwise drop every measurement after it, which is the evidence a
+        // code-bearing prompt most needs.
+        let Some(close) = rest.find(']') else {
+            continue;
+        };
+        let inner = &rest[..close];
+        rest = &rest[close + 1..];
+        if inner.contains("truncated text") {
+            measurements.push(PasteMeasurement::Truncated);
+        } else if inner.starts_with("pasted text") {
+            measurements.push(PasteMeasurement::Lines(
+                inner
+                    .split_once('+')
+                    .and_then(|(_, tail)| tail.split_whitespace().next())
+                    .and_then(|count| count.parse().ok())
+                    .unwrap_or(0),
+            ));
+        } else if inner.starts_with("pasted content")
+            && let Some(count) = inner.split_whitespace().nth(2).and_then(|c| c.parse().ok())
+        {
+            measurements.push(PasteMeasurement::Chars(count));
+        }
+    }
+    measurements
+}
+
+/// Whether a measurement is this draft's.
+///
+/// `Lines(0)` is the spelling Claude uses when the paste had no line breaks at
+/// all, and it carries no size, so it would match every single-line draft ever
+/// pasted. It is not evidence and is not accepted.
+pub fn measurement_matches_draft(draft: &str, measurement: PasteMeasurement) -> bool {
+    match measurement {
+        PasteMeasurement::Truncated | PasteMeasurement::Lines(0) => false,
+        PasteMeasurement::Lines(count) => count == draft.matches('\n').count(),
+        // Chars or bytes: the binary prints "chars" but the unit is not
+        // provable from outside, and a partial paste matches neither.
+        PasteMeasurement::Chars(count) => count == draft.chars().count() || count == draft.len(),
+    }
+}
+
+/// The whole composer, not its first line.
+///
+/// The marker line's remainder plus everything under it that is not chrome.
+/// Only the completeness comparison uses this: an emptiness test must keep
+/// asking `pane_has_unsubmitted_agent_input`, which knows a lingering paste
+/// marker is still unsubmitted input.
+pub fn current_composer_body(pane: &str) -> Option<String> {
+    let (body, rows_below) = composer_body_and_rows_below(pane)?;
+    // Near the bottom, measured from the END of the draft, not from the
+    // marker. Claude renders submitted messages as `> text`, so the transcript
+    // is full of marker lines, and an echo of an identical prompt with nothing
+    // but chrome under it would otherwise read as the composer. Counting from
+    // the marker instead -- which is what this did first -- capped how TALL a
+    // draft could be: a prompt wrapping past five rows stopped being readable
+    // at all, which is the symptom this whole change exists to end.
+    (rows_below <= COMPOSER_BOTTOM_ROWS).then_some(body)
+}
+
+/// The composer's text and how many rows sit under it.
+///
+/// Locality is the completeness question's business, not this one's. Asking
+/// whether a draft is STILL on screen does not care how far from the bottom it
+/// is -- it is on screen either way -- and refusing to answer there turns a
+/// hard "your prompt is still sitting in the composer" into a quiet unverified.
+fn composer_body_and_rows_below(pane: &str) -> Option<(String, usize)> {
+    let lines = pane
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    let index = lines
+        .iter()
+        .rposition(|line| starts_with_agent_prompt_marker(line))?;
+    let mut body = Vec::new();
+    if let Some(rest) = strip_agent_prompt_marker(lines[index])
+        && !rest.trim().is_empty()
+        && !is_agent_input_composer_chrome_text(rest.trim())
+    {
+        body.push(rest.trim().to_owned());
+    }
+    let mut chrome_from = lines.len();
+    for (offset, line) in lines[index + 1..].iter().enumerate() {
+        if is_agent_input_composer_tail_chrome(line) || is_agent_input_composer_chrome_text(line) {
+            chrome_from = index + 1 + offset;
+            break;
+        }
+        body.push((*line).to_owned());
+    }
+    Some((body.join("\n"), lines.len() - chrome_from))
+}
+
 pub fn current_composer_text(pane: &str) -> Option<String> {
     let lines = pane
         .lines()
@@ -195,13 +400,18 @@ pub fn current_composer_text(pane: &str) -> Option<String> {
             continue;
         };
         let rest = rest.trim();
-        if !rest.is_empty() {
+        // A placeholder is the composer telling you it is empty. Returning it
+        // as the composer's contents made `› Ask Codex to do anything` read as
+        // something the user had typed, which is half of why no submission
+        // could ever verify and why delivery was held back against an empty
+        // composer. Same vocabulary as the region check below it.
+        if !rest.is_empty() && !is_agent_input_composer_chrome_text(rest) {
             return Some(rest.to_owned());
         }
         let following = lines[index + 1..]
             .iter()
             .copied()
-            .filter(|line| !looks_like_agent_bottom_chrome(line))
+            .filter(|line| !is_agent_input_composer_tail_chrome(line))
             .collect::<Vec<_>>();
         return following
             .first()
@@ -234,23 +444,6 @@ pub fn starts_with_agent_prompt_marker(line: &str) -> bool {
 
 pub fn is_agent_prompt_marker(character: char) -> bool {
     matches!(character, '›' | '>' | '❯')
-}
-
-fn looks_like_agent_bottom_chrome(line: &str) -> bool {
-    is_horizontal_rule(line)
-        || line.starts_with('⏵')
-        || line.starts_with('⧉')
-        || line.contains("[[aimux]")
-        || ((line.starts_with("gpt-") || line.starts_with("claude-"))
-            && (line.contains(" · ~/") || line.contains(" · /")))
-}
-
-fn is_horizontal_rule(line: &str) -> bool {
-    let mut chars = line.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    matches!(first, '─' | '-') && chars.all(|character| character == first)
 }
 
 /// The tail of the pane, whitespace-collapsed — two identical readings mean the
@@ -312,6 +505,98 @@ pub fn prompt_paste_mode(prompt: &str, tool: Option<&str>) -> PromptPasteMode {
     } else {
         PromptPasteMode::Guarded
     }
+}
+
+// The composer chrome vocabulary, one copy.
+//
+// `agent_prompt_delivery` had its own (`looks_like_agent_bottom_chrome`) and
+// it only knew a status line that starts `claude-`/`gpt-` or carries
+// `[[aimux]`. A user-configured `statusLine` carries neither, so every reader
+// of `current_composer_text` -- the draft poll, the still-holds check, the
+// delivery gate -- was handed Sam's status line as the contents of his
+// composer. These came from `project_service::agent_input_delivery`, which had
+// measured the real chrome; they live here now because this is the module that
+// reads composers, and that one calls these.
+
+pub(crate) fn is_agent_input_composer_chrome_text(text: &str) -> bool {
+    let normalized = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    normalized.is_empty()
+        || matches!(
+            normalized.as_str(),
+            "ask codex to do anything" | "ask claude to do anything"
+        )
+        || normalized.contains("bypass permissions")
+        || (normalized.contains("shift+tab") && normalized.contains("cycle"))
+        || {
+            let mut words = normalized.split_whitespace();
+            matches!(words.next(), Some("press"))
+                && words.next().is_some_and(is_keyboard_hint_token)
+                && normalized.contains(" to ")
+                && (normalized.contains("message")
+                    || normalized.contains("prompt")
+                    || normalized.contains("composer")
+                    || normalized.contains("input")
+                    || normalized.contains("send")
+                    || normalized.contains("queue")
+                    || normalized.contains("edit")
+                    || normalized.contains("accept")
+                    || normalized.contains("cancel"))
+        }
+}
+
+pub(crate) fn is_keyboard_hint_token(token: &str) -> bool {
+    matches!(
+        token.trim_matches(|ch: char| matches!(ch, ',' | '.' | ':' | ';' | '(' | ')' | '[' | ']')),
+        "up" | "down"
+            | "left"
+            | "right"
+            | "tab"
+            | "enter"
+            | "return"
+            | "esc"
+            | "escape"
+            | "space"
+            | "backspace"
+            | "delete"
+            | "ctrl+c"
+            | "ctrl+d"
+            | "ctrl+j"
+            | "ctrl+o"
+            | "ctrl+r"
+            | "shift+tab"
+    )
+}
+
+pub(crate) fn is_agent_input_composer_tail_chrome(line: &str) -> bool {
+    if line.is_empty() {
+        return true;
+    }
+    let lower = line.to_ascii_lowercase();
+    is_agent_input_horizontal_rule(line)
+        || line.starts_with('⏵')
+        || line.starts_with('⧉')
+        || line.contains("[[aimux]")
+        || lower.contains("bypass permissions")
+        || lower.contains("shift+tab")
+        || lower.contains(" context)")
+        || lower.starts_with("gpt-")
+        || lower.starts_with("claude-")
+        // Codex's hint row, which sits under the composer the way Claude's
+        // `⏵⏵ bypass permissions` row does. Without it the first line under an
+        // empty Codex composer was read as what the user had typed.
+        || (lower.starts_with("? ") && lower.contains("shortcut"))
+}
+
+pub(crate) fn is_agent_input_horizontal_rule(line: &str) -> bool {
+    let mut chars = line.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    matches!(first, '─' | '-') && chars.all(|character| character == first)
 }
 
 #[cfg(test)]

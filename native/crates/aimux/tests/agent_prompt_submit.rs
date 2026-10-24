@@ -5,8 +5,9 @@
 //! there, against the two runtimes production actually uses.
 
 use aimux::agent_prompt_delivery::{
-    PromptDeliveryVerification, composer_shows_pasted_draft, composer_still_holds_prompt_text,
-    current_composer_text, prompt_draft_signature, prompt_submit_verification,
+    PromptDeliveryVerification, composer_shows_complete_prompt_draft, composer_shows_pasted_draft,
+    composer_still_holds_prompt_text, current_composer_text, prompt_draft_signature,
+    prompt_submit_verification,
 };
 
 const DRAFT: &str = "Aimux task Run: aimux task show t1 and report the mutation proof";
@@ -170,22 +171,22 @@ const CODEX_EMPTY_COMPOSER: &str = "› Ask Codex to do anything\n\
   GPT-6.1-Sol high · ~/cs/tealstreet-sdk/.aimux/worktrees/rust-bybit · Port Bybit to new layout\n\
   ? for shortcuts";
 
-/// Why every submission was reported unverified: on both real panes the
-/// composer region reads as non-empty when you only look at one line of it.
-/// This is the measurement the old emptiness test was making.
+/// Why every submission was reported unverified: both real panes were read as
+/// holding user text when the composer was empty -- Claude's because the
+/// user's own `statusLine` was returned as the composer's contents, Codex's
+/// because its placeholder was. One chrome vocabulary now answers for every
+/// reader of a composer, so both read as empty.
 #[test]
-fn a_real_empty_composer_does_not_read_as_empty_one_line_at_a_time() {
+fn a_real_empty_composer_reads_as_empty() {
     assert_eq!(
         current_composer_text(CLAUDE_EMPTY_COMPOSER).as_deref(),
-        Some(
-            "sam@sam-mbp ~/cs/tealstreet-next/.aimux/worktrees/deaws feat/aws-exit-eks ██████░░░░69% Opus 5.5 (1M context) [AWS migration inventory and alternatives]"
-        ),
-        "the user's status line is being read as what they typed"
+        Some(""),
+        "the user's status line is not what they typed"
     );
     assert_eq!(
         current_composer_text(CODEX_EMPTY_COMPOSER).as_deref(),
-        Some("Ask Codex to do anything"),
-        "Codex's placeholder is being read as what they typed"
+        Some(""),
+        "Codex's placeholder is not what they typed"
     );
 }
 
@@ -251,5 +252,232 @@ fn an_empty_composer_alone_does_not_verify_anything() {
     assert_eq!(
         prompt_submit_verification(false, CLAUDE_EMPTY_COMPOSER, DRAFT),
         Ok(PromptDeliveryVerification::Unverified)
+    );
+}
+
+/// A Claude composer showing a collapsed paste, with the real chrome under it.
+fn claude_pane_showing(composer: &str) -> String {
+    format!(
+        "──────────\n❯ {composer}\n──────────\n  sam@sam-mbp ~/cs/aimux master ██░░20% Opus 5.5 (1M context) [a title]\n  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+    )
+}
+
+const MULTILINE_DRAFT: &str = "line one\nline two\nline three\nline four";
+
+/// The case Sam actually hits: the agent collapses his prompt, so the composer
+/// never shows its text, and the marker is the only thing there is to read.
+/// Claude's marker counts line BREAKS, and this draft has three.
+#[test]
+fn a_collapsed_paste_measuring_this_draft_is_complete() {
+    assert!(composer_shows_complete_prompt_draft(
+        &claude_pane_showing("[Pasted text #1 +3 lines]"),
+        MULTILINE_DRAFT,
+        Some("❯ ")
+    ));
+}
+
+/// A measurement that is not this draft's is not this draft.
+#[test]
+fn a_collapsed_paste_measuring_something_else_is_not_complete() {
+    assert!(!composer_shows_complete_prompt_draft(
+        &claude_pane_showing("[Pasted text #1 +2 lines]"),
+        MULTILINE_DRAFT,
+        Some("❯ ")
+    ));
+}
+
+/// The agent says when it did not take the whole thing, in its own spelling.
+#[test]
+fn a_truncated_paste_is_never_complete() {
+    assert!(!composer_shows_complete_prompt_draft(
+        &claude_pane_showing("[...Truncated text #1 +3 lines...]"),
+        MULTILINE_DRAFT,
+        Some("❯ ")
+    ));
+}
+
+/// `[Pasted text #2]` is what Claude prints when the paste had no line breaks
+/// at all. It carries no size, so it would certify every single-line draft
+/// ever pasted.
+#[test]
+fn a_marker_carrying_no_measurement_is_not_complete() {
+    assert!(!composer_shows_complete_prompt_draft(
+        &claude_pane_showing("[Pasted text #2]"),
+        "a single line draft",
+        Some("❯ ")
+    ));
+}
+
+/// The retry case. The previous attempt's marker measures the same draft --
+/// it is the same draft -- so without the baseline it would certify a paste
+/// that never landed. Only the new marker counts, and it is the wrong size.
+#[test]
+fn a_marker_left_by_the_previous_attempt_does_not_certify_this_one() {
+    let draft = "x".repeat(3434);
+    let before = claude_pane_showing("[Pasted Content 3434 chars]");
+    let now = claude_pane_showing("[Pasted Content 3434 chars][Pasted Content 1200 chars]");
+
+    assert!(
+        composer_shows_complete_prompt_draft(&before, &draft, Some("❯ ")),
+        "the first attempt's own marker is evidence for it"
+    );
+    assert!(!composer_shows_complete_prompt_draft(
+        &now,
+        &draft,
+        Some(&before)
+    ));
+}
+
+/// A multi-line draft the agent did NOT collapse: the composer shows every
+/// line, and reading one line of it was the other half of the bug.
+#[test]
+fn a_multi_line_draft_shown_in_full_is_complete() {
+    let pane = "──────────\n❯ line one\nline two\nline three\nline four\n──────────\n  sam@sam-mbp ~/cs/aimux master ██░░20% Opus 5.5 (1M context) [a title]";
+
+    assert!(composer_shows_complete_prompt_draft(
+        pane,
+        MULTILINE_DRAFT,
+        Some("❯ ")
+    ));
+}
+
+/// A measurement is evidence of THIS paste only by not having been there
+/// before. Without a baseline there is no before, and the captures that
+/// produce it all end in `.ok()` -- so the one most likely to be missing is
+/// the retry that left the previous attempt's marker on screen.
+#[test]
+fn without_a_baseline_a_marker_certifies_nothing() {
+    let pane = claude_pane_showing("[Pasted text #1 +3 lines]");
+
+    assert!(composer_shows_complete_prompt_draft(
+        &pane,
+        MULTILINE_DRAFT,
+        Some("❯ ")
+    ));
+    assert!(
+        !composer_shows_complete_prompt_draft(&pane, MULTILINE_DRAFT, None),
+        "a marker with nothing to compare it against is not evidence"
+    );
+}
+
+/// Claude renders a submitted message as `> text`, so the transcript is full
+/// of marker lines. With the real composer scrolled out of the capture, an
+/// echo of an identical earlier prompt must not become the composer.
+#[test]
+fn a_transcript_echo_far_above_the_composer_is_not_the_composer() {
+    // Chrome all the way down, so the body reads back as exactly the draft and
+    // only the marker's distance from the bottom can reject it. Transcript
+    // prose under the echo would be caught by the body comparison instead,
+    // which is not the guard under test.
+    let echo = format!("> {MULTILINE_DRAFT}\n{}", "──────────\n".repeat(12));
+
+    assert!(!composer_shows_complete_prompt_draft(
+        &echo,
+        MULTILINE_DRAFT,
+        Some("❯ ")
+    ));
+}
+
+/// A composer holding the draft AND something else is not a composer holding
+/// the draft. The extra text is part of the composer -- above the rule that
+/// closes it -- so the body carries it and the comparison fails.
+///
+/// Text BELOW that rule is a different thing: it is the agent's status rows,
+/// and demanding they all be recognised chrome made one unknown row -- a
+/// `statusLine` without a context readout, a compaction notice, an update
+/// banner -- turn every delivery to that pane unverifiable.
+#[test]
+fn a_draft_with_more_text_in_the_composer_is_not_the_whole_composer() {
+    let pane = format!(
+        "❯ {MULTILINE_DRAFT}\nleftover draft the user kept\n──────────\n  some status row we have never seen"
+    );
+
+    assert!(!composer_shows_complete_prompt_draft(
+        &pane,
+        MULTILINE_DRAFT,
+        Some("❯ ")
+    ));
+}
+
+/// And the unknown status row itself must not cost a verification.
+#[test]
+fn an_unrecognised_status_row_does_not_make_a_pane_unverifiable() {
+    let pane = format!("❯ {MULTILINE_DRAFT}\n──────────\n  some status row we have never seen");
+
+    assert!(composer_shows_complete_prompt_draft(
+        &pane,
+        MULTILINE_DRAFT,
+        Some("❯ ")
+    ));
+}
+
+/// A draft tall enough to wrap is still a draft. Counting the composer's
+/// distance from the bottom at the MARKER capped how tall it could be.
+#[test]
+fn a_draft_taller_than_the_chrome_below_it_is_still_readable() {
+    let tall = (1..=20)
+        .map(|n| format!("line {n} of a long prompt"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let pane = format!(
+        "❯ {tall}\n──────────\n  sam@sam-mbp ~/cs/aimux master ██░░20% Opus 5.5 (1M context) [a title]\n  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+    );
+
+    assert!(composer_shows_complete_prompt_draft(
+        &pane,
+        &tall,
+        Some("❯ ")
+    ));
+}
+
+/// A draft still sitting in the composer is a hard refusal, and must stay one
+/// even when its first line happens to read like chrome.
+#[test]
+fn a_stuck_draft_whose_first_line_looks_like_chrome_is_still_stuck() {
+    let stuck = "❯ press enter to send\nthe rest of the draft the user typed";
+
+    assert!(composer_still_holds_prompt_text(
+        stuck,
+        "the rest of the draft the user typed"
+    ));
+}
+
+/// A prompt that quotes a paste marker must not certify itself. This
+/// repository's own prompts carry these strings.
+#[test]
+fn a_prompt_quoting_a_marker_does_not_certify_a_partial_paste() {
+    let draft = "line one\nline two\nline three\nexplain [Pasted text #1 +3 lines]";
+    let pane = claude_pane_showing("explain [Pasted text #1 +3 lines]");
+
+    assert!(
+        !composer_shows_complete_prompt_draft(&pane, draft, Some("❯ ")),
+        "a composer holding text beside a marker is not a collapsed paste"
+    );
+}
+
+/// A retry that renders the same measurement twice has one new paste in it.
+/// Rejecting every repeat would report a delivery that happened as unverified.
+#[test]
+fn a_second_identical_paste_is_still_a_new_paste() {
+    let before = claude_pane_showing("[Pasted text #1 +3 lines]");
+    let now = claude_pane_showing("[Pasted text #1 +3 lines][Pasted text #2 +3 lines]");
+
+    assert!(composer_shows_complete_prompt_draft(
+        &now,
+        MULTILINE_DRAFT,
+        Some(&before)
+    ));
+}
+
+/// A body nobody could read is not a composer with the draft gone. Silencing
+/// that into a quiet "unverified" is the wrapper lying about which question
+/// failed.
+#[test]
+fn an_unreadable_body_does_not_silence_the_stuck_draft_refusal() {
+    let stuck = format!("❯ {MULTILINE_DRAFT}\n{}", "──────────\n".repeat(12));
+
+    assert!(
+        composer_still_holds_prompt_text(&stuck, MULTILINE_DRAFT),
+        "the draft is on screen; the body reader giving up does not change that"
     );
 }
