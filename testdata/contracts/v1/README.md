@@ -246,6 +246,12 @@ Priority fixture groups:
 - `fast-control/switching.json`: switchable agent filtering, project-control
   guards, worktree scoping, teammate navigation, liveness handling, and
   serialized item shape captured by running TypeScript `fast-control` helpers.
+  One case, `fast-control-001`, carries a `divergesFromNode` note: Node ordered
+  the Expose-visible list by tmux window position, so the coder at `@1` came
+  before the overseer at `@2`. Rust orders every agent list by class first --
+  overseer, control, scribe, coder -- and only then by window, which is what
+  `compare_agent_canonical_order` decides for the dashboard, the footer chips,
+  the app and this list alike.
 
 ## Hooks
 

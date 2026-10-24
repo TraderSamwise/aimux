@@ -387,44 +387,43 @@ fn composer_rows_show_the_draft(pane: &str, draft: &str) -> bool {
     else {
         return false;
     };
-    let first = strip_agent_prompt_marker(rows[index])
-        .unwrap_or_default()
-        .trim();
+    let wanted = normalize_words(draft);
+    if wanted.is_empty() {
+        return false;
+    }
+    // Rows are taken until they add up to the draft, because a composer's rows
+    // and a draft's lines do not correspond in either direction: a terminal
+    // hard-wraps one long line across several rows, and a composer that folds
+    // renders several lines of draft onto one. `normalize_words` collapses
+    // both, which is what the body comparison this replaced was getting right;
+    // what it got wrong was needing to know where the composer ended.
+    let mut taken = normalize_words(
+        strip_agent_prompt_marker(rows[index])
+            .unwrap_or_default()
+            .trim(),
+    );
     let mut consumed = index;
-    let mut carried = normalize_words(first);
-    for draft_row in draft.lines().map(str::trim) {
-        // A terminal hard-wraps a long line across several rows, so one row of
-        // the draft can be six of the pane's. Taking rows until they add up is
-        // what makes a wrapped prompt comparable at all: the body comparison
-        // this replaced got it for free by collapsing newlines, and losing it
-        // left every prompt that wraps unverifiable.
-        let wanted = normalize_words(draft_row);
-        loop {
-            if carried == wanted {
-                break;
-            }
-            if !carried.is_empty() && !wanted.starts_with(&carried) {
-                return false;
-            }
-            let Some(row) = rows.get(consumed + 1) else {
-                return false;
-            };
-            consumed += 1;
-            let row = normalize_words(row);
-            if !carried.is_empty() && !row.is_empty() {
-                carried.push(' ');
-            }
-            carried.push_str(&row);
+    while taken != wanted {
+        if !taken.is_empty() && !wanted.starts_with(&taken) {
+            return false;
         }
-        carried.clear();
+        let Some(row) = rows.get(consumed + 1) else {
+            return false;
+        };
+        consumed += 1;
+        let row = normalize_words(row);
+        if !taken.is_empty() && !row.is_empty() {
+            taken.push(' ');
+        }
+        taken.push_str(&row);
     }
     let tail = &rows[consumed + 1..];
-    // What sits under the draft's last row decides two things at once. It must
-    // not be more composer -- a composer holding the draft AND something else
-    // is not a composer holding the draft -- and there must not be much of it,
-    // because Claude renders submitted messages as `> text` and an echo of an
-    // identical prompt high in the transcript would otherwise read as the
-    // composer.
+    // What sits under the last row of the draft decides two things at once. It
+    // must not be more composer -- a composer holding the draft AND something
+    // else is not a composer holding the draft -- and there must not be much
+    // of it, because Claude renders submitted messages as `> text` and an echo
+    // of an identical prompt high in the transcript would otherwise read as
+    // the composer.
     let next_is_a_boundary = tail.first().is_none_or(|row| {
         row.is_empty()
             || is_agent_input_horizontal_rule(row)
