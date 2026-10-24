@@ -1751,6 +1751,7 @@ fn row_chips_input(session: &DashboardSession) -> crate::agent_row_chips::RowChi
         thread_unread_count: thread_unread_count(session) as i64,
         activity_new_count: activity_new_count(session) as i64,
         pending_delivery_count: session.thread_pending_count as i64,
+        queued_input_count: session.queued_input_count as i64,
         waiting_on_them_count: session.thread_waiting_on_them_count as i64,
         family_count: session.workflow_family_count as i64,
         restore_notice: session

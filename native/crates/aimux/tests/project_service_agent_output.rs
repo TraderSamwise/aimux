@@ -34,7 +34,9 @@ use aimux::project_service::router::{
 use aimux::project_service::watcher_delivery::{
     WatcherDeliveryResult, deliver_agent_input_with_runtime,
 };
-use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
+use aimux::runtime_topology::{
+    coerce_runtime_topology, read_runtime_topology, runtime_topology_path,
+};
 use aimux::tmux::{CapturePaneOptions, TmuxTarget};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -2335,7 +2337,15 @@ fn agent_input_holds_for_recent_active_client_then_flushes_from_queue() {
     assert!(!agent_input_delivery_queue_path(&state_dir).exists());
     let drained = agent_input_delivery_backlog_snapshot(&state_dir);
     assert_eq!(drained.current_depth, Some(0));
-    assert_eq!(drained.high_water_mark, Some(1));
+    // At least one, not exactly one: the backlog registry is keyed by metric
+    // NAME and shared across every test in this binary, so any other test
+    // holding a queued entry at the same moment raises this mark. In
+    // production a project service serves one project, so the global name is
+    // the project's own; under `cargo test` it is everybody's.
+    assert!(
+        drained.high_water_mark.is_some_and(|mark| mark >= 1),
+        "the queue was filled before it drained: {drained:?}"
+    );
     cleanup(project);
 }
 
@@ -3376,8 +3386,114 @@ fn unverified_queued_input_is_recorded_once_without_automatic_resend() {
     cleanup(project);
 }
 
+/// Sam's message to an agent whose window is gone was invisible everywhere
+/// except a project-level failure banner: nothing in production read the
+/// delivery queue, and the row's pending chip counts runtime-exchange
+/// messages, not this. The agent carries it now -- asserted on the ROW the
+/// dashboard builds, because a count on a session with no row reaches no
+/// surface at all.
 #[test]
-fn queued_agent_input_blocks_when_session_is_absent_from_topology() {
+fn queued_input_is_published_on_the_agents_row() {
+    let project = temp_project("queued-input-published-on-agent");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    enqueue_agent_input_delivery(
+        &context,
+        "codex-1",
+        "@possibly-reused",
+        "first message",
+        "active-client-recent-input",
+        now_ms,
+    )
+    .expect("enqueue");
+
+    let metadata = aimux::daemon_state::try_load_metadata_state(&state_dir).expect("metadata");
+    let queued = metadata
+        .sessions
+        .get("codex-1")
+        .and_then(|session| session.get("queuedInput"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    assert_eq!(
+        queued["count"], 1,
+        "the agent must say that Sam's input is waiting: {queued}"
+    );
+    assert_eq!(queued["oldestCreatedAtMs"], now_ms);
+
+    let state = aimux::project_service::desktop_state::build_desktop_state(
+        aimux::project_service::desktop_state::DesktopStateInput {
+            project_root: project.to_string_lossy().into_owned(),
+            topology: &read_runtime_topology(runtime_topology_path(&state_dir)).expect("topology"),
+            metadata_sessions: &metadata.sessions,
+            exchange: &json!({}),
+        },
+    );
+    let row = state["sessions"]
+        .as_array()
+        .expect("sessions")
+        .iter()
+        .find(|session| session["id"] == "codex-1")
+        .expect("the agent is on the dashboard");
+    assert_eq!(row["queuedInputCount"], 1);
+    let chips = row
+        .pointer("/semantic/presentation/rowChips")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        chips.iter().any(|chip| chip["kind"] == "queued-input"),
+        "the row has to say it: {chips:#?}"
+    );
+    cleanup(project);
+}
+
+/// An agent that is OFFLINE is a wait, not a failure of the project: it will
+/// be back, and its dashboard row carries the queued count. The banner used to
+/// be re-raised every half second for this, which is why five projects carried
+/// one that could never age out.
+#[test]
+fn queued_agent_input_waits_for_an_offline_session() {
+    let project = temp_project("queued-topology-offline-session");
+    let state_dir = project.join("state");
+    write_state_with_session_status(&state_dir, "offline");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    enqueue_agent_input_delivery(
+        &context,
+        "codex-1",
+        "@possibly-reused",
+        "do not inject",
+        "active-client-recent-input",
+        now_ms,
+    )
+    .expect("enqueue");
+    let mut runtime = FakeActivityRuntime::default();
+
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
+    );
+
+    assert!(runtime.inner.actions.is_empty());
+    assert_eq!(queued_delivery_count(&state_dir), 1);
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert!(
+        !failures
+            .iter()
+            .any(|failure| failure["title"] == "Agent input delivery blocked"),
+        "an agent that is coming back is not a project failure: {failures:#?}"
+    );
+    cleanup(project);
+}
+
+/// And an agent with no row on any surface still raises one, because there is
+/// nowhere else the waiting message could be seen. Graveyarded, stopped or
+/// gone entirely: the project-level record is the last surface left.
+#[test]
+fn queued_agent_input_still_reports_a_session_with_no_row() {
     let project = temp_project("queued-topology-absent-session");
     let state_dir = project.join("state");
     write_state_without_sessions(&state_dir);
@@ -3400,10 +3516,6 @@ fn queued_agent_input_blocks_when_session_is_absent_from_topology() {
         now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
     );
 
-    assert!(
-        runtime.inner.actions.is_empty(),
-        "absent session is not ownership proof for the queued tmux window id"
-    );
     assert_eq!(queued_delivery_count(&state_dir), 1);
     let failures = list_dashboard_operation_failures(&state_dir);
     assert!(
@@ -3412,9 +3524,124 @@ fn queued_agent_input_blocks_when_session_is_absent_from_topology() {
             .any(|failure| failure["title"] == "Agent input delivery blocked"
                 && failure["message"]
                     .as_str()
-                    .is_some_and(|message| message.contains("no live tmux window")
-                        && message.contains("@possibly-reused"))),
-        "blocked delivery should explain the missing live session"
+                    .is_some_and(|message| message.contains("no longer on this project"))),
+        "a message queued for an agent nobody can see has to be reported: {failures:#?}"
+    );
+    cleanup(project);
+}
+
+/// A window that has not been created yet is not a failure. A live row is
+/// briefly unbound while it is launching, and a restart rewrites the topology
+/// -- a message sent in that moment must not raise a banner on the project.
+#[test]
+fn queued_agent_input_is_quiet_while_a_window_is_still_settling() {
+    let project = temp_project("queued-unbound-still-settling");
+    let state_dir = project.join("state");
+    write_state_with_unbound_running_session(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    enqueue_agent_input_delivery(
+        &context,
+        "codex-1",
+        "@possibly-reused",
+        "do not inject",
+        "active-client-recent-input",
+        now_ms,
+    )
+    .expect("enqueue");
+    let mut runtime = FakeActivityRuntime::default();
+
+    // Inside the hold budget the entry was given at enqueue.
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, now_ms + 1);
+
+    assert_eq!(queued_delivery_count(&state_dir), 1);
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert!(
+        !failures
+            .iter()
+            .any(|failure| failure["title"] == "Agent input delivery blocked"),
+        "a window that is still being created is not a project failure: {failures:#?}"
+    );
+    cleanup(project);
+}
+
+/// A RUNNING agent with no window binding has a dashboard row, and the row
+/// carries the queued count -- so this is a wait, not a banner. Keying one to
+/// the entry's age was wrong twice: a message that waited out an offline agent
+/// is always past its deadline, so the first tick after that agent came back
+/// unbound would have raised a project failure for an ordinary restart.
+#[test]
+fn queued_agent_input_waits_for_a_running_session_with_no_window() {
+    let project = temp_project("queued-running-unbound-session");
+    let state_dir = project.join("state");
+    write_state_with_unbound_running_session(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    enqueue_agent_input_delivery(
+        &context,
+        "codex-1",
+        "@possibly-reused",
+        "do not inject",
+        "active-client-recent-input",
+        now_ms,
+    )
+    .expect("enqueue");
+    let mut runtime = FakeActivityRuntime::default();
+
+    // Long past the hold budget: still no banner, because the row says it.
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
+    );
+
+    assert_eq!(queued_delivery_count(&state_dir), 1);
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert!(
+        !failures
+            .iter()
+            .any(|failure| failure["title"] == "Agent input delivery blocked"),
+        "an agent with a row does not need a project banner: {failures:#?}"
+    );
+    cleanup(project);
+}
+
+/// And it goes away when the input does. The queue FILE is removed rather
+/// than saved empty when it drains, so a count that only cleared on a saved
+/// empty queue would stick to the agent for ever.
+#[test]
+fn delivering_the_queued_input_clears_it_from_the_agent() {
+    let project = temp_project("queued-input-cleared-on-delivery");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    enqueue_agent_input_delivery(
+        &context,
+        "codex-1",
+        "@1",
+        "queued input",
+        "active-client-recent-input",
+        now_ms,
+    )
+    .expect("enqueue");
+    let mut runtime = FakeActivityRuntime::default();
+
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + ACTIVE_CLIENT_DWELL_MS + 1,
+    );
+
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    let metadata = aimux::daemon_state::try_load_metadata_state(&state_dir).expect("metadata");
+    assert_eq!(
+        metadata
+            .sessions
+            .get("codex-1")
+            .and_then(|session| session.get("queuedInput")),
+        None,
+        "a delivered message is not a waiting one"
     );
     cleanup(project);
 }
@@ -3963,6 +4190,30 @@ fn write_state(state_dir: &PathBuf) {
                 }),
             )]),
         },
+    )
+    .unwrap();
+}
+
+fn write_state_with_unbound_running_session(state_dir: &PathBuf) {
+    create_dir_all(state_dir).unwrap();
+    let mut topology = topology_fixture();
+    topology["bindings"] = json!([]);
+    write(
+        runtime_topology_path(state_dir),
+        serde_yaml::to_string(&topology).unwrap(),
+    )
+    .unwrap();
+}
+
+fn write_state_with_session_status(state_dir: &PathBuf, status: &str) {
+    create_dir_all(state_dir).unwrap();
+    let mut topology = topology_fixture();
+    for session in topology["sessions"].as_array_mut().unwrap() {
+        session["status"] = json!(status);
+    }
+    write(
+        runtime_topology_path(state_dir),
+        serde_yaml::to_string(&topology).unwrap(),
     )
     .unwrap();
 }

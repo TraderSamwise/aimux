@@ -3,6 +3,9 @@ use serde_json::{Map, Value, json};
 #[derive(Debug, Clone, Default)]
 pub struct SessionSemanticsInput {
     pub status: String,
+    /// Input queued for this agent that has not been delivered yet. Distinct
+    /// from `thread_pending_count`, which counts runtime-exchange messages.
+    pub queued_input_count: i64,
     pub restore_notice: Option<String>,
     pub pending_action: Option<String>,
     pub activity: Option<String>,
@@ -70,6 +73,7 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
         thread_unread_count,
         activity_new_count,
         pending_delivery_count,
+        queued_input_count: input.queued_input_count,
         waiting_on_me_count,
         waiting_on_them_count,
         blocked_count,
@@ -99,6 +103,7 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
             thread_unread_count,
             activity_new_count,
             pending_delivery_count,
+            queued_input_count: input.queued_input_count,
             waiting_on_them_count,
             family_count,
         });
@@ -154,6 +159,13 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
         "pendingDeliveryCount".into(),
         Value::from(pending_delivery_count),
     );
+    // Only when there is some: every recorded snapshot predates this field.
+    if input.queued_input_count > 0 {
+        semantic.insert(
+            "queuedInputCount".into(),
+            Value::from(input.queued_input_count),
+        );
+    }
     semantic.insert("waitingOnMeCount".into(), Value::from(waiting_on_me_count));
     semantic.insert(
         "waitingOnThemCount".into(),
@@ -440,6 +452,7 @@ struct CompactHintInput<'a> {
     thread_unread_count: i64,
     activity_new_count: i64,
     pending_delivery_count: i64,
+    queued_input_count: i64,
     waiting_on_me_count: i64,
     waiting_on_them_count: i64,
     blocked_count: i64,
@@ -447,6 +460,15 @@ struct CompactHintInput<'a> {
 }
 
 fn compact_hint(input: CompactHintInput<'_>) -> Value {
+    // Ahead of everything the agent has to say: the user's own message has
+    // not gone in. The statusline and the tmux bar read this, and for a row
+    // whose two chip slots are already full it is the only place it appears.
+    if input.queued_input_count > 0 {
+        return Value::String(format!(
+            "{} queued",
+            capped_count_label(input.queued_input_count)
+        ));
+    }
     let hint = match input.user.get("attention").and_then(Value::as_str) {
         Some("error") => Some("error".to_owned()),
         Some("blocked") => Some("blocked".to_owned()),

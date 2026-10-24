@@ -75,6 +75,11 @@ pub struct RowChipsInput {
     pub thread_unread_count: i64,
     pub activity_new_count: i64,
     pub pending_delivery_count: i64,
+    /// Input sitting in the delivery queue for this agent, which is a
+    /// different fact from `pending_delivery_count` -- that one counts thread
+    /// messages. An agent whose window is gone keeps its queued input until it
+    /// comes back, and this is the only place that says so.
+    pub queued_input_count: i64,
     pub waiting_on_them_count: i64,
     pub family_count: i64,
 }
@@ -93,6 +98,17 @@ pub fn agent_row_chips(input: &RowChipsInput) -> Vec<RowChip> {
         }
     };
     let mut chips = Vec::new();
+    // First, and ahead of the restore notice: this is the user's OWN message,
+    // sitting undelivered. The row budget is two chips, so a chip further down
+    // the ladder is a chip nobody sees -- and for an offline agent the restore
+    // notice and an unread count fill both slots.
+    if input.queued_input_count > 0 {
+        chips.push(RowChip::new(
+            "queued-input",
+            format!("{} queued", capped_count_label(input.queued_input_count)),
+            tone(RowChipTone::Attention),
+        ));
+    }
     if let Some(label) = input
         .restore_notice
         .as_deref()
@@ -235,6 +251,7 @@ mod tests {
             thread_unread_count: 8,
             activity_new_count: 5,
             pending_delivery_count: 3,
+            queued_input_count: 0,
             waiting_on_them_count: 1,
             family_count: 4,
         }
