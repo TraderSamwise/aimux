@@ -27,21 +27,34 @@ const screen = componentBody(
 describe("accepting a share invite", () => {
   it("waits for the stored settings before it can accept", () => {
     expect(screen, "from the store, not a constant").toContain(
-      "useAtomValue(settingsHydratedAtom)",
+      "useAtomValue(settingsReadStateAtom)",
+    );
+    // The full read state, not the hydrated flag: that one is only "not
+    // unread", so a read that FAILED reports hydrated while the write is still
+    // refused -- and accepting then spends the invite and keeps nothing.
+    expect(screen, "and only a read that answered may accept").toContain(
+      'settingsReadState === "read" &&',
     );
     // In `canAccept`'s CONDITION, so it gates the auto-accept effect and the
     // button together rather than one of the two. Asserting the name alone was
     // satisfied by the dependency array after the condition had lost it.
     expect(screen).toMatch(
-      /const canAccept = useMemo\(\s*\(\)\s*=>[\s\S]{0,400}?settingsHydrated &&/,
+      /const canAccept = useMemo\(\s*\(\)\s*=>[\s\S]{0,400}?settingsReadState === "read" &&/,
     );
     expect(screen, "and it re-evaluates when the read lands").toMatch(
-      /const canAccept = useMemo\([\s\S]{0,600}?\[[^\]]{0,200}settingsHydrated,/,
+      /const canAccept = useMemo\([\s\S]{0,600}?\[[^\]]{0,200}settingsReadState,/,
     );
   });
 
   it("still gates the auto-accept and the button on it", () => {
     expect(screen).toContain('if (!canAccept || status !== "idle" || autoAcceptedRef.current)');
     expect(screen).toContain("disabled={!canAccept}");
+  });
+
+  // And it says why, rather than looking broken: a signed-in user whose
+  // storage is unreadable would otherwise sit at a button that does nothing.
+  it("says why it cannot accept when storage is unreadable", () => {
+    expect(screen).toContain('settingsReadState === "failed"');
+    expect(screen).toMatch(/cannot read its local storage/);
   });
 });

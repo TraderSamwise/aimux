@@ -153,7 +153,7 @@ export const settingsAtom = readBeforeWriteAtom(asyncSettingsAtom, defaultSettin
 // issues reported "not read yet" again and the landing screen re-entered its
 // spinner after it had already decided; and it let a rejected read throw
 // straight into render, taking the screen down over a storage fault.
-const settingsReadStateAtom = storageReadStateAtom(asyncSettingsAtom);
+export const settingsReadStateAtom = storageReadStateAtom(asyncSettingsAtom);
 
 export const settingsHydratedAtom = atom((get) => get(settingsReadStateAtom) !== "unread");
 
