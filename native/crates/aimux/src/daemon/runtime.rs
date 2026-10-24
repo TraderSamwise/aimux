@@ -483,6 +483,21 @@ const PROJECT_SERVICE_REPLACEMENT_COOLDOWN_MS: u64 = 600_000;
 
 const PROJECT_SERVICE_HEALTH_RECOVERY_GRACE_MULTIPLIER: u64 = 2;
 const PROJECT_SERVICE_HEALTH_WAIT_POLL_MS: u64 = 100;
+/// How many consecutive not-live answers condemn a launched service.
+///
+/// One is not enough. On mbp2 the daemon launched pid 8916, asked whether it
+/// was live 11ms later, was told no, and reported "process exited before
+/// /health became ready" -- with "exit status: unavailable (process was not
+/// waitable by this daemon or was already reaped)" in the same breath, which
+/// is the daemon saying it could not tell. The service was alive; it logged
+/// its own startup 150ms after being pronounced dead. The daemon terminated
+/// it as invalid and launched a replacement, and both ran, both published an
+/// endpoint over each other, and the project ended with no endpoint at all
+/// and two services.
+///
+/// A process that really died at startup stays dead, so confirming the
+/// negative one poll later costs 100ms and nothing else.
+const PROJECT_SERVICE_NOT_LIVE_GLANCES_BEFORE_EXITED: u32 = 2;
 
 /// How long a pid gets to die after SIGKILL before the replacement gives up.
 /// A kill the kernel has accepted lands in milliseconds; this is only slack
@@ -1905,6 +1920,7 @@ impl RealDaemonRuntime {
         let recovery_grace_ms = project_service_health_recovery_grace_ms(startup_timeout_ms);
         let recovery_deadline = primary_deadline + u128::from(recovery_grace_ms);
         let mut recovery_grace_started = false;
+        let mut not_live_glances = 0u32;
         loop {
             let observed_failure = match load_metadata_endpoint_result(project_state_dir) {
                 Ok(Some(endpoint)) if endpoint.pid != pid => {
@@ -1927,7 +1943,18 @@ impl RealDaemonRuntime {
                 },
                 Err(error) => ProjectServiceHealthWaitFailure::EndpointLoadFailed { error },
             };
-            if !self.project_service_process_verifier.is_live(pid) {
+            if self.project_service_process_verifier.is_live(pid) {
+                not_live_glances = 0;
+            } else {
+                not_live_glances += 1;
+            }
+            let now = current_unix_millis();
+            let budget_spent = startup_timeout_ms == 0 || now >= recovery_deadline;
+            // Condemned on a confirmed absence, or on the last glance there is
+            // time for -- never on a single unconfirmed one.
+            if not_live_glances >= PROJECT_SERVICE_NOT_LIVE_GLANCES_BEFORE_EXITED
+                || (not_live_glances > 0 && budget_spent)
+            {
                 let exit_status = self
                     .project_service_process_verifier
                     .exit_status_detail(pid);
@@ -1935,8 +1962,7 @@ impl RealDaemonRuntime {
                     ProjectServiceHealthWaitFailure::ProcessExited { exit_status },
                 );
             }
-            let now = current_unix_millis();
-            if startup_timeout_ms == 0 || now >= recovery_deadline {
+            if budget_spent {
                 return ProjectServiceHealthWait::NotReady(observed_failure);
             }
             if now >= primary_deadline && !recovery_grace_started {
@@ -8606,6 +8632,84 @@ mod tests {
         ));
     }
 
+    /// mbp2, 00:28:36.188 -> 00:28:36.199: launched, pronounced dead eleven
+    /// milliseconds later, and replaced. The pid was alive and logged its own
+    /// startup 150ms after the verdict, so the project ended up with two
+    /// services writing over each other's endpoint.
+    #[test]
+    fn one_unconfirmed_not_live_glance_does_not_condemn_a_starting_service() {
+        let fixture = restart_service_fixture("wait-health-not-live-once");
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&fixture.project_root);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_901,
+                pid: 91_020,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(91_120)),
+            Arc::new(
+                RestartTestProcessVerifier::current_native([])
+                    .with_pid_live_after_not_live_checks(91_020, 1)
+                    .with_exit_detail(
+                        91_020,
+                        "unavailable (process was not waitable by this daemon or was already reaped)",
+                    ),
+            ),
+            1_000,
+        )
+        // Not ready on the first pass on purpose: a probe that answers
+        // straight away returns before the loop ever asks whether the process
+        // is live, which makes this test blind to the verdict it is about.
+        .with_project_service_health_probe(Arc::new(RestartTestHealthProbe::sequence(vec![
+            false, true,
+        ])));
+
+        let ready = runtime.wait_for_live_project_service(&state_dir, 91_020);
+
+        assert!(
+            matches!(ready, ProjectServiceHealthWait::Ready(_)),
+            "a service that answers on the next glance is not an exited one: {ready:?}"
+        );
+        fixture.cleanup();
+    }
+
+    /// The other direction: a process that really is gone stays gone, and the
+    /// confirmation costs one poll.
+    #[test]
+    fn a_process_that_stays_gone_is_still_reported_as_exited() {
+        let fixture = restart_service_fixture("wait-health-stays-gone");
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&fixture.project_root);
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(91_120)),
+            Arc::new(
+                RestartTestProcessVerifier::current_native([])
+                    .with_exit_detail(91_020, "exited with code 1"),
+            ),
+            1_000,
+        );
+
+        let ready = runtime.wait_for_live_project_service(&state_dir, 91_020);
+
+        assert_eq!(
+            ready,
+            ProjectServiceHealthWait::NotReady(ProjectServiceHealthWaitFailure::ProcessExited {
+                exit_status: Some("exited with code 1".to_owned()),
+            })
+        );
+        fixture.cleanup();
+    }
+
     #[test]
     fn wait_for_live_project_service_requires_serving_health_endpoint() {
         let fixture = restart_service_fixture("wait-health-not-ready");
@@ -10002,7 +10106,10 @@ mod tests {
         assert!(error.contains(&structured_log.display().to_string()));
         assert!(error.contains(&stdio_log.display().to_string()));
         assert_eq!(launcher.calls(), vec![project]);
-        assert_eq!(health.calls(), vec![91_025]);
+        // Twice: the wait confirms a not-live answer one poll later before it
+        // calls a launched service exited, and probes health again on that
+        // second pass.
+        assert_eq!(health.calls(), vec![91_025, 91_025]);
         fixture.cleanup();
     }
 
@@ -10170,7 +10277,8 @@ mod tests {
         assert!(refreshed.into_inner().is_empty());
         assert_eq!(launcher.calls(), vec![project]);
         assert_eq!(launcher.terminations(), vec![(91_026, false)]);
-        assert_eq!(health.calls(), vec![91_126]);
+        // Twice, for the confirming second pass -- see the exited-service wait.
+        assert_eq!(health.calls(), vec![91_126, 91_126]);
         fixture.cleanup();
     }
 
@@ -11868,6 +11976,7 @@ mod tests {
         project_service_pids: BTreeMap<String, Vec<i32>>,
         exit_details: BTreeMap<i32, String>,
         live_checks_before_exit: Mutex<BTreeMap<i32, usize>>,
+        not_live_checks_before_live: Mutex<BTreeMap<i32, usize>>,
         batch_project_counts: Mutex<Vec<usize>>,
         single_project_scan_count: Mutex<usize>,
     }
@@ -11882,6 +11991,7 @@ mod tests {
                 project_service_pids: BTreeMap::new(),
                 exit_details: BTreeMap::new(),
                 live_checks_before_exit: Mutex::new(BTreeMap::new()),
+                not_live_checks_before_live: Mutex::new(BTreeMap::new()),
                 batch_project_counts: Mutex::new(Vec::new()),
                 single_project_scan_count: Mutex::new(0),
             }
@@ -11895,6 +12005,7 @@ mod tests {
                 project_service_pids: BTreeMap::new(),
                 exit_details: BTreeMap::new(),
                 live_checks_before_exit: Mutex::new(BTreeMap::new()),
+                not_live_checks_before_live: Mutex::new(BTreeMap::new()),
                 batch_project_counts: Mutex::new(Vec::new()),
                 single_project_scan_count: Mutex::new(0),
             }
@@ -11916,6 +12027,15 @@ mod tests {
                 .get_mut()
                 .expect("live checks before exit")
                 .insert(pid, checks);
+            self
+        }
+
+        fn with_pid_live_after_not_live_checks(mut self, pid: i32, checks: usize) -> Self {
+            self.not_live_checks_before_live
+                .get_mut()
+                .expect("not live checks before live")
+                .insert(pid, checks);
+            self.live.insert(pid);
             self
         }
 
@@ -11955,6 +12075,18 @@ mod tests {
         }
 
         fn is_live(&self, pid: i32) -> bool {
+            {
+                let mut not_live_checks = self
+                    .not_live_checks_before_live
+                    .lock()
+                    .expect("not live checks before live");
+                if let Some(checks) = not_live_checks.get_mut(&pid)
+                    && *checks > 0
+                {
+                    *checks -= 1;
+                    return false;
+                }
+            }
             let mut live_checks = self
                 .live_checks_before_exit
                 .lock()
