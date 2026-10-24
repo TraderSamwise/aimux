@@ -1,5 +1,5 @@
 import { atom } from "jotai";
-import { atomWithStorage, unwrap } from "jotai/utils";
+import { atomWithStorage } from "jotai/utils";
 import { focusAtom } from "jotai-optics";
 import {
   createSsrSafeMergingJsonStorage,

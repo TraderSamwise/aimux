@@ -91,7 +91,7 @@ to run, the answer is `yarn verify`.
 
 | lane | who runs it | what it is |
 | --- | --- | --- |
-| `yarn verify` | you, after every change | Typecheck, lint, fmt, clippy and the static audits. ~20s. |
+| `yarn verify` | you, after every change | Typecheck, lint (root, relay AND app), fmt, clippy and the static audits. ~30s. |
 | `yarn verify:push` | the pre-push hook | Typechecks plus the commit-hook attestation. You do not run this by hand. |
 | `yarn verify:full` | CI, and the cutover install gate | `verify` plus every Rust, root JS and app JS suite. Minutes. |
 | `yarn release:readiness` | the release gate | `verify:full` plus the idle-spawn budget and the installed-runtime gates. |
