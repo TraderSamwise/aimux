@@ -5,8 +5,8 @@
 //! there, against the two runtimes production actually uses.
 
 use aimux::agent_prompt_delivery::{
-    composer_shows_pasted_draft, composer_still_holds_prompt_text, current_composer_text,
-    prompt_draft_signature,
+    PromptDeliveryVerification, composer_shows_pasted_draft, composer_still_holds_prompt_text,
+    current_composer_text, prompt_draft_signature, prompt_submit_verification,
 };
 
 const DRAFT: &str = "Aimux task Run: aimux task show t1 and report the mutation proof";
@@ -149,5 +149,107 @@ fn the_signature_is_the_collapsed_tail_so_a_redraw_reads_as_a_change() {
         settled,
         prompt_draft_signature("› hello world stil"),
         "a pane still being written must not read as settled"
+    );
+}
+
+/// Captured from a live agent on 2026-10-24, not composed by hand. The rule is
+/// shortened; nothing else is touched.
+///
+/// The status line is a user-configured Claude Code `statusLine` command, so
+/// its bracketed title is the agent's own, never `[[aimux]`.
+const CLAUDE_EMPTY_COMPOSER: &str = "──────────\n\
+❯ \n\
+──────────\n\
+  sam@sam-mbp ~/cs/tealstreet-next/.aimux/worktrees/deaws feat/aws-exit-eks ██████░░░░69% Opus 5.5 (1M context) [AWS migration inventory and alternatives]\n\
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents · 1 feedback draft";
+
+/// Also captured live. An empty Codex composer renders its placeholder, and the
+/// hint row below it is not a rule, a chevron, or a model line.
+const CODEX_EMPTY_COMPOSER: &str = "› Ask Codex to do anything\n\
+\n\
+  GPT-6.1-Sol high · ~/cs/tealstreet-sdk/.aimux/worktrees/rust-bybit · Port Bybit to new layout\n\
+  ? for shortcuts";
+
+/// Why every submission was reported unverified: on both real panes the
+/// composer region reads as non-empty when you only look at one line of it.
+/// This is the measurement the old emptiness test was making.
+#[test]
+fn a_real_empty_composer_does_not_read_as_empty_one_line_at_a_time() {
+    assert_eq!(
+        current_composer_text(CLAUDE_EMPTY_COMPOSER).as_deref(),
+        Some(
+            "sam@sam-mbp ~/cs/tealstreet-next/.aimux/worktrees/deaws feat/aws-exit-eks ██████░░░░69% Opus 5.5 (1M context) [AWS migration inventory and alternatives]"
+        ),
+        "the user's status line is being read as what they typed"
+    );
+    assert_eq!(
+        current_composer_text(CODEX_EMPTY_COMPOSER).as_deref(),
+        Some("Ask Codex to do anything"),
+        "Codex's placeholder is being read as what they typed"
+    );
+}
+
+#[test]
+fn a_submitted_prompt_verifies_on_a_real_claude_pane() {
+    assert_eq!(
+        prompt_submit_verification(true, CLAUDE_EMPTY_COMPOSER, DRAFT),
+        Ok(PromptDeliveryVerification::Verified)
+    );
+}
+
+#[test]
+fn a_submitted_prompt_verifies_on_a_real_codex_pane() {
+    assert_eq!(
+        prompt_submit_verification(true, CODEX_EMPTY_COMPOSER, DRAFT),
+        Ok(PromptDeliveryVerification::Verified)
+    );
+}
+
+/// The other direction, and the one that must not become a false delivery: the
+/// pasted blocks are still sitting in the composer, so the carriage return
+/// never landed.
+#[test]
+fn pasted_blocks_left_in_the_composer_are_not_a_delivery() {
+    assert_eq!(
+        prompt_submit_verification(
+            true,
+            "› [Pasted Content 4577 chars][Pasted Content 3941 chars]",
+            DRAFT
+        ),
+        Ok(PromptDeliveryVerification::Unverified)
+    );
+}
+
+/// And the draft's own text left in the composer is still a refusal, not a
+/// quiet unverified.
+#[test]
+fn a_draft_still_visible_after_submit_is_an_error() {
+    assert!(prompt_submit_verification(true, &format!("› {DRAFT}"), DRAFT).is_err());
+}
+
+/// A marker character far up the transcript is not a composer. With the real
+/// composer scrolled out of the capture, this used to be enough to call a pane
+/// readable and then empty.
+#[test]
+fn a_quoted_marker_far_above_the_bottom_is_not_a_composer() {
+    // A bare marker with nothing after it, and chrome all the way down: the
+    // shape that reads as "composer found, and empty". A quote carrying text
+    // would be caught by the composer-has-user-text check instead, which is
+    // not the guard under test here.
+    let quoted = format!("> \n{}", "──────────\n".repeat(12));
+
+    assert_eq!(
+        prompt_submit_verification(true, &quoted, DRAFT),
+        Ok(PromptDeliveryVerification::Unverified)
+    );
+}
+
+/// An empty composer alone proves nothing: without having seen the complete
+/// draft go in, there is no submission to verify.
+#[test]
+fn an_empty_composer_alone_does_not_verify_anything() {
+    assert_eq!(
+        prompt_submit_verification(false, CLAUDE_EMPTY_COMPOSER, DRAFT),
+        Ok(PromptDeliveryVerification::Unverified)
     );
 }

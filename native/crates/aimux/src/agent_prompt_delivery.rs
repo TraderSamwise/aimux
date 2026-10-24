@@ -19,6 +19,10 @@ pub const POLL_MS: u64 = 250;
 pub const MAX_POLL_ATTEMPTS: u32 = 20;
 pub const SETTLE_BEFORE_SUBMIT_MS: u64 = 200;
 pub const VERIFY_AFTER_SUBMIT_MS: u64 = 700;
+/// How far above the bottom of a capture the composer can be and still be the
+/// composer. Measured on both agents: four non-empty rows for Claude, three for
+/// Codex.
+const COMPOSER_BOTTOM_ROWS: usize = 8;
 /// Node sliced the signature to its last 240 characters.
 const SIGNATURE_CHARS: usize = 240;
 
@@ -52,8 +56,48 @@ pub fn prompt_submit_verification(
                 .to_owned(),
         );
     }
+    // The same question `agent_input_delivery` asks before it delivers, not a
+    // second answer to it. This used to require `current_composer_text(pane)`
+    // to be literally empty, and on a real pane it never is:
+    //
+    //   ❯                             <- Claude, composer empty
+    //   ──────────────────────────────
+    //   sam@sam-mbp ~/cs/... feat/aws-exit-eks ███░░69% Opus 5.5 (1M context) [AWS migration]
+    //   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+    //
+    // `looks_like_agent_bottom_chrome` only knows a status line that starts
+    // `claude-`/`gpt-` or carries `[[aimux]`, and Sam's is a user-configured
+    // `statusLine` command carrying the agent's own title -- so the status line
+    // was read as the composer's contents, and the composer was never empty.
+    // Codex is worse: an empty composer renders `› Ask Codex to do anything`.
+    // Both made every submission Unverified whatever happened, which is what
+    // the six verified:false receipts in the wild were.
+    //
+    // `pane_has_unsubmitted_agent_input` already keys on the agents' real
+    // chrome -- placeholders, ` context)`, a lowercased `gpt-` -- and it still
+    // counts a collapsed `[Pasted Content …]` left sitting in the composer as
+    // unsubmitted input, so an Enter that never landed is still not a delivery.
+    // A pane with no composer region at all is a pane we could not read, and
+    // that is not the same as a composer with nothing in it. Without this the
+    // "complete draft followed by unreadable composer" case below would be
+    // reported as a delivery on the strength of a question nobody could ask.
+    //
+    // Near the bottom, not anywhere: a `>` opening a markdown block quote, or a
+    // shell prompt quoted in the transcript, is a marker character sixty lines
+    // up, and with the real composer scrolled out of the capture it would have
+    // answered this question on behalf of a composer nobody looked at. Both
+    // agents keep the composer within a few rows of the bottom -- Claude has a
+    // rule, a status line and a hint row under it, Codex a blank, a model line
+    // and a hint row.
+    let composer_is_readable = pane
+        .lines()
+        .rev()
+        .filter(|line| !line.trim().is_empty())
+        .take(COMPOSER_BOTTOM_ROWS)
+        .any(line_starts_with_agent_prompt_marker);
     if complete_draft_observed
-        && current_composer_text(pane).is_some_and(|composer| composer.trim().is_empty())
+        && composer_is_readable
+        && !crate::project_service::agent_input_delivery::pane_has_unsubmitted_agent_input(pane)
     {
         Ok(PromptDeliveryVerification::Verified)
     } else {

@@ -840,7 +840,19 @@ fn latest_composer_region_is_chrome_only(pane: &str) -> bool {
         .filter(|line| !is_agent_input_composer_tail_chrome(line));
 
     let Some(first) = non_chrome_tail.next() else {
-        return false;
+        // Nothing but chrome under an empty prompt line is the emptiest a
+        // composer gets. Reading that as "not chrome only" sent the question to
+        // `current_composer_text`, which answers with the first line under the
+        // marker -- on a real Claude pane the user's own status line:
+        //
+        //   ❯
+        //   ──────────────────────────────
+        //   sam@sam-mbp ~/cs/... (1M context) [AWS migration]
+        //   ⏵⏵ bypass permissions on (shift+tab to cycle)
+        //
+        // so an empty composer read as unsubmitted user input, which holds
+        // delivery back and reports every submission unverified.
+        return true;
     };
     is_agent_input_composer_chrome_text(first) && non_chrome_tail.next().is_none()
 }
