@@ -85,10 +85,6 @@ export default function SharedChatsScreen() {
   // Not until the stored settings have been read. `refresh` WRITES the shares
   // it fetched and then calls `setHasHydrated(true)`, which switches off the
   // loading state -- so a held write left this screen presenting the default
-  // empty list as a loaded one, saying nobody had shared anything.
-  // Not until the stored settings have been read. `refresh` WRITES the shares
-  // it fetched and then calls `setHasHydrated(true)`, which switches off the
-  // loading state -- so a held write left this screen presenting the default
   // empty list as a loaded one: "nobody has shared anything" when the truth
   // was "not read yet".
   //

@@ -17,48 +17,12 @@ const APP = join(dirname(fileURLToPath(import.meta.url)), "..");
  * neither announces itself: both are mount-time or socket-time, with no user
  * gesture to repeat.
  */
-describe("the shared chat summary", () => {
-  const chat = componentBody(
-    join(APP, "components", "screens", "AgentChatScreen.tsx"),
-    "export default function ChatScreen(",
-  );
-
-  // It writes `acceptedShares` and `activeShare` and then latches
-  // `shareSummaryCheckedKey`, which switches the effect off for good. Latching
-  // after a held write opened a shared chat that was absent from the list
-  // `useRouteShare` resolves from.
-  // The retry comes from the dependency, not from withholding the latch. The
-  // effect re-runs when the settings read lands, re-fetches, and the two
-  // writes land on that pass.
-  it("comes back round when the settings read lands", () => {
-    expect(chat).toContain("useAtomValue(settingsReadStateAtom)");
-    expect(chat, "as a dependency of the effect that writes").toMatch(
-      /setShareSummaryCheckedKey\(shareSummaryRequestKey\);[\s\S]{0,1800}?\}, \[[^\]]{0,400}settingsReadState,/,
-    );
-  });
-
-  // Nothing about a storage read may decide whether the owner can SEND.
-  // `shareSummaryCheckedKey` is that gate through `ownerShareStatusPending`,
-  // and two attempts at this got it wrong: gating the fetch stopped the key
-  // being set at all, and withholding the latch did the same on a canonical
-  // shared route, where `!isSharedSessionView` is true while the settings are
-  // unread. Either way the owner's composer accepted text and did nothing,
-  // because `handleSendMessage` returns without setting an error.
-  it("never lets a storage read hold the send gate", () => {
-    const declaration = chat.slice(chat.indexOf("const shouldLoadShareSummary = Boolean("));
-    expect(
-      declaration.slice(0, declaration.indexOf(");")),
-      "the fetch must not wait on a read that may never answer",
-    ).not.toContain("settingsReadState");
-    // And the latch itself is unconditional.
-    expect(chat).toMatch(
-      /setLegacyActiveShare\(acceptedShare\);[\s\S]{0,900}?\n\s*setShareSummaryCheckedKey\(shareSummaryRequestKey\);/,
-    );
-    expect(chat, "no condition in front of it").not.toMatch(
-      /if \([^)]*settingsReadState[^)]*\)\s*\{\s*setShareSummaryCheckedKey/,
-    );
-  });
-});
+// The shared chat summary's two cases are NOT here. They were source-text
+// gates asserting spellings, and they passed through both regressions this
+// branch produced -- a grep cannot see that `shareSummaryCheckedKey` is the
+// owner's send gate. They are
+// `app/components/AgentChatScreen.sendgate.component.test.tsx` now, which
+// renders the screen and fails on either one.
 
 describe("a security event from the relay", () => {
   const layout = componentBody(

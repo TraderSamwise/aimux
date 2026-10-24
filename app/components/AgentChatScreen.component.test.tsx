@@ -5,18 +5,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const boundary = vi.hoisted(() => ({
   endpoint: { host: "127.0.0.1", port: 43191 },
-  getToken: vi.fn(async () => null),
+  getToken: vi.fn(async (): Promise<string | null> => null),
   refreshOutputSnapshot: vi.fn(async () => true),
   sendLivePaneInput: vi.fn(),
   router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
+  getShare: vi.fn(),
+  listShares: vi.fn(),
+  // The route and the storage read are per-test, because the cases that
+  // matter are a canonical shared route and a read that never settles.
+  pathname: "/agent/codex-component",
+  params: { sessionId: "codex-component" } as Record<string, string>,
+  storage: () => Promise.resolve(null) as Promise<string | null>,
 }));
 
 vi.mock("expo-router", async () => {
   const { useEffect } = await import("react");
   return {
     useFocusEffect: (callback: React.EffectCallback) => useEffect(callback, [callback]),
-    useLocalSearchParams: () => ({ sessionId: "codex-component" }),
-    usePathname: () => "/agent/codex-component",
+    useLocalSearchParams: () => boundary.params,
+    usePathname: () => boundary.pathname,
     useRouter: () => boundary.router,
   };
 });
@@ -47,10 +54,12 @@ vi.mock("@/lib/use-agent-output-feed", () => ({
 vi.mock("@/lib/api", () => ({
   sendLivePaneInput: boundary.sendLivePaneInput,
   markSessionSeen: vi.fn(async () => ({ ok: true })),
+  getShare: boundary.getShare,
+  listShares: boundary.listShares,
 }));
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
-    getItem: vi.fn(async () => null),
+    getItem: vi.fn(() => boundary.storage()),
     setItem: vi.fn(async () => {}),
     removeItem: vi.fn(async () => {}),
   },
@@ -139,10 +148,18 @@ const viewport = createResponsiveViewportValue({
 
 async function mountChat(
   mode: AgentOutputViewMode = "terminal",
-  options: { store?: ReturnType<typeof createStore>; draft?: string | null } = {},
+  options: {
+    store?: ReturnType<typeof createStore>;
+    draft?: string | null;
+    // A read that never settles never hydrates, and that is the case under
+    // test -- so waiting for it would hang rather than fail.
+    awaitHydration?: boolean;
+  } = {},
 ) {
   const store = options.store ?? createStore();
-  await waitFor(() => expect(store.get(settingsHydratedAtom)).toBe(true));
+  if (options.awaitHydration !== false) {
+    await waitFor(() => expect(store.get(settingsHydratedAtom)).toBe(true));
+  }
   const project = projectStateKey({ path: "/repo" });
   const agent = agentStateKey(project, sessionId);
   store.set(desktopStateFamily(project), {
@@ -203,6 +220,10 @@ async function sendMessage(mode: AgentOutputViewMode = "terminal") {
 describe("AgentChatScreen mounted web composer footer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    boundary.pathname = "/agent/codex-component";
+    boundary.params = { sessionId: "codex-component" };
+    boundary.storage = () => Promise.resolve(null);
+    boundary.getToken.mockResolvedValue(null);
     boundary.sendLivePaneInput.mockResolvedValue({
       ok: true,
       sessionId,

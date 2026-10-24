@@ -64,6 +64,10 @@ const reportedStorageFailures = new Set<unknown>();
  *
  * Keyed by the atom, so it is per-process rather than per-store, and it only
  * ever caches what storage itself returned -- the same shape as memoisation.
+ * The app has one store, so that is the same thing; a PROCESS with several
+ * stores, which only tests have, will see one store's answer stand in for
+ * another's. A test that needs a read which never settles therefore needs a
+ * module of its own, which is why the send-gate test is its own file.
  */
 const lastAnsweredRead = new WeakMap<Atom<unknown>, unknown>();
 
