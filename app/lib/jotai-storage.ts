@@ -52,6 +52,21 @@ export type StorageReadState = "unread" | "read" | "failed";
 
 const reportedStorageFailures = new Set<unknown>();
 
+/**
+ * The last value each persisted atom's storage actually returned.
+ *
+ * `atomWithStorage` re-reads on every mount, and `unwrap` keeps no previous
+ * value across a rejection -- so a remount whose read fails after an earlier
+ * one SUCCEEDED would otherwise un-answer a question already answered: the
+ * project the user is looking at reverts to none, and every recording that
+ * waits on the read is refused for the rest of the session. A value that has
+ * been read once is still the best answer available, so it is kept.
+ *
+ * Keyed by the atom, so it is per-process rather than per-store, and it only
+ * ever caches what storage itself returned -- the same shape as memoisation.
+ */
+const lastAnsweredRead = new WeakMap<Atom<unknown>, unknown>();
+
 /// Once per distinct fault. A read can re-run, and a warning per evaluation
 /// would bury the first one.
 function reportStorageReadFailure(error: unknown): void {
@@ -69,10 +84,14 @@ function reportStorageReadFailure(error: unknown): void {
  * unlatched signal un-answers a question that had already been answered, and
  * whoever was waiting on it starts waiting again.
  *
- * A re-read after a FAILED one is not latched, and should not be: `unwrap`
- * keeps no previous value to carry across a rejection, and a fresh read really
- * is in flight again. It reports "unread" until that read settles, which it
- * does -- so a caller waits for the new answer rather than waiting forever.
+ * Latched in the other direction too: a read that fails AFTER one succeeded
+ * still reports "read", and the value stays what was read. Un-answering there
+ * would make the project the user is looking at vanish mid-session and would
+ * refuse every held write for the rest of it.
+ *
+ * A re-read after a read that only ever FAILED is not latched, and should not
+ * be: a fresh read really is in flight again, and it reports "unread" until
+ * that read settles -- which it does, so nothing waits forever.
  *
  * The stored value must never itself be `undefined`, which is how `unwrap`
  * spells a read still in flight; the `Value` bound on {@link storedValueAtom}
@@ -82,11 +101,15 @@ export function storageReadStateAtom(stored: Atom<unknown>): Atom<StorageReadSta
   const resolved = unwrap(stored, keepPreviousValue);
   return atom((get) => {
     try {
-      return get(resolved) === undefined ? "unread" : "read";
+      const value = get(resolved);
+      if (value === undefined) return "unread";
+      lastAnsweredRead.set(stored, value);
+      return "read";
     } catch (error) {
       // `unwrap` rethrows a rejected read on every evaluation.
       reportStorageReadFailure(error);
-      return "failed";
+      // A read that failed AFTER one succeeded has not un-answered anything.
+      return lastAnsweredRead.has(stored) ? "read" : "failed";
     }
   });
 }
@@ -116,16 +139,20 @@ export function storedValueAtom<Value extends NonNullable<unknown> | null>(
   stored: Atom<Value | Promise<Value>>,
   whileUnread: Value,
 ): Atom<Value> {
-  const resolved = unwrap(stored as Atom<unknown>, keepPreviousValue);
+  const key = stored as Atom<unknown>;
+  const resolved = unwrap(key, keepPreviousValue);
   return atom((get) => {
     let value: unknown;
     try {
       value = get(resolved);
     } catch {
       // Reported by `storageReadStateAtom`; rethrowing here would take the
-      // screen down over a storage fault.
-      return whileUnread;
+      // screen down over a storage fault. A value read earlier still stands:
+      // losing it would make the project the user is looking at vanish.
+      const answered = lastAnsweredRead.get(key);
+      return answered === undefined ? whileUnread : (answered as Value);
     }
+    if (value !== undefined) lastAnsweredRead.set(key, value);
     return value === undefined ? whileUnread : (value as Value);
   });
 }

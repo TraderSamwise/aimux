@@ -21,7 +21,7 @@ const storage = vi.hoisted(() => {
   const written: Record<string, unknown> = {};
   // `noopStorage` answers synchronously on the SSR/web-static path, where
   // there is no promise to unwrap at all.
-  const state = { answersSynchronouslyWith: undefined as unknown };
+  const state = { answersSynchronously: false, answersSynchronouslyWith: null as unknown };
   return {
     reads,
     written,
@@ -30,7 +30,7 @@ const storage = vi.hoisted(() => {
       // Stands in for the JSON storage itself, so these reads answer with
       // parsed values rather than JSON text.
       getItem: (key: string) => {
-        if (state.answersSynchronouslyWith !== undefined) return state.answersSynchronouslyWith;
+        if (state.answersSynchronously) return state.answersSynchronouslyWith;
         const read = new Promise((resolve, reject) => {
           reads.push({ key, settle: resolve, fail: reject });
         });
@@ -72,9 +72,11 @@ const ZETA = project({ id: "zeta", name: "Zeta", path: "/repo/zeta" });
 // A launch. Fresh modules, because `atomWithStorage` issues its eager
 // `getOnInit` read once at import and that read is what these tests settle.
 async function launch(options?: { answersSynchronouslyWith?: unknown }) {
+  const synchronous = options !== undefined && "answersSynchronouslyWith" in options;
   vi.resetModules();
   storage.reads.length = 0;
-  storage.state.answersSynchronouslyWith = options?.answersSynchronouslyWith;
+  storage.state.answersSynchronously = synchronous;
+  storage.state.answersSynchronouslyWith = options?.answersSynchronouslyWith ?? null;
   for (const key of Object.keys(storage.written)) delete storage.written[key];
 
   const projects = await import("@/stores/projects");
@@ -218,6 +220,27 @@ describe("the remembered project while storage is still being read", () => {
     unsubscribe();
   });
 
+  // The direction that bites. `atomWithStorage` re-reads on every mount, so a
+  // remount while storage is faulting would otherwise un-answer a question
+  // already answered: the project the user is looking at reverts to none, and
+  // every write that waits on the read is refused for the rest of the session.
+  it("keeps what it read when a later read fails", async () => {
+    const { selectedProjectReadStateAtom, selectedProjectRefAtom, store, unsubscribe } =
+      await launch();
+    await settlePendingReads("/repo/zeta");
+    expect(store.get(selectedProjectReadStateAtom)).toBe("read");
+
+    unsubscribe();
+    const again = store.sub(selectedProjectReadStateAtom, () => {});
+    await failPendingReads(new Error("storage went away"));
+
+    expect(store.get(selectedProjectReadStateAtom), "still answered").toBe("read");
+    expect(store.get(selectedProjectRefAtom), "and the project has not vanished").toEqual({
+      path: "/repo/zeta",
+    });
+    again();
+  });
+
   // The limit of the latch, stated rather than assumed. `unwrap` keeps no
   // previous value across a rejection, so the re-read a remount issues really
   // is a new read in flight -- and it settles, so nothing waits forever.
@@ -250,15 +273,16 @@ describe("the remembered project while storage is still being read", () => {
     unsubscribe();
   });
 
-  // The SSR and web-static path: `createSsrSafeJsonStorage` falls back to a
-  // storage with no `window`, which answers at once. There is no promise to
-  // unwrap, so nothing may wait on one.
+  // The SSR and web-static path: with no `window`, `createSsrSafeJsonStorage`
+  // uses a storage that answers `null` at once and holds nothing. There is no
+  // promise to unwrap, so nothing may wait on one -- and the answer is a real
+  // "nothing stored", not a read in flight.
   it("answers immediately when storage is synchronous", async () => {
     const { selectedProjectReadStateAtom, selectedProjectRefAtom, store, unsubscribe } =
-      await launch({ answersSynchronouslyWith: "/repo/zeta" });
+      await launch({ answersSynchronouslyWith: null });
 
     expect(store.get(selectedProjectReadStateAtom)).toBe("read");
-    expect(store.get(selectedProjectRefAtom)).toEqual({ path: "/repo/zeta" });
+    expect(store.get(selectedProjectRefAtom)).toBeNull();
     unsubscribe();
   });
 });
