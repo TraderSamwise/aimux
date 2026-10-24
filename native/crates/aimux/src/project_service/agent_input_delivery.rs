@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::agent_prompt_delivery::{
@@ -17,6 +17,9 @@ use crate::backlog_metrics::{
 };
 use crate::daemon_state::{metadata_state_path, save_metadata_state, try_load_metadata_state};
 use crate::debug_logging::{LogLevel, log_at};
+use crate::runtime_topology::{
+    list_topology_session_states, read_runtime_topology, runtime_topology_path,
+};
 use crate::state_update_lock::acquire_state_update_lock;
 
 use super::agent_output::{
@@ -30,6 +33,7 @@ use super::operation_failures::{
 };
 use super::router::ProjectServiceRequestContext;
 use super::scheduler::{PeriodicTask, PeriodicTaskFuture, scheduler_now_ms};
+use super::session_visibility::LIVE_SESSION_STATUSES;
 
 pub const AGENT_INPUT_DELIVERY_TASK_NAME: &str = "agent-input-delivery";
 /// Default quiet window before Aimux may submit into an attended agent session.
@@ -770,10 +774,30 @@ fn resolve_queued_delivery_target(
 ) -> QueuedDeliveryTarget {
     match resolve_live_session_target(context, &pending.session_id) {
         Ok(Some(target)) => QueuedDeliveryTarget::Deliverable(target),
-        Ok(None) => QueuedDeliveryTarget::Waiting(format!(
-            "Holding queued input for {} until it is running again; the runtime topology has no live tmux window for it and the queued target {} is stale",
-            pending.session_id, pending.window_id
-        )),
+        // "No target" is three different answers, and only one of them is a
+        // wait. An agent the dashboard shows as OFFLINE will be back, and its
+        // row carries the count. An agent the dashboard shows as RUNNING with
+        // no usable window binding cannot receive anything and nobody would
+        // know -- the topology attaches `tmuxTarget` only when the session,
+        // window id and index are all present, and unbound live rows are a
+        // shape the runtime has a repair pass for. And an agent with no
+        // dashboard row at all -- graveyarded, stopped, deleted -- has no
+        // surface that could carry a chip, so the project-level record is the
+        // only place left to say it.
+        Ok(None) => match queued_session_disposition(context, &pending.session_id) {
+            QueuedSessionDisposition::ComingBack => QueuedDeliveryTarget::Waiting(format!(
+                "Holding queued input for {} until it is running again; it is offline and the queued target {} is stale",
+                pending.session_id, pending.window_id
+            )),
+            QueuedSessionDisposition::RunningButUnbound => QueuedDeliveryTarget::Blocked(format!(
+                "Kept queued input for {} because it is running with no tmux window binding to deliver into; the queued target {} is stale",
+                pending.session_id, pending.window_id
+            )),
+            QueuedSessionDisposition::Gone => QueuedDeliveryTarget::Blocked(format!(
+                "Kept queued input for {} because that agent is no longer on this project; the queued target {} is stale",
+                pending.session_id, pending.window_id
+            )),
+        },
         Err(error) => QueuedDeliveryTarget::Blocked(format!(
             "Kept queued input for {} because {error}; refused stale queued tmux target {}",
             pending.session_id, pending.window_id
@@ -1084,13 +1108,8 @@ fn publish_queued_input_counts(
         .map(|(session_id, (count, oldest))| format!("{session_id}:{count}:{oldest}"))
         .collect::<Vec<_>>()
         .join(",");
-    {
-        static PUBLISHED: Mutex<BTreeMap<PathBuf, String>> = Mutex::new(BTreeMap::new());
-        let mut published = PUBLISHED.lock().unwrap_or_else(|error| error.into_inner());
-        if published.get(&directory) == Some(&fingerprint) {
-            return;
-        }
-        published.insert(directory.clone(), fingerprint);
+    if published_fingerprint(&directory) == Some(fingerprint.clone()) {
+        return;
     }
     // Reported, not swallowed. With the project-level banner gone for a wait,
     // a metadata write that fails silently would leave Sam with no surface at
@@ -1169,6 +1188,11 @@ fn publish_queued_input_counts(
         );
         return;
     }
+    // Recorded only now. Recording intent before the write meant one contended
+    // metadata lock -- a 2s timeout against receipts, status and hooks -- left
+    // the cache claiming a state it had never written, and the chip never came
+    // back for that queue.
+    remember_published_fingerprint(&directory, fingerprint);
     context.project_events.publish_project_update(
         context.project_root(),
         crate::project_api_contract::invalidations::RUNTIME_SESSION.to_vec(),
@@ -1176,6 +1200,64 @@ fn publish_queued_input_counts(
         None,
         None,
     );
+}
+
+/// Which of the three "no window" answers this is.
+enum QueuedSessionDisposition {
+    /// On the dashboard as offline: its row carries the queued count.
+    ComingBack,
+    /// On the dashboard as live, but with no window to deliver into.
+    RunningButUnbound,
+    /// No row on any surface -- graveyarded, stopped, or gone entirely.
+    Gone,
+}
+
+fn queued_session_disposition(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+) -> QueuedSessionDisposition {
+    let Ok(topology) = read_runtime_topology(runtime_topology_path(context.project_state_dir()))
+    else {
+        // The caller only reaches here on `Ok(None)`, so the topology was
+        // readable a moment ago; if it is not now, say the least.
+        return QueuedSessionDisposition::Gone;
+    };
+    let status = list_topology_session_states(&topology, None)
+        .into_iter()
+        .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
+        .and_then(|session| {
+            session
+                .get("status")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    match status.as_deref() {
+        Some("offline") => QueuedSessionDisposition::ComingBack,
+        Some(status) if LIVE_SESSION_STATUSES.contains(&status) => {
+            QueuedSessionDisposition::RunningButUnbound
+        }
+        _ => QueuedSessionDisposition::Gone,
+    }
+}
+
+fn published_fingerprints() -> &'static Mutex<BTreeMap<PathBuf, String>> {
+    static PUBLISHED: OnceLock<Mutex<BTreeMap<PathBuf, String>>> = OnceLock::new();
+    PUBLISHED.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn published_fingerprint(directory: &Path) -> Option<String> {
+    published_fingerprints()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(directory)
+        .cloned()
+}
+
+fn remember_published_fingerprint(directory: &Path, fingerprint: String) {
+    published_fingerprints()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(directory.to_path_buf(), fingerprint);
 }
 
 fn record_agent_input_delivery_failure(
