@@ -71,13 +71,50 @@ impl PeriodicTask for BuiltinMetadataTask {
         SCAN_BUDGET + Duration::from_secs(1)
     }
 
-    fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        // Every tick that has an effect to apply calls runtime routes
+        // in-process, and those load the project's config, which resolves the
+        // repo root by running git. The async seam refuses a sync subprocess
+        // from an async task outright, so on mbp2 this task panicked on its
+        // first effect after every service start -- `watcher tick loop task
+        // panicked {task: builtin-metadata-watchers}`, and the statuses,
+        // progress and logs of that tick went nowhere.
+        //
+        // The whole body belongs on the blocking pool anyway: it is file
+        // reads and route calls, and on the worker it holds the project
+        // service's reactor for its entire budget.
+        let context = Arc::clone(&self.context);
+        let mut watchers = std::mem::take(&mut self.watchers);
         Box::pin(async move {
-            let budget = TickLoopBudget::new(SCAN_BUDGET);
-            let input = collect_watcher_sources(context, &budget);
-            let effects = self.watchers.scan(&input);
-            apply_effects(&self.context, &effects);
-            Ok(())
+            let scanned = crate::async_runtime::spawn_blocking_named(
+                crate::async_runtime::scoped_task_name(
+                    "builtin-metadata-watchers",
+                    "scan",
+                    "project-service",
+                ),
+                move || {
+                    let budget = TickLoopBudget::new(SCAN_BUDGET);
+                    let input = collect_watcher_sources(&context, &budget);
+                    let effects = watchers.scan(&input);
+                    apply_effects(&context, &effects);
+                    watchers
+                },
+            )
+            .await;
+            match scanned {
+                Ok(watchers) => {
+                    self.watchers = watchers;
+                    Ok(())
+                }
+                // The watchers went down with the panicking thread. Starting
+                // the next tick from scratch re-primes them, which costs one
+                // repeated effect; leaving the field empty would make every
+                // later tick report a change against nothing.
+                Err(error) => {
+                    self.watchers = BuiltinMetadataWatchers::new();
+                    Err(format!("builtin metadata scan did not finish: {error}"))
+                }
+            }
         })
     }
 }

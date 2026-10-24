@@ -2,13 +2,17 @@
 //! to real request bodies. The behaviour itself is covered by the corpus.
 
 use aimux::builtin_metadata_watchers::{BuiltinMetadataWatchers, MetadataEffects};
-use aimux::project_service::builtin_metadata_task::collect_watcher_sources;
+use aimux::project_service::builtin_metadata_task::{BuiltinMetadataTask, collect_watcher_sources};
 use aimux::project_service::router::ProjectServiceRequestContext;
+use aimux::project_service::scheduler::PeriodicTask;
 use aimux::project_service::watcher_delivery::TickLoopBudget;
 use serde_json::{Value, json};
 use std::fs;
+use std::future::poll_fn;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Barrier, mpsc};
+use std::task::Poll;
 use std::time::Duration;
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -379,4 +383,49 @@ fn effects_are_the_positional_shapes_the_appliers_expect() {
     assert_eq!(status.as_array().map(Vec::len), Some(3));
     let event: Value = json!(["s", "prompt", "msg", "history", "info", Value::Null]);
     assert_eq!(event.as_array().map(Vec::len), Some(6));
+}
+
+/// The scan applies its effects by calling runtime routes in-process, and
+/// those load the project's config, which resolves the repo root by running
+/// git. The async seam refuses a sync subprocess from an async task, so a
+/// body left on the worker panicked the whole tick on mbp2 -- that tick's
+/// statuses, progress and logs went nowhere -- and held the project
+/// service's reactor for its entire budget on every other tick.
+///
+/// The one pool thread is occupied before the measurement, so a body that
+/// reached the pool cannot have run: handing the work over leaves the first
+/// poll Pending, doing it inline leaves it Ready.
+#[test]
+fn the_metadata_scan_runs_on_the_blocking_pool_not_the_async_worker() {
+    let project = temp_project("blocking-pool");
+    let context = Arc::new(context_for(&project));
+    let mut task = BuiltinMetadataTask::new(Arc::clone(&context));
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .expect("test runtime");
+    let release = Arc::new(Barrier::new(2));
+    let (started, pool_occupied) = mpsc::channel();
+    let held = Arc::clone(&release);
+    runtime.handle().spawn_blocking(move || {
+        started.send(()).expect("report the pool thread started");
+        held.wait();
+    });
+    pool_occupied
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the one blocking pool thread is occupied");
+
+    // aimux-async-seam: test - sync test polls the task future once
+    let first_poll = runtime.block_on(async {
+        let mut future = task.run(&context);
+        poll_fn(|cx| Poll::Ready(future.as_mut().poll(cx))).await
+    });
+    release.wait();
+
+    assert!(
+        first_poll.is_pending(),
+        "the metadata scan ran on the async worker instead of handing its work to the blocking pool"
+    );
 }
