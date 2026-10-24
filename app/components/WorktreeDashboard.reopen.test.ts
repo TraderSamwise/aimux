@@ -89,6 +89,11 @@ describe("reopening the last agent", () => {
     expect(dashboardSource, "from the store, not a constant").toContain(
       "useAtomValue(lastAgentHydratedAtom)",
     );
+    // And the effect has to re-run when the read lands, or it waits forever on
+    // the value it read at mount.
+    expect(dashboardSource, "and THIS effect re-runs when it does").toMatch(
+      /lastAgentToReopen\(\{[\s\S]{0,1200}?\}, \[[^\]]{0,240}lastAgentHydrated,/,
+    );
   });
 });
 

@@ -50,9 +50,18 @@ export function componentBody(path: string, declaration: string): string {
 /**
  * Comments removed, so commenting code out cannot satisfy a gate.
  *
- * Line comments go first, then block comments; a `//` inside a string literal
- * is the known limit, and no gate in this repo asserts on one.
+ * Line comments go first -- trailing ones too, which is the point: a gate that
+ * only removed whole lines was satisfied by `const open = null; // the real
+ * call`. A `//` inside a string literal is the known limit, and no gate in
+ * this repo asserts on one.
  */
 export function stripComments(source: string): string {
-  return source.replace(/^[ \t]*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  return (
+    source
+      // Trailing comments as well as whole lines: `const open = null; //
+      // store.set(...)` satisfied a gate that only removed full-line ones.
+      // The negative lookbehind spares `https://`.
+      .replace(/(?<!:)\/\/.*$/gm, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+  );
 }

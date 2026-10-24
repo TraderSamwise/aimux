@@ -14,8 +14,9 @@ import {
   projectKey,
   projectRefOf,
   resolveRouteProjectRef,
-  unresolvedProjectRefFor,
+  unresolvedProjectSelection,
   type ProjectRef,
+  type UnresolvedSelection,
 } from "@/lib/project-key";
 import { projectRefFromSearchOrLocation } from "@/lib/view-location";
 import {
@@ -37,16 +38,10 @@ export interface RouteProject {
   routeProjectPath: string | null;
   projectLoading: boolean;
   /**
-   * A project that IS selected but is not in the current snapshot.
-   *
-   * Almost always a machine that has not answered yet: `selectionWasContradicted`
-   * deliberately keeps a selection whose host is merely quiet, rather than
-   * moving the user off the checkout they left. A surface that renders
-   * "nothing selected" there is wrong twice over -- something is selected, and
-   * saying otherwise while that machine's projects are missing reads as though
-   * the project were gone.
+   * A project that IS selected but is not in the current snapshot, with
+   * whether its host has answered. See `unresolvedProjectSelection`.
    */
-  unresolvedProjectRef: ProjectRef | null;
+  unresolvedSelection: UnresolvedSelection | null;
 }
 
 export function useRouteProject(): RouteProject {
@@ -108,8 +103,15 @@ export function useRouteProject(): RouteProject {
 
   const projectRef = projectRefOf(project);
   const projectRefKey = projectKey(projectRef);
-  const unresolvedProjectRef = unresolvedProjectRefFor(project, effectiveRefKey);
-  const unresolvedProjectRefKey = projectKey(unresolvedProjectRef);
+  const unresolvedSelection = unresolvedProjectSelection({
+    project,
+    effectiveRefKey,
+    listSynced: lastSyncAt !== null,
+    projects,
+  });
+  const unresolvedSelectionKey = unresolvedSelection
+    ? `${projectKey(unresolvedSelection.ref)}:${unresolvedSelection.hostAnswered}`
+    : null;
   return useMemo(
     () => ({
       project,
@@ -119,12 +121,12 @@ export function useRouteProject(): RouteProject {
       endpoint,
       routeProjectPath,
       projectLoading,
-      unresolvedProjectRef,
+      unresolvedSelection,
     }),
     // projectRefKey stands in for projectRef, whose identity is fresh each
     // render; the ref itself is stable in content. Same for the unresolved one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [endpoint, project, projectLoading, projectRefKey, routeProjectPath, unresolvedProjectRefKey],
+    [endpoint, project, projectLoading, projectRefKey, routeProjectPath, unresolvedSelectionKey],
   );
 }
 

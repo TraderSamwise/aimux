@@ -22,19 +22,41 @@ export function projectKey(ref: ProjectRef | null | undefined): string | null {
 }
 
 /**
- * The project a surface is SELECTED on when this snapshot contains no match.
+ * A project that IS selected while this snapshot has no match for it, and
+ * whether its host has spoken.
  *
- * Its own function because the alternative is a surface deciding that nothing
+ * Its own function because the alternative is a surface deciding that NOTHING
  * is selected, which is a different claim and was the bug: a selection whose
- * machine had not answered is deliberately kept by
- * `selectionWasContradicted`, so the snapshot not containing it means quiet,
- * not gone.
+ * machine has not answered is deliberately kept by `selectionWasContradicted`,
+ * so a snapshot without it means quiet, not gone.
+ *
+ * Two things it must not do. It must not fire before the project list has been
+ * asked at all -- an empty list on a cold launch is not an answer about
+ * anything, and saying "it will load when its host answers" there is a promise
+ * made before the question. And it must tell quiet apart from gone: if the
+ * machine named IS in the snapshot, that machine answered and does not have
+ * this path, so waiting for it is waiting forever.
  */
-export function unresolvedProjectRefFor(
-  project: { path: string } | null | undefined,
-  effectiveRefKey: string | null,
-): ProjectRef | null {
-  return project ? null : parseProjectKey(effectiveRefKey);
+export interface UnresolvedSelection {
+  ref: ProjectRef;
+  /** The snapshot speaks for this ref's machine, so the project is really gone. */
+  hostAnswered: boolean;
+}
+
+export function unresolvedProjectSelection(input: {
+  project: { path: string } | null | undefined;
+  effectiveRefKey: string | null;
+  listSynced: boolean;
+  projects: readonly { machineId?: string }[];
+}): UnresolvedSelection | null {
+  if (input.project) return null;
+  if (!input.listSynced) return null;
+  const ref = parseProjectKey(input.effectiveRefKey);
+  if (!ref) return null;
+  // No machine named is local mode, where the list speaks for everything.
+  const hostAnswered =
+    !ref.machineId || input.projects.some((project) => project.machineId === ref.machineId);
+  return { ref, hostAnswered };
 }
 
 // What a project is called when the daemon has not named it -- the last

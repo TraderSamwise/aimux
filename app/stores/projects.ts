@@ -259,27 +259,15 @@ export const reconcileProjectsAtom = atom(
     // here, so the next reload no longer depends on the fallback.
     const resolved = findProjectForRef(sorted, nextRef) ?? null;
 
-    // Only a read that ANSWERED may adopt a default here, because adopting one
-    // writes it to storage a few lines below. A selection still in flight is
-    // not a user without a selection: the stored key comes back from
-    // AsyncStorage a frame or two after the first project poll, and adopting
-    // `sorted[0]` in that window overwrote the project Sam left -- worse than
-    // any bounce, because nothing afterwards corrects it. A read that FAILED
-    // is the third answer and is treated the same way: the stored key is
-    // still there and still wanted, and persisting a guess over it would
-    // destroy exactly what could not be read. An empty answer is the one case
-    // with nothing to lose, so it takes the fallback.
-    if (!nextRef && get(selectedProjectReadStateAtom) === "read" && sorted.length > 0) {
+    // A selection still in flight is not a user without a selection: the
+    // stored key comes back from AsyncStorage a frame or two after the first
+    // project poll, and adopting `sorted[0]` in that window overwrote the
+    // project Sam left -- worse than any bounce, because nothing afterwards
+    // corrects it. So nothing is adopted until the read has finished, one way
+    // or the other. Where the result GOES is decided once, below.
+    const readState = get(selectedProjectReadStateAtom);
+    if (!nextRef && readState !== "unread" && sorted.length > 0) {
       nextRef = projectRefOf(sorted[0]);
-    } else if (!nextRef && get(selectedProjectReadStateAtom) === "failed" && sorted.length > 0) {
-      // The read failed, so there is nothing to honour and nothing that may be
-      // written over. The app still has to open on something, so it opens on
-      // the first project IN MEMORY -- the stored key is left exactly as it is,
-      // for a launch whose read works.
-      set(unreadableSelectionFallbackAtom, projectRefOf(sorted[0]));
-      set(lastSyncAtAtom, Date.now());
-      if (sorted !== previousProjects) set(projectsAtom, sorted);
-      return;
     } else if (nextRef && !resolved && selectionWasContradicted(nextRef, sorted, options)) {
       nextRef = projectRefOf(sorted[0]);
       nextSession = null;
@@ -291,7 +279,14 @@ export const reconcileProjectsAtom = atom(
 
     if (sorted !== previousProjects) set(projectsAtom, sorted);
     if (!sameProjectRef(nextRef, get(selectedProjectRefAtom))) {
-      set(selectedProjectRefAtom, nextRef);
+      // One place decides whether this is persisted, because every branch
+      // above can reach it and only one of them used to be checked. A stored
+      // key that could not be READ must never be written over -- it may be
+      // hiding a selection that is still on disk, and a guess destroys
+      // exactly what could not be read -- but the app still has to open on
+      // something, so the answer is kept in memory instead.
+      if (readState === "read") set(selectedProjectRefAtom, nextRef);
+      else set(unreadableSelectionFallbackAtom, nextRef);
     }
     if (nextSession !== get(selectedSessionIdAtom)) set(selectedSessionIdAtom, nextSession);
     set(lastSyncAtAtom, Date.now());

@@ -279,6 +279,25 @@ describe("the remembered project while storage is still being read", () => {
     unsubscribe();
   });
 
+  // One reconcile was not enough to prove this. Once the in-memory stand-in
+  // supplies a selection, the NEXT snapshot sees a non-null ref and takes the
+  // contradicted branch instead -- which used to persist, writing a guess
+  // over the very key that could not be read.
+  it("still persists nothing when a later snapshot contradicts the stand-in", async () => {
+    const { reconcileProjectsAtom, selectedProjectRefAtom, store, unsubscribe } = await launch();
+
+    await failPendingReads(new Error("storage is unavailable"));
+    store.set(reconcileProjectsAtom, [ALPHA, ZETA]);
+    expect(store.get(selectedProjectRefAtom)?.path).toBe("/repo/alpha");
+
+    // Alpha's host drops out of the snapshot, so the stand-in is contradicted.
+    store.set(reconcileProjectsAtom, [ZETA]);
+
+    expect(store.get(selectedProjectRefAtom)?.path, "it moves on in memory").toBe("/repo/zeta");
+    expect(storage.written[SELECTION_KEY], "and still writes nothing").toBeUndefined();
+    unsubscribe();
+  });
+
   // And a selection the user then makes by hand IS stored: the stand-in must
   // not shadow the real key once there is one to store.
   it("stores a selection made by hand after a failed read", async () => {

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -18,7 +18,11 @@ import { describe, expect, it } from "vitest";
  * see it: `get` returning `Value | Promise<Value>` is exactly what the guard
  * the defect wears is testing for.
  */
-const STORES = dirname(fileURLToPath(import.meta.url));
+const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+// Everywhere the app could declare one, not just `stores/`: an atom added
+// beside a screen would have escaped this entirely.
+const SEARCHED = ["stores", "lib", "components", "app", "hooks"];
 
 // The helpers a persisted atom may be handed to. `unwrap` is jotai's own and
 // is what the helpers are built on; the rest of the app should prefer them.
@@ -36,9 +40,26 @@ const READERS = ["storedValueAtom", "storageReadStateAtom", "readBeforeWriteAtom
 const REPLACED_WHOLESALE = new Set(["selectedProjectKeyAtom"]);
 
 function sourceFiles(): { name: string; text: string }[] {
-  return readdirSync(STORES)
-    .filter((entry) => entry.endsWith(".ts") && !entry.endsWith(".test.ts"))
-    .map((name) => ({ name, text: readFileSync(join(STORES, name), "utf8") }));
+  const found: { name: string; text: string }[] = [];
+  const walk = (directory: string, label: string) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      const name = label ? `${label}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules") continue;
+        walk(path, name);
+        continue;
+      }
+      if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) continue;
+      found.push({ name, text: readFileSync(path, "utf8") });
+    }
+  };
+  for (const directory of SEARCHED) {
+    const root = join(APP_ROOT, directory);
+    if (!existsSync(root)) continue;
+    walk(root, directory);
+  }
+  return found;
 }
 
 function persistedAtomNames(text: string): string[] {

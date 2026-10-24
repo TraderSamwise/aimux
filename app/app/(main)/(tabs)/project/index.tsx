@@ -203,7 +203,7 @@ export default function ProjectScreen() {
     projectRef,
     endpoint,
     projectLoading,
-    unresolvedProjectRef,
+    unresolvedSelection,
   } = useRouteProject();
   // Keyed by the pair: two machines' copies of one checkout are two
   // projects, and sharing an atom between them bleeds one host into the
@@ -324,13 +324,13 @@ export default function ProjectScreen() {
               ? relayUnavailableCopy.title.replace(/\.$/, "")
               : // A selection whose host has not answered is still a
                 // selection, so it is named rather than denied.
-                ((unresolvedProjectRef && projectNameFromPath(unresolvedProjectRef.path)) ??
+                ((unresolvedSelection && projectNameFromPath(unresolvedSelection.ref.path)) ??
                 "No project selected"))
         }
         subtitle={
           project?.path ??
-          (projectLoading || showRelayUnavailable || unresolvedProjectRef
-            ? (projectPath ?? unresolvedProjectRef?.path)
+          (projectLoading || showRelayUnavailable || unresolvedSelection
+            ? (projectPath ?? unresolvedSelection?.ref.path)
             : undefined)
         }
         actions={
@@ -386,18 +386,26 @@ export default function ProjectScreen() {
         <EmptyCard title={relayUnavailableCopy.title} body={relayUnavailableCopy.detail} />
       ) : projectLoading ? (
         <EmptyCard title="Loading project..." body="Fetching project state from the daemon." />
-      ) : unresolvedProjectRef ? (
+      ) : unresolvedSelection ? (
         // Before this branch existed, the project Sam left on a machine that
         // had not answered read as "No project selected" -- while that
         // machine's projects were simply missing from the list, and the others
         // sat in the sidebar beside the message.
+        //
+        // `hostAnswered` is the difference between quiet and gone: a machine
+        // that IS in this snapshot has answered and does not have the path, so
+        // telling the user to wait for it would be waiting forever.
         <EmptyCard
           title={
-            unresolvedProjectRef.machineId
-              ? `Waiting for ${unresolvedProjectRef.machineId}`
-              : "Waiting for this project's host"
+            unresolvedSelection.hostAnswered
+              ? "Project not found"
+              : `Waiting for ${unresolvedSelection.ref.machineId}`
           }
-          body={`${unresolvedProjectRef.path} is the project you had open. It will load when its host answers; pick another from the sidebar to move on.`}
+          body={
+            unresolvedSelection.hostAnswered
+              ? `${unresolvedSelection.ref.path} is the project you had open, and its host no longer has it. Pick another from the sidebar.`
+              : `${unresolvedSelection.ref.path} is the project you had open. It will load when its host answers; pick another from the sidebar to move on.`
+          }
         />
       ) : !project ? (
         <EmptyCard title="No project selected" body="Pick a project from the sidebar." />
