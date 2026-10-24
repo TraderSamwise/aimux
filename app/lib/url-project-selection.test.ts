@@ -3,6 +3,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { componentBody, stripComments } from "@/test/component-source";
+
 import { urlProjectSelectionWrite, type UrlProjectSelectionInput } from "./url-project-selection";
 
 const NOW = 1_700_000_000_000;
@@ -153,10 +155,12 @@ describe("what the URL does to the project selection", () => {
 // signals. Source rather than render: this is a route component no renderer in
 // this app executes.
 describe("the layout that applies it", () => {
-  const source = readFileSync(
+  // The component's own body, so neither commenting the code out nor moving it
+  // into a function nothing calls can satisfy these.
+  const source = componentBody(
     join(dirname(fileURLToPath(import.meta.url)), "..", "app", "(main)", "_layout.tsx"),
-    "utf8",
-  ).replace(/^\s*\/\/.*$/gm, "");
+    "export default function MainLayout(",
+  );
 
   it("asks the rule rather than deciding inline", () => {
     expect(source).toContain("urlProjectSelectionWrite({");
@@ -166,10 +170,12 @@ describe("the layout that applies it", () => {
   });
 
   it("shares the downgrade rule with the readers rather than restating it", () => {
-    const rule = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "url-project-selection.ts"),
-      "utf8",
-    ).replace(/^\s*\/\/.*$/gm, "");
+    const rule = stripComments(
+      readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), "url-project-selection.ts"),
+        "utf8",
+      ),
+    );
     // `resolveRouteProjectRef` is built on the same helper, and it is what the
     // layout and `useRouteProject` use to READ the current project. A writer
     // with its own copy of the rule would agree today and drift silently.
@@ -180,8 +186,8 @@ describe("the layout that applies it", () => {
   it("passes the real read state, not a constant", () => {
     expect(source).toContain("selectionReadState: selectedProjectReadState,");
     expect(source, "from the store").toContain("useAtomValue(selectedProjectReadStateAtom)");
-    expect(source, "and the effect re-runs when it lands").toMatch(
-      /\}, \[[\s\S]{0,200}selectedProjectReadState,[\s\S]{0,120}\]\);/,
+    expect(source, "and THIS effect re-runs when it lands").toMatch(
+      /urlProjectSelectionWrite\(\{[\s\S]{0,600}?\}, \[[^\]]{0,200}selectedProjectReadState,/,
     );
   });
 
@@ -192,6 +198,9 @@ describe("the layout that applies it", () => {
     expect(source).toContain("useAtomValue(lastAgentHydratedAtom)");
     expect(source).toMatch(
       /if \(!lastAgentHydrated \|\| !selectedProjectHydrated\) return;[\s\S]{0,200}store\.set\(selectedSessionIdAtom, open\)/,
+    );
+    expect(source, "and it re-runs when either read lands").toMatch(
+      /store\.set\(selectedSessionIdAtom, open\);[\s\S]{0,120}\}, \[[^\]]{0,160}lastAgentHydrated,[^\]]{0,160}selectedProjectHydrated,/,
     );
   });
 

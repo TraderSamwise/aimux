@@ -3,6 +3,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { componentBody, stripComments } from "@/test/component-source";
+
 /**
  * The agent list is where the reopen can happen, and the only place.
  *
@@ -12,14 +14,19 @@ import { describe, expect, it } from "vitest";
  * still say is that this screen delegates the decision and does it once --
  * the rules themselves are driven in `reopen-last-agent.test.ts`.
  */
-const dashboardSource = readFileSync(
+// The component's own body, not the file: commenting the guard out and leaving
+// `void lastAgentHydrated;` behind kept every assertion here green while the
+// chat reopened on every mount.
+const dashboardSource = componentBody(
   join(dirname(fileURLToPath(import.meta.url)), "WorktreeDashboard.tsx"),
-  "utf8",
+  "function WorktreeDashboardImpl(",
 );
 
-const projectsStoreSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "..", "stores", "projects.ts"),
-  "utf8",
+const projectsStoreSource = stripComments(
+  readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "stores", "projects.ts"),
+    "utf8",
+  ),
 );
 
 describe("reopening the last agent", () => {

@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+
+import { componentBody } from "@/test/component-source";
 
 const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LANDING = "app/(main)/(tabs)/(dashboard)/index.tsx";
@@ -17,23 +18,7 @@ describe("the landing screen", () => {
   // uncalled function: every assertion below still matched, while the app
   // opened on shared chats every time. Dead code cannot satisfy a gate that
   // only reads what runs.
-  const source = (() => {
-    expect(existsSync(path), `${path} is readable`).toBe(true);
-    // Comments stripped first: `toContain` is happy to match a call that has
-    // been commented out.
-    const file = readFileSync(path, "utf8").replace(/^\s*\/\/.*$/gm, "");
-    const opener = file.indexOf("export default function DashboardIndex() {");
-    expect(opener, "the route still exports a component by that name").toBeGreaterThan(-1);
-    let depth = 0;
-    for (let index = file.indexOf("{", opener); index < file.length; index += 1) {
-      if (file[index] === "{") depth += 1;
-      else if (file[index] === "}") {
-        depth -= 1;
-        if (depth === 0) return file.slice(opener, index + 1);
-      }
-    }
-    throw new Error("unbalanced braces in the landing component");
-  })();
+  const source = componentBody(path, "export default function DashboardIndex(");
 
   it("derives the backend answer instead of reading the raw status", () => {
     expect(source, "the three-valued answer is the whole fix").toContain(
