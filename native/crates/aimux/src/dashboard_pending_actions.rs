@@ -169,7 +169,7 @@ impl DashboardPendingActions {
         }
         // This rewrites the session and service lists, so anything already
         // worked out about them is about the previous value.
-        snapshot.main_checkout_verdicts.clear();
+        snapshot.forget_derived();
         self.apply_to_sessions(&mut snapshot.sessions);
         self.apply_to_sessions(&mut snapshot.teammates);
         self.apply_to_services(&mut snapshot.services);

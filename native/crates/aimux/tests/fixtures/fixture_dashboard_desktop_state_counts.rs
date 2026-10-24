@@ -72,6 +72,7 @@ fn fixture_dashboard_desktop_state_counts_match_typescript() {
 fn run_case(input: CaseInput) -> Value {
     let snapshot = DesktopStateSnapshot {
         main_checkout_verdicts: Default::default(),
+        navigation_order: Default::default(),
         sessions: input.model.sessions,
         teammates: Vec::new(),
         services: input.model.services,

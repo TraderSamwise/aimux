@@ -272,7 +272,7 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
         ));
     }
     footer_lines.extend(render_footer_hints(
-        &build_dashboard_footer_hints(input, input.preview_source),
+        &build_dashboard_footer_hints(input, input.preview_source, &navigation_groups),
         input.cols.saturating_sub(2),
     ));
     let focus_line = find_focus_line(&content);
@@ -287,6 +287,7 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
             input,
             panel_width,
             viewport_height,
+            &navigation_groups,
         ))
     } else {
         None
@@ -421,9 +422,12 @@ fn dashboard_alert_line(alert: &DashboardFooterAlert<'_>) -> String {
     line
 }
 
+/// The grouping is passed in rather than rebuilt. Each rebuild walks every
+/// agent, and this is one of eight places one keypress asked for it.
 fn build_dashboard_footer_hints(
     input: &DashboardRenderInput<'_>,
     preview_source: &str,
+    navigation_groups: &[DashboardNavigationGroup<'_>],
 ) -> Vec<FooterHint<'static>> {
     let selected_session = selected_session(input);
     let selected_service = selected_service(input);
@@ -536,7 +540,7 @@ fn build_dashboard_footer_hints(
         });
     }
     let has_worktrees = has_worktrees(input);
-    let has_supervisor_group = dashboard_navigation_groups(input.snapshot)
+    let has_supervisor_group = navigation_groups
         .iter()
         .any(|group| group.kind == DashboardNavigationGroupKind::Supervisor);
     if has_worktrees && input.nav_level == DashboardNavLevel::Sessions {
@@ -2065,12 +2069,13 @@ fn render_selected_details_panel(
     input: &DashboardRenderInput<'_>,
     panel_width: usize,
     height: usize,
+    navigation_groups: &[DashboardNavigationGroup<'_>],
 ) -> Vec<String> {
     let width = 8.max(panel_width.saturating_sub(4));
     let selected_session = selected_session(input);
     let selected_service = selected_service(input);
     if selected_session.is_none() && selected_service.is_none() {
-        return render_worktree_details_panel(input, panel_width, height, width);
+        return render_worktree_details_panel(input, panel_width, height, width, navigation_groups);
     }
     if let Some(service) = selected_service {
         let mut lines = Vec::new();
@@ -2450,9 +2455,9 @@ fn render_worktree_details_panel(
     panel_width: usize,
     height: usize,
     width: usize,
+    navigation_groups: &[DashboardNavigationGroup<'_>],
 ) -> Vec<String> {
     let focused_path = input.focused_worktree_path;
-    let navigation_groups = dashboard_navigation_groups(input.snapshot);
     let focused_navigation_group = input
         .focused_group_index
         .and_then(|index| navigation_groups.get(index))
@@ -3100,8 +3105,11 @@ pub fn render_dashboard_footer_hints_contract(
     input: &DashboardRenderInput<'_>,
     preview_source: &str,
 ) -> serde_json::Value {
+    // The contract entry point has no frame to share, so it derives the
+    // grouping for its one call.
+    let navigation_groups = dashboard_navigation_groups(input.snapshot);
     Value::Array(
-        build_dashboard_footer_hints(input, preview_source)
+        build_dashboard_footer_hints(input, preview_source, &navigation_groups)
             .into_iter()
             .map(|hint| {
                 if matches!(hint.tone, Some(KeyTone::Danger)) {

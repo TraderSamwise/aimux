@@ -21,7 +21,10 @@ use aimux::dashboard_controller::{
     DashboardController, DashboardControllerEffect, DashboardKey, DashboardScreen,
 };
 use aimux::dashboard_model::DesktopStateSnapshot;
-use aimux::dashboard_navigation::{DashboardNavigationState, dashboard_navigation_groups};
+use aimux::dashboard_navigation::{
+    DashboardNavigationState, NAVIGATION_GROUP_BUILDS, NAVIGATION_ORDER_BUILDS,
+    dashboard_navigation_groups,
+};
 use aimux::dashboard_renderer::{DashboardRenderInput, render_dashboard_frame};
 use aimux::dashboard_ui_state::DashboardUiStatePersistence;
 use aimux::project_service::desktop_state::{
@@ -282,6 +285,8 @@ fn what_one_repaint_costs_the_operating_system() {
     );
 
     let before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
+    let builds_before = NAVIGATION_GROUP_BUILDS.load(Ordering::Relaxed);
+    let orders_before = NAVIGATION_ORDER_BUILDS.load(Ordering::Relaxed);
     let effect = controller.handle_key(&base, DashboardKey::Down);
     let frame = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &base,
@@ -314,6 +319,8 @@ fn what_one_repaint_costs_the_operating_system() {
         &controller.navigation,
     );
     let keypress_calls = CANONICALIZE_CALLS.load(Ordering::Relaxed) - before;
+    let keypress_builds = NAVIGATION_GROUP_BUILDS.load(Ordering::Relaxed) - builds_before;
+    let keypress_orders = NAVIGATION_ORDER_BUILDS.load(Ordering::Relaxed) - orders_before;
     let _ = std::fs::remove_dir_all(&root);
     remove_snapshot_tree("base");
     remove_snapshot_tree("more-agents");
@@ -328,12 +335,86 @@ fn what_one_repaint_costs_the_operating_system() {
     // screen, so once its verdicts are worked out there is nothing left for a
     // keypress to ask the filesystem. This was 808 calls, eight rebuilds of the
     // whole grouping, before the memo.
-    println!("one Down arrow -> {keypress_calls} calls");
+    println!(
+        "one Down arrow -> {keypress_calls} calls, {keypress_builds} groupings assembled, \
+         {keypress_orders} orderings worked out"
+    );
     assert_eq!(
         keypress_calls, 0,
         "a keypress on a snapshot already on screen must ask the filesystem \
          nothing at all; {keypress_calls} calls means something is rebuilding \
          the worktree grouping from scratch, {base_calls} lookups at a time"
+    );
+
+    // And the multiplier this file says it gates, measured directly rather
+    // than through the filesystem. The verdict memo took the syscalls to zero
+    // and left the rebuilds untouched, so the proxy stopped being able to see
+    // the thing it was for: eight rebuilds, each walking and sorting every
+    // agent, for one keypress.
+    //
+    // What is gated is the WORK, not the call count. The grouping borrows from
+    // the snapshot so it cannot be cached and is still assembled per caller --
+    // cheaply, by reading the ordering. The ordering is the part that walks
+    // every agent, and it is worked out once.
+    // Zero, for the same reason the syscalls are zero: the snapshot cannot
+    // change while it is on screen, so once its ordering is worked out a
+    // keypress has nothing to work out. The warm pass above did it.
+    assert_eq!(
+        keypress_orders, 0,
+        "a keypress on a snapshot already on screen must work nothing out; \
+         {keypress_orders} means something is sorting every agent again, \
+         {keypress_builds} groupings into the frame"
+    );
+    assert!(
+        keypress_builds > 1,
+        "and the grouping is still assembled per caller -- cheaply, by reading \
+         the ordering. If assembling it ever becomes the expensive part, gate \
+         that number too rather than this one"
+    );
+
+    // The other half: a snapshot the dashboard has never seen must work its
+    // ordering out ONCE across a whole first pass, not once per consumer. Six
+    // assemblies, one ordering -- before this, six orderings, each sorting
+    // every agent.
+    let fresh = snapshot("fresh-pass", 4, 8);
+    // Before the controller, which derives it too -- the window has to cover
+    // the whole first pass or it measures the second one.
+    let orders_before = NAVIGATION_ORDER_BUILDS.load(Ordering::Relaxed);
+    let mut fresh_controller = DashboardController::new(&fresh);
+    let _ = fresh_controller.handle_key(&fresh, DashboardKey::Down);
+    let fresh_frame = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &fresh,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 40,
+        nav_level: fresh_controller.navigation.level,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: fresh_controller.navigation.focused_worktree_path(&fresh),
+        focused_group_index: None,
+        runtime_label: Some("native"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        details_sidebar_visible: fresh_controller.details_sidebar_visible,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let fresh_orders = NAVIGATION_ORDER_BUILDS.load(Ordering::Relaxed) - orders_before;
+    remove_snapshot_tree("fresh-pass");
+    assert!(
+        !fresh_frame.frame.is_empty(),
+        "the fresh pass has to paint too"
+    );
+    assert_eq!(
+        fresh_orders, 1,
+        "a snapshot's first pass must work its ordering out once; \
+         {fresh_orders} means each consumer is sorting every agent for itself"
     );
 }
 
@@ -415,7 +496,10 @@ fn mutating_a_snapshot_in_place_discards_what_was_worked_out_about_it() {
         "and the second does not"
     );
 
-    base.main_checkout_verdicts.clear();
+    // Through the one method, because the ordering is derived from the
+    // verdicts: clearing the verdicts alone would leave an ordering built from
+    // what was just thrown away, and that is why it is not a field each.
+    base.forget_derived();
 
     let before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
     let _ = dashboard_navigation_groups(&base);
@@ -426,5 +510,43 @@ fn mutating_a_snapshot_in_place_discards_what_was_worked_out_about_it() {
         after_clear, first,
         "a cleared memo pays the full cost again; a mutator that cleared \
          nothing would leave the previous answer in place"
+    );
+}
+
+/// The memo answers about the snapshot it is ASKED about, not the one it was
+/// built from.
+///
+/// `SnapshotMemo`'s contract asks whoever holds a `&mut` to clear it, and its
+/// doc claims nothing mutates a snapshot after the grouping has been read.
+/// `dashboard_controller.rs` does: six of its tests retain a subset of
+/// `sessions` on a snapshot a controller has already seen. The verdict memo
+/// survives that as a wrong boolean; an ordering of INDICES does not -- it
+/// indexes a list that has moved, and panics. So the ordering carries a
+/// fingerprint of the rows it describes and is worked out again when they
+/// differ.
+#[test]
+fn an_ordering_is_not_reused_for_a_snapshot_that_has_changed_underneath_it() {
+    let _counters = counters();
+    let mut base = snapshot("stale", 3, 9);
+
+    let before = dashboard_navigation_groups(&base);
+    let counted: usize = before.iter().map(|group| group.sessions.len()).sum();
+    assert!(counted > 1, "the fixture has to have rows to lose");
+
+    // In place, after the grouping has been read, without clearing anything --
+    // exactly what the controller tests do.
+    let keep = base.sessions[0].id.clone();
+    base.sessions.retain(|session| session.id == keep);
+    for group in &mut base.worktree_groups {
+        group.sessions.retain(|session| session.id == keep);
+    }
+
+    let after = dashboard_navigation_groups(&base);
+    let remaining: usize = after.iter().map(|group| group.sessions.len()).sum();
+    remove_snapshot_tree("stale");
+    assert_eq!(
+        remaining, 1,
+        "the grouping must describe the snapshot it was handed; {remaining} \
+         rows means a stale ordering was reused"
     );
 }

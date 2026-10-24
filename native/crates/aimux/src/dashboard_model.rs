@@ -97,6 +97,31 @@ pub struct DesktopStateSnapshot {
     /// snapshot. See [`SnapshotMemo`].
     #[serde(skip)]
     pub main_checkout_verdicts: SnapshotMemo<BTreeMap<String, bool>>,
+    /// Which agents and services belong to which worktree, in the order the
+    /// dashboard shows them, worked out once per snapshot. See
+    /// [`SnapshotMemo`].
+    ///
+    /// Memoised because the grouping is derived from it eight times for one
+    /// keypress -- the move, the repaint, the footer, the details panel and
+    /// the persist each ask -- and deriving it walks and sorts every agent.
+    /// The grouping itself borrows from the snapshot and so cannot be cached
+    /// here; this is the part that costs, and it is owned.
+    #[serde(skip)]
+    pub navigation_order: SnapshotMemo<crate::dashboard_navigation::NavigationOrder>,
+}
+
+impl DesktopStateSnapshot {
+    /// Throw away everything worked out ABOUT this snapshot.
+    ///
+    /// One method rather than a field each, because the ordering is derived
+    /// from the main-checkout verdicts: clearing the verdicts and keeping the
+    /// ordering leaves an answer built from values that have just been
+    /// discarded, and a caller holding `&mut` has no way to know that the two
+    /// are related. Required of anything mutating a snapshot in place.
+    pub fn forget_derived(&mut self) {
+        self.main_checkout_verdicts.clear();
+        self.navigation_order.clear();
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
