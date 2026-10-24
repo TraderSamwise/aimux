@@ -57,12 +57,26 @@ export const selectedProjectHydratedAtom = atom(
 // as no selection and the remembered project was never restored.
 const storedProjectKeyAtom = storedValueAtom<string | null>(selectedProjectKeyAtom, null);
 
+/**
+ * Where the app sits when the stored key could not be READ.
+ *
+ * In memory only, and never written back. A read that failed may be hiding a
+ * selection that is still on disk, so persisting a guess over it would destroy
+ * exactly what could not be read -- but an app with no project selected, on
+ * every launch, is not an acceptable alternative either. Safari in private
+ * mode is enough to reach this.
+ */
+const unreadableSelectionFallbackAtom = atom<ProjectRef | null>(null);
+
 export const selectedProjectRefAtom = atom(
   (get) => {
     const stored = get(storedProjectKeyAtom);
-    return stored ? parseProjectKey(stored) : null;
+    return (stored ? parseProjectKey(stored) : null) ?? get(unreadableSelectionFallbackAtom);
   },
   (_get, set, ref: ProjectRef | null) => {
+    // The stored key is the answer from here on, so the in-memory stand-in
+    // steps aside rather than shadowing it.
+    set(unreadableSelectionFallbackAtom, null);
     set(selectedProjectKeyAtom, projectKey(ref));
   },
 );
@@ -257,6 +271,15 @@ export const reconcileProjectsAtom = atom(
     // with nothing to lose, so it takes the fallback.
     if (!nextRef && get(selectedProjectReadStateAtom) === "read" && sorted.length > 0) {
       nextRef = projectRefOf(sorted[0]);
+    } else if (!nextRef && get(selectedProjectReadStateAtom) === "failed" && sorted.length > 0) {
+      // The read failed, so there is nothing to honour and nothing that may be
+      // written over. The app still has to open on something, so it opens on
+      // the first project IN MEMORY -- the stored key is left exactly as it is,
+      // for a launch whose read works.
+      set(unreadableSelectionFallbackAtom, projectRefOf(sorted[0]));
+      set(lastSyncAtAtom, Date.now());
+      if (sorted !== previousProjects) set(projectsAtom, sorted);
+      return;
     } else if (nextRef && !resolved && selectionWasContradicted(nextRef, sorted, options)) {
       nextRef = projectRefOf(sorted[0]);
       nextSession = null;

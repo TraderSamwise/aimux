@@ -258,18 +258,41 @@ describe("the remembered project while storage is still being read", () => {
     again();
   });
 
-  // The destructive case, and the reason a failed read is its own answer:
-  // adopting a default here PERSISTS it, so a storage fault that hid the
-  // remembered key would go on to overwrite it -- destroying exactly what
-  // could not be read. The key is still on disk and still wanted.
-  it("does not persist a guess over a key it could not read", async () => {
+  // The reason a failed read is its own answer: adopting a default here would
+  // PERSIST it, so a storage fault that hid the remembered key would go on to
+  // overwrite it -- destroying exactly what could not be read. The key is
+  // still on disk and still wanted.
+  //
+  // But the app must not sit on an empty screen every launch either, which is
+  // reachable with storage simply blocked. So it opens on a project IN MEMORY
+  // and writes nothing.
+  it("opens on a project without persisting a guess over a key it could not read", async () => {
     const { reconcileProjectsAtom, selectedProjectRefAtom, store, unsubscribe } = await launch();
 
     await failPendingReads(new Error("storage is unavailable"));
     store.set(reconcileProjectsAtom, [ZETA, ALPHA]);
 
-    expect(store.get(selectedProjectRefAtom), "no project is adopted").toBeNull();
+    expect(store.get(selectedProjectRefAtom)?.path, "the app opens on something").toBe(
+      "/repo/alpha",
+    );
     expect(storage.written[SELECTION_KEY], "and the stored key is left alone").toBeUndefined();
+    unsubscribe();
+  });
+
+  // And a selection the user then makes by hand IS stored: the stand-in must
+  // not shadow the real key once there is one to store.
+  it("stores a selection made by hand after a failed read", async () => {
+    const { reconcileProjectsAtom, selectedProjectRefAtom, selectProjectAtom, store, unsubscribe } =
+      await launch();
+
+    await failPendingReads(new Error("storage is unavailable"));
+    store.set(reconcileProjectsAtom, [ZETA, ALPHA]);
+    store.set(selectProjectAtom, { path: "/repo/zeta" });
+
+    expect(store.get(selectedProjectRefAtom)?.path).toBe("/repo/zeta");
+    expect(storage.written[SELECTION_KEY], "the hand-made choice is stored").toBe(
+      "\u0000/repo/zeta",
+    );
     unsubscribe();
   });
 

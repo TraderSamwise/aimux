@@ -1,0 +1,93 @@
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+import { projectKey, projectNameFromPath, unresolvedProjectRefFor } from "@/lib/project-key";
+import { componentBody } from "@/test/component-source";
+
+// The project screen is a route component no renderer in this app executes,
+// and the defect here was an ORDER: a selection whose host had not answered
+// fell through to the branch that says nothing is selected.
+const screen = componentBody(
+  join(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "app",
+    "(main)",
+    "(tabs)",
+    "project",
+    "index.tsx",
+  ),
+  "export default function ProjectScreen(",
+);
+
+describe("a selected project that is not in the current snapshot", () => {
+  it("is asked about at all", () => {
+    expect(screen, "from the one place that derives it").toContain("unresolvedProjectRef");
+    expect(screen).toContain("} = useRouteProject();");
+  });
+
+  // The bug, as an ordering. `selectionWasContradicted` deliberately keeps a
+  // selection whose machine is merely quiet, so this branch has to come first
+  // or the screen denies a selection it still holds -- with that machine's
+  // projects missing and every other project in the sidebar beside the
+  // message.
+  it("is answered before the branch that says nothing is selected", () => {
+    const waiting = screen.indexOf("unresolvedProjectRef ? (");
+    const nothingSelected = screen.indexOf('<EmptyCard title="No project selected"');
+    expect(waiting, "the waiting branch is rendered").toBeGreaterThan(-1);
+    expect(nothingSelected, "and so is the empty one").toBeGreaterThan(-1);
+    expect(waiting, "but the waiting branch is reached first").toBeLessThan(nothingSelected);
+  });
+
+  // The header is a second surface on the same screen, and it had the same
+  // fallback. Naming the project there is what tells Sam WHICH one is waiting.
+  it("is named in the header rather than denied there too", () => {
+    const named = screen.indexOf("projectNameFromPath(unresolvedProjectRef.path)");
+    const denied = screen.indexOf('"No project selected"');
+    expect(named, "the header names it").toBeGreaterThan(-1);
+    expect(named, "before falling back").toBeLessThan(denied);
+  });
+
+  it("names the host it is waiting for, when it knows one", () => {
+    expect(screen).toContain("`Waiting for ${unresolvedProjectRef.machineId}`");
+    expect(screen, "and says which project, so the message is actionable").toContain(
+      "unresolvedProjectRef.path",
+    );
+  });
+});
+
+describe("projectNameFromPath", () => {
+  it("is the last segment of the path", () => {
+    expect(projectNameFromPath("/Users/sam/cs/aimux")).toBe("aimux");
+    expect(projectNameFromPath("/Users/sam/cs/aimux/")).toBe("aimux");
+  });
+
+  // Never empty: it is rendered as a title.
+  it("falls back to the path when there is no segment", () => {
+    expect(projectNameFromPath("/")).toBe("/");
+    expect(projectNameFromPath("")).toBe("");
+  });
+});
+
+describe("unresolvedProjectRefFor", () => {
+  const project = { path: "/repo/aimux" };
+
+  it("is nothing when the snapshot has the project", () => {
+    expect(
+      unresolvedProjectRefFor(project, projectKey({ machineId: "mbp", path: "/repo/aimux" })),
+    ).toBeNull();
+  });
+
+  // The case the screen renders: the selection names a host this snapshot
+  // does not speak for.
+  it("is the selected ref when the snapshot does not", () => {
+    expect(
+      unresolvedProjectRefFor(null, projectKey({ machineId: "strix", path: "/repo/aimux" })),
+    ).toEqual({ machineId: "strix", path: "/repo/aimux" });
+  });
+
+  it("is nothing when nothing is selected either", () => {
+    expect(unresolvedProjectRefFor(null, null)).toBeNull();
+  });
+});

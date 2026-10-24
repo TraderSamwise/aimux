@@ -14,6 +14,7 @@ import {
   projectKey,
   projectRefOf,
   resolveRouteProjectRef,
+  unresolvedProjectRefFor,
   type ProjectRef,
 } from "@/lib/project-key";
 import { projectRefFromSearchOrLocation } from "@/lib/view-location";
@@ -35,6 +36,17 @@ export interface RouteProject {
   endpoint: ServiceEndpoint | null;
   routeProjectPath: string | null;
   projectLoading: boolean;
+  /**
+   * A project that IS selected but is not in the current snapshot.
+   *
+   * Almost always a machine that has not answered yet: `selectionWasContradicted`
+   * deliberately keeps a selection whose host is merely quiet, rather than
+   * moving the user off the checkout they left. A surface that renders
+   * "nothing selected" there is wrong twice over -- something is selected, and
+   * saying otherwise while that machine's projects are missing reads as though
+   * the project were gone.
+   */
+  unresolvedProjectRef: ProjectRef | null;
 }
 
 export function useRouteProject(): RouteProject {
@@ -96,6 +108,8 @@ export function useRouteProject(): RouteProject {
 
   const projectRef = projectRefOf(project);
   const projectRefKey = projectKey(projectRef);
+  const unresolvedProjectRef = unresolvedProjectRefFor(project, effectiveRefKey);
+  const unresolvedProjectRefKey = projectKey(unresolvedProjectRef);
   return useMemo(
     () => ({
       project,
@@ -105,11 +119,12 @@ export function useRouteProject(): RouteProject {
       endpoint,
       routeProjectPath,
       projectLoading,
+      unresolvedProjectRef,
     }),
     // projectRefKey stands in for projectRef, whose identity is fresh each
-    // render; the ref itself is stable in content.
+    // render; the ref itself is stable in content. Same for the unresolved one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [endpoint, project, projectLoading, projectRefKey, routeProjectPath],
+    [endpoint, project, projectLoading, projectRefKey, routeProjectPath, unresolvedProjectRefKey],
   );
 }
 

@@ -21,6 +21,28 @@ export function projectKey(ref: ProjectRef | null | undefined): string | null {
   return `${ref.machineId ?? ""}${SEPARATOR}${ref.path}`;
 }
 
+/**
+ * The project a surface is SELECTED on when this snapshot contains no match.
+ *
+ * Its own function because the alternative is a surface deciding that nothing
+ * is selected, which is a different claim and was the bug: a selection whose
+ * machine had not answered is deliberately kept by
+ * `selectionWasContradicted`, so the snapshot not containing it means quiet,
+ * not gone.
+ */
+export function unresolvedProjectRefFor(
+  project: { path: string } | null | undefined,
+  effectiveRefKey: string | null,
+): ProjectRef | null {
+  return project ? null : parseProjectKey(effectiveRefKey);
+}
+
+// What a project is called when the daemon has not named it -- the last
+// segment of its path, which is how every surface shows a checkout.
+export function projectNameFromPath(path: string): string {
+  return path.split("/").filter(Boolean).pop() || path;
+}
+
 export function projectRefOf(
   project: { machineId?: string; path: string } | null | undefined,
 ): ProjectRef | null {

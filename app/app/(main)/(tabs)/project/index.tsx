@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { projectStateKey } from "@/lib/project-key";
+import { projectNameFromPath, projectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -196,8 +196,15 @@ function ProgressSection({ model }: { model: ProjectObservabilityModel }) {
 export default function ProjectScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, machineId, projectRef, endpoint, projectLoading } =
-    useRouteProject();
+  const {
+    project,
+    projectPath,
+    machineId,
+    projectRef,
+    endpoint,
+    projectLoading,
+    unresolvedProjectRef,
+  } = useRouteProject();
   // Keyed by the pair: two machines' copies of one checkout are two
   // projects, and sharing an atom between them bleeds one host into the
   // other.
@@ -315,10 +322,16 @@ export default function ProjectScreen() {
             ? "Loading project..."
             : showRelayUnavailable
               ? relayUnavailableCopy.title.replace(/\.$/, "")
-              : "No project selected")
+              : // A selection whose host has not answered is still a
+                // selection, so it is named rather than denied.
+                ((unresolvedProjectRef && projectNameFromPath(unresolvedProjectRef.path)) ??
+                "No project selected"))
         }
         subtitle={
-          project?.path ?? (projectLoading || showRelayUnavailable ? projectPath : undefined)
+          project?.path ??
+          (projectLoading || showRelayUnavailable || unresolvedProjectRef
+            ? (projectPath ?? unresolvedProjectRef?.path)
+            : undefined)
         }
         actions={
           <Button
@@ -373,6 +386,19 @@ export default function ProjectScreen() {
         <EmptyCard title={relayUnavailableCopy.title} body={relayUnavailableCopy.detail} />
       ) : projectLoading ? (
         <EmptyCard title="Loading project..." body="Fetching project state from the daemon." />
+      ) : unresolvedProjectRef ? (
+        // Before this branch existed, the project Sam left on a machine that
+        // had not answered read as "No project selected" -- while that
+        // machine's projects were simply missing from the list, and the others
+        // sat in the sidebar beside the message.
+        <EmptyCard
+          title={
+            unresolvedProjectRef.machineId
+              ? `Waiting for ${unresolvedProjectRef.machineId}`
+              : "Waiting for this project's host"
+          }
+          body={`${unresolvedProjectRef.path} is the project you had open. It will load when its host answers; pick another from the sidebar to move on.`}
+        />
       ) : !project ? (
         <EmptyCard title="No project selected" body="Pick a project from the sidebar." />
       ) : !endpoint ? (
