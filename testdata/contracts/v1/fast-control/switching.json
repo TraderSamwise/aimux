@@ -123,45 +123,6 @@
           {
             "target": {
               "sessionName": "aimux-repo-abc",
-              "windowId": "@1",
-              "windowIndex": 1,
-              "windowName": "codex"
-            },
-            "id": "coder",
-            "metadata": {
-              "kind": "agent",
-              "sessionId": "coder",
-              "label": "Coder",
-              "command": "codex",
-              "worktreePath": "<root>/repo"
-            },
-            "label": "Coder",
-            "urgency": 0,
-            "activity": 1,
-            "recentRank": 9007199254740991,
-            "overseer": false,
-            "scribe": false,
-            "role": "coder",
-            "lane": {
-              "kind": "worktree",
-              "worktreePath": "<root>/repo"
-            },
-            "roleState": {
-              "status": "resolved",
-              "role": "coder",
-              "lane": {
-                "kind": "worktree",
-                "worktreePath": "<root>/repo"
-              },
-              "projectControl": false,
-              "shouldShowInExpose": true,
-              "showRoleSuffix": false
-            },
-            "shouldShowInExpose": true
-          },
-          {
-            "target": {
-              "sessionName": "aimux-repo-abc",
               "windowId": "@2",
               "windowIndex": 2,
               "windowName": "claude"
@@ -200,10 +161,50 @@
               "showRoleSuffix": true
             },
             "shouldShowInExpose": true
+          },
+          {
+            "target": {
+              "sessionName": "aimux-repo-abc",
+              "windowId": "@1",
+              "windowIndex": 1,
+              "windowName": "codex"
+            },
+            "id": "coder",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "coder",
+              "label": "Coder",
+              "command": "codex",
+              "worktreePath": "<root>/repo"
+            },
+            "label": "Coder",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "role": "coder",
+            "lane": {
+              "kind": "worktree",
+              "worktreePath": "<root>/repo"
+            },
+            "roleState": {
+              "status": "resolved",
+              "role": "coder",
+              "lane": {
+                "kind": "worktree",
+                "worktreePath": "<root>/repo"
+              },
+              "projectControl": false,
+              "shouldShowInExpose": true,
+              "showRoleSuffix": false
+            },
+            "shouldShowInExpose": true
           }
         ]
       },
-      "inputSha256": "f93568cdbc23cff4462da17f17baeffdf98b253cde5a4c6874799bec1864f118"
+      "inputSha256": "f93568cdbc23cff4462da17f17baeffdf98b253cde5a4c6874799bec1864f118",
+      "divergesFromNode": "Node ordered the Expose-visible switch list by tmux window position, so the coder at @1 came before the overseer at @2. Rust orders every agent list by class first -- overseer, control, scribe, coder -- and only then by window, which is what team_contract::compare_agent_canonical_order now decides for the dashboard, the footer chips, the app and this list alike. Deliberate divergence, not drift; a per-surface order is the bug that replaced."
     },
     {
       "id": "fast-control-002",

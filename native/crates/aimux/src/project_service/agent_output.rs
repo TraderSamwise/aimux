@@ -2938,7 +2938,7 @@ async fn wait_for_prompt_submit_with_runtime_async(
             return submit_prompt_with_runtime_async(
                 runtime,
                 draft,
-                composer_shows_complete_prompt_draft(&pane, draft),
+                composer_shows_complete_prompt_draft(&pane, draft, before),
             )
             .await;
         }
@@ -3130,7 +3130,7 @@ fn wait_for_prompt_submit_confirmed_sync(
             return submit_prompt_with_runtime_sync(
                 runtime,
                 draft,
-                composer_shows_complete_prompt_draft(&pane, draft),
+                composer_shows_complete_prompt_draft(&pane, draft, before),
             );
         }
     }
@@ -4270,6 +4270,28 @@ mod tests {
                 name: "head loss without a matching fragment then empty composer",
                 before_submit: Ok("› remaining tail".into()),
                 after_submit: Ok("› ".into()),
+                expected: Ok(PromptDeliveryVerification::Unverified),
+            },
+            // The case the app hits every time: the agent collapses the
+            // prompt, so the composer never shows its text and the marker's
+            // own measurement is the only evidence there is. EVIDENCE_DRAFT
+            // has no line breaks, so this is Codex's character count.
+            SubmitEvidenceScenario {
+                name: "collapsed paste measuring this draft then a clear composer",
+                before_submit: Ok(format!(
+                    "› [Pasted Content {} chars]",
+                    EVIDENCE_DRAFT.chars().count()
+                )),
+                after_submit: Ok("assistant response\n› ".into()),
+                expected: Ok(PromptDeliveryVerification::Verified),
+            },
+            SubmitEvidenceScenario {
+                name: "collapsed paste measuring something else is not a delivery",
+                before_submit: Ok(format!(
+                    "› [Pasted Content {} chars]",
+                    EVIDENCE_DRAFT.chars().count() - 40
+                )),
+                after_submit: Ok("assistant response\n› ".into()),
                 expected: Ok(PromptDeliveryVerification::Unverified),
             },
             SubmitEvidenceScenario {
