@@ -87,15 +87,46 @@ const lastAgentStorageAtom = atomWithStorage<Record<string, string>>(
   { getOnInit: true },
 );
 
+export const lastAgentReadStateAtom = storageReadStateAtom(lastAgentStorageAtom);
+
+// For callers that only need to stop waiting; a read that FAILED has finished
+// and has no memory to offer, which is a complete answer for reopening. The
+// WRITER below needs the state itself, because it merges onto what it reads.
+export const lastAgentHydratedAtom = atom((get) => get(lastAgentReadStateAtom) !== "unread");
+
+// Module scope so the empty memory keeps one identity: callers put it in
+// dependency arrays and compare it by reference. Frozen because that identity
+// is shared -- one `memory[key] = id` on it would poison the empty memory for
+// the whole process and then be persisted.
+const NO_REMEMBERED_AGENTS: Readonly<Record<string, string>> = Object.freeze({});
+
+// Through `storedValueAtom` for the same reason as the project key above: the
+// old `!("then" in stored)` guard read the pending promise as an empty memory
+// and jotai never replaced it, so this read `{}` for the whole session and the
+// agent you were last in was recorded on every selection and restored on none.
+const storedLastAgentAtom = storedValueAtom<Record<string, string>>(
+  lastAgentStorageAtom,
+  NO_REMEMBERED_AGENTS,
+);
+
 export const lastAgentByProjectAtom = atom(
-  // The storage atom's value is typed to include a pending read, which is not
-  // a memory; an unresolved one is no memory yet, as with the selected
-  // project above.
   (get) => {
-    const stored = get(lastAgentStorageAtom);
-    return stored && typeof stored === "object" && !("then" in stored) ? stored : {};
+    const stored = get(storedLastAgentAtom);
+    // The shape half of the old guard, kept. `storedValueAtom` handles the
+    // pending read, but a stored value of the wrong shape is still not a
+    // memory, and the writer below merges onto whatever this returns. An array
+    // is `typeof "object"` and would spread into numeric keys.
+    const usable = stored && typeof stored === "object" && !Array.isArray(stored);
+    return usable ? stored : NO_REMEMBERED_AGENTS;
   },
-  (_get, set, memory: Record<string, string>) => {
+  (get, set, memory: Record<string, string>) => {
+    // The one place this rule lives, because it guards the whole map. A
+    // recording merges onto what the reader above returns, so writing before
+    // the stored map has come back persists a one-entry copy of it -- keeping
+    // the project just touched and forgetting every other project's agent.
+    // A read that FAILED is refused for the same reason: the map is unknown,
+    // and a guess would destroy exactly what could not be read.
+    if (get(lastAgentReadStateAtom) !== "read") return;
     set(lastAgentStorageAtom, memory);
   },
 );
@@ -116,6 +147,9 @@ export const selectedSessionIdAtom = atom(
   (get) => get(selectedSessionIdValueAtom),
   (get, set, sessionId: string | null) => {
     set(selectedSessionIdValueAtom, sessionId);
+    // The recording may be refused -- `lastAgentByProjectAtom`'s setter turns
+    // it down until the stored map has been read -- and the selection itself
+    // stands either way, which is why it is set first.
     const memory = rememberAgentForProject(
       get(lastAgentByProjectAtom),
       projectKey(get(selectedProjectRefAtom)),

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonProject } from "@/lib/api";
 
 const SELECTION_KEY = "aimux-selected-project";
+const LAST_AGENT_KEY = "aimux-last-agent-by-project";
 
 // The whole bug lives in the window between launch and AsyncStorage answering,
 // and nothing in the unit environment pends: `createSsrSafeJsonStorage` sees no
@@ -81,8 +82,27 @@ async function launch(options?: { answersSynchronouslyWith?: unknown }) {
   // Mounted, as the app mounts it through `useAtomValue`. Mounting matters:
   // `atomWithStorage.onMount` issues a SECOND read, and the latch has to
   // survive it.
-  const unsubscribe = store.sub(projects.selectedProjectHydratedAtom, () => {});
+  const subscriptions = [
+    store.sub(projects.selectedProjectHydratedAtom, () => {}),
+    store.sub(projects.lastAgentByProjectAtom, () => {}),
+    store.sub(projects.lastAgentReadStateAtom, () => {}),
+  ];
+  const unsubscribe = () => {
+    for (const stop of subscriptions) stop();
+  };
   return { ...projects, store, unsubscribe };
+}
+
+// One key at a time, for the interleavings where the two reads do not land
+// together.
+async function settleReadsFor(key: string, value: unknown) {
+  const matching = storage.reads.filter((read) => read.key === key);
+  for (const read of matching) {
+    storage.reads.splice(storage.reads.indexOf(read), 1);
+    read.settle(value);
+  }
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 async function settlePendingReads(value: unknown) {
@@ -198,6 +218,23 @@ describe("the remembered project while storage is still being read", () => {
     unsubscribe();
   });
 
+  // The limit of the latch, stated rather than assumed. `unwrap` keeps no
+  // previous value across a rejection, so the re-read a remount issues really
+  // is a new read in flight -- and it settles, so nothing waits forever.
+  it("goes back to waiting when a remount re-reads after a failure", async () => {
+    const { selectedProjectReadStateAtom, store, unsubscribe } = await launch();
+    await failPendingReads(new Error("storage is unavailable"));
+    expect(store.get(selectedProjectReadStateAtom)).toBe("failed");
+
+    unsubscribe();
+    const again = store.sub(selectedProjectReadStateAtom, () => {});
+
+    expect(store.get(selectedProjectReadStateAtom), "a fresh read is in flight").toBe("unread");
+    await settlePendingReads("/repo/zeta");
+    expect(store.get(selectedProjectReadStateAtom), "and it settles").toBe("read");
+    again();
+  });
+
   // The destructive case, and the reason a failed read is its own answer:
   // adopting a default here PERSISTS it, so a storage fault that hid the
   // remembered key would go on to overwrite it -- destroying exactly what
@@ -222,6 +259,118 @@ describe("the remembered project while storage is still being read", () => {
 
     expect(store.get(selectedProjectReadStateAtom)).toBe("read");
     expect(store.get(selectedProjectRefAtom)).toEqual({ path: "/repo/zeta" });
+    unsubscribe();
+  });
+});
+
+describe("the agent you were last reading", () => {
+  // The sibling of the project key, with the same defect and the same effect:
+  // `!("then" in stored)` read the pending promise as an empty memory, jotai
+  // never replaced it, so the memory was recorded on every selection and
+  // restored on none.
+  it("is restored on a launch that writes nothing", async () => {
+    const { lastAgentByProjectAtom, store, unsubscribe } = await launch();
+
+    expect(store.get(lastAgentByProjectAtom), "not read yet").toEqual({});
+
+    await settleReadsFor(LAST_AGENT_KEY, { "\u0000/repo/zeta": "claude-9" });
+
+    expect(store.get(lastAgentByProjectAtom)).toEqual({ "\u0000/repo/zeta": "claude-9" });
+    unsubscribe();
+  });
+
+  // The destructive half. The writer merges onto whatever it reads, so a
+  // selection made before the memory lands would persist a one-entry map --
+  // keeping this project's agent and forgetting every other project's.
+  it("is not wiped by a selection made before it has been read", async () => {
+    const { lastAgentByProjectAtom, selectedSessionIdAtom, store, unsubscribe } = await launch();
+
+    // The project is known; only the memory is still in flight.
+    await settleReadsFor(SELECTION_KEY, "/repo/zeta");
+    store.set(selectedSessionIdAtom, "claude-7");
+
+    expect(store.get(selectedSessionIdAtom), "the selection itself still happens").toBe("claude-7");
+    expect(
+      storage.written[LAST_AGENT_KEY],
+      "but nothing is persisted over the memory",
+    ).toBeUndefined();
+
+    await settleReadsFor(LAST_AGENT_KEY, { "\u0000/repo/other": "claude-1" });
+
+    expect(
+      store.get(lastAgentByProjectAtom),
+      "another project's remembered agent survived",
+    ).toEqual({ "\u0000/repo/other": "claude-1" });
+    unsubscribe();
+  });
+
+  // What the layout's replay relies on: setting the same session id again,
+  // after the memory has come back, records what the refused write did not.
+  it("records a replayed selection once the memory arrives", async () => {
+    const { lastAgentByProjectAtom, selectedSessionIdAtom, store, unsubscribe } = await launch();
+
+    await settleReadsFor(SELECTION_KEY, "/repo/zeta");
+    store.set(selectedSessionIdAtom, "claude-7");
+    expect(storage.written[LAST_AGENT_KEY], "refused while the map was in flight").toBeUndefined();
+
+    await settleReadsFor(LAST_AGENT_KEY, { "\u0000/repo/other": "claude-1" });
+    store.set(selectedSessionIdAtom, store.get(selectedSessionIdAtom));
+
+    expect(store.get(lastAgentByProjectAtom), "both entries, neither lost").toEqual({
+      "\u0000/repo/other": "claude-1",
+      "\u0000/repo/zeta": "claude-7",
+    });
+    unsubscribe();
+  });
+
+  // And once it has been read, recording works as before.
+  it("records a selection once the memory has been read", async () => {
+    const {
+      lastAgentByProjectAtom,
+      reconcileProjectsAtom,
+      selectedSessionIdAtom,
+      store,
+      unsubscribe,
+    } = await launch();
+
+    await settleReadsFor(SELECTION_KEY, null);
+    await settleReadsFor(LAST_AGENT_KEY, {});
+    store.set(reconcileProjectsAtom, [ZETA]);
+    store.set(selectedSessionIdAtom, "claude-7");
+
+    expect(Object.values(store.get(lastAgentByProjectAtom))).toContain("claude-7");
+    unsubscribe();
+  });
+
+  // A stored value of the wrong shape is not a memory. The writer merges onto
+  // whatever the read returns, and `rememberAgentForProject` indexes it.
+  it.each([
+    ["null", null],
+    // `typeof [] === "object"`, and spreading one gives numeric keys.
+    ["an array", ["claude-7"]],
+  ])("ignores a stored memory that is %s", async (_label, stored) => {
+    const { lastAgentByProjectAtom, selectedSessionIdAtom, store, unsubscribe } = await launch();
+
+    await settleReadsFor(SELECTION_KEY, "/repo/zeta");
+    await settleReadsFor(LAST_AGENT_KEY, stored);
+
+    expect(store.get(lastAgentByProjectAtom)).toEqual({});
+    expect(() => store.set(selectedSessionIdAtom, "claude-7")).not.toThrow();
+    unsubscribe();
+  });
+
+  // The empty memory is one shared object, so a consumer writing to it would
+  // poison it for the whole process -- and the next real recording would
+  // persist the poison.
+  it("hands out an empty memory nothing can write to", async () => {
+    const { lastAgentByProjectAtom, store, unsubscribe } = await launch();
+
+    await settleReadsFor(LAST_AGENT_KEY, null);
+    const memory = store.get(lastAgentByProjectAtom);
+
+    expect(() => {
+      (memory as Record<string, string>)["\u0000/repo/zeta"] = "claude-7";
+    }).toThrow();
     unsubscribe();
   });
 });

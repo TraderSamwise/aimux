@@ -38,7 +38,9 @@ describe("reopening the last agent", () => {
     // The ref beside it only guards one mount; the module flag is what makes
     // it once per launch.
     expect(dashboardSource).toContain("alreadyReopened: reopenedLastAgentThisLaunch(),");
-    expect(dashboardSource).toContain("reopenedThisLaunchRef.current || !desktopStatePresent");
+    expect(dashboardSource).toContain(
+      "reopenedThisLaunchRef.current || !desktopStatePresent || !lastAgentHydrated",
+    );
   });
 
   it("passes the agent the route is already showing", () => {
@@ -68,7 +70,18 @@ describe("reopening the last agent", () => {
   it("waits for the state to be present before concluding the agent is gone", () => {
     // Before the first desktop state arrives every agent looks absent, and
     // concluding "gone" there would spend the launch's one attempt on nothing.
-    expect(dashboardSource).toContain("!desktopStatePresent) return;");
+    expect(dashboardSource).toContain("|| !desktopStatePresent ||");
+  });
+
+  it("waits for the memory to be read before concluding there is none", () => {
+    // The same argument, one layer down: the memory comes back from storage a
+    // frame or two after launch, and `{}` before it does is not "no agent was
+    // remembered". Spending the attempt on that unread value is how the whole
+    // feature came to do nothing.
+    expect(dashboardSource).toContain("!lastAgentHydrated) return;");
+    expect(dashboardSource, "from the store, not a constant").toContain(
+      "useAtomValue(lastAgentHydratedAtom)",
+    );
   });
 });
 

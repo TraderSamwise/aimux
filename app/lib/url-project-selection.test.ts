@@ -163,6 +163,16 @@ describe("the layout that applies it", () => {
     );
   });
 
+  // The recording of a selection made before the memory was read is refused,
+  // and the screen that made it is keyed on the session id, so nothing fires
+  // again. Without this replay a cold start into a chat never records it.
+  it("replays the open agent once its memory has been read", () => {
+    expect(source).toContain("useAtomValue(lastAgentHydratedAtom)");
+    expect(source).toMatch(
+      /if \(!lastAgentHydrated\) return;[\s\S]{0,200}store\.set\(selectedSessionIdAtom, open\)/,
+    );
+  });
+
   it("acts on both halves of the answer", () => {
     expect(source).toContain(
       "if (write.clearExplicitSelection) store.set(explicitProjectSelectionAtom, null);",

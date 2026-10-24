@@ -63,6 +63,7 @@ import {
   projectListStatusAtom,
   reconcileProjectsAtom,
   rememberProjectViewPath,
+  lastAgentHydratedAtom,
   selectedProjectEndpointAtom,
   selectedProjectHydratedAtom,
   selectedProjectRefAtom,
@@ -132,6 +133,7 @@ export default function MainLayout() {
   const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const explicitProjectSelection = useAtomValue(explicitProjectSelectionAtom);
   const selectedProjectHydrated = useAtomValue(selectedProjectHydratedAtom);
+  const lastAgentHydrated = useAtomValue(lastAgentHydratedAtom);
   const activeShare = useRouteShare();
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
   const refreshNonce = useAtomValue(desktopStateRefreshNonceAtom);
@@ -238,6 +240,20 @@ export default function MainLayout() {
     store,
     urlProjectRef,
   ]);
+
+  // Record the agent already open, once the memory it belongs in has been read.
+  //
+  // Recording merges onto that stored map, so a selection made before it came
+  // back is refused rather than persisting a one-entry copy of it. A cold
+  // start straight into a chat is exactly that case -- the route selects the
+  // agent before storage answers, and the screen's effect is keyed on the
+  // session id, so it never fires again. Replaying it here is what makes the
+  // agent you deep-linked into the one the next launch reopens.
+  useEffect(() => {
+    if (!lastAgentHydrated) return;
+    const open = store.get(selectedSessionIdAtom);
+    if (open) store.set(selectedSessionIdAtom, open);
+  }, [lastAgentHydrated, store]);
 
   useEffect(() => {
     const target = sharedChatRedirect(activeShare, pathname);
