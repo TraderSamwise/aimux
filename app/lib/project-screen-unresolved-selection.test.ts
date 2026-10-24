@@ -57,6 +57,31 @@ describe("a selected project that is not in the current snapshot", () => {
   });
 });
 
+// Expose is the other surface that guesses. It asks the project service for
+// tiles, so guessing costs a real request and a visible flash.
+describe("the expose screen while the selection is unread", () => {
+  const expose = componentBody(
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "components",
+      "screens",
+      "ExposeScreen.tsx",
+    ),
+    "export default function ExposeScreen(",
+  );
+
+  it("waits for the stored selection before falling back to the first project", () => {
+    expect(expose).toContain("useAtomValue(selectedProjectHydratedAtom)");
+    expect(expose, "the displayed project waits").toContain(
+      "selectionRead ? projectRefOf(projects[0]) : null",
+    );
+    expect(expose, "and so does the one it requests tiles for").toContain(
+      "currentProjectRef || !selectionRead ? null :",
+    );
+  });
+});
+
 describe("projectNameFromPath", () => {
   it("is the last segment of the path", () => {
     expect(projectNameFromPath("/Users/sam/cs/aimux")).toBe("aimux");

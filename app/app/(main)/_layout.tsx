@@ -246,11 +246,14 @@ export default function MainLayout() {
   // Record the agent already open, once the memory it belongs in has been read.
   //
   // Recording merges onto that stored map, so a selection made before it came
-  // back is refused rather than persisting a one-entry copy of it. A cold
-  // start straight into a chat is exactly that case -- the route selects the
-  // agent before storage answers, and the screen's effect is keyed on the
-  // session id, so it never fires again. Replaying it here is what makes the
-  // agent you deep-linked into the one the next launch reopens.
+  // back is refused rather than persisting a one-entry copy of it -- and the
+  // screen that made it is keyed on the session id, so it never fires again.
+  // This is what records it instead.
+  //
+  // It covers a launch that lands on the project the selection already names.
+  // A deep link to a DIFFERENT project clears the open agent a few lines above
+  // before this runs, so there is nothing to replay; that agent is recorded by
+  // the next selection the user makes, as it always was.
   // Both reads, because the record is KEYED by the open project: the two
   // storage reads are independent and either can land first, so waiting on
   // the memory alone would replay while the project key was still unknown,
