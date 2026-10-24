@@ -586,3 +586,32 @@ fn a_codex_draft_is_read_to_its_own_end() {
         Some("› ")
     ));
 }
+
+/// A long line does not arrive as a long line: the terminal wraps it across
+/// rows, and one row of the draft becomes several of the pane's. Comparing
+/// row for row without allowing for that left every wrapped prompt
+/// unverifiable -- which is most of what the app sends.
+#[test]
+fn a_wrapped_draft_row_is_still_that_row() {
+    let draft = "this is one long line of a prompt that the terminal will wrap across several rows before it is submitted\nand a second line after it";
+    let pane = "──────────\n❯ this is one long line of a prompt that the\nterminal will wrap across several rows before\nit is submitted\nand a second line after it\n──────────\n  sam@sam-mbp ~/cs/aimux master (1M context) [a title]";
+
+    assert!(composer_shows_complete_prompt_draft(
+        pane,
+        draft,
+        Some("❯ ")
+    ));
+}
+
+/// And a wrapped row that does not add up to the draft is not the draft.
+#[test]
+fn a_wrapped_draft_missing_its_middle_is_not_complete() {
+    let draft = "this is one long line of a prompt that the terminal will wrap across several rows before it is submitted";
+    let pane = "──────────\n❯ this is one long line of a prompt that the\nit is submitted\n──────────\n  sam@sam-mbp ~/cs/aimux master (1M context) [a title]";
+
+    assert!(!composer_shows_complete_prompt_draft(
+        pane,
+        draft,
+        Some("❯ ")
+    ));
+}

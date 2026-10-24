@@ -390,20 +390,33 @@ fn composer_rows_show_the_draft(pane: &str, draft: &str) -> bool {
     let first = strip_agent_prompt_marker(rows[index])
         .unwrap_or_default()
         .trim();
-    let mut expected = draft.lines().map(str::trim);
-    let Some(first_draft_row) = expected.next() else {
-        return false;
-    };
-    if normalize_words(first) != normalize_words(first_draft_row) {
-        return false;
-    }
     let mut consumed = index;
-    let mut actual = rows[index + 1..].iter();
-    for draft_row in expected {
-        match actual.next() {
-            Some(row) if normalize_words(row) == normalize_words(draft_row) => consumed += 1,
-            _ => return false,
+    let mut carried = normalize_words(first);
+    for draft_row in draft.lines().map(str::trim) {
+        // A terminal hard-wraps a long line across several rows, so one row of
+        // the draft can be six of the pane's. Taking rows until they add up is
+        // what makes a wrapped prompt comparable at all: the body comparison
+        // this replaced got it for free by collapsing newlines, and losing it
+        // left every prompt that wraps unverifiable.
+        let wanted = normalize_words(draft_row);
+        loop {
+            if carried == wanted {
+                break;
+            }
+            if !carried.is_empty() && !wanted.starts_with(&carried) {
+                return false;
+            }
+            let Some(row) = rows.get(consumed + 1) else {
+                return false;
+            };
+            consumed += 1;
+            let row = normalize_words(row);
+            if !carried.is_empty() && !row.is_empty() {
+                carried.push(' ');
+            }
+            carried.push_str(&row);
         }
+        carried.clear();
     }
     let tail = &rows[consumed + 1..];
     // What sits under the draft's last row decides two things at once. It must
@@ -418,7 +431,10 @@ fn composer_rows_show_the_draft(pane: &str, draft: &str) -> bool {
             || is_agent_input_composer_tail_chrome(row)
             || is_agent_input_composer_chrome_text(row)
     });
-    next_is_a_boundary && tail.iter().filter(|row| !row.is_empty()).count() <= COMPOSER_BOTTOM_ROWS
+    // One fewer than the readability check allows, because that one counts the
+    // marker row itself: a draft with that many rows under it would pass here
+    // and be refused there.
+    next_is_a_boundary && tail.iter().filter(|row| !row.is_empty()).count() < COMPOSER_BOTTOM_ROWS
 }
 
 /// The composer's text and how many rows sit under it.

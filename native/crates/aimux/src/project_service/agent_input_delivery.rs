@@ -860,6 +860,14 @@ fn latest_composer_region_is_chrome_only(pane: &str) -> bool {
     // to close it with. Treating it as the end either way made `❯ `, a blank,
     // and then what the user had typed read as an empty composer -- and an
     // empty composer is one aimux types into.
+    // Any rule below, not just one before the first blank: a draft whose first
+    // row is blank puts the composer's own closing rule AFTER that blank, and
+    // stopping at the blank would read `❯ `, a blank, and then what the user
+    // typed as an empty composer. The cost is that a rule somewhere in a
+    // blank-closing agent's status area would send this past the blank, and
+    // then a status row nobody has enumerated reads as user input -- delivery
+    // held back rather than typed over, and neither Claude nor Codex draws one
+    // there today.
     let closes_with_a_rule = under
         .iter()
         .any(|line| is_agent_input_horizontal_rule(line));
