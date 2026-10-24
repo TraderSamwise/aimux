@@ -100,7 +100,11 @@ import {
   notificationSettingsAtom,
   type ActiveSharedSession,
 } from "@/stores/settings";
-import { addSecurityEventAtom } from "@/stores/security";
+import {
+  addSecurityEventAtom,
+  securityEventsReadStateAtom,
+  type SecurityEventRecord,
+} from "@/stores/security";
 import { PROJECT_API_EVENT_NAMES } from "../../../src/project-api-contract";
 import { serviceEndpointKey } from "@/lib/daemon-url";
 import {
@@ -135,6 +139,10 @@ export default function MainLayout() {
   const explicitProjectSelection = useAtomValue(explicitProjectSelectionAtom);
   const selectedProjectHydrated = useAtomValue(selectedProjectHydratedAtom);
   const selectedProjectReadState = useAtomValue(selectedProjectReadStateAtom);
+  const securityEventsReadState = useAtomValue(securityEventsReadStateAtom);
+  // Security events the relay reported before the stored inbox had been read.
+  // They cannot be written yet and the relay will not send them again.
+  const heldSecurityEventsRef = useRef<SecurityEventRecord[]>([]);
   const lastAgentHydrated = useAtomValue(lastAgentHydratedAtom);
   const activeShare = useRouteShare();
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
@@ -243,6 +251,15 @@ export default function MainLayout() {
     urlProjectRef,
   ]);
 
+  // Store the security events that arrived before the inbox could be read.
+  useEffect(() => {
+    if (securityEventsReadState !== "read") return;
+    const held = heldSecurityEventsRef.current;
+    if (held.length === 0) return;
+    heldSecurityEventsRef.current = [];
+    for (const event of held) store.set(addSecurityEventAtom, event);
+  }, [securityEventsReadState, store]);
+
   // Record the agent already open, once the memory it belongs in has been read.
   //
   // Recording merges onto that stored map, so a selection made before it came
@@ -334,7 +351,15 @@ export default function MainLayout() {
       store.set(recordRelayMachinesAtom, machines),
     );
     const unsubSecurity = transport.onSecurityEvent((event) => {
-      store.set(addSecurityEventAtom, event);
+      // The inbox is read, changed and stored back whole, so this write is
+      // held until the stored list has arrived -- and the relay does not
+      // resend, so a held write here would simply lose the event while the
+      // notification below still fired. Kept and replayed instead.
+      if (store.get(securityEventsReadStateAtom) === "read") {
+        store.set(addSecurityEventAtom, event);
+      } else {
+        heldSecurityEventsRef.current.push(event);
+      }
       if (!isBrowserDocumentVisible()) {
         const notification = {
           id: event.id,

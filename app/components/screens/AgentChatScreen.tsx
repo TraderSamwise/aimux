@@ -232,6 +232,7 @@ import {
   acceptedSharedSessionsAtom,
   activeSharedSessionAtom,
   agentOutputViewModeAtom,
+  settingsReadStateAtom,
   type AgentOutputViewMode,
   type ActiveSharedSession,
 } from "@/stores/settings";
@@ -529,6 +530,7 @@ export default function ChatScreen() {
   const activeShare = useRouteShare();
   const setLegacyActiveShare = useSetAtom(activeSharedSessionAtom);
   const setAcceptedShares = useSetAtom(acceptedSharedSessionsAtom);
+  const settingsReadState = useAtomValue(settingsReadStateAtom);
   const jotaiStore = useStore();
   const { getToken } = useAuth();
   const { user } = useUser();
@@ -645,9 +647,18 @@ export default function ChatScreen() {
   const canManageShare = Boolean(
     shareSummary?.ownerUserId && user?.id === shareSummary.ownerUserId,
   );
+  // The settings read is part of this, not a separate guard, because the
+  // effect below WRITES `acceptedShares` and `activeShare` and then latches
+  // `shareSummaryCheckedKey` so it never runs again. Those writes are held
+  // until the stored settings have been read, so running first would open the
+  // shared chat, record nothing, and leave the share absent from the list that
+  // `useRouteShare` resolves from -- on a route outside `(main)`, where
+  // nothing refreshes shares. Folding it in here means the effect re-runs when
+  // the read lands.
   const shouldLoadShareSummary = Boolean(
     token &&
     sessionId &&
+    settingsReadState === "read" &&
     (isCanonicalSharedRoute ||
       activeShareForRoute ||
       sharePanelOpen ||
