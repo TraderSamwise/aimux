@@ -647,18 +647,15 @@ export default function ChatScreen() {
   const canManageShare = Boolean(
     shareSummary?.ownerUserId && user?.id === shareSummary.ownerUserId,
   );
-  // The settings read is part of this, not a separate guard, because the
-  // effect below WRITES `acceptedShares` and `activeShare` and then latches
-  // `shareSummaryCheckedKey` so it never runs again. Those writes are held
-  // until the stored settings have been read, so running first would open the
-  // shared chat, record nothing, and leave the share absent from the list that
-  // `useRouteShare` resolves from -- on a route outside `(main)`, where
-  // nothing refreshes shares. Folding it in here means the effect re-runs when
-  // the read lands.
+  // The settings read is deliberately NOT part of this. `shareSummaryCheckedKey`
+  // is the owner's SEND gate through `ownerShareStatusPending`, so a read that
+  // never answers must not keep this effect from running: gating it here left
+  // the owner unable to send a message in any chat, permanently and silently.
+  // The read is consulted at the one latch that follows a settings write
+  // instead.
   const shouldLoadShareSummary = Boolean(
     token &&
     sessionId &&
-    settingsReadState === "read" &&
     (isCanonicalSharedRoute ||
       activeShareForRoute ||
       sharePanelOpen ||
@@ -1928,7 +1925,18 @@ export default function ChatScreen() {
             });
             setLegacyActiveShare(acceptedShare);
           }
-          setShareSummaryCheckedKey(shareSummaryRequestKey);
+          // Latched only once those two writes could land. They are held until
+          // the stored settings have been read, and latching regardless is
+          // what recorded the key after a dropped write and switched this
+          // effect off for good -- leaving a shared chat open but absent from
+          // the list `useRouteShare` resolves from.
+          //
+          // A read still in flight gets another pass when it arrives, because
+          // the read state is a dependency below. A read that FAILED latches
+          // anyway: nothing is coming, and this key is the send gate.
+          if (settingsReadState !== "unread") {
+            setShareSummaryCheckedKey(shareSummaryRequestKey);
+          }
         }
         return;
       }
@@ -1964,6 +1972,7 @@ export default function ChatScreen() {
     sharePanelOpen,
     shareSummaryRequestKey,
     shouldLoadShareSummary,
+    settingsReadState,
     token,
   ]);
 

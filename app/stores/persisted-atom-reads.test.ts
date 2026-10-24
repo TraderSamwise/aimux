@@ -77,6 +77,18 @@ describe("every persisted atom", () => {
   // never look.
   const allPersistedAtomNames = files.flatMap((file) => persistedAtomNames(file.text));
 
+  // An aliased import defeats every assertion below at once: the file still
+  // contains the string so it is scanned, but neither the use count nor the
+  // declaration pattern matches the alias, so the atom is invisible.
+  it("is imported under its own name", () => {
+    for (const file of everyFile) {
+      expect(
+        file.text,
+        `${file.name} aliases the import, which hides its persisted atoms from this audit`,
+      ).not.toMatch(/atomWithStorage\s+as\s+\w+/);
+    }
+  });
+
   it("is declared in a shape this audit can see", () => {
     // Not a floor: every `atomWithStorage` in the tree must match the
     // declaration pattern, or one spelled through a factory or an

@@ -24,14 +24,30 @@ describe("the shared chat summary", () => {
   );
 
   // It writes `acceptedShares` and `activeShare` and then latches
-  // `shareSummaryCheckedKey` so it never runs again -- on a route outside
-  // `(main)`, where nothing refreshes shares. Held writes there open a shared
-  // chat that is absent from the list `useRouteShare` resolves from.
-  it("waits for the stored settings before it fetches and records", () => {
+  // `shareSummaryCheckedKey`, which switches the effect off for good. Latching
+  // after a held write opened a shared chat that was absent from the list
+  // `useRouteShare` resolves from.
+  it("latches only once the writes could land", () => {
     expect(chat).toContain("useAtomValue(settingsReadStateAtom)");
-    expect(chat, "in the flag the effect and its deps both read").toMatch(
-      /const shouldLoadShareSummary = Boolean\([\s\S]{0,200}?settingsReadState === "read" &&/,
+    expect(chat, "at the latch that follows the writes").toMatch(
+      /setLegacyActiveShare\(acceptedShare\);[\s\S]{0,700}?if \(settingsReadState !== "unread"\) \{\s*setShareSummaryCheckedKey\(shareSummaryRequestKey\);/,
     );
+    expect(chat, "and re-runs when a read in flight arrives").toMatch(
+      /\}, \[[^\]]{0,400}settingsReadState,/,
+    );
+  });
+
+  // The regression this replaced, and it was worse than the bug: gating the
+  // whole effect meant that with a settings read that never answers,
+  // `shareSummaryCheckedKey` was never set, `ownerShareStatusPending` never
+  // cleared, and the OWNER could not send a message in any chat -- silently,
+  // because `handleSendMessage` returns without setting an error.
+  it("does not gate the fetch itself, which is the owner's send gate", () => {
+    const declaration = chat.slice(chat.indexOf("const shouldLoadShareSummary = Boolean("));
+    expect(
+      declaration.slice(0, declaration.indexOf(");")),
+      "the send gate must not wait on a read that may never answer",
+    ).not.toContain("settingsReadState");
   });
 });
 
