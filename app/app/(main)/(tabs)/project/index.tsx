@@ -392,17 +392,17 @@ export default function ProjectScreen() {
         // machine's projects were simply missing from the list, and the others
         // sat in the sidebar beside the message.
         //
-        // `hostAnswered` is the difference between quiet and gone: a machine
+        // `hostIsListed` is the difference between quiet and gone: a machine
         // that IS in this snapshot has answered and does not have the path, so
         // telling the user to wait for it would be waiting forever.
         <EmptyCard
           title={
-            unresolvedSelection.hostAnswered
+            unresolvedSelection.hostIsListed
               ? "Project not found"
               : `Waiting for ${unresolvedSelection.ref.machineId}`
           }
           body={
-            unresolvedSelection.hostAnswered
+            unresolvedSelection.hostIsListed
               ? `${unresolvedSelection.ref.path} is the project you had open, and its host no longer has it. Pick another from the sidebar.`
               : `${unresolvedSelection.ref.path} is the project you had open. It will load when its host answers; pick another from the sidebar to move on.`
           }

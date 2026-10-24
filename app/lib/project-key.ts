@@ -39,8 +39,17 @@ export function projectKey(ref: ProjectRef | null | undefined): string | null {
  */
 export interface UnresolvedSelection {
   ref: ProjectRef;
-  /** The snapshot speaks for this ref's machine, so the project is really gone. */
-  hostAnswered: boolean;
+  /**
+   * This ref's machine appears in the snapshot.
+   *
+   * Named for what it checks, because `projectsAtom` deliberately RETAINS the
+   * previous snapshot's projects for a machine that did not answer, so being
+   * listed is not the same claim as having answered. It is still the right
+   * signal for "gone rather than quiet": retention keeps a machine's projects
+   * WITH it, so a listed machine that does not have this path did not have it
+   * last time either.
+   */
+  hostIsListed: boolean;
 }
 
 export function unresolvedProjectSelection(input: {
@@ -54,9 +63,9 @@ export function unresolvedProjectSelection(input: {
   const ref = parseProjectKey(input.effectiveRefKey);
   if (!ref) return null;
   // No machine named is local mode, where the list speaks for everything.
-  const hostAnswered =
+  const hostIsListed =
     !ref.machineId || input.projects.some((project) => project.machineId === ref.machineId);
-  return { ref, hostAnswered };
+  return { ref, hostIsListed };
 }
 
 // What a project is called when the daemon has not named it -- the last

@@ -110,7 +110,7 @@ export function useRouteProject(): RouteProject {
     projects,
   });
   const unresolvedSelectionKey = unresolvedSelection
-    ? `${projectKey(unresolvedSelection.ref)}:${unresolvedSelection.hostAnswered}`
+    ? `${projectKey(unresolvedSelection.ref)}:${unresolvedSelection.hostIsListed}`
     : null;
   return useMemo(
     () => ({

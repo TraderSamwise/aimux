@@ -170,6 +170,9 @@ export function storedValueAtom<Value extends NonNullable<unknown> | null>(
  *
  * So the write waits for the read it is modifying. One issued earlier is
  * dropped, which costs that one change; persisting it costs everything else.
+ * A dropped write warns, because a caller that has already reported success
+ * is worse than the lost change -- a caller whose write MUST land should wait
+ * for the matching hydration flag before offering the action at all.
  * A read that FAILED is refused for the same reason: the stored value is
  * unknown, and a change merged onto a guess destroys what could not be read.
  *
@@ -186,7 +189,13 @@ export function readBeforeWriteAtom<Value extends NonNullable<unknown> | null>(
   return atom(
     (get) => get(value),
     (get, set, update: Value | ((current: Value) => Value)) => {
-      if (get(readState) !== "read") return;
+      if (get(readState) !== "read") {
+        // Dropped, not deferred. Said out loud because a caller may have
+        // already told the user it worked -- the invite screen did -- and a
+        // silent drop is the kind of thing this whole change exists to stop.
+        console.warn("[aimux] dropped a persisted write issued before its value was read");
+        return;
+      }
       const next =
         typeof update === "function" ? (update as (current: Value) => Value)(get(value)) : update;
       set(stored, next);

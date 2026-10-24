@@ -58,10 +58,13 @@ export function componentBody(path: string, declaration: string): string {
 export function stripComments(source: string): string {
   return (
     source
+      // Block comments FIRST. The other order ate the code in
+      // `/* a // b */ code();` -- the line rule removed `// b */ code();` and
+      // left an unterminated `/*` that swallowed to the next `*/`.
+      .replace(/\/\*[\s\S]*?\*\//g, "")
       // Trailing comments as well as whole lines: `const open = null; //
       // store.set(...)` satisfied a gate that only removed full-line ones.
       // The negative lookbehind spares `https://`.
       .replace(/(?<!:)\/\/.*$/gm, "")
-      .replace(/\/\*[\s\S]*?\*\//g, "")
   );
 }

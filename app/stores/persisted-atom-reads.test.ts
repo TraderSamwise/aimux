@@ -70,10 +70,26 @@ function persistedAtomNames(text: string): string[] {
 }
 
 describe("every persisted atom", () => {
-  const files = sourceFiles().filter((file) => file.text.includes("atomWithStorage"));
+  const everyFile = sourceFiles();
+  const files = everyFile.filter((file) => file.text.includes("atomWithStorage"));
+  // Checked across the whole tree, not per file: `selectedProjectKeyAtom` is
+  // exported, so another file could read or write it and a per-file scan would
+  // never look.
+  const allPersistedAtomNames = files.flatMap((file) => persistedAtomNames(file.text));
 
-  it("is declared somewhere this audit can see", () => {
-    // The audit is worthless if the pattern stops matching. Five today.
+  it("is declared in a shape this audit can see", () => {
+    // Not a floor: every `atomWithStorage` in the tree must match the
+    // declaration pattern, or one spelled through a factory or an
+    // `atomFamily` would escape the whole audit while the count still looked
+    // healthy.
+    for (const file of files) {
+      const uses = file.text.match(/atomWithStorage[<(]/g)?.length ?? 0;
+      const named = persistedAtomNames(file.text).length;
+      expect(
+        named,
+        `${file.name} creates ${uses} persisted atom(s) but this audit can only name ${named}; declare it as \`const <name> = atomWithStorage\``,
+      ).toBe(uses);
+    }
     const declared = files.flatMap((file) => persistedAtomNames(file.text));
     expect(declared.length, `found ${JSON.stringify(declared)}`).toBeGreaterThanOrEqual(5);
   });
@@ -93,8 +109,8 @@ describe("every persisted atom", () => {
 
   it("is never written directly, so a read-modify-write cannot land early", () => {
     const offences: string[] = [];
-    for (const file of files) {
-      for (const name of persistedAtomNames(file.text)) {
+    for (const file of everyFile) {
+      for (const name of allPersistedAtomNames) {
         if (REPLACED_WHOLESALE.has(name)) continue;
         for (const [index, line] of file.text.split("\n").entries()) {
           if (!new RegExp(`\\bset\\(\\s*${name}\\b`).test(line)) continue;
@@ -110,8 +126,8 @@ describe("every persisted atom", () => {
 
   it("is never read directly, only through the storage helpers", () => {
     const offences: string[] = [];
-    for (const file of files) {
-      for (const name of persistedAtomNames(file.text)) {
+    for (const file of everyFile) {
+      for (const name of allPersistedAtomNames) {
         for (const [index, line] of file.text.split("\n").entries()) {
           if (!line.includes(name)) continue;
           // A write is fine: `set(<name>, value)` is how a value is stored.

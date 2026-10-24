@@ -55,7 +55,7 @@ describe("a selected project that is not in the current snapshot", () => {
       "unresolvedSelection.ref.path",
     );
     expect(screen, "and does not promise a deleted checkout will arrive").toContain(
-      'unresolvedSelection.hostAnswered\n              ? "Project not found"',
+      'unresolvedSelection.hostIsListed\n              ? "Project not found"',
     );
   });
 });
@@ -113,6 +113,15 @@ describe("the hook that derives it", () => {
     );
   });
 
+  // The call shape alone was not enough: replacing the snapshot with `[]` kept
+  // every test green, and `hostIsListed` then never fires -- so a checkout
+  // that is genuinely gone says "Waiting for strix" forever, the inverse of
+  // the bug this fixed.
+  it("reads those inputs from the store, not from constants", () => {
+    expect(hook).toContain("useAtomValue(projectsAtom)");
+    expect(hook).toContain("useAtomValue(lastSyncAtAtom)");
+  });
+
   it("returns it to the surfaces", () => {
     expect(hook).toContain("unresolvedSelection,");
   });
@@ -131,7 +140,7 @@ describe("unresolvedProjectSelection", () => {
   it("is the selected ref, not yet answered, when its host is absent", () => {
     expect(unresolvedProjectSelection({ ...base, projects: [{ machineId: "mbp" }] })).toEqual({
       ref: { machineId: "strix", path: "/repo/aimux" },
-      hostAnswered: false,
+      hostIsListed: false,
     });
   });
 
@@ -140,14 +149,14 @@ describe("unresolvedProjectSelection", () => {
   it("reports the host as answered when the snapshot speaks for it", () => {
     expect(
       unresolvedProjectSelection({ ...base, projects: [{ machineId: "strix" }] }),
-    ).toMatchObject({ hostAnswered: true });
+    ).toMatchObject({ hostIsListed: true });
   });
 
   // Local mode names no machine, and the list speaks for everything.
   it("treats a machineless selection as answered", () => {
     expect(
       unresolvedProjectSelection({ ...base, effectiveRefKey: projectKey({ path: "/repo/gone" }) }),
-    ).toMatchObject({ hostAnswered: true });
+    ).toMatchObject({ hostIsListed: true });
   });
 
   // The promise made before the question was asked: an empty list on a cold

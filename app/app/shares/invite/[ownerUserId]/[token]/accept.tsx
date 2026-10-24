@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useSetAtom } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import { acceptShareInvite } from "@/lib/api";
@@ -12,6 +12,7 @@ import {
   acceptedSharedSessionsAtom,
   activeSharedSessionAtom,
   agentOutputViewModeAtom,
+  settingsHydratedAtom,
   type ActiveSharedSession,
 } from "@/stores/settings";
 
@@ -26,15 +27,31 @@ export default function AcceptShareInviteScreen() {
   const setActiveShare = useSetAtom(activeSharedSessionAtom);
   const setAcceptedShares = useSetAtom(acceptedSharedSessionsAtom);
   const setAgentOutputViewMode = useSetAtom(agentOutputViewModeAtom);
+  const settingsHydrated = useAtomValue(settingsHydratedAtom);
   const router = useRouter();
   const [status, setStatus] = useState<"idle" | "accepting" | "accepted" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
   const invitePath =
     ownerUserId && inviteToken ? `/shares/invite/${ownerUserId}/${inviteToken}/accept` : null;
 
+  // `settingsHydrated` belongs here, with sign-in and the route params,
+  // because accepting WRITES three settings and the invite is consumed
+  // server-side when it does. Those writes are held until the stored settings
+  // have been read, so accepting first would consume the invite, report
+  // "Invite accepted.", navigate to the shared chat -- and have stored no
+  // accepted share, which is what the chat route resolves from. Nothing on
+  // that route refreshes shares, so it does not heal.
   const canAccept = useMemo(
-    () => Boolean(isLoaded && isSignedIn && ownerUserId && inviteToken && status !== "accepting"),
-    [isLoaded, isSignedIn, ownerUserId, inviteToken, status],
+    () =>
+      Boolean(
+        isLoaded &&
+        isSignedIn &&
+        settingsHydrated &&
+        ownerUserId &&
+        inviteToken &&
+        status !== "accepting",
+      ),
+    [isLoaded, isSignedIn, settingsHydrated, ownerUserId, inviteToken, status],
   );
 
   const acceptInvite = useCallback(async () => {
