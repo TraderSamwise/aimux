@@ -34,7 +34,12 @@ import { appStatusClasses, appStatusColors } from "@/lib/status-tone";
 import { formatDaemonProjectReadError, formatTmuxUnavailable } from "@/lib/unavailable-state";
 import { cn } from "@/lib/utils";
 import { detailHrefForPath, projectRefFromSearchOrLocation } from "@/lib/view-location";
-import { projectsAtom, selectedProjectRefAtom, selectedSessionIdAtom } from "@/stores/projects";
+import {
+  projectsAtom,
+  selectedProjectHydratedAtom,
+  selectedProjectRefAtom,
+  selectedSessionIdAtom,
+} from "@/stores/projects";
 import { relayStatusAtom } from "@/stores/relay";
 import { exposePreviewModeAtom, type ExposePreviewMode } from "@/stores/settings";
 import { sidebarOpenAtom } from "@/stores/ui";
@@ -612,6 +617,7 @@ export default function ExposeScreen() {
   const projects = useAtomValue(projectsAtom);
   const [exposePreviewMode, setExposePreviewMode] = useAtom(exposePreviewModeAtom);
   const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
+  const selectionRead = useAtomValue(selectedProjectHydratedAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const setSelectedSession = useSetAtom(selectedSessionIdAtom);
   const setSidebarOpen = useSetAtom(sidebarOpenAtom);
@@ -644,11 +650,16 @@ export default function ExposeScreen() {
     value: routeFilter,
   });
   const filter = localFilter.routeFilter === routeFilter ? localFilter.value : routeFilter;
-  const currentProjectRef = routeProjectRef ?? selectedProjectRef ?? projectRefOf(projects[0]);
+  // Until the stored selection has been read there is no current project to
+  // fall back FROM, and guessing the first one costs an expose request and a
+  // tile flash for a project the user did not pick.
+  const currentProjectRef =
+    routeProjectRef ?? selectedProjectRef ?? (selectionRead ? projectRefOf(projects[0]) : null);
   const currentProject = findProjectForRef(projects, currentProjectRef) ?? null;
   const currentProjectPath = currentProject?.path ?? currentProjectRef?.path ?? null;
   const currentProjectMachineId = currentProject?.machineId ?? currentProjectRef?.machineId;
-  const projectForRequest = currentProject ?? (currentProjectRef ? null : (projects[0] ?? null));
+  const projectForRequest =
+    currentProject ?? (currentProjectRef || !selectionRead ? null : (projects[0] ?? null));
   const projectEndpoint = projectForRequest ? getProjectServiceEndpoint(projectForRequest) : null;
   const projectRequestId = projectForRequest?.id ?? "";
   const projectRequestName = projectForRequest?.name ?? "";

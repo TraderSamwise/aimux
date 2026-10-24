@@ -58,7 +58,11 @@ import {
   desktopStateUsageFamily,
   worktreeGroupsFamily,
 } from "@/stores/desktopState";
-import { lastAgentByProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
+import {
+  lastAgentByProjectAtom,
+  lastAgentHydratedAtom,
+  selectedSessionIdAtom,
+} from "@/stores/projects";
 import {
   lastAgentToReopen,
   markLastAgentReopened,
@@ -998,6 +1002,7 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
   const selectedSessionId = useAtomValue(selectedSessionIdAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const lastAgentByProject = useAtomValue(lastAgentByProjectAtom);
+  const lastAgentHydrated = useAtomValue(lastAgentHydratedAtom);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -1046,7 +1051,10 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
   // back into the chat they just backed out of.
   const reopenedThisLaunchRef = useRef(reopenedLastAgentThisLaunch());
   useEffect(() => {
-    if (reopenedThisLaunchRef.current || !desktopStatePresent) return;
+    // `lastAgentHydrated` for the same reason as `desktopStatePresent`: before
+    // the memory comes back from storage every agent looks unremembered, and
+    // concluding that here would spend the launch's one attempt on nothing.
+    if (reopenedThisLaunchRef.current || !desktopStatePresent || !lastAgentHydrated) return;
     const target = lastAgentToReopen({
       remembered: rememberedAgentForProject(lastAgentByProject, stateProjectKey),
       listedSessionIds: groups.flatMap((bucket) => bucket.sessions.map((session) => session.id)),
@@ -1069,6 +1077,7 @@ function WorktreeDashboardImpl({ padded = true }: { padded?: boolean }) {
     groups,
     handlePickSession,
     lastAgentByProject,
+    lastAgentHydrated,
     pathname,
     stateProjectKey,
   ]);

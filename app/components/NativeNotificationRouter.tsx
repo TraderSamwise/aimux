@@ -98,7 +98,10 @@ export function NativeNotificationRouter() {
           const token = await getTokenRef.current();
           await markNotificationsRead(endpoint, { id: notificationId }, { token });
         } catch {
-          // Device-local read state is the source of truth for this tap.
+          // The device-local mark above usually carries this, but not always:
+          // it is held until the stored marks have been read, and a tap during
+          // that window is dropped rather than persisted over them. So a tap
+          // whose server mark ALSO fails can show up unread again.
         }
       })();
       // With no machine named and two machines holding the path, the tap

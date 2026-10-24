@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { projectStateKey } from "@/lib/project-key";
+import { projectNameFromPath, projectStateKey, type UnresolvedSelection } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -193,11 +193,47 @@ function ProgressSection({ model }: { model: ProjectObservabilityModel }) {
   );
 }
 
+// The three reasons a selection can be unresolved, as three different things
+// to tell the user. They were two, and a machineless ref took the "gone" one.
+interface EmptyCardCopy {
+  title: string;
+  body: string;
+}
+
+function unresolvedSelectionCopy(selection: UnresolvedSelection): EmptyCardCopy {
+  const { ref, reason } = selection;
+  if (reason === "host-quiet") {
+    return {
+      // A machineless ref has no host to name -- it reaches here when nothing
+      // in the snapshot has the path at all.
+      title: ref.machineId ? `Waiting for ${ref.machineId}` : "Waiting for this project's host",
+      body: `${ref.path} is the project you had open. It will load when its host answers; pick another from the sidebar to move on.`,
+    };
+  }
+  if (reason === "ambiguous") {
+    return {
+      title: "More than one machine has this path",
+      body: `${ref.path} exists on several of your machines, so this needs picking by host. Choose it from the sidebar.`,
+    };
+  }
+  return {
+    title: "Project not found",
+    body: `${ref.path} is the project you had open, and its host no longer has it. Pick another from the sidebar.`,
+  };
+}
+
 export default function ProjectScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, machineId, projectRef, endpoint, projectLoading } =
-    useRouteProject();
+  const {
+    project,
+    projectPath,
+    machineId,
+    projectRef,
+    endpoint,
+    projectLoading,
+    unresolvedSelection,
+  } = useRouteProject();
   // Keyed by the pair: two machines' copies of one checkout are two
   // projects, and sharing an atom between them bleeds one host into the
   // other.
@@ -315,10 +351,16 @@ export default function ProjectScreen() {
             ? "Loading project..."
             : showRelayUnavailable
               ? relayUnavailableCopy.title.replace(/\.$/, "")
-              : "No project selected")
+              : // A selection whose host has not answered is still a
+                // selection, so it is named rather than denied.
+                ((unresolvedSelection && projectNameFromPath(unresolvedSelection.ref.path)) ??
+                "No project selected"))
         }
         subtitle={
-          project?.path ?? (projectLoading || showRelayUnavailable ? projectPath : undefined)
+          project?.path ??
+          (projectLoading || showRelayUnavailable || unresolvedSelection
+            ? (projectPath ?? unresolvedSelection?.ref.path)
+            : undefined)
         }
         actions={
           <Button
@@ -373,6 +415,19 @@ export default function ProjectScreen() {
         <EmptyCard title={relayUnavailableCopy.title} body={relayUnavailableCopy.detail} />
       ) : projectLoading ? (
         <EmptyCard title="Loading project..." body="Fetching project state from the daemon." />
+      ) : unresolvedSelection ? (
+        // Before this branch existed, the project Sam left on a machine that
+        // had not answered read as "No project selected" -- while that
+        // machine's projects were simply missing from the list, and the others
+        // sat in the sidebar beside the message.
+        //
+        // `hostIsListed` is the difference between quiet and gone: a machine
+        // that IS in this snapshot has answered and does not have the path, so
+        // telling the user to wait for it would be waiting forever.
+        <EmptyCard
+          title={unresolvedSelectionCopy(unresolvedSelection).title}
+          body={unresolvedSelectionCopy(unresolvedSelection).body}
+        />
       ) : !project ? (
         <EmptyCard title="No project selected" body="Pick a project from the sidebar." />
       ) : !endpoint ? (

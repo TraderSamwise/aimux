@@ -15,7 +15,7 @@ const base: InitialMainRouteInput = {
   isSignedIn: true,
   ownBackend: "present",
   realSharedChatCount: 1,
-  sharesHydrated: true,
+  sharesReadState: "read",
   waitExpired: false,
 };
 
@@ -69,7 +69,7 @@ describe("initialMainRoute", () => {
   // The other half of the bounce: stored shares start empty, so the count said
   // "no shares" for a frame and then said otherwise.
   it("waits rather than reading unread storage as having no shares", () => {
-    expect(initialMainRoute({ ...base, realSharedChatCount: 0, sharesHydrated: false })).toBe(
+    expect(initialMainRoute({ ...base, realSharedChatCount: 0, sharesReadState: "unread" })).toBe(
       "pending",
     );
   });
@@ -88,10 +88,31 @@ describe("initialMainRoute", () => {
       initialMainRoute({
         ...base,
         realSharedChatCount: 0,
-        sharesHydrated: false,
+        sharesReadState: "unread",
         waitExpired: true,
       }),
       "an unread share list expires to no shares, which is this user's own surface",
+    ).toBe("project");
+  });
+
+  // A read that failed answers with the DEFAULT -- no shares -- so deciding
+  // from the count beside it is deciding from a fallback. It lands on the
+  // user's own surface without waiting, which is also where an unreadable
+  // share list would have led.
+  it("does not read a failed share list as a count", () => {
+    expect(initialMainRoute({ ...base, sharesReadState: "failed" })).toBe("project");
+    expect(
+      initialMainRoute({ ...base, sharesReadState: "failed", ownBackend: "absent" }),
+      "not even when the backend is known absent, because the count is unknown",
+    ).toBe("project");
+    expect(
+      initialMainRoute({
+        ...base,
+        sharesReadState: "failed",
+        ownBackend: "unknown",
+        waitExpired: false,
+      }),
+      "and it does not spend the wait on a relay either, since the answer is already settled",
     ).toBe("project");
   });
 
@@ -102,7 +123,7 @@ describe("initialMainRoute", () => {
         ...base,
         isSignedIn: false,
         ownBackend: "unknown",
-        sharesHydrated: false,
+        sharesReadState: "unread",
       }),
     ).toBe("project");
   });
@@ -151,7 +172,7 @@ describe("ownBackendSignal", () => {
       initialMainRoute({
         isSignedIn: true,
         realSharedChatCount: 2,
-        sharesHydrated: true,
+        sharesReadState: "read",
         ownBackend: ownBackendSignal(true, "daemon_offline", 0),
         waitExpired: false,
       }),
@@ -165,7 +186,7 @@ describe("ownBackendSignal", () => {
       initialMainRoute({
         isSignedIn: true,
         realSharedChatCount: 3,
-        sharesHydrated: true,
+        sharesReadState: "read",
         ownBackend: ownBackendSignal(true, "relay_unavailable", 0),
         waitExpired: true,
       }),

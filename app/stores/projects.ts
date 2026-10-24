@@ -3,7 +3,12 @@ import { atomWithStorage } from "jotai/utils";
 import type { DaemonProject } from "@/lib/api";
 import type { DesktopSession } from "@/lib/desktop-state";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
-import { createSsrSafeJsonStorage } from "@/lib/jotai-storage";
+import {
+  createSsrSafeJsonStorage,
+  readBeforeWriteAtom,
+  storageReadStateAtom,
+  storedValueAtom,
+} from "@/lib/jotai-storage";
 import {
   PROJECT_LIST_LOADING,
   PROJECT_LIST_OK,
@@ -37,14 +42,41 @@ export const selectedProjectKeyAtom = atomWithStorage<string | null>(
   { getOnInit: true },
 );
 
+export const selectedProjectReadStateAtom = storageReadStateAtom(selectedProjectKeyAtom);
+
+// For callers that only need to stop waiting. A read that FAILED has finished,
+// so nothing waits on it forever -- but it is not a read that answered, which
+// is why anything about to write the answer back consults the state itself.
+export const selectedProjectHydratedAtom = atom(
+  (get) => get(selectedProjectReadStateAtom) !== "unread",
+);
+
+// The stored key as storage actually answered it. Reading `selectedProjectKeyAtom`
+// directly cannot work: jotai holds the pending read in the atom and never
+// replaces it, so the old `typeof stored === "string"` guard read every launch
+// as no selection and the remembered project was never restored.
+const storedProjectKeyAtom = storedValueAtom<string | null>(selectedProjectKeyAtom, null);
+
+/**
+ * Where the app sits when the stored key could not be READ.
+ *
+ * In memory only, and never written back. A read that failed may be hiding a
+ * selection that is still on disk, so persisting a guess over it would destroy
+ * exactly what could not be read -- but an app with no project selected, on
+ * every launch, is not an acceptable alternative either. Safari in private
+ * mode is enough to reach this.
+ */
+const unreadableSelectionFallbackAtom = atom<ProjectRef | null>(null);
+
 export const selectedProjectRefAtom = atom(
-  // The storage atom's value is typed to include a pending read, which is not
-  // a key; an unresolved selection is no selection yet.
   (get) => {
-    const stored = get(selectedProjectKeyAtom);
-    return typeof stored === "string" ? parseProjectKey(stored) : null;
+    const stored = get(storedProjectKeyAtom);
+    return (stored ? parseProjectKey(stored) : null) ?? get(unreadableSelectionFallbackAtom);
   },
   (_get, set, ref: ProjectRef | null) => {
+    // The stored key is the answer from here on, so the in-memory stand-in
+    // steps aside rather than shadowing it.
+    set(unreadableSelectionFallbackAtom, null);
     set(selectedProjectKeyAtom, projectKey(ref));
   },
 );
@@ -70,16 +102,45 @@ const lastAgentStorageAtom = atomWithStorage<Record<string, string>>(
   { getOnInit: true },
 );
 
+export const lastAgentReadStateAtom = storageReadStateAtom(lastAgentStorageAtom);
+
+// For callers that only need to stop waiting; a read that FAILED has finished
+// and has no memory to offer, which is a complete answer for reopening. The
+// WRITER below needs the state itself, because it merges onto what it reads.
+export const lastAgentHydratedAtom = atom((get) => get(lastAgentReadStateAtom) !== "unread");
+
+// Module scope so the empty memory keeps one identity: callers put it in
+// dependency arrays and compare it by reference. Frozen because that identity
+// is shared -- one `memory[key] = id` on it would poison the empty memory for
+// the whole process and then be persisted.
+const NO_REMEMBERED_AGENTS: Readonly<Record<string, string>> = Object.freeze({});
+
+// Through the shared helper for both halves of the same defect: the old
+// `!("then" in stored)` guard read the pending promise as an empty memory and
+// jotai never replaced it, so this read `{}` for the whole session and the
+// agent you were last in was recorded on every selection and restored on
+// none -- and a recording made in that window merged onto `{}` and persisted
+// it, forgetting every other project's agent.
+const storedLastAgentAtom = readBeforeWriteAtom<Record<string, string>>(
+  lastAgentStorageAtom,
+  NO_REMEMBERED_AGENTS as Record<string, string>,
+  "aimux-last-agent-by-project",
+);
+
 export const lastAgentByProjectAtom = atom(
-  // The storage atom's value is typed to include a pending read, which is not
-  // a memory; an unresolved one is no memory yet, as with the selected
-  // project above.
   (get) => {
-    const stored = get(lastAgentStorageAtom);
-    return stored && typeof stored === "object" && !("then" in stored) ? stored : {};
+    const stored = get(storedLastAgentAtom);
+    // The shape half of the old guard, kept. `storedValueAtom` handles the
+    // pending read, but a stored value of the wrong shape is still not a
+    // memory, and the writer below merges onto whatever this returns. An array
+    // is `typeof "object"` and would spread into numeric keys.
+    const usable = stored && typeof stored === "object" && !Array.isArray(stored);
+    return usable ? stored : NO_REMEMBERED_AGENTS;
   },
   (_get, set, memory: Record<string, string>) => {
-    set(lastAgentStorageAtom, memory);
+    // `storedLastAgentAtom` holds this until the stored map has been read; see
+    // `readBeforeWriteAtom` for why a recording must never land before it.
+    set(storedLastAgentAtom, memory);
   },
 );
 
@@ -99,6 +160,9 @@ export const selectedSessionIdAtom = atom(
   (get) => get(selectedSessionIdValueAtom),
   (get, set, sessionId: string | null) => {
     set(selectedSessionIdValueAtom, sessionId);
+    // The recording may be refused -- `lastAgentByProjectAtom`'s setter turns
+    // it down until the stored map has been read -- and the selection itself
+    // stands either way, which is why it is set first.
     const memory = rememberAgentForProject(
       get(lastAgentByProjectAtom),
       projectKey(get(selectedProjectRefAtom)),
@@ -196,7 +260,14 @@ export const reconcileProjectsAtom = atom(
     // here, so the next reload no longer depends on the fallback.
     const resolved = findProjectForRef(sorted, nextRef) ?? null;
 
-    if (!nextRef && sorted.length > 0) {
+    // A selection still in flight is not a user without a selection: the
+    // stored key comes back from AsyncStorage a frame or two after the first
+    // project poll, and adopting `sorted[0]` in that window overwrote the
+    // project Sam left -- worse than any bounce, because nothing afterwards
+    // corrects it. So nothing is adopted until the read has finished, one way
+    // or the other. Where the result GOES is decided once, below.
+    const readState = get(selectedProjectReadStateAtom);
+    if (!nextRef && readState !== "unread" && sorted.length > 0) {
       nextRef = projectRefOf(sorted[0]);
     } else if (nextRef && !resolved && selectionWasContradicted(nextRef, sorted, options)) {
       nextRef = projectRefOf(sorted[0]);
@@ -209,7 +280,14 @@ export const reconcileProjectsAtom = atom(
 
     if (sorted !== previousProjects) set(projectsAtom, sorted);
     if (!sameProjectRef(nextRef, get(selectedProjectRefAtom))) {
-      set(selectedProjectRefAtom, nextRef);
+      // One place decides whether this is persisted, because every branch
+      // above can reach it and only one of them used to be checked. A stored
+      // key that could not be READ must never be written over -- it may be
+      // hiding a selection that is still on disk, and a guess destroys
+      // exactly what could not be read -- but the app still has to open on
+      // something, so the answer is kept in memory instead.
+      if (readState === "read") set(selectedProjectRefAtom, nextRef);
+      else set(unreadableSelectionFallbackAtom, nextRef);
     }
     if (nextSession !== get(selectedSessionIdAtom)) set(selectedSessionIdAtom, nextSession);
     set(lastSyncAtAtom, Date.now());

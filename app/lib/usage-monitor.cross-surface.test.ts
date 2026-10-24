@@ -65,7 +65,13 @@ vi.mock("@/lib/use-route-project", () => ({
 }));
 vi.mock("@/stores/projects", async () => {
   const { atom } = await vi.importActual<typeof import("jotai")>("jotai");
-  return { selectedSessionIdAtom: atom(null), lastAgentByProjectAtom: atom({}) };
+  return {
+    selectedSessionIdAtom: atom(null),
+    lastAgentByProjectAtom: atom({}),
+    // Read: this harness renders the dashboard, which waits for the stored
+    // memory before spending the launch's one reopen.
+    lastAgentHydratedAtom: atom(true),
+  };
 });
 
 import { UsageMonitor } from "@/components/UsageMonitor";

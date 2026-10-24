@@ -232,6 +232,7 @@ import {
   acceptedSharedSessionsAtom,
   activeSharedSessionAtom,
   agentOutputViewModeAtom,
+  settingsReadStateAtom,
   type AgentOutputViewMode,
   type ActiveSharedSession,
 } from "@/stores/settings";
@@ -529,6 +530,7 @@ export default function ChatScreen() {
   const activeShare = useRouteShare();
   const setLegacyActiveShare = useSetAtom(activeSharedSessionAtom);
   const setAcceptedShares = useSetAtom(acceptedSharedSessionsAtom);
+  const settingsReadState = useAtomValue(settingsReadStateAtom);
   const jotaiStore = useStore();
   const { getToken } = useAuth();
   const { user } = useUser();
@@ -645,6 +647,12 @@ export default function ChatScreen() {
   const canManageShare = Boolean(
     shareSummary?.ownerUserId && user?.id === shareSummary.ownerUserId,
   );
+  // The settings read is deliberately NOT part of this. `shareSummaryCheckedKey`
+  // is the owner's SEND gate through `ownerShareStatusPending`, so a read that
+  // never answers must not keep this effect from running: gating it here left
+  // the owner unable to send a message in any chat, permanently and silently.
+  // The read is consulted at the one latch that follows a settings write
+  // instead.
   const shouldLoadShareSummary = Boolean(
     token &&
     sessionId &&
@@ -1917,6 +1925,15 @@ export default function ChatScreen() {
             });
             setLegacyActiveShare(acceptedShare);
           }
+          // Latched unconditionally, because this key is the owner's SEND gate
+          // through `ownerShareStatusPending` -- and that keys on
+          // `!isSharedSessionView`, which is false on a canonical shared route
+          // while the settings are unread, so withholding the latch there
+          // left an owner unable to send on their own share link.
+          //
+          // The retry does not need the latch withheld: `settingsReadState` is
+          // a dependency of this effect, so a read still in flight brings it
+          // back round, and the two writes above land on that pass.
           setShareSummaryCheckedKey(shareSummaryRequestKey);
         }
         return;
@@ -1953,6 +1970,7 @@ export default function ChatScreen() {
     sharePanelOpen,
     shareSummaryRequestKey,
     shouldLoadShareSummary,
+    settingsReadState,
     token,
   ]);
 

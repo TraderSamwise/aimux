@@ -25,7 +25,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "lint:staged": "eslint --fix",
+    "lint:staged": "eslint --fix --max-warnings=0",
     "check:env": "./scripts/check-release-env.js",
     "check:ota-native-deps": "./scripts/check-ota-native-deps.js",
     "format": "prettier --write .",

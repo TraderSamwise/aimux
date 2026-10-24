@@ -101,15 +101,42 @@ describe("whether settings have been read yet", () => {
 
   // The derivation is the whole point and a constant cannot be caught by
   // timing, so it is read from the source.
-  it("is derived from the unwrap that has no fallback", () => {
+  it("is derived from the shared storage read state", () => {
     const source = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "settings.ts"),
       "utf8",
     ).replace(/^\s*\/\/.*$/gm, "");
-    expect(source).toContain("const resolvedSettingsAtom = unwrap(asyncSettingsAtom);");
-    expect(source, "a fallback would make it true before anything was read").toContain(
-      "atom((get) => get(resolvedSettingsAtom) !== undefined)",
+    // Not `settingsAtom`: that one falls back to defaults, so anything derived
+    // from it is answered before anything has been read.
+    expect(source).toContain(
+      "const settingsReadStateAtom = storageReadStateAtom(asyncSettingsAtom);",
     );
+    expect(source, "and the flag is the one state that means nothing came back").toContain(
+      'atom((get) => get(settingsReadStateAtom) !== "unread")',
+    );
+  });
+});
+
+// Each of the nine `focusAtom`s writes the WHOLE settings object: it reads the
+// current one, changes its own field, and stores all of it back. So a write
+// that lands before the stored object does would store the defaults plus that
+// one field, and every other setting the user had chosen is gone.
+describe("a settings write that beat the read", () => {
+  it("does not replace every other setting with defaults", async () => {
+    await AsyncStorage.setItem(
+      "aimux-settings",
+      JSON.stringify({ theme: "light", chatRichTerminalColors: false }),
+    );
+    // A fresh module, so its eager read is the one in flight here.
+    vi.resetModules();
+    const fresh = await import("./settings");
+    const store = createStore();
+
+    store.set(fresh.agentOutputViewModeAtom, "terminal");
+
+    const raw = JSON.parse((await AsyncStorage.getItem("aimux-settings")) ?? "{}");
+    expect(raw.theme, "the stored theme survived").toBe("light");
+    expect(raw.chatRichTerminalColors, "and so did the stored toggle").toBe(false);
   });
 });
 

@@ -11,7 +11,7 @@ import { useAuth } from "@/lib/auth";
 import { selectedProjectRefAtom } from "@/stores/projects";
 import { relayConfiguredAtom, relayMachinesAtom, relayStatusAtom } from "@/stores/relay";
 import { buildViewHref, projectRefFromSearchOrLocation } from "@/lib/view-location";
-import { acceptedSharedSessionsAtom, settingsHydratedAtom } from "@/stores/settings";
+import { acceptedSharedSessionsAtom, settingsReadStateAtom } from "@/stores/settings";
 
 // The worktree dashboard now lives as the default "Dashboard" section of the
 // Project screen. The legacy standalone route redirects there so every landing
@@ -27,7 +27,7 @@ export default function DashboardIndex() {
   const relayStatus = useAtomValue(relayStatusAtom);
   const relayMachines = useAtomValue(relayMachinesAtom);
   const acceptedShares = useAtomValue(acceptedSharedSessionsAtom);
-  const sharesHydrated = useAtomValue(settingsHydratedAtom);
+  const sharesReadState = useAtomValue(settingsReadStateAtom);
   const waitExpired = useLandingWaitExpired();
   const projectRef =
     projectRefFromSearchOrLocation(searchParams.project, searchParams.machine) ??
@@ -38,7 +38,7 @@ export default function DashboardIndex() {
     isSignedIn,
     ownBackend: ownBackendSignal(relayConfigured, relayStatus, relayMachines.length),
     realSharedChatCount: acceptedShares.length,
-    sharesHydrated,
+    sharesReadState,
     waitExpired,
   });
 

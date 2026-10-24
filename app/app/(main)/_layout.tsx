@@ -63,10 +63,14 @@ import {
   projectListStatusAtom,
   reconcileProjectsAtom,
   rememberProjectViewPath,
+  lastAgentHydratedAtom,
   selectedProjectEndpointAtom,
+  selectedProjectHydratedAtom,
+  selectedProjectReadStateAtom,
   selectedProjectRefAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
+import { urlProjectSelectionWrite } from "@/lib/url-project-selection";
 import {
   projectListFailed,
   projectListPartial,
@@ -96,7 +100,11 @@ import {
   notificationSettingsAtom,
   type ActiveSharedSession,
 } from "@/stores/settings";
-import { addSecurityEventAtom } from "@/stores/security";
+import {
+  addSecurityEventAtom,
+  securityEventsReadStateAtom,
+  type SecurityEventRecord,
+} from "@/stores/security";
 import { PROJECT_API_EVENT_NAMES } from "../../../src/project-api-contract";
 import { serviceEndpointKey } from "@/lib/daemon-url";
 import {
@@ -129,6 +137,13 @@ export default function MainLayout() {
   const projects = useAtomValue(projectsAtom);
   const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const explicitProjectSelection = useAtomValue(explicitProjectSelectionAtom);
+  const selectedProjectHydrated = useAtomValue(selectedProjectHydratedAtom);
+  const selectedProjectReadState = useAtomValue(selectedProjectReadStateAtom);
+  const securityEventsReadState = useAtomValue(securityEventsReadStateAtom);
+  // Security events the relay reported before the stored inbox had been read.
+  // They cannot be written yet and the relay will not send them again.
+  const heldSecurityEventsRef = useRef<SecurityEventRecord[]>([]);
+  const lastAgentHydrated = useAtomValue(lastAgentHydratedAtom);
   const activeShare = useRouteShare();
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
   const refreshNonce = useAtomValue(desktopStateRefreshNonceAtom);
@@ -215,33 +230,64 @@ export default function MainLayout() {
   // selection that knows its host, or this and the writer below trade
   // corrections forever.
   usePrePaintEffect(() => {
-    if (activeShare || !urlProjectRef) return;
-    if (sameProjectRef(urlProjectRef, selectedProjectRef)) return;
-    // A machineless URL does not downgrade a selection that knows which host
-    // holds that same path; the URL writer below fills the machine back in.
-    if (
-      !urlProjectRef.machineId &&
-      selectedProjectRef?.machineId &&
-      selectedProjectRef.path === urlProjectRef.path
-    ) {
-      return;
-    }
-    const urlKey = projectKey(urlProjectRef);
-    const selectedKey = projectKey(selectedProjectRef);
-    if (
-      explicitProjectSelection &&
-      explicitProjectSelection.key === selectedKey &&
-      explicitProjectSelection.key !== urlKey &&
-      explicitProjectSelection.expiresAt > Date.now()
-    ) {
-      return;
-    }
-    if (explicitProjectSelection?.key === urlKey) {
-      store.set(explicitProjectSelectionAtom, null);
-    }
-    store.set(selectedProjectRefAtom, urlProjectRef);
+    const write = urlProjectSelectionWrite({
+      shareOwnsRoute: Boolean(activeShare),
+      urlProjectRef,
+      selectedProjectRef,
+      selectionReadState: selectedProjectReadState,
+      explicitProjectSelection,
+      now: Date.now(),
+    });
+    if (!write) return;
+    if (write.clearExplicitSelection) store.set(explicitProjectSelectionAtom, null);
+    store.set(selectedProjectRefAtom, write.ref);
     store.set(selectedSessionIdAtom, null);
-  }, [activeShare, explicitProjectSelection, selectedProjectRef, store, urlProjectRef]);
+  }, [
+    activeShare,
+    explicitProjectSelection,
+    selectedProjectReadState,
+    selectedProjectRef,
+    store,
+    urlProjectRef,
+  ]);
+
+  // Store the security events that arrived before the inbox could be read.
+  useEffect(() => {
+    if (securityEventsReadState === "unread") return;
+    const held = heldSecurityEventsRef.current;
+    if (held.length === 0) return;
+    heldSecurityEventsRef.current = [];
+    if (securityEventsReadState === "failed") {
+      // Nothing can be written, so holding them only grows for the session.
+      // Said out loud rather than discarded in silence.
+      console.warn(
+        `[aimux] discarded ${held.length} security event(s): the stored inbox could not be read`,
+      );
+      return;
+    }
+    for (const event of held) store.set(addSecurityEventAtom, event);
+  }, [securityEventsReadState, store]);
+
+  // Record the agent already open, once the memory it belongs in has been read.
+  //
+  // Recording merges onto that stored map, so a selection made before it came
+  // back is refused rather than persisting a one-entry copy of it -- and the
+  // screen that made it is keyed on the session id, so it never fires again.
+  // This is what records it instead.
+  //
+  // It covers a launch that lands on the project the selection already names.
+  // A deep link to a DIFFERENT project clears the open agent a few lines above
+  // before this runs, so there is nothing to replay; that agent is recorded by
+  // the next selection the user makes, as it always was.
+  // Both reads, because the record is KEYED by the open project: the two
+  // storage reads are independent and either can land first, so waiting on
+  // the memory alone would replay while the project key was still unknown,
+  // record nothing, and never fire again.
+  useEffect(() => {
+    if (!lastAgentHydrated || !selectedProjectHydrated) return;
+    const open = store.get(selectedSessionIdAtom);
+    if (open) store.set(selectedSessionIdAtom, open);
+  }, [lastAgentHydrated, selectedProjectHydrated, store]);
 
   useEffect(() => {
     const target = sharedChatRedirect(activeShare, pathname);
@@ -313,7 +359,15 @@ export default function MainLayout() {
       store.set(recordRelayMachinesAtom, machines),
     );
     const unsubSecurity = transport.onSecurityEvent((event) => {
-      store.set(addSecurityEventAtom, event);
+      // The inbox is read, changed and stored back whole, so this write is
+      // held until the stored list has arrived -- and the relay does not
+      // resend, so a held write here would simply lose the event while the
+      // notification below still fired. Kept and replayed instead.
+      if (store.get(securityEventsReadStateAtom) === "read") {
+        store.set(addSecurityEventAtom, event);
+      } else {
+        heldSecurityEventsRef.current.push(event);
+      }
       if (!isBrowserDocumentVisible()) {
         const notification = {
           id: event.id,

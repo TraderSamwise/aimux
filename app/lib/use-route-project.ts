@@ -14,7 +14,9 @@ import {
   projectKey,
   projectRefOf,
   resolveRouteProjectRef,
+  unresolvedProjectSelection,
   type ProjectRef,
+  type UnresolvedSelection,
 } from "@/lib/project-key";
 import { projectRefFromSearchOrLocation } from "@/lib/view-location";
 import {
@@ -35,6 +37,11 @@ export interface RouteProject {
   endpoint: ServiceEndpoint | null;
   routeProjectPath: string | null;
   projectLoading: boolean;
+  /**
+   * A project that IS selected but is not in the current snapshot, with
+   * whether its host has answered. See `unresolvedProjectSelection`.
+   */
+  unresolvedSelection: UnresolvedSelection | null;
 }
 
 export function useRouteProject(): RouteProject {
@@ -96,6 +103,16 @@ export function useRouteProject(): RouteProject {
 
   const projectRef = projectRefOf(project);
   const projectRefKey = projectKey(projectRef);
+  const unresolvedSelection = unresolvedProjectSelection({
+    project,
+    effectiveRefKey,
+    listSynced: lastSyncAt !== null,
+    projects,
+    shareOwnsRoute: Boolean(activeShare),
+  });
+  const unresolvedSelectionKey = unresolvedSelection
+    ? `${projectKey(unresolvedSelection.ref)}:${unresolvedSelection.reason}`
+    : null;
   return useMemo(
     () => ({
       project,
@@ -105,11 +122,12 @@ export function useRouteProject(): RouteProject {
       endpoint,
       routeProjectPath,
       projectLoading,
+      unresolvedSelection,
     }),
     // projectRefKey stands in for projectRef, whose identity is fresh each
-    // render; the ref itself is stable in content.
+    // render; the ref itself is stable in content. Same for the unresolved one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [endpoint, project, projectLoading, projectRefKey, routeProjectPath],
+    [endpoint, project, projectLoading, projectRefKey, routeProjectPath, unresolvedSelectionKey],
   );
 }
 

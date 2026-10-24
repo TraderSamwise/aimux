@@ -21,6 +21,73 @@ export function projectKey(ref: ProjectRef | null | undefined): string | null {
   return `${ref.machineId ?? ""}${SEPARATOR}${ref.path}`;
 }
 
+/**
+ * A project that IS selected while this snapshot has no match for it, and why.
+ *
+ * Its own function because the alternative is a surface deciding that NOTHING
+ * is selected, which is a different claim and was the bug: a selection whose
+ * machine has not answered is deliberately kept by `selectionWasContradicted`,
+ * so a snapshot without it means quiet, not gone.
+ *
+ * Three things it must not do. It must not fire before the project list has
+ * been asked at all -- an empty list on a cold launch is not an answer about
+ * anything, and "it will load when its host answers" there is a promise made
+ * before the question. It must tell quiet apart from gone, because a machine
+ * that IS listed answered and does not have the path, so waiting for it is
+ * waiting forever. And it must not call a MACHINELESS ref gone: one names a
+ * path and no host, so an unresolved one is ambiguous or not ours, which is
+ * not a loss at all.
+ */
+export type UnresolvedReason =
+  /** The ref names a machine this snapshot does not include. */
+  | "host-quiet"
+  /** The machine is listed and does not have the path. */
+  | "not-on-host"
+  /** No machine named, and more than one has the path. */
+  | "ambiguous";
+
+export interface UnresolvedSelection {
+  ref: ProjectRef;
+  reason: UnresolvedReason;
+}
+
+export function unresolvedProjectSelection(input: {
+  project: { path: string } | null | undefined;
+  effectiveRefKey: string | null;
+  listSynced: boolean;
+  projects: readonly { machineId?: string; path: string }[];
+  shareOwnsRoute: boolean;
+}): UnresolvedSelection | null {
+  // A share's project is not the viewer's to judge. The ref is the owner's
+  // project root, it carries no machine, and the viewer's own snapshot says
+  // nothing about it -- so a receiver with any local project at all was being
+  // told the owner's project was gone.
+  if (input.shareOwnsRoute) return null;
+  if (input.project) return null;
+  if (!input.listSynced) return null;
+  const ref = parseProjectKey(input.effectiveRefKey);
+  if (!ref) return null;
+  if (ref.machineId) {
+    const listed = input.projects.some((project) => project.machineId === ref.machineId);
+    return { ref, reason: listed ? "not-on-host" : "host-quiet" };
+  }
+  // No machine named. Exactly one match would have RESOLVED through
+  // `uniqueProjectRefForPath`, so an unresolved one means none have the path
+  // or several do. Several is a question for the user; NONE is not "gone"
+  // either -- without a machine there is no host to have lost it, and a
+  // `?project=` link whose host is simply offline would be told the checkout
+  // was deleted. `not-on-host` is only ever said about a machine that is
+  // listed, which is what the type's doc promises.
+  const matches = input.projects.filter((project) => project.path === ref.path).length;
+  return { ref, reason: matches > 1 ? "ambiguous" : "host-quiet" };
+}
+
+// What a project is called when the daemon has not named it -- the last
+// segment of its path, which is how every surface shows a checkout.
+export function projectNameFromPath(path: string): string {
+  return path.split("/").filter(Boolean).pop() || path;
+}
+
 export function projectRefOf(
   project: { machineId?: string; path: string } | null | undefined,
 ): ProjectRef | null {

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useSetAtom } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import { acceptShareInvite } from "@/lib/api";
@@ -12,6 +12,7 @@ import {
   acceptedSharedSessionsAtom,
   activeSharedSessionAtom,
   agentOutputViewModeAtom,
+  settingsReadStateAtom,
   type ActiveSharedSession,
 } from "@/stores/settings";
 
@@ -26,15 +27,37 @@ export default function AcceptShareInviteScreen() {
   const setActiveShare = useSetAtom(activeSharedSessionAtom);
   const setAcceptedShares = useSetAtom(acceptedSharedSessionsAtom);
   const setAgentOutputViewMode = useSetAtom(agentOutputViewModeAtom);
+  const settingsReadState = useAtomValue(settingsReadStateAtom);
   const router = useRouter();
   const [status, setStatus] = useState<"idle" | "accepting" | "accepted" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
   const invitePath =
     ownerUserId && inviteToken ? `/shares/invite/${ownerUserId}/${inviteToken}/accept` : null;
 
+  // The settings read belongs here, with sign-in and the route params, because
+  // accepting WRITES three settings and the invite is consumed server-side
+  // when it does. Those writes are held until the stored settings have been
+  // read, so accepting first would consume the invite, report "Invite
+  // accepted.", navigate to the shared chat -- and have stored no accepted
+  // share, which is what the chat route resolves from. Nothing on that route
+  // refreshes shares, so it does not heal.
+  //
+  // `=== "read"` rather than the hydrated flag, which is only "not unread":
+  // a read that FAILED reports hydrated, and the write is still refused,
+  // because a change merged onto an unknown value destroys it. Consuming the
+  // invite in that state would lose it for good, so the screen says so
+  // instead of spending it.
   const canAccept = useMemo(
-    () => Boolean(isLoaded && isSignedIn && ownerUserId && inviteToken && status !== "accepting"),
-    [isLoaded, isSignedIn, ownerUserId, inviteToken, status],
+    () =>
+      Boolean(
+        isLoaded &&
+        isSignedIn &&
+        settingsReadState === "read" &&
+        ownerUserId &&
+        inviteToken &&
+        status !== "accepting",
+      ),
+    [isLoaded, isSignedIn, settingsReadState, ownerUserId, inviteToken, status],
   );
 
   const acceptInvite = useCallback(async () => {
@@ -97,9 +120,14 @@ export default function AcceptShareInviteScreen() {
       <View className="rounded-lg border border-border bg-card p-5">
         <Text className="text-2xl font-semibold text-foreground">Shared session invite</Text>
         <Text className="text-sm text-muted-foreground mt-2">
-          {isSignedIn
-            ? "Accepting this invite will connect aimux to the owner shared session."
-            : "Sign in to accept this invite."}
+          {!isSignedIn
+            ? "Sign in to accept this invite."
+            : settingsReadState === "failed"
+              ? // Accepting consumes the invite server-side and then stores the
+                // share. With local storage unreadable that store is refused,
+                // so accepting would spend the invite and keep nothing.
+                "This device cannot read its local storage, so accepting would lose the invite. Check your browser's site-data settings, or open this link on another device."
+              : "Accepting this invite will connect aimux to the owner shared session."}
         </Text>
         {message ? <Text className="text-sm text-muted-foreground mt-4">{message}</Text> : null}
         {!isSignedIn && isLoaded ? (
