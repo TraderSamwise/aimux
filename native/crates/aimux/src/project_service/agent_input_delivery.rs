@@ -376,6 +376,10 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
             Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
         )
         .set_depth(0);
+        // Clears the agent rows too. Returning here without publishing left a
+        // count on a row whose queue was already empty -- for ever, because
+        // nothing else writes or clears it.
+        publish_queued_input_counts(context, &[]);
         return;
     }
 
@@ -388,7 +392,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
             remaining.extend(ready);
             break;
         }
-        let target = match resolve_queued_delivery_target(context, &pending) {
+        let target = match resolve_queued_delivery_target(context, &pending, now_ms) {
             QueuedDeliveryTarget::Deliverable(target) => target,
             QueuedDeliveryTarget::Waiting(reason) => {
                 log_at(
@@ -558,6 +562,8 @@ pub async fn run_pending_agent_input_deliveries_async(
             Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
         )
         .set_depth(0);
+        // Same as the sync runner: an empty queue clears the rows.
+        publish_queued_input_counts(context, &[]);
         return Ok(());
     }
 
@@ -579,7 +585,7 @@ pub async fn run_pending_agent_input_deliveries_async(
             remaining.extend(ready);
             break;
         }
-        let target = match resolve_queued_delivery_target(context, &pending) {
+        let target = match resolve_queued_delivery_target(context, &pending, now_ms) {
             QueuedDeliveryTarget::Deliverable(target) => target,
             QueuedDeliveryTarget::Waiting(reason) => {
                 // No `failures.push` either: an agent that is not running is
@@ -771,7 +777,9 @@ pub fn agent_input_delivery_backlog_snapshot(
 fn resolve_queued_delivery_target(
     context: &ProjectServiceRequestContext,
     pending: &PendingAgentInputDelivery,
+    now_ms: i64,
 ) -> QueuedDeliveryTarget {
+    let settled = now_ms >= pending.max_deliver_at_ms;
     match resolve_live_session_target(context, &pending.session_id) {
         Ok(Some(target)) => QueuedDeliveryTarget::Deliverable(target),
         // "No target" is three different answers, and only one of them is a
@@ -785,16 +793,37 @@ fn resolve_queued_delivery_target(
         // surface that could carry a chip, so the project-level record is the
         // only place left to say it.
         Ok(None) => match queued_session_disposition(context, &pending.session_id) {
+            // Reported only once the entry has outlived the hold budget it was
+            // given at enqueue.
             QueuedSessionDisposition::ComingBack => QueuedDeliveryTarget::Waiting(format!(
                 "Holding queued input for {} until it is running again; it is offline and the queued target {} is stale",
                 pending.session_id, pending.window_id
             )),
-            QueuedSessionDisposition::RunningButUnbound => QueuedDeliveryTarget::Blocked(format!(
-                "Kept queued input for {} because it is running with no tmux window binding to deliver into; the queued target {} is stale",
+            // Both of these are reported, but not instantly. A live row is
+            // briefly unbound while its window is being created, and a restart
+            // rewrites the topology, so a message sent in that moment would
+            // raise a banner for an ordinary lifecycle event -- which is the
+            // noise this whole change is about, in a new costume. The entry
+            // carries a deadline nothing read until now: before it, hold
+            // quietly; after it, say so.
+            // It has a row, so the row says it. Keying a banner to the
+            // ENTRY's age was wrong twice over: a message that waited out an
+            // offline agent is always past its deadline, so the first tick
+            // where that agent came back unbound would have raised one, and
+            // the condition the banner would describe is the one the chip
+            // already describes on a row the dashboard is showing.
+            QueuedSessionDisposition::RunningButUnbound => QueuedDeliveryTarget::Waiting(format!(
+                "Holding queued input for {} until its window exists; it is live with no tmux binding and the queued target {} is stale",
                 pending.session_id, pending.window_id
             )),
-            QueuedSessionDisposition::Gone => QueuedDeliveryTarget::Blocked(format!(
+            // No row anywhere, and the message has outlived the hold budget it
+            // was given: the project record is the only surface left.
+            QueuedSessionDisposition::Gone if settled => QueuedDeliveryTarget::Blocked(format!(
                 "Kept queued input for {} because that agent is no longer on this project; the queued target {} is stale",
+                pending.session_id, pending.window_id
+            )),
+            QueuedSessionDisposition::Gone => QueuedDeliveryTarget::Waiting(format!(
+                "Holding queued input for {} while the topology settles; the queued target {} is stale",
                 pending.session_id, pending.window_id
             )),
         },

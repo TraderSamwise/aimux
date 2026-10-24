@@ -202,6 +202,36 @@ fn working() -> Value {
     })
 }
 
+/// Queued input is first in the ladder, because the row's budget is two and a
+/// chip further down is a chip nobody sees. An offline agent already spends
+/// both slots on a restore notice and a count, which is how the surface this
+/// change exists to provide went missing on the rows that needed it.
+#[test]
+fn a_waiting_message_is_the_first_thing_the_row_says() {
+    let state = desktop_state(
+        "running",
+        &exchange(8, 3),
+        json!({
+            "derived": { "activity": "running", "attention": "normal", "unseenCount": 5 },
+            "queuedInput": { "count": 2, "oldestCreatedAtMs": 1 }
+        }),
+    );
+    let session = session_state(&state);
+    let chips = chips_handed_to_the_app(&session);
+
+    assert_eq!(
+        chips.first().map(|chip| chip.kind.as_str()),
+        Some("queued-input"),
+        "the user's own undelivered message leads: {chips:?}"
+    );
+    let (visible, _) = visible_row_chips(&chips, ROW_BUDGET);
+    assert!(
+        visible.iter().any(|chip| chip.kind == "queued-input"),
+        "and it survives the row's budget: {visible:?}"
+    );
+    assert!(dashboard_row(&state).contains("2 queued"));
+}
+
 #[test]
 fn the_dashboard_row_renders_the_chips_the_app_is_handed() {
     let state = desktop_state("running", &exchange(8, 3), working());

@@ -73,6 +73,7 @@ pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
         thread_unread_count,
         activity_new_count,
         pending_delivery_count,
+        queued_input_count: input.queued_input_count,
         waiting_on_me_count,
         waiting_on_them_count,
         blocked_count,
@@ -451,6 +452,7 @@ struct CompactHintInput<'a> {
     thread_unread_count: i64,
     activity_new_count: i64,
     pending_delivery_count: i64,
+    queued_input_count: i64,
     waiting_on_me_count: i64,
     waiting_on_them_count: i64,
     blocked_count: i64,
@@ -458,6 +460,15 @@ struct CompactHintInput<'a> {
 }
 
 fn compact_hint(input: CompactHintInput<'_>) -> Value {
+    // Ahead of everything the agent has to say: the user's own message has
+    // not gone in. The statusline and the tmux bar read this, and for a row
+    // whose two chip slots are already full it is the only place it appears.
+    if input.queued_input_count > 0 {
+        return Value::String(format!(
+            "{} queued",
+            capped_count_label(input.queued_input_count)
+        ));
+    }
     let hint = match input.user.get("attention").and_then(Value::as_str) {
         Some("error") => Some("error".to_owned()),
         Some("blocked") => Some("blocked".to_owned()),

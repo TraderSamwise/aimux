@@ -98,6 +98,17 @@ pub fn agent_row_chips(input: &RowChipsInput) -> Vec<RowChip> {
         }
     };
     let mut chips = Vec::new();
+    // First, and ahead of the restore notice: this is the user's OWN message,
+    // sitting undelivered. The row budget is two chips, so a chip further down
+    // the ladder is a chip nobody sees -- and for an offline agent the restore
+    // notice and an unread count fill both slots.
+    if input.queued_input_count > 0 {
+        chips.push(RowChip::new(
+            "queued-input",
+            format!("{} queued", capped_count_label(input.queued_input_count)),
+            tone(RowChipTone::Attention),
+        ));
+    }
     if let Some(label) = input
         .restore_notice
         .as_deref()
@@ -155,13 +166,6 @@ pub fn agent_row_chips(input: &RowChipsInput) -> Vec<RowChip> {
             ),
             tone(RowChipTone::Info),
         ));
-    }
-    if input.queued_input_count > 0 {
-        chips.push(RowChip {
-            kind: "queued-input".into(),
-            label: format!("{} queued", capped_count_label(input.queued_input_count)),
-            tone: RowChipTone::Attention,
-        });
     }
     if input.pending_delivery_count > 0 {
         chips.push(RowChip::new(

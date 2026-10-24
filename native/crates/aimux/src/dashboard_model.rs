@@ -289,6 +289,10 @@ fn dashboard_session_survives_hidden_offline(
 ) -> bool {
     is_project_control_session(session)
         || !is_dashboard_session_offline(session)
+        // A message of Sam's is sitting undelivered on this row, and the row
+        // is the only surface that says so. Hiding offline agents would take
+        // the last one away.
+        || session.queued_input_count > 0
         || kept.keeps_session(session)
 }
 

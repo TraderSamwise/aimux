@@ -3530,13 +3530,48 @@ fn queued_agent_input_still_reports_a_session_with_no_row() {
     cleanup(project);
 }
 
-/// A RUNNING agent with no window binding cannot receive anything, and the
-/// dashboard shows it as running, so nobody would know. That is a failure, not
-/// a wait -- the topology attaches a tmux target only when the session, window
-/// id and index are all there, and an unbound live row is a shape the runtime
-/// has a repair pass for.
+/// A window that has not been created yet is not a failure. A live row is
+/// briefly unbound while it is launching, and a restart rewrites the topology
+/// -- a message sent in that moment must not raise a banner on the project.
 #[test]
-fn queued_agent_input_reports_a_running_session_with_no_window() {
+fn queued_agent_input_is_quiet_while_a_window_is_still_settling() {
+    let project = temp_project("queued-unbound-still-settling");
+    let state_dir = project.join("state");
+    write_state_with_unbound_running_session(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    enqueue_agent_input_delivery(
+        &context,
+        "codex-1",
+        "@possibly-reused",
+        "do not inject",
+        "active-client-recent-input",
+        now_ms,
+    )
+    .expect("enqueue");
+    let mut runtime = FakeActivityRuntime::default();
+
+    // Inside the hold budget the entry was given at enqueue.
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, now_ms + 1);
+
+    assert_eq!(queued_delivery_count(&state_dir), 1);
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert!(
+        !failures
+            .iter()
+            .any(|failure| failure["title"] == "Agent input delivery blocked"),
+        "a window that is still being created is not a project failure: {failures:#?}"
+    );
+    cleanup(project);
+}
+
+/// A RUNNING agent with no window binding has a dashboard row, and the row
+/// carries the queued count -- so this is a wait, not a banner. Keying one to
+/// the entry's age was wrong twice: a message that waited out an offline agent
+/// is always past its deadline, so the first tick after that agent came back
+/// unbound would have raised a project failure for an ordinary restart.
+#[test]
+fn queued_agent_input_waits_for_a_running_session_with_no_window() {
     let project = temp_project("queued-running-unbound-session");
     let state_dir = project.join("state");
     write_state_with_unbound_running_session(&state_dir);
@@ -3553,6 +3588,7 @@ fn queued_agent_input_reports_a_running_session_with_no_window() {
     .expect("enqueue");
     let mut runtime = FakeActivityRuntime::default();
 
+    // Long past the hold budget: still no banner, because the row says it.
     run_pending_agent_input_deliveries_with_runtime(
         &context,
         &mut runtime,
@@ -3562,13 +3598,10 @@ fn queued_agent_input_reports_a_running_session_with_no_window() {
     assert_eq!(queued_delivery_count(&state_dir), 1);
     let failures = list_dashboard_operation_failures(&state_dir);
     assert!(
-        failures
+        !failures
             .iter()
-            .any(|failure| failure["title"] == "Agent input delivery blocked"
-                && failure["message"]
-                    .as_str()
-                    .is_some_and(|message| message.contains("no tmux window binding"))),
-        "a running agent with nowhere to deliver has to be reported: {failures:#?}"
+            .any(|failure| failure["title"] == "Agent input delivery blocked"),
+        "an agent with a row does not need a project banner: {failures:#?}"
     );
     cleanup(project);
 }
