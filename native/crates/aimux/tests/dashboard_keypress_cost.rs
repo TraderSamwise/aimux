@@ -731,6 +731,30 @@ fn a_services_ordering_is_not_reused_for_a_snapshot_that_has_changed() {
         .collect();
     remove_snapshot_tree("stale-services");
     assert_eq!(ordered.len(), 2, "both services are grouped again");
+
+    // `created_at` orders only the rows with NO window index --
+    // `agent_canonical_sort_key` returns on the index when there is one, and
+    // never reads the date. So this is the shape that gates it.
+    for svc in &mut base.services {
+        svc.tmux_window_index = None;
+        svc.created_at = Some("2026-01-05T00:00:00.000Z".into());
+    }
+    base.forget_derived();
+    let tied: Vec<String> = dashboard_navigation_groups(&base)
+        .iter()
+        .flat_map(|group| group.services.iter().map(|svc| svc.id.clone()))
+        .collect();
+    for (position, svc) in base.services.iter_mut().enumerate() {
+        svc.created_at = Some(format!("2026-01-0{}T00:00:00.000Z", 9 - position));
+    }
+    let retied: Vec<String> = dashboard_navigation_groups(&base)
+        .iter()
+        .flat_map(|group| group.services.iter().map(|svc| svc.id.clone()))
+        .collect();
+    assert_ne!(
+        tied, retied,
+        "with no window index, changing createdAt must reorder the services"
+    );
     assert_ne!(
         ordered, reordered,
         "reordering services by window index must reorder the grouping; an \
@@ -811,4 +835,90 @@ fn an_ordering_is_not_reused_when_a_row_changed_worktree() {
     remove_snapshot_tree("moved-worktree");
     assert!(!still_there, "it must leave the worktree it was moved off");
     assert!(arrived, "and appear on the one it was moved to");
+}
+
+/// The classifier fields are part of the order too.
+///
+/// The comparator keys on CLASS before position, so a role changed in place
+/// reorders the rows -- and deleting `role`, `overseer`, `scribe`,
+/// `project_control`, `team` and `lane` from the fingerprint left the whole
+/// suite green until this.
+#[test]
+fn an_ordering_is_not_reused_when_a_class_changed() {
+    let _counters = counters();
+    let mut base = snapshot("class-change", 1, 4);
+    for group in &mut base.worktree_groups {
+        group.sessions.clear();
+    }
+    // One window apiece, so class is the only thing left to order by.
+    for session in &mut base.sessions {
+        session.tmux_window_index = Some(1);
+        session.role = None;
+    }
+    base.forget_derived();
+    let before: Vec<String> = dashboard_navigation_groups(&base)
+        .iter()
+        .flat_map(|group| group.sessions.iter().map(|session| session.id.clone()))
+        .collect();
+    assert!(before.len() > 1, "the fixture has to have rows to reorder");
+
+    // In place, same count, same ids and paths.
+    if let Some(last) = base.sessions.last_mut() {
+        last.role = Some("overseer".into());
+        last.overseer = Some(true);
+    }
+
+    let after: Vec<String> = dashboard_navigation_groups(&base)
+        .iter()
+        .flat_map(|group| group.sessions.iter().map(|session| session.id.clone()))
+        .collect();
+    remove_snapshot_tree("class-change");
+    assert_ne!(
+        before, after,
+        "promoting an agent to overseer must reorder the grouping; an \
+         identical order means the classifier fields are not in the \
+         fingerprint"
+    );
+}
+
+/// Which path counts as the main checkout decides every bucket, so it is in
+/// the fingerprint -- and nothing gated that until this.
+#[test]
+fn an_ordering_is_not_reused_when_the_main_checkout_moved() {
+    let _counters = counters();
+    let mut base = snapshot("main-moved", 2, 4);
+    for group in &mut base.worktree_groups {
+        group.sessions.clear();
+    }
+    let elsewhere = base
+        .sessions
+        .iter()
+        .find_map(|session| session.worktree_path.clone())
+        .expect("a session names a worktree");
+    base.forget_derived();
+
+    // The GROUP comes from the topology either way; what the verdict decides
+    // is which rows sit in it rather than in the main group.
+    let rows_on_it = |groups: &[aimux::dashboard_navigation::DashboardNavigationGroup<'_>]| {
+        groups
+            .iter()
+            .filter(|group| group.path == Some(elsewhere.as_str()))
+            .flat_map(|group| group.sessions.iter().map(|session| session.id.clone()))
+            .count()
+    };
+    let before = rows_on_it(&dashboard_navigation_groups(&base));
+    assert!(before > 0, "that worktree starts with rows of its own");
+
+    // In place: the same rows, now sitting on what is suddenly the main
+    // checkout. Their ids and paths are untouched.
+    base.main_checkout_path = Some(elsewhere.clone());
+
+    let after = rows_on_it(&dashboard_navigation_groups(&base));
+    remove_snapshot_tree("main-moved");
+    assert_eq!(
+        after, 0,
+        "once that path IS the main checkout its agents belong to the main \
+         group; {after} rows still on it means the main checkout path is not \
+         in the fingerprint"
+    );
 }
