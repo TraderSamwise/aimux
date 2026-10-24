@@ -66,6 +66,7 @@ import {
   lastAgentHydratedAtom,
   selectedProjectEndpointAtom,
   selectedProjectHydratedAtom,
+  selectedProjectReadStateAtom,
   selectedProjectRefAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
@@ -133,6 +134,7 @@ export default function MainLayout() {
   const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const explicitProjectSelection = useAtomValue(explicitProjectSelectionAtom);
   const selectedProjectHydrated = useAtomValue(selectedProjectHydratedAtom);
+  const selectedProjectReadState = useAtomValue(selectedProjectReadStateAtom);
   const lastAgentHydrated = useAtomValue(lastAgentHydratedAtom);
   const activeShare = useRouteShare();
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
@@ -224,7 +226,7 @@ export default function MainLayout() {
       shareOwnsRoute: Boolean(activeShare),
       urlProjectRef,
       selectedProjectRef,
-      selectionRead: selectedProjectHydrated,
+      selectionReadState: selectedProjectReadState,
       explicitProjectSelection,
       now: Date.now(),
     });
@@ -235,7 +237,7 @@ export default function MainLayout() {
   }, [
     activeShare,
     explicitProjectSelection,
-    selectedProjectHydrated,
+    selectedProjectReadState,
     selectedProjectRef,
     store,
     urlProjectRef,
@@ -249,11 +251,15 @@ export default function MainLayout() {
   // agent before storage answers, and the screen's effect is keyed on the
   // session id, so it never fires again. Replaying it here is what makes the
   // agent you deep-linked into the one the next launch reopens.
+  // Both reads, because the record is KEYED by the open project: the two
+  // storage reads are independent and either can land first, so waiting on
+  // the memory alone would replay while the project key was still unknown,
+  // record nothing, and never fire again.
   useEffect(() => {
-    if (!lastAgentHydrated) return;
+    if (!lastAgentHydrated || !selectedProjectHydrated) return;
     const open = store.get(selectedSessionIdAtom);
     if (open) store.set(selectedSessionIdAtom, open);
-  }, [lastAgentHydrated, store]);
+  }, [lastAgentHydrated, selectedProjectHydrated, store]);
 
   useEffect(() => {
     const target = sharedChatRedirect(activeShare, pathname);

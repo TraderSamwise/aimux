@@ -1,3 +1,4 @@
+import type { StorageReadState } from "@/lib/jotai-storage";
 import {
   preferMachineBearingRef,
   projectKey,
@@ -13,16 +14,22 @@ export interface UrlProjectSelectionInput {
   /** The selection as it stands. */
   selectedProjectRef: ProjectRef | null;
   /**
-   * Whether the stored selection has come back from storage.
+   * What happened to the stored selection's read, in full.
    *
    * The reason this is an input rather than an assumption: every guard below
-   * compares the URL against the selection, and an unread selection compares
-   * as absent. A `?project=` link that names no machine would then be adopted
-   * and PERSISTED over a machine-qualified key -- the exact downgrade the
-   * guard two steps down exists to prevent, waved through because the thing
-   * it protects had not loaded yet.
+   * compares the URL against the selection, and a selection that has not been
+   * read compares as absent. A `?project=` link that names no machine would
+   * then be adopted and PERSISTED over a machine-qualified key -- the exact
+   * downgrade the guard two steps down exists to prevent, waved through
+   * because the thing it protects had not loaded yet.
+   *
+   * All three answers, not a boolean, because a read that FAILED is the
+   * interesting one: it will not arrive later, so waiting would strand the
+   * deep link the user just tapped, but the selection it would be compared
+   * against is unknown, so a machineless URL still must not be persisted over
+   * it.
    */
-  selectionRead: boolean;
+  selectionReadState: StorageReadState;
   /** A selection the user just made by hand, which outranks the URL until it expires. */
   explicitProjectSelection: { key: string; expiresAt: number } | null;
   now: number;
@@ -45,7 +52,13 @@ export function urlProjectSelectionWrite(
   input: UrlProjectSelectionInput,
 ): UrlProjectSelectionWrite | null {
   if (input.shareOwnsRoute || !input.urlProjectRef) return null;
-  if (!input.selectionRead) return null;
+  if (input.selectionReadState === "unread") return null;
+  // A read that failed never answers, so the URL is honoured rather than left
+  // waiting -- but only when it names a machine and so cannot downgrade the
+  // key still on disk. A machineless one is refused: the screen renders the
+  // URL's project either way, through `resolveRouteProjectRef`, so nothing is
+  // stranded by declining to PERSIST it.
+  if (input.selectionReadState === "failed" && !input.urlProjectRef.machineId) return null;
   if (sameProjectRef(input.urlProjectRef, input.selectedProjectRef)) return null;
 
   // A machineless URL does not downgrade a selection that knows which host

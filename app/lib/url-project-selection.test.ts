@@ -11,7 +11,7 @@ const base: UrlProjectSelectionInput = {
   shareOwnsRoute: false,
   urlProjectRef: { machineId: "mbp", path: "/repo/aimux" },
   selectedProjectRef: { machineId: "mbp", path: "/repo/other" },
-  selectionRead: true,
+  selectionReadState: "read",
   explicitProjectSelection: null,
   now: NOW,
 };
@@ -49,7 +49,29 @@ describe("what the URL does to the project selection", () => {
     expect(
       urlProjectSelectionWrite({
         ...base,
-        selectionRead: false,
+        selectionReadState: "unread",
+        selectedProjectRef: null,
+        urlProjectRef: { path: "/repo/aimux" },
+      }),
+    ).toBeNull();
+  });
+
+  // A read that FAILED never arrives, so waiting would strand the deep link
+  // the user just tapped -- but the selection it would be compared against is
+  // unknown, so a machineless URL must not be written over whatever is still
+  // on disk. The screen renders the URL's project either way.
+  it("honours a machine-bearing URL after a failed read", () => {
+    expect(urlProjectSelectionWrite({ ...base, selectionReadState: "failed" })).toEqual({
+      ref: { machineId: "mbp", path: "/repo/aimux" },
+      clearExplicitSelection: false,
+    });
+  });
+
+  it("refuses to persist a machineless URL after a failed read", () => {
+    expect(
+      urlProjectSelectionWrite({
+        ...base,
+        selectionReadState: "failed",
         selectedProjectRef: null,
         urlProjectRef: { path: "/repo/aimux" },
       }),
@@ -63,7 +85,7 @@ describe("what the URL does to the project selection", () => {
     expect(
       urlProjectSelectionWrite({
         ...base,
-        selectionRead: false,
+        selectionReadState: "unread",
         selectedProjectRef: { machineId: "strix", path: "/repo/other" },
       }),
     ).toBeNull();
@@ -152,14 +174,14 @@ describe("the layout that applies it", () => {
     // layout and `useRouteProject` use to READ the current project. A writer
     // with its own copy of the rule would agree today and drift silently.
     expect(rule).toContain("preferMachineBearingRef(");
-    expect(rule, "no second spelling of it").not.toMatch(/!input\.urlProjectRef\.machineId/);
+    expect(rule, "no second spelling of it").not.toMatch(/input\.selectedProjectRef\?\.machineId/);
   });
 
   it("passes the real read state, not a constant", () => {
-    expect(source).toContain("selectionRead: selectedProjectHydrated,");
-    expect(source, "from the store").toContain("useAtomValue(selectedProjectHydratedAtom)");
+    expect(source).toContain("selectionReadState: selectedProjectReadState,");
+    expect(source, "from the store").toContain("useAtomValue(selectedProjectReadStateAtom)");
     expect(source, "and the effect re-runs when it lands").toMatch(
-      /\}, \[[\s\S]{0,200}selectedProjectHydrated,[\s\S]{0,120}\]\);/,
+      /\}, \[[\s\S]{0,200}selectedProjectReadState,[\s\S]{0,120}\]\);/,
     );
   });
 
@@ -169,7 +191,7 @@ describe("the layout that applies it", () => {
   it("replays the open agent once its memory has been read", () => {
     expect(source).toContain("useAtomValue(lastAgentHydratedAtom)");
     expect(source).toMatch(
-      /if \(!lastAgentHydrated\) return;[\s\S]{0,200}store\.set\(selectedSessionIdAtom, open\)/,
+      /if \(!lastAgentHydrated \|\| !selectedProjectHydrated\) return;[\s\S]{0,200}store\.set\(selectedSessionIdAtom, open\)/,
     );
   });
 
