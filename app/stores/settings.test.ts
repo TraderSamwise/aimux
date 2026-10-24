@@ -117,6 +117,29 @@ describe("whether settings have been read yet", () => {
   });
 });
 
+// Each of the nine `focusAtom`s writes the WHOLE settings object: it reads the
+// current one, changes its own field, and stores all of it back. So a write
+// that lands before the stored object does would store the defaults plus that
+// one field, and every other setting the user had chosen is gone.
+describe("a settings write that beat the read", () => {
+  it("does not replace every other setting with defaults", async () => {
+    await AsyncStorage.setItem(
+      "aimux-settings",
+      JSON.stringify({ theme: "light", chatRichTerminalColors: false }),
+    );
+    // A fresh module, so its eager read is the one in flight here.
+    vi.resetModules();
+    const fresh = await import("./settings");
+    const store = createStore();
+
+    store.set(fresh.agentOutputViewModeAtom, "terminal");
+
+    const raw = JSON.parse((await AsyncStorage.getItem("aimux-settings")) ?? "{}");
+    expect(raw.theme, "the stored theme survived").toBe("light");
+    expect(raw.chatRichTerminalColors, "and so did the stored toggle").toBe(false);
+  });
+});
+
 describe("settings store", () => {
   it("keeps durable UI settings in one persisted settings object", () => {
     expect(settingsModule.defaultSettings).toEqual({

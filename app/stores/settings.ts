@@ -1,7 +1,11 @@
 import { atom } from "jotai";
 import { atomWithStorage, unwrap } from "jotai/utils";
 import { focusAtom } from "jotai-optics";
-import { createSsrSafeMergingJsonStorage, storageReadStateAtom } from "@/lib/jotai-storage";
+import {
+  createSsrSafeMergingJsonStorage,
+  readBeforeWriteAtom,
+  storageReadStateAtom,
+} from "@/lib/jotai-storage";
 import {
   defaultNotificationSettings,
   normalizeNotificationSettings,
@@ -133,7 +137,12 @@ const asyncSettingsAtom = atomWithStorage<AppSettings>(
   { getOnInit: true },
 );
 
-export const settingsAtom = unwrap(asyncSettingsAtom, (previous) => previous ?? defaultSettings);
+// Every one of the nine `focusAtom`s below writes THROUGH this atom: each one
+// reads the whole settings object, changes its own field, and stores all of it
+// back. So a write before storage answered would store the DEFAULTS plus that
+// one field -- every other setting replaced. This is the single place that can
+// hold them, which is why they all go through it.
+export const settingsAtom = readBeforeWriteAtom(asyncSettingsAtom, defaultSettings);
 
 // `settingsAtom` falls back to defaults until storage resolves, so an EMPTY
 // `acceptedShares` means either "no shared chats" or "not read yet". Anything

@@ -22,7 +22,18 @@ const STORES = dirname(fileURLToPath(import.meta.url));
 
 // The helpers a persisted atom may be handed to. `unwrap` is jotai's own and
 // is what the helpers are built on; the rest of the app should prefer them.
-const READERS = ["storedValueAtom", "storageReadStateAtom", "unwrap"];
+const READERS = ["storedValueAtom", "storageReadStateAtom", "readBeforeWriteAtom", "unwrap"];
+
+// A persisted atom whose writes REPLACE the value outright, with something the
+// caller already holds, rather than modifying what is stored. Those lose
+// nothing by landing before the read and must not be held up -- the user
+// picking a project while storage is still answering has to work.
+//
+// An allowlist because the distinction is a judgement about the writer, not a
+// pattern in the text: everything else is a read-modify-write, where a write
+// that lands early stores the FALLBACK plus its one change and destroys the
+// rest. Adding a name here has to be a deliberate decision.
+const REPLACED_WHOLESALE = new Set(["selectedProjectKeyAtom"]);
 
 function sourceFiles(): { name: string; text: string }[] {
   return readdirSync(STORES)
@@ -57,6 +68,23 @@ describe("every persisted atom", () => {
         `${file.name} declares ${atoms} persisted atom(s) but ${asking} pass getOnInit; without it the read does not start until the atom is mounted`,
       ).toBe(atoms);
     }
+  });
+
+  it("is never written directly, so a read-modify-write cannot land early", () => {
+    const offences: string[] = [];
+    for (const file of files) {
+      for (const name of persistedAtomNames(file.text)) {
+        if (REPLACED_WHOLESALE.has(name)) continue;
+        for (const [index, line] of file.text.split("\n").entries()) {
+          if (!new RegExp(`\\bset\\(\\s*${name}\\b`).test(line)) continue;
+          offences.push(`${file.name}:${index + 1} writes ${name} directly`);
+        }
+      }
+    }
+    expect(
+      offences,
+      "route the write through `readBeforeWriteAtom`, or allowlist it as replaced wholesale",
+    ).toEqual([]);
   });
 
   it("is never read directly, only through the storage helpers", () => {

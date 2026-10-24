@@ -1,6 +1,6 @@
 import { atom } from "jotai";
-import { atomWithStorage, unwrap } from "jotai/utils";
-import { createSsrSafeJsonStorage } from "@/lib/jotai-storage";
+import { atomWithStorage } from "jotai/utils";
+import { createSsrSafeJsonStorage, readBeforeWriteAtom } from "@/lib/jotai-storage";
 
 const MAX_SECURITY_EVENTS = 100;
 
@@ -36,7 +36,17 @@ const asyncSecurityEventsAtom = atomWithStorage<SecurityInboxEvent[]>(
   { getOnInit: true },
 );
 
-export const securityEventsAtom = unwrap(asyncSecurityEventsAtom, (previous) => previous ?? []);
+// Module scope so the empty inbox keeps one identity across reads, and frozen
+// because that identity is shared.
+const NO_SECURITY_EVENTS: readonly SecurityInboxEvent[] = Object.freeze([]);
+
+// All three writers below read this list and store a whole new one back, so a
+// write before storage answered would replace the stored inbox with a list
+// built on an empty one. The hold lives here, where all three pass.
+export const securityEventsAtom = readBeforeWriteAtom(
+  asyncSecurityEventsAtom,
+  NO_SECURITY_EVENTS as SecurityInboxEvent[],
+);
 
 export const addSecurityEventAtom = atom(null, (get, set, event: SecurityEventRecord) => {
   const now = new Date().toISOString();

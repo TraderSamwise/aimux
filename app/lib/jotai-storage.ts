@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { atom, type Atom } from "jotai";
+import { atom, type Atom, type WritableAtom } from "jotai";
 import { createJSONStorage, unwrap } from "jotai/utils";
 
 // SSR-safe no-op storage for server-side rendering (web static export).
@@ -128,4 +128,41 @@ export function storedValueAtom<Value extends NonNullable<unknown> | null>(
     }
     return value === undefined ? whileUnread : (value as Value);
   });
+}
+
+/**
+ * A persisted atom's value, with writes held until it has been read.
+ *
+ * Nearly every write to a persisted atom is a read-modify-write: take the
+ * current value, change one entry, store the whole thing back. Before the read
+ * lands the caller reads a FALLBACK instead, so what it stores back is the
+ * fallback plus its one change -- three days of notification read marks, a
+ * hundred security events, every other setting, replaced by a single entry.
+ * The write succeeds, the read state flips to answered, and nothing ever
+ * corrects it. It is silent, and it is permanent.
+ *
+ * So the write waits for the read it is modifying. One issued earlier is
+ * dropped, which costs that one change; persisting it costs everything else.
+ * A read that FAILED is refused for the same reason: the stored value is
+ * unknown, and a change merged onto a guess destroys what could not be read.
+ *
+ * This is for a value that is MODIFIED. A write that replaces the value
+ * outright with something the caller already has -- the project the user just
+ * picked -- loses nothing by landing early and must not be held up.
+ */
+export function readBeforeWriteAtom<Value extends NonNullable<unknown> | null>(
+  stored: WritableAtom<Value | Promise<Value>, [Value], unknown>,
+  whileUnread: Value,
+): WritableAtom<Value, [Value | ((current: Value) => Value)], void> {
+  const readState = storageReadStateAtom(stored as Atom<unknown>);
+  const value = storedValueAtom(stored, whileUnread);
+  return atom(
+    (get) => get(value),
+    (get, set, update: Value | ((current: Value) => Value)) => {
+      if (get(readState) !== "read") return;
+      const next =
+        typeof update === "function" ? (update as (current: Value) => Value)(get(value)) : update;
+      set(stored, next);
+    },
+  );
 }

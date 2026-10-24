@@ -1,8 +1,8 @@
 import { atom } from "jotai";
 import { parseProjectKey, type ProjectStateKey } from "@/lib/project-key";
-import { atomFamily, atomWithStorage, unwrap } from "jotai/utils";
+import { atomFamily, atomWithStorage } from "jotai/utils";
 import type { NotificationRecord } from "@/lib/api";
-import { createSsrSafeJsonStorage } from "@/lib/jotai-storage";
+import { createSsrSafeJsonStorage, readBeforeWriteAtom } from "@/lib/jotai-storage";
 
 export interface ProjectNotificationFeed {
   notifications: NotificationRecord[];
@@ -52,9 +52,13 @@ const asyncNotificationLocalReadStateAtom = atomWithStorage<NotificationLocalRea
   { getOnInit: true },
 );
 
-export const notificationLocalReadStateAtom = unwrap(
+// Read, pruned and stored back whole by the writer below, so a write before
+// storage answered would replace up to three days of read marks with the one
+// notification just seen -- and a cold-start notification tap is exactly that
+// moment.
+export const notificationLocalReadStateAtom = readBeforeWriteAtom(
   asyncNotificationLocalReadStateAtom,
-  (previous) => previous ?? defaultNotificationLocalReadState,
+  defaultNotificationLocalReadState,
 );
 
 export function notificationLocalReadKey(
@@ -164,7 +168,7 @@ export const markNotificationRecordsReadLocalAtom = atom(
       readAtByKey[key] = readAt;
       changed = true;
     }
-    if (changed) set(asyncNotificationLocalReadStateAtom, { readAtByKey });
+    if (changed) set(notificationLocalReadStateAtom, { readAtByKey });
   },
 );
 

@@ -5,6 +5,7 @@ import type { DesktopSession } from "@/lib/desktop-state";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import {
   createSsrSafeJsonStorage,
+  readBeforeWriteAtom,
   storageReadStateAtom,
   storedValueAtom,
 } from "@/lib/jotai-storage";
@@ -100,13 +101,15 @@ export const lastAgentHydratedAtom = atom((get) => get(lastAgentReadStateAtom) !
 // the whole process and then be persisted.
 const NO_REMEMBERED_AGENTS: Readonly<Record<string, string>> = Object.freeze({});
 
-// Through `storedValueAtom` for the same reason as the project key above: the
-// old `!("then" in stored)` guard read the pending promise as an empty memory
-// and jotai never replaced it, so this read `{}` for the whole session and the
-// agent you were last in was recorded on every selection and restored on none.
-const storedLastAgentAtom = storedValueAtom<Record<string, string>>(
+// Through the shared helper for both halves of the same defect: the old
+// `!("then" in stored)` guard read the pending promise as an empty memory and
+// jotai never replaced it, so this read `{}` for the whole session and the
+// agent you were last in was recorded on every selection and restored on
+// none -- and a recording made in that window merged onto `{}` and persisted
+// it, forgetting every other project's agent.
+const storedLastAgentAtom = readBeforeWriteAtom<Record<string, string>>(
   lastAgentStorageAtom,
-  NO_REMEMBERED_AGENTS,
+  NO_REMEMBERED_AGENTS as Record<string, string>,
 );
 
 export const lastAgentByProjectAtom = atom(
@@ -119,15 +122,10 @@ export const lastAgentByProjectAtom = atom(
     const usable = stored && typeof stored === "object" && !Array.isArray(stored);
     return usable ? stored : NO_REMEMBERED_AGENTS;
   },
-  (get, set, memory: Record<string, string>) => {
-    // The one place this rule lives, because it guards the whole map. A
-    // recording merges onto what the reader above returns, so writing before
-    // the stored map has come back persists a one-entry copy of it -- keeping
-    // the project just touched and forgetting every other project's agent.
-    // A read that FAILED is refused for the same reason: the map is unknown,
-    // and a guess would destroy exactly what could not be read.
-    if (get(lastAgentReadStateAtom) !== "read") return;
-    set(lastAgentStorageAtom, memory);
+  (_get, set, memory: Record<string, string>) => {
+    // `storedLastAgentAtom` holds this until the stored map has been read; see
+    // `readBeforeWriteAtom` for why a recording must never land before it.
+    set(storedLastAgentAtom, memory);
   },
 );
 
