@@ -63,11 +63,16 @@ function reportStorageReadFailure(error: unknown): void {
 /**
  * Whether a persisted atom's stored value has come back, and how.
  *
- * Latched between "unread" and the other two. `atomWithStorage` reads twice --
- * once eagerly for `getOnInit`, again on every mount -- and `unwrap`'s default
+ * Latched once a read has ANSWERED. `atomWithStorage` reads twice -- once
+ * eagerly for `getOnInit`, again on every mount -- and `unwrap`'s default
  * fallback reports `undefined` a second time for the second promise, so an
  * unlatched signal un-answers a question that had already been answered, and
  * whoever was waiting on it starts waiting again.
+ *
+ * A re-read after a FAILED one is not latched, and should not be: `unwrap`
+ * keeps no previous value to carry across a rejection, and a fresh read really
+ * is in flight again. It reports "unread" until that read settles, which it
+ * does -- so a caller waits for the new answer rather than waiting forever.
  *
  * The stored value must never itself be `undefined`, which is how `unwrap`
  * spells a read still in flight; the `Value` bound on {@link storedValueAtom}

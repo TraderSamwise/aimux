@@ -101,14 +101,18 @@ describe("whether settings have been read yet", () => {
 
   // The derivation is the whole point and a constant cannot be caught by
   // timing, so it is read from the source.
-  it("is derived from the unwrap that has no fallback", () => {
+  it("is derived from the shared storage read state", () => {
     const source = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "settings.ts"),
       "utf8",
     ).replace(/^\s*\/\/.*$/gm, "");
-    expect(source).toContain("const resolvedSettingsAtom = unwrap(asyncSettingsAtom);");
-    expect(source, "a fallback would make it true before anything was read").toContain(
-      "atom((get) => get(resolvedSettingsAtom) !== undefined)",
+    // Not `settingsAtom`: that one falls back to defaults, so anything derived
+    // from it is answered before anything has been read.
+    expect(source).toContain(
+      "const settingsReadStateAtom = storageReadStateAtom(asyncSettingsAtom);",
+    );
+    expect(source, "and the flag is the one state that means nothing came back").toContain(
+      'atom((get) => get(settingsReadStateAtom) !== "unread")',
     );
   });
 });

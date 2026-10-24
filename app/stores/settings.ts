@@ -1,7 +1,7 @@
 import { atom } from "jotai";
 import { atomWithStorage, unwrap } from "jotai/utils";
 import { focusAtom } from "jotai-optics";
-import { createSsrSafeMergingJsonStorage } from "@/lib/jotai-storage";
+import { createSsrSafeMergingJsonStorage, storageReadStateAtom } from "@/lib/jotai-storage";
 import {
   defaultNotificationSettings,
   normalizeNotificationSettings,
@@ -138,9 +138,15 @@ export const settingsAtom = unwrap(asyncSettingsAtom, (previous) => previous ?? 
 // `settingsAtom` falls back to defaults until storage resolves, so an EMPTY
 // `acceptedShares` means either "no shared chats" or "not read yet". Anything
 // deciding from that count has to know which, or it decides on a default.
-const resolvedSettingsAtom = unwrap(asyncSettingsAtom);
+//
+// Through the shared helper rather than a second `unwrap` here, for the two
+// defects that spelling had: it was unlatched, so the re-read every mount
+// issues reported "not read yet" again and the landing screen re-entered its
+// spinner after it had already decided; and it let a rejected read throw
+// straight into render, taking the screen down over a storage fault.
+const settingsReadStateAtom = storageReadStateAtom(asyncSettingsAtom);
 
-export const settingsHydratedAtom = atom((get) => get(resolvedSettingsAtom) !== undefined);
+export const settingsHydratedAtom = atom((get) => get(settingsReadStateAtom) !== "unread");
 
 export const themePreferenceAtom = focusAtom(settingsAtom, (optic) => optic.prop("theme"));
 export const agentOutputViewModeAtom = focusAtom(settingsAtom, (optic) =>

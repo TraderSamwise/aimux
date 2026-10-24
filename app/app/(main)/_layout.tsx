@@ -64,9 +64,11 @@ import {
   reconcileProjectsAtom,
   rememberProjectViewPath,
   selectedProjectEndpointAtom,
+  selectedProjectHydratedAtom,
   selectedProjectRefAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
+import { urlProjectSelectionWrite } from "@/lib/url-project-selection";
 import {
   projectListFailed,
   projectListPartial,
@@ -129,6 +131,7 @@ export default function MainLayout() {
   const projects = useAtomValue(projectsAtom);
   const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
   const explicitProjectSelection = useAtomValue(explicitProjectSelectionAtom);
+  const selectedProjectHydrated = useAtomValue(selectedProjectHydratedAtom);
   const activeShare = useRouteShare();
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
   const refreshNonce = useAtomValue(desktopStateRefreshNonceAtom);
@@ -215,33 +218,26 @@ export default function MainLayout() {
   // selection that knows its host, or this and the writer below trade
   // corrections forever.
   usePrePaintEffect(() => {
-    if (activeShare || !urlProjectRef) return;
-    if (sameProjectRef(urlProjectRef, selectedProjectRef)) return;
-    // A machineless URL does not downgrade a selection that knows which host
-    // holds that same path; the URL writer below fills the machine back in.
-    if (
-      !urlProjectRef.machineId &&
-      selectedProjectRef?.machineId &&
-      selectedProjectRef.path === urlProjectRef.path
-    ) {
-      return;
-    }
-    const urlKey = projectKey(urlProjectRef);
-    const selectedKey = projectKey(selectedProjectRef);
-    if (
-      explicitProjectSelection &&
-      explicitProjectSelection.key === selectedKey &&
-      explicitProjectSelection.key !== urlKey &&
-      explicitProjectSelection.expiresAt > Date.now()
-    ) {
-      return;
-    }
-    if (explicitProjectSelection?.key === urlKey) {
-      store.set(explicitProjectSelectionAtom, null);
-    }
-    store.set(selectedProjectRefAtom, urlProjectRef);
+    const write = urlProjectSelectionWrite({
+      shareOwnsRoute: Boolean(activeShare),
+      urlProjectRef,
+      selectedProjectRef,
+      selectionRead: selectedProjectHydrated,
+      explicitProjectSelection,
+      now: Date.now(),
+    });
+    if (!write) return;
+    if (write.clearExplicitSelection) store.set(explicitProjectSelectionAtom, null);
+    store.set(selectedProjectRefAtom, write.ref);
     store.set(selectedSessionIdAtom, null);
-  }, [activeShare, explicitProjectSelection, selectedProjectRef, store, urlProjectRef]);
+  }, [
+    activeShare,
+    explicitProjectSelection,
+    selectedProjectHydrated,
+    selectedProjectRef,
+    store,
+    urlProjectRef,
+  ]);
 
   useEffect(() => {
     const target = sharedChatRedirect(activeShare, pathname);
