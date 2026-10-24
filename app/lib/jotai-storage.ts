@@ -183,6 +183,26 @@ export function storedValueAtom<Value extends NonNullable<unknown> | null>(
  * This is for a value that is MODIFIED. A write that replaces the value
  * outright with something the caller already has -- the project the user just
  * picked -- loses nothing by landing early and must not be held up.
+ *
+ * It HOLDS rather than defers, and that is not a shortcut. `focusAtom`
+ * computes the merged object at WRITE time and hands this a plain value, so a
+ * queued write from any of the nine settings lenses would be
+ * `defaults + one field` already -- and flushing it once the read landed would
+ * persist exactly the corruption this exists to prevent, with nothing after it
+ * to correct it. Deferral is only sound where the caller passes a modifier,
+ * which no production call site does.
+ *
+ * **Never gate an effect whose own latch is a user-facing gate.** That one
+ * sentence would have prevented the two worst regressions on this branch:
+ * `shareSummaryCheckedKey` looked like effect bookkeeping and is the owner's
+ * send gate through `ownerShareStatusPending`, and `loading` in the shared
+ * chats screen looked like a fetch flag and is the spinner. Let the effect
+ * run, latch unconditionally, and take the retry from the read state being a
+ * dependency.
+ *
+ * A caller behind this hold has three valid responses: wait for the read
+ * before offering the action at all, keep the value when `false` comes back,
+ * or accept the loss out loud. Gating an unrelated effect is none of them.
  */
 export function readBeforeWriteAtom<Value extends NonNullable<unknown> | null>(
   stored: WritableAtom<Value | Promise<Value>, [Value], unknown>,
