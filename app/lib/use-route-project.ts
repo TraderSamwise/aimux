@@ -108,9 +108,10 @@ export function useRouteProject(): RouteProject {
     effectiveRefKey,
     listSynced: lastSyncAt !== null,
     projects,
+    shareOwnsRoute: Boolean(activeShare),
   });
   const unresolvedSelectionKey = unresolvedSelection
-    ? `${projectKey(unresolvedSelection.ref)}:${unresolvedSelection.hostIsListed}`
+    ? `${projectKey(unresolvedSelection.ref)}:${unresolvedSelection.reason}`
     : null;
   return useMemo(
     () => ({

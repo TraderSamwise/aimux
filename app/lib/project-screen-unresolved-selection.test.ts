@@ -8,6 +8,18 @@ import { componentBody } from "@/test/component-source";
 // The project screen is a route component no renderer in this app executes,
 // and the defect here was an ORDER: a selection whose host had not answered
 // fell through to the branch that says nothing is selected.
+const PROJECT_SCREEN = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "app",
+  "(main)",
+  "(tabs)",
+  "project",
+  "index.tsx",
+);
+
+const copy = componentBody(PROJECT_SCREEN, "function unresolvedSelectionCopy(");
+
 const screen = componentBody(
   join(
     dirname(fileURLToPath(import.meta.url)),
@@ -50,12 +62,19 @@ describe("a selected project that is not in the current snapshot", () => {
   });
 
   it("names the host it is waiting for, when it knows one", () => {
-    expect(screen).toContain("`Waiting for ${unresolvedSelection.ref.machineId}`");
-    expect(screen, "and says which project, so the message is actionable").toContain(
-      "unresolvedSelection.ref.path",
+    expect(copy, "the copy helper names the quiet host").toContain(
+      "`Waiting for ${ref.machineId}`",
     );
-    expect(screen, "and does not promise a deleted checkout will arrive").toContain(
-      'unresolvedSelection.hostIsListed\n              ? "Project not found"',
+    expect(copy, "and says which project, so the message is actionable").toContain(
+      "${ref.path} is the project you had open",
+    );
+    // Three reasons, three answers. Two of them shared one message, and a
+    // machineless ref took the one that says the project is gone.
+    expect(copy).toContain('reason === "host-quiet"');
+    expect(copy).toContain('reason === "ambiguous"');
+    expect(copy).toContain('title: "Project not found"');
+    expect(screen, "through the one helper that decides the wording").toContain(
+      "unresolvedSelectionCopy(unresolvedSelection)",
     );
   });
 });
@@ -109,7 +128,7 @@ describe("the hook that derives it", () => {
 
   it("passes the real snapshot, selection and sync state", () => {
     expect(hook).toMatch(
-      /unresolvedProjectSelection\(\{\s*project,\s*effectiveRefKey,\s*listSynced: lastSyncAt !== null,\s*projects,\s*\}\)/,
+      /unresolvedProjectSelection\(\{\s*project,\s*effectiveRefKey,\s*listSynced: lastSyncAt !== null,\s*projects,\s*shareOwnsRoute: Boolean\(activeShare\),\s*\}\)/,
     );
   });
 
@@ -129,34 +148,71 @@ describe("the hook that derives it", () => {
 
 describe("unresolvedProjectSelection", () => {
   const selected = projectKey({ machineId: "strix", path: "/repo/aimux" });
-  const base = { project: null, effectiveRefKey: selected, listSynced: true, projects: [] };
+  const base = {
+    project: null as { path: string } | null,
+    effectiveRefKey: selected,
+    listSynced: true,
+    projects: [] as readonly { machineId?: string; path: string }[],
+    shareOwnsRoute: false,
+  };
 
   it("is nothing when the snapshot has the project", () => {
     expect(unresolvedProjectSelection({ ...base, project: { path: "/repo/aimux" } })).toBeNull();
   });
 
-  // The case the screen renders: the selection names a host this snapshot does
-  // not speak for, so the project is quiet rather than gone.
-  it("is the selected ref, not yet answered, when its host is absent", () => {
-    expect(unresolvedProjectSelection({ ...base, projects: [{ machineId: "mbp" }] })).toEqual({
-      ref: { machineId: "strix", path: "/repo/aimux" },
-      hostIsListed: false,
-    });
+  // Quiet: the selection names a host this snapshot does not speak for.
+  it("waits on a host the snapshot does not include", () => {
+    expect(
+      unresolvedProjectSelection({ ...base, projects: [{ machineId: "mbp", path: "/repo/x" }] }),
+    ).toEqual({ ref: { machineId: "strix", path: "/repo/aimux" }, reason: "host-quiet" });
   });
 
-  // And the one that must NOT say "waiting": the host is right there and does
-  // not have the path, so nothing is coming.
-  it("reports the host as answered when the snapshot speaks for it", () => {
+  // Gone: the host is right there and does not have the path, so nothing is
+  // coming and saying "waiting" would wait forever.
+  it("reports not-on-host when the snapshot speaks for that machine", () => {
     expect(
-      unresolvedProjectSelection({ ...base, projects: [{ machineId: "strix" }] }),
-    ).toMatchObject({ hostIsListed: true });
+      unresolvedProjectSelection({ ...base, projects: [{ machineId: "strix", path: "/repo/x" }] }),
+    ).toMatchObject({ reason: "not-on-host" });
   });
 
-  // Local mode names no machine, and the list speaks for everything.
-  it("treats a machineless selection as answered", () => {
+  // A machineless ref names a path and no host. Exactly one match would have
+  // RESOLVED, so an unresolved one with several matches is a question for the
+  // user -- it was being called gone while two machines had it.
+  it("reports ambiguous when several machines have a machineless path", () => {
     expect(
-      unresolvedProjectSelection({ ...base, effectiveRefKey: projectKey({ path: "/repo/gone" }) }),
-    ).toMatchObject({ hostIsListed: true });
+      unresolvedProjectSelection({
+        ...base,
+        effectiveRefKey: projectKey({ path: "/repo/aimux" }),
+        projects: [
+          { machineId: "mbp", path: "/repo/aimux" },
+          { machineId: "strix", path: "/repo/aimux" },
+        ],
+      }),
+    ).toMatchObject({ reason: "ambiguous" });
+  });
+
+  it("reports not-on-host when a machineless path is nowhere", () => {
+    expect(
+      unresolvedProjectSelection({
+        ...base,
+        effectiveRefKey: projectKey({ path: "/repo/gone" }),
+        projects: [{ machineId: "mbp", path: "/repo/aimux" }],
+      }),
+    ).toMatchObject({ reason: "not-on-host" });
+  });
+
+  // A share's project root is the OWNER's, carries no machine, and the
+  // viewer's snapshot says nothing about it -- so a receiver with any local
+  // project was told the owner's project was gone.
+  it("says nothing about a project a share owns", () => {
+    expect(
+      unresolvedProjectSelection({
+        ...base,
+        effectiveRefKey: projectKey({ path: "/owner/repo" }),
+        projects: [{ machineId: "mbp", path: "/repo/aimux" }],
+        shareOwnsRoute: true,
+      }),
+    ).toBeNull();
   });
 
   // The promise made before the question was asked: an empty list on a cold

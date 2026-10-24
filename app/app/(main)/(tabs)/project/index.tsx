@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { projectNameFromPath, projectStateKey } from "@/lib/project-key";
+import { projectNameFromPath, projectStateKey, type UnresolvedSelection } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -191,6 +191,33 @@ function ProgressSection({ model }: { model: ProjectObservabilityModel }) {
       <StoryList items={model.story} />
     </View>
   );
+}
+
+// The three reasons a selection can be unresolved, as three different things
+// to tell the user. They were two, and a machineless ref took the "gone" one.
+interface EmptyCardCopy {
+  title: string;
+  body: string;
+}
+
+function unresolvedSelectionCopy(selection: UnresolvedSelection): EmptyCardCopy {
+  const { ref, reason } = selection;
+  if (reason === "host-quiet") {
+    return {
+      title: `Waiting for ${ref.machineId}`,
+      body: `${ref.path} is the project you had open. It will load when its host answers; pick another from the sidebar to move on.`,
+    };
+  }
+  if (reason === "ambiguous") {
+    return {
+      title: "More than one machine has this path",
+      body: `${ref.path} exists on several of your machines, so this needs picking by host. Choose it from the sidebar.`,
+    };
+  }
+  return {
+    title: "Project not found",
+    body: `${ref.path} is the project you had open, and its host no longer has it. Pick another from the sidebar.`,
+  };
 }
 
 export default function ProjectScreen() {
@@ -396,16 +423,8 @@ export default function ProjectScreen() {
         // that IS in this snapshot has answered and does not have the path, so
         // telling the user to wait for it would be waiting forever.
         <EmptyCard
-          title={
-            unresolvedSelection.hostIsListed
-              ? "Project not found"
-              : `Waiting for ${unresolvedSelection.ref.machineId}`
-          }
-          body={
-            unresolvedSelection.hostIsListed
-              ? `${unresolvedSelection.ref.path} is the project you had open, and its host no longer has it. Pick another from the sidebar.`
-              : `${unresolvedSelection.ref.path} is the project you had open. It will load when its host answers; pick another from the sidebar to move on.`
-          }
+          title={unresolvedSelectionCopy(unresolvedSelection).title}
+          body={unresolvedSelectionCopy(unresolvedSelection).body}
         />
       ) : !project ? (
         <EmptyCard title="No project selected" body="Pick a project from the sidebar." />

@@ -23,6 +23,12 @@ export function componentBody(path: string, declaration: string): string {
   // opens `({ padded = true })` before it opens its body, and matching that
   // pair returns the parameter list -- which every assertion then fails
   // against, loudly rather than silently.
+  //
+  // One shape still defeats this: a declaration whose RETURN TYPE is an inline
+  // object literal, `function f(): { a: string } {`, whose brace is also
+  // outside the parameters. Give such a function a named return type. The
+  // failure is loud -- the extracted text is the type, so the assertions miss
+  // -- but it is not self-explaining, hence this note.
   let parens = 0;
   let body = -1;
   for (let index = opener; index < file.length; index += 1) {
