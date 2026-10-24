@@ -3,7 +3,11 @@ import { atomWithStorage } from "jotai/utils";
 import type { DaemonProject } from "@/lib/api";
 import type { DesktopSession } from "@/lib/desktop-state";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
-import { createSsrSafeJsonStorage } from "@/lib/jotai-storage";
+import {
+  createSsrSafeJsonStorage,
+  storageReadStateAtom,
+  storedValueAtom,
+} from "@/lib/jotai-storage";
 import {
   PROJECT_LIST_LOADING,
   PROJECT_LIST_OK,
@@ -37,12 +41,25 @@ export const selectedProjectKeyAtom = atomWithStorage<string | null>(
   { getOnInit: true },
 );
 
+export const selectedProjectReadStateAtom = storageReadStateAtom(selectedProjectKeyAtom);
+
+// For callers that only need to stop waiting. A read that FAILED has finished,
+// so nothing waits on it forever -- but it is not a read that answered, which
+// is why anything about to write the answer back consults the state itself.
+export const selectedProjectHydratedAtom = atom(
+  (get) => get(selectedProjectReadStateAtom) !== "unread",
+);
+
+// The stored key as storage actually answered it. Reading `selectedProjectKeyAtom`
+// directly cannot work: jotai holds the pending read in the atom and never
+// replaces it, so the old `typeof stored === "string"` guard read every launch
+// as no selection and the remembered project was never restored.
+const storedProjectKeyAtom = storedValueAtom<string | null>(selectedProjectKeyAtom, null);
+
 export const selectedProjectRefAtom = atom(
-  // The storage atom's value is typed to include a pending read, which is not
-  // a key; an unresolved selection is no selection yet.
   (get) => {
-    const stored = get(selectedProjectKeyAtom);
-    return typeof stored === "string" ? parseProjectKey(stored) : null;
+    const stored = get(storedProjectKeyAtom);
+    return stored ? parseProjectKey(stored) : null;
   },
   (_get, set, ref: ProjectRef | null) => {
     set(selectedProjectKeyAtom, projectKey(ref));
@@ -196,7 +213,17 @@ export const reconcileProjectsAtom = atom(
     // here, so the next reload no longer depends on the fallback.
     const resolved = findProjectForRef(sorted, nextRef) ?? null;
 
-    if (!nextRef && sorted.length > 0) {
+    // Only a read that ANSWERED may adopt a default here, because adopting one
+    // writes it to storage a few lines below. A selection still in flight is
+    // not a user without a selection: the stored key comes back from
+    // AsyncStorage a frame or two after the first project poll, and adopting
+    // `sorted[0]` in that window overwrote the project Sam left -- worse than
+    // any bounce, because nothing afterwards corrects it. A read that FAILED
+    // is the third answer and is treated the same way: the stored key is
+    // still there and still wanted, and persisting a guess over it would
+    // destroy exactly what could not be read. An empty answer is the one case
+    // with nothing to lose, so it takes the fallback.
+    if (!nextRef && get(selectedProjectReadStateAtom) === "read" && sorted.length > 0) {
       nextRef = projectRefOf(sorted[0]);
     } else if (nextRef && !resolved && selectionWasContradicted(nextRef, sorted, options)) {
       nextRef = projectRefOf(sorted[0]);
