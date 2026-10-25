@@ -395,6 +395,16 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
         let target = match resolve_queued_delivery_target(context, &pending, now_ms) {
             QueuedDeliveryTarget::Deliverable(target) => target,
             QueuedDeliveryTarget::Waiting(reason) => {
+                // Whatever banner an earlier tick raised about this session
+                // described a probe against a window, and the session has
+                // since moved on to a state the dashboard already shows on its
+                // own row -- offline, or live without a binding. Nothing else
+                // retires that record: it is cleared only where a delivery
+                // SUCCEEDS, which a session in this state can never reach, so
+                // without this it outlives its own truth for ever. Measured on
+                // one project, a probe failure from five days earlier was
+                // still the banner on the dashboard.
+                clear_agent_input_delivery_failure(context, &pending.session_id);
                 log_at(
                     LogLevel::Debug,
                     "Agent input waiting for its agent",
@@ -591,6 +601,10 @@ pub async fn run_pending_agent_input_deliveries_async(
                 // No `failures.push` either: an agent that is not running is
                 // not a failed tick, and reporting one every half second is
                 // how a wait became an error on every project.
+                //
+                // See the sibling branch above for why the stale banner is
+                // retired here: nothing else ever does it.
+                clear_agent_input_delivery_failure(context, &pending.session_id);
                 log_at(
                     LogLevel::Debug,
                     "Agent input waiting for its agent",
