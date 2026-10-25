@@ -22,7 +22,8 @@ pub(crate) fn read_displayable_agent_restore_offer(
     project_state_dir: &Path,
 ) -> Option<Value> {
     let offer = read_agent_restore_offer(project_state_dir)?;
-    if agent_restore_offer_has_prompt_gate(context, project_state_dir, &offer) {
+    let project_id = compute_project_id(context.project_root());
+    if agent_restore_offer_is_current(project_state_dir, &project_id, &offer) {
         Some(offer)
     } else {
         remove_agent_restore_offer(project_state_dir);
@@ -152,6 +153,10 @@ fn normalize_agent_restore_offer(value: &Value) -> Option<Value> {
     let id = trimmed_string(value.get("id")).unwrap_or_else(|| format!("restore-{snapshot_id}"));
     let created_at = trimmed_string(value.get("createdAt")).unwrap_or_else(|| now.clone());
     let updated_at = trimmed_string(value.get("updatedAt")).unwrap_or(now);
+    // Normalize rebuilds the object from scratch, so a field not listed here is
+    // dropped on the way back to disk. The boot stamp is what scopes the offer
+    // to one occasion; losing it would make every offer foreign.
+    let daemon_boot_id = trimmed_string(value.get("daemonBootId"));
     let session_ids = sessions
         .iter()
         .map(|session| Value::String(string_field(session, "id")))
@@ -161,6 +166,7 @@ fn normalize_agent_restore_offer(value: &Value) -> Option<Value> {
         "id": id,
         "snapshotId": snapshot_id,
         "snapshotUpdatedAt": snapshot_updated_at,
+        "daemonBootId": daemon_boot_id,
         "source": "last-online",
         "createdAt": created_at,
         "updatedAt": updated_at,
@@ -272,18 +278,6 @@ pub(super) fn reconcile_agent_restore_offer(
     Some(updated)
 }
 
-/// The boot the prompt gate was seeded for, which is what an acknowledgement
-/// is answering. Read from the gate rather than recomputed, so the two cannot
-/// disagree about which occasion this is.
-fn current_daemon_boot_id(project_state_dir: &Path) -> Option<String> {
-    trimmed_string(
-        Value::Object(read_json_object(&agent_restore_prompt_gate_path(
-            project_state_dir,
-        )))
-        .get("daemonBootId"),
-    )
-}
-
 pub(super) fn acknowledge_agent_restore_offer(project_state_dir: &Path) {
     if let Some(offer) = read_agent_restore_offer(project_state_dir) {
         let snapshot_id = string_field(&offer, "snapshotId");
@@ -297,7 +291,12 @@ pub(super) fn acknowledge_agent_restore_offer(project_state_dir: &Path) {
                 &json!({
                     "version": 1,
                     "snapshotId": snapshot_id,
-                    "daemonBootId": current_daemon_boot_id(project_state_dir),
+                    // The occasion being answered is the one the offer was
+                    // authorized under, which the offer itself carries. Reading
+                    // it back off the gate meant two readers of "which boot is
+                    // this" -- the gate's top-level field and its per-project
+                    // one -- that could disagree for a project with no gate.
+                    "daemonBootId": trimmed_string(offer.get("daemonBootId")),
                     "source": "last-online",
                     "acknowledgedAt": now_iso(),
                 }),
@@ -348,18 +347,55 @@ pub(super) fn write_agent_restore_retry_offer(
     let _ = write_json_atomic(agent_restore_offer_path(project_state_dir), &retry);
 }
 
-fn agent_restore_offer_has_prompt_gate(
-    context: &ProjectServiceRequestContext,
+/// The boot gate for one project, which is the only thing that authorizes
+/// showing an offer. Read in one place so the snapshot id and the boot id
+/// always come from the same gate object.
+pub(super) fn read_agent_restore_prompt_gate(
     project_state_dir: &Path,
+    project_id: &str,
+) -> Option<Value> {
+    Value::Object(read_json_object(&agent_restore_prompt_gate_path(
+        project_state_dir,
+    )))
+    .get("projects")
+    .and_then(Value::as_object)
+    .and_then(|projects| projects.get(project_id))
+    .cloned()
+}
+
+/// Whether an offer on disk belongs to the occasion that is open right now.
+///
+/// Keying on the snapshot id alone was not enough. The snapshot is deliberately
+/// retentive, so its id changes only when the SET of agents changes -- and an
+/// unanswered offer therefore matched every later boot's re-seeded gate for
+/// ever. On this machine that left eight live offer files, the oldest written
+/// 2026-09-09, each frozen at whatever subset the last partial restore or decay
+/// had left it (one project's snapshot held twenty agents and its offer held
+/// one), re-prompting on every new dashboard process because the dashboard's
+/// dismissal is only in memory.
+///
+/// An offer with no boot stamp cannot be attributed to an occasion, so it is
+/// foreign -- the same reasoning `acknowledgement_still_applies` uses for an
+/// undatable acknowledgement. Both display surfaces ask this one question, so a
+/// read can never show an offer the derive would have deleted.
+pub(super) fn agent_restore_offer_is_current(
+    project_state_dir: &Path,
+    project_id: &str,
     offer: &Value,
 ) -> bool {
-    let project_id = compute_project_id(context.project_root());
-    let snapshot_id = string_field(offer, "snapshotId");
-    read_json_object(&agent_restore_prompt_gate_path(project_state_dir))
-        .get("projects")
-        .and_then(Value::as_object)
-        .and_then(|projects| projects.get(&project_id))
-        .is_some_and(|gate| string_field(gate, "snapshotId") == snapshot_id)
+    let Some(gate) = read_agent_restore_prompt_gate(project_state_dir, project_id) else {
+        return false;
+    };
+    if string_field(&gate, "snapshotId") != string_field(offer, "snapshotId") {
+        return false;
+    }
+    match (
+        trimmed_string(gate.get("daemonBootId")),
+        trimmed_string(offer.get("daemonBootId")),
+    ) {
+        (Some(current), Some(offered)) => current == offered,
+        _ => false,
+    }
 }
 
 fn mark_agent_restore_prompt_gate_asked(

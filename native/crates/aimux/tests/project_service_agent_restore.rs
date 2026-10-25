@@ -357,6 +357,40 @@ impl TestProject {
         .expect("write ack");
     }
 
+    /// Freeze the offer at a subset of its sessions, which is what a partial
+    /// restore and a decay both leave behind.
+    fn shrink_offer_to(&self, session_ids: &[&str]) {
+        let mut offer = self.offer().expect("offer to shrink");
+        let sessions = offer["sessions"]
+            .as_array()
+            .expect("sessions")
+            .iter()
+            .filter(|session| session_ids.contains(&session["id"].as_str().unwrap_or_default()))
+            .cloned()
+            .collect::<Vec<_>>();
+        offer["sessionIds"] = json!(session_ids);
+        offer["sessions"] = json!(sessions);
+        self.write_offer(&offer);
+    }
+
+    /// The offer as it was written before it carried a boot stamp.
+    fn strip_offer_boot_stamp(&self) {
+        let mut offer = self.offer().expect("offer to strip");
+        offer
+            .as_object_mut()
+            .expect("offer object")
+            .remove("daemonBootId");
+        self.write_offer(&offer);
+    }
+
+    fn write_offer(&self, offer: &Value) {
+        fs::write(
+            self.state_dir.join("agent-restore-offer.json"),
+            serde_json::to_string_pretty(offer).expect("serialize offer"),
+        )
+        .expect("write offer");
+    }
+
     fn remove_offer(&self) {
         let _ = fs::remove_file(self.state_dir.join("agent-restore-offer.json"));
     }
@@ -899,5 +933,159 @@ fn the_snapshot_orders_an_overseer_first_from_metadata_alone() {
         session_ids(&project.snapshot().expect("snapshot recorded")),
         vec!["codex-two", "claude-one"],
         "the overseer leads although its window is still the later one"
+    );
+}
+
+/// An offer nobody answered must not outlive the boot that asked.
+///
+/// The snapshot is deliberately retentive, so its id changes only when the SET
+/// of agents changes, and the boot gate is re-seeded from whatever snapshot is
+/// on disk. An offer keyed on the snapshot id alone therefore matched every
+/// later boot's gate for ever: `~/.aimux/projects` held eight live offer files
+/// written between 2026-09-09 and 2026-10-23, every one still displayable, each
+/// frozen at whatever subset the last partial restore or decay had left it.
+/// Because the dashboard's dismissal is only in memory, every new TUI process
+/// asked again.
+///
+/// What this asserts is the file: which boot it belongs to, and that the set is
+/// re-derived whole rather than served frozen. The dangerous half -- pressing
+/// Enter on a six-week-old offer and launching six-week-old agents -- is
+/// asserted through the real restore route by the two tests below.
+#[test]
+fn an_unanswered_offer_does_not_outlive_its_daemon_boot() {
+    let project = TestProject::new("offer-per-boot");
+    project.run_task();
+    let snapshot = project.snapshot().expect("agents recorded while running");
+
+    project.simulate_process_death();
+    project.seed_prompt_gates("boot-1");
+    project.run_task_with_no_live_windows();
+    let offered = project
+        .offer()
+        .expect("the crash is offered in its own boot");
+    assert_eq!(
+        offered["daemonBootId"], "boot-1",
+        "the offer records the boot that authorized it: {offered}"
+    );
+
+    // Frozen at a subset, which is what a partial restore or a decay leaves and
+    // what every stale file on the real machine looked like.
+    project.shrink_offer_to(&[AGENT_IDS[0]]);
+
+    // A new daemon boot. Same agents, so the same snapshot id -- that is the
+    // trap -- but a different occasion.
+    let gate = project.seed_prompt_gates("boot-2");
+    assert_eq!(
+        gate["snapshotId"], snapshot["id"],
+        "the same agents still carry the same snapshot id"
+    );
+    project.run_task_with_no_live_windows();
+
+    let offer = project
+        .offer()
+        .expect("the crash is still unanswered, so it is still offered");
+    assert_eq!(
+        offer["daemonBootId"], "boot-2",
+        "a boot-1 offer must not be served in boot-2: {offer}"
+    );
+    assert_eq!(
+        session_ids(&offer),
+        AGENT_IDS,
+        "re-deriving must offer the whole snapshot, not the subset the stale \
+         file was frozen at: {offer}"
+    );
+}
+
+/// The inverse: scoping an offer to a boot must not break the boot it belongs
+/// to. A guard that refuses the real case is not a guard.
+///
+/// `accepted` is what proves it was served, not merely stored: the restore
+/// route's first act is the same read surface `/desktop-state` renders from, and
+/// an offer that read surface refuses answers `accepted: false`.
+#[test]
+fn an_offer_from_this_boot_is_still_served_and_restorable() {
+    let project = TestProject::new("offer-this-boot");
+    project.run_task();
+    project.simulate_process_death();
+    project.seed_prompt_gates("boot-1");
+    project.run_task_with_no_live_windows();
+    assert!(project.offer().is_some(), "the offer exists to be answered");
+
+    let outcome = project.accept_restore_offer();
+    assert_eq!(
+        outcome["accepted"], true,
+        "an offer from this boot must still restore: {outcome}"
+    );
+    assert_eq!(outcome["total"], AGENT_IDS.len());
+}
+
+/// The shape every offer file on the real machine had: no boot stamp at all,
+/// because the field did not exist when they were written. An offer that cannot
+/// be attributed to an occasion is foreign -- the same reasoning an undatable
+/// acknowledgement gets -- so it is dropped rather than trusted for ever.
+#[test]
+fn an_offer_with_no_boot_stamp_is_not_shown_and_cannot_be_restored() {
+    let project = TestProject::new("offer-unstamped");
+    project.run_task();
+    project.simulate_process_death();
+    project.seed_prompt_gates("boot-1");
+    project.run_task_with_no_live_windows();
+    project.strip_offer_boot_stamp();
+
+    // The read surface: pressing Enter on it must restore nothing.
+    let outcome = project.accept_restore_offer();
+    assert_eq!(
+        outcome["accepted"], false,
+        "an unattributable offer must not launch agents: {outcome}"
+    );
+    assert_eq!(outcome["offer"], Value::Null);
+}
+
+/// Two surfaces decide whether an offer may be shown -- the read path that
+/// `/desktop-state` and the restore route share, and the derive on the tick
+/// loop -- and they must answer the same way about the same file. Each had its
+/// own copy of the rule, so keeping them in step was luck rather than
+/// construction.
+///
+/// Compared against each other on one fixture rather than asserted once per
+/// surface, because a per-surface test passes happily while the surfaces
+/// disagree. Whichever looks first must refuse the stale offer AND clear it.
+#[test]
+fn a_stale_offer_is_refused_and_cleared_by_whichever_surface_sees_it_first() {
+    let stale_offer_in_a_later_boot = |name: &str| {
+        let project = TestProject::new(name);
+        project.run_task();
+        project.simulate_process_death();
+        project.seed_prompt_gates("boot-1");
+        project.run_task_with_no_live_windows();
+        let offered = project.offer().expect("an offer to go stale");
+        assert_eq!(offered["daemonBootId"], "boot-1");
+        // A new boot, with the boot-1 file left exactly as it is.
+        project.seed_prompt_gates("boot-2");
+        project
+    };
+
+    // The read surface, with no derive in between.
+    let read_first = stale_offer_in_a_later_boot("offer-read-first");
+    let outcome = read_first.accept_restore_offer();
+    assert_eq!(
+        outcome["accepted"], false,
+        "the read surface must refuse a stale offer: {outcome}"
+    );
+    assert!(
+        read_first.offer().is_none(),
+        "the read surface must clear what it refused: {:?}",
+        read_first.offer()
+    );
+
+    // The derive surface, on the identical state.
+    let derive_first = stale_offer_in_a_later_boot("offer-derive-first");
+    derive_first.run_task_with_no_live_windows();
+    let rederived = derive_first
+        .offer()
+        .expect("the crash is unanswered, so it is offered again");
+    assert_eq!(
+        rederived["daemonBootId"], "boot-2",
+        "the derive surface must clear the stale file rather than serve it: {rederived}"
     );
 }

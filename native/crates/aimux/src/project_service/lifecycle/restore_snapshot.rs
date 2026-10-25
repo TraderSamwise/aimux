@@ -27,9 +27,10 @@ use crate::paths::{PathResolver, compute_project_id};
 use super::ids::{now_iso, pseudo_uuid_v4};
 use super::json_helpers::{array_field, object_insert_mut, string_field, trimmed_string};
 use super::restore_offer::{
-    acknowledge_agent_restore_offer, agent_restore_ack_path, agent_restore_offer_path,
-    agent_restore_prompt_gate_path, build_agent_restore_worktree_groups,
-    normalize_agent_restore_sessions, read_agent_restore_offer, remove_agent_restore_offer,
+    acknowledge_agent_restore_offer, agent_restore_ack_path, agent_restore_offer_is_current,
+    agent_restore_offer_path, build_agent_restore_worktree_groups,
+    normalize_agent_restore_sessions, read_agent_restore_offer, read_agent_restore_prompt_gate,
+    remove_agent_restore_offer,
 };
 use super::topology_helpers::read_json_object;
 
@@ -312,7 +313,7 @@ pub(crate) fn derive_agent_restore_offer(
 ) -> RestoreStateResult<Option<Value>> {
     let existing = read_agent_restore_offer(project_state_dir);
     if let Some(existing) = existing {
-        if !offer_matches_prompt_gate(project_state_dir, project_id, &existing) {
+        if !agent_restore_offer_is_current(project_state_dir, project_id, &existing) {
             remove_agent_restore_offer(project_state_dir);
         } else {
             return Ok(decay_existing_offer(
@@ -338,6 +339,12 @@ pub(crate) fn derive_agent_restore_offer(
     {
         return Ok(None);
     }
+    // A gate with no boot stamp authorizes nothing. An offer written without one
+    // reads as foreign on the very next tick, is removed, and is derived again --
+    // for ever, because `askedAt` is stamped only once an offer is displayed.
+    let Some(daemon_boot_id) = trimmed_string(gate.get("daemonBootId")) else {
+        return Ok(None);
+    };
     if acknowledgement_still_applies(project_state_dir, &gate, &snapshot_id) {
         remove_agent_restore_offer(project_state_dir);
         return Ok(None);
@@ -355,6 +362,7 @@ pub(crate) fn derive_agent_restore_offer(
         "id": format!("restore-{snapshot_id}"),
         "snapshotId": snapshot_id,
         "snapshotUpdatedAt": string_field(&snapshot, "updatedAt"),
+        "daemonBootId": daemon_boot_id,
         "source": "last-online",
         "createdAt": now,
         "updatedAt": now,
@@ -461,19 +469,6 @@ pub fn seed_agent_restore_prompt_gates_for_daemon_boot(
         .join("restore-prompt-gates.json");
     write_restore_state(&path, &state)?;
     Ok(state)
-}
-
-fn read_agent_restore_prompt_gate(project_state_dir: &Path, project_id: &str) -> Option<Value> {
-    read_json_object(&agent_restore_prompt_gate_path(project_state_dir))
-        .get("projects")
-        .and_then(Value::as_object)
-        .and_then(|projects| projects.get(project_id))
-        .cloned()
-}
-
-fn offer_matches_prompt_gate(project_state_dir: &Path, project_id: &str, offer: &Value) -> bool {
-    read_agent_restore_prompt_gate(project_state_dir, project_id)
-        .is_some_and(|gate| string_field(&gate, "snapshotId") == string_field(offer, "snapshotId"))
 }
 
 /// Whether a previous acknowledgement still answers THIS offer.
