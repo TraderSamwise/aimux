@@ -1195,11 +1195,16 @@ fn toggling_offline_agents_keeps_the_worktree_the_pointer_is_on_enterable() {
         group_of("/repo/.aimux/worktrees/two", elsewhere),
     ];
 
-    // No Down and no step-in: navigation starts at `Worktrees` when groups
-    // exist, which is exactly the state that was broken.
+    // No step-in: navigation starts at `Worktrees` when groups exist, which is
+    // exactly the state that was broken. The toggle fires while the pointer is
+    // on the first group, and the passes after it are what prove the keep
+    // survives: a seed that evaporated would leave the agent on screen for one
+    // frame and take it away on the next fetch.
     let script = Arc::new(Mutex::new(std::collections::VecDeque::from(vec![
         (0_u64, vec![]),
         (NO_EXTRA_IDLE, vec![DashboardKey::ToggleOfflineAgents]),
+        (NO_EXTRA_IDLE, vec![]),
+        (NO_EXTRA_IDLE, vec![DashboardKey::Down]),
         (NO_EXTRA_IDLE, vec![]),
     ])));
     let key_script = Arc::clone(&script);
@@ -1251,6 +1256,14 @@ fn toggling_offline_agents_keeps_the_worktree_the_pointer_is_on_enterable() {
         "the focused worktree's agent went off screen, leaving a group that \
          cannot be entered: {painted}"
     );
+    // And it is still there after two further passes and a key press, which is
+    // what makes it a keep rather than one frame's reprieve.
+    //
+    // The other group's agent stays gone, and there is no dead end there to
+    // recover from: a worktree with no visible session and no live service is
+    // dropped from the model outright, so it cannot be arrowed onto. The
+    // stranded case is only ever the group the pointer is already on, which is
+    // held by `kept.paths` while its contents are not.
     assert!(
         !painted.contains("beta"),
         "the keep must be scoped to the focused worktree, not a filter that \

@@ -1189,30 +1189,48 @@ pub fn run_native_dashboard_with_seams(
                         // the two signals above are both empty and the filter
                         // takes every offline agent in that group. The row
                         // itself survives on `kept.paths`, which leaves a group
-                        // you can see, cannot enter -- `step_in` refuses on an
-                        // empty group -- and cannot reveal, because pointing at
-                        // the agent is the one thing that would have kept it.
+                        // you can see, cannot enter -- `step_in` counts the
+                        // rows the filter left -- and cannot reveal, because
+                        // pointing at the agent is the one thing that would
+                        // have kept it.
                         //
                         // So at this level "the thing the pointer is on" is the
                         // GROUP, and keeping it means keeping what it contains.
-                        // That is narrower than it looks: it holds only the
-                        // focused group, it ends as soon as the pointer moves
-                        // off, and one refresh after stepping in the level
-                        // becomes `Sessions` and the ordinary single-agent rule
-                        // takes over again.
+                        // Narrow by construction: only the focused group, and
+                        // only while the pointer is on it. Step in and
+                        // `step_in` sets the level to `Sessions` synchronously,
+                        // where the ordinary rule resumes and pointing at one
+                        // agent does not keep its siblings.
                         //
-                        // Reading `focused_group` off the outgoing snapshot is
-                        // what makes it stable rather than one-frame: the
-                        // agents it names are kept, so they are still in the
-                        // snapshot this pass produces, and the next pass finds
-                        // them there again.
+                        // It overshoots a little: `step_in` counts services as
+                        // well as agents, so a group with a live service was
+                        // never stranded and did not need this. Uniformity is
+                        // worth more than the few agents that buys -- the
+                        // alternative is a rule whose answer depends on whether
+                        // a dev server happens to be up.
+                        //
+                        // Read off the INCOMING snapshot, not the outgoing one.
+                        // The outgoing snapshot has already been filtered, so
+                        // its copy of this group lost these agents on an
+                        // earlier pass -- seeding from it would hold a group
+                        // the pointer was already on and fail to recover one
+                        // the pointer arrives at, which is the same dead end
+                        // reached from the other direction.
                         if controller.as_ref().is_some_and(|controller| {
                             controller.navigation.level == DashboardNavLevel::Worktrees
-                        }) && let Some(group) = focused_group
-                            .as_ref()
-                            .filter(|group| group.kind == DashboardNavigationGroupKind::Worktree)
-                        {
-                            for session in &group.sessions {
+                        }) && focused_group.as_ref().is_some_and(|group| {
+                            group.kind == DashboardNavigationGroupKind::Worktree
+                        }) {
+                            let focused_sessions = loaded
+                                .snapshot
+                                .worktree_groups
+                                .iter()
+                                .find(|group| {
+                                    group.path.as_deref() == focused_worktree_path.as_deref()
+                                })
+                                .map(|group| group.sessions.as_slice())
+                                .unwrap_or_default();
+                            for session in focused_sessions {
                                 if !kept.sessions.iter().any(|id| id == &session.id) {
                                     kept.sessions.push(session.id.clone());
                                 }
