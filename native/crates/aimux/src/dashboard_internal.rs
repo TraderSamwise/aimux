@@ -1185,6 +1185,57 @@ pub fn run_native_dashboard_with_seams(
                             pending_selection.as_deref(),
                             carried_selection.as_ref(),
                         );
+                        // On a worktree ROW the pointer is not on any agent, so
+                        // the two signals above are both empty and the filter
+                        // takes every offline agent in that group. The row
+                        // itself survives on `kept.paths`, which leaves a group
+                        // you can see, cannot enter -- `step_in` counts the
+                        // rows the filter left -- and cannot reveal, because
+                        // pointing at the agent is the one thing that would
+                        // have kept it.
+                        //
+                        // So at this level "the thing the pointer is on" is the
+                        // GROUP, and keeping it means keeping what it contains.
+                        // Narrow by construction: only the focused group, and
+                        // only while the pointer is on it. Step in and
+                        // `step_in` sets the level to `Sessions` synchronously,
+                        // where the ordinary rule resumes and pointing at one
+                        // agent does not keep its siblings.
+                        //
+                        // It overshoots a little: `step_in` counts services as
+                        // well as agents, so a group with a live service was
+                        // never stranded and did not need this. Uniformity is
+                        // worth more than the few agents that buys -- the
+                        // alternative is a rule whose answer depends on whether
+                        // a dev server happens to be up.
+                        //
+                        // Read off the INCOMING snapshot, not the outgoing one.
+                        // The outgoing snapshot has already been filtered, so
+                        // its copy of this group lost these agents on an
+                        // earlier pass -- seeding from it would hold a group
+                        // the pointer was already on and fail to recover one
+                        // the pointer arrives at, which is the same dead end
+                        // reached from the other direction.
+                        if controller.as_ref().is_some_and(|controller| {
+                            controller.navigation.level == DashboardNavLevel::Worktrees
+                        }) && focused_group.as_ref().is_some_and(|group| {
+                            group.kind == DashboardNavigationGroupKind::Worktree
+                        }) {
+                            let focused_sessions = loaded
+                                .snapshot
+                                .worktree_groups
+                                .iter()
+                                .find(|group| {
+                                    group.path.as_deref() == focused_worktree_path.as_deref()
+                                })
+                                .map(|group| group.sessions.as_slice())
+                                .unwrap_or_default();
+                            for session in focused_sessions {
+                                if !kept.sessions.iter().any(|id| id == &session.id) {
+                                    kept.sessions.push(session.id.clone());
+                                }
+                            }
+                        }
                         let visible_model = filter_dashboard_visible_model(
                             &loaded.snapshot,
                             hide_offline_agents,
