@@ -329,13 +329,7 @@ impl TestProject {
     /// What the file system looks like after a `kill -9`: the snapshot is still
     /// there, stamped by a run that no longer exists, and its agents are gone.
     fn simulate_process_death(&self) {
-        let mut snapshot = self.snapshot().expect("snapshot to inherit");
-        snapshot["writerInstanceId"] = json!("previous-run-9999");
-        fs::write(
-            self.state_dir.join("last-online-agents.json"),
-            serde_json::to_string_pretty(&snapshot).expect("serialize snapshot"),
-        )
-        .expect("write snapshot");
+        self.simulate_process_death_as("previous-run-9999");
     }
 
     /// The acknowledgement as the product writes it, so the test drives the
@@ -389,6 +383,40 @@ impl TestProject {
             serde_json::to_string_pretty(offer).expect("serialize offer"),
         )
         .expect("write offer");
+    }
+
+    /// What the file system looks like after a `kill -9` by a named run, so a
+    /// test can give two deaths different observing runs -- the difference a
+    /// lasting dismissal has to respect.
+    fn simulate_process_death_as(&self, writer_instance_id: &str) {
+        let mut snapshot = self.snapshot().expect("snapshot to inherit");
+        snapshot["writerInstanceId"] = json!(writer_instance_id);
+        fs::write(
+            self.state_dir.join("last-online-agents.json"),
+            serde_json::to_string_pretty(&snapshot).expect("serialize snapshot"),
+        )
+        .expect("write snapshot");
+    }
+
+    fn dismiss_restore_offer(&self) -> Value {
+        let context = ProjectServiceRequestContext::with_project_state_dir(
+            &self.project_root,
+            &self.state_dir,
+        );
+        let mut runtime = StubLifecycleRuntime;
+        route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::DISMISS_RESTORE_PREVIOUS,
+            Some(&json!({})),
+            &mut runtime,
+        )
+        .expect("dismiss route handled")
+        .body
+    }
+
+    fn ack(&self) -> Option<Value> {
+        read_json(&self.state_dir.join("agent-restore-offer-ack.json"))
     }
 
     fn remove_offer(&self) {
@@ -1087,5 +1115,114 @@ fn a_stale_offer_is_refused_and_cleared_by_whichever_surface_sees_it_first() {
     assert_eq!(
         rederived["daemonBootId"], "boot-2",
         "the derive surface must clear the stale file rather than serve it: {rederived}"
+    );
+}
+
+/// Saying no has to stick.
+///
+/// The acknowledgement is scoped to the boot that made it, because accepting a
+/// restore that did not work once muted twenty agents across every later
+/// restart. Dismissing was scoped the same way -- and dismissing is an answer
+/// about this fleet, not about this occasion, so it did not stick at all. That
+/// is why a reinstall re-offered agents that died six weeks earlier and had
+/// already been turned down: eight such offers were live on this machine.
+#[test]
+fn a_dismissal_lasts_past_the_boot_that_made_it() {
+    let project = TestProject::new("dismiss-lasts");
+    project.run_task();
+    project.simulate_process_death_as("run-that-died");
+    project.seed_prompt_gates("boot-1");
+    project.run_task_with_no_live_windows();
+    assert!(project.offer().is_some(), "the crash is offered once");
+
+    project.dismiss_restore_offer();
+    let ack = project.ack().expect("the dismissal is recorded");
+    assert_eq!(ack["answer"], "dismissed", "{ack}");
+    assert_eq!(
+        ack["writerInstanceId"], "run-that-died",
+        "the dismissal names the fleet it answered: {ack}"
+    );
+
+    // Two more boots. Same agents, still dead, still unwanted.
+    for boot in ["boot-2", "boot-3"] {
+        project.seed_prompt_gates(boot);
+        project.run_task_with_no_live_windows();
+        assert!(
+            project.offer().is_none(),
+            "a dismissed fleet must not be offered again in {boot}: {:?}",
+            project.offer()
+        );
+    }
+}
+
+/// And it must not stick too far. Agents that have been alive again are a new
+/// fleet, however the set compares -- the snapshot id is reused whenever the
+/// SET is unchanged, so a lasting answer keyed on it would be exactly the
+/// "twenty agents went offline with no prompt" failure in the other direction.
+#[test]
+fn a_dismissal_does_not_mute_agents_that_have_been_alive_again() {
+    let project = TestProject::new("dismiss-not-forever");
+    project.run_task();
+    project.simulate_process_death_as("first-run");
+    project.seed_prompt_gates("boot-1");
+    project.run_task_with_no_live_windows();
+    project.dismiss_restore_offer();
+
+    // The same agents, up again and then killed again, which is a different
+    // run's observation even though the set -- and so the snapshot id -- is
+    // identical.
+    let snapshot_id = project
+        .snapshot()
+        .expect("snapshot")
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("snapshot id")
+        .to_owned();
+    project.run_task();
+    project.simulate_process_death_as("second-run");
+    assert_eq!(
+        project.snapshot().expect("snapshot")["id"],
+        snapshot_id,
+        "the set is unchanged, so the snapshot id is the same one -- that is \
+         the trap this test exists for"
+    );
+
+    project.seed_prompt_gates("boot-2");
+    project.run_task_with_no_live_windows();
+    let offer = project
+        .offer()
+        .expect("a second death of the same agents must be offered again");
+    assert_eq!(session_ids(&offer), AGENT_IDS);
+}
+
+/// An accepted restore keeps the old rule, and must: the restore that mutes
+/// everything after it is the one that did not work.
+#[test]
+fn accepting_a_restore_is_still_spent_by_its_own_boot() {
+    let project = TestProject::new("accept-per-boot");
+    project.run_task();
+    project.simulate_process_death_as("run-that-died");
+    project.seed_prompt_gates("boot-1");
+    project.run_task_with_no_live_windows();
+
+    let outcome = project.accept_restore_offer();
+    assert_eq!(outcome["accepted"], true, "{outcome}");
+    let ack = project.ack().expect("the acceptance is recorded");
+    assert_eq!(ack["answer"], "restored", "{ack}");
+
+    // The stub runtime cannot create windows, so nothing actually came back.
+    // Within this boot the acceptance answers for it; the next boot must ask.
+    project.remove_offer();
+    project.run_task_with_no_live_windows();
+    assert!(
+        project.offer().is_none(),
+        "an acceptance answers for its own boot: {:?}",
+        project.offer()
+    );
+    project.seed_prompt_gates("boot-2");
+    project.run_task_with_no_live_windows();
+    assert!(
+        project.offer().is_some(),
+        "a restore that did not work must be asked about again next boot"
     );
 }

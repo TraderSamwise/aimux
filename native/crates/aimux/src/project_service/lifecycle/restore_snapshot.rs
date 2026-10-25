@@ -27,8 +27,8 @@ use crate::paths::{PathResolver, compute_project_id};
 use super::ids::{now_iso, pseudo_uuid_v4};
 use super::json_helpers::{array_field, object_insert_mut, string_field, trimmed_string};
 use super::restore_offer::{
-    acknowledge_agent_restore_offer, agent_restore_ack_path, agent_restore_offer_is_current,
-    agent_restore_offer_path, build_agent_restore_worktree_groups,
+    AgentRestoreAnswer, acknowledge_agent_restore_offer, agent_restore_ack_path,
+    agent_restore_offer_is_current, agent_restore_offer_path, build_agent_restore_worktree_groups,
     normalize_agent_restore_sessions, read_agent_restore_offer, read_agent_restore_prompt_gate,
     remove_agent_restore_offer,
 };
@@ -250,6 +250,12 @@ pub(crate) fn remove_last_online_agent_sessions(
 /// they were done with an agent. That is the whole difference between a clean
 /// exit and an unsafe one.
 pub(crate) fn prune_restore_eligibility(project_state_dir: &Path, session_id: &str) {
+    // The snapshot first, deliberately: removing a session from it rolls the
+    // snapshot id, so the acknowledgement the offer trim may write below can
+    // never match a later derive. That matters because two callers are not a
+    // human -- the retired-worktree reaper and the dead-agent reap -- and the
+    // ordering is what keeps an automatic prune from leaving behind an answer
+    // nobody gave.
     let removed = BTreeSet::from([session_id.to_owned()]);
     let now = now_iso();
     if let Err(error) = remove_last_online_agent_sessions(project_state_dir, &removed, &now) {
@@ -276,7 +282,10 @@ fn remove_agent_restore_offer_sessions(
         return;
     }
     if sessions.is_empty() {
-        acknowledge_agent_restore_offer(project_state_dir);
+        // The last agent the offer named is no longer restorable. Not a human
+        // saying no: `prune_restore_eligibility` is also reached from the
+        // retired-worktree reaper, which runs on its own.
+        acknowledge_agent_restore_offer(project_state_dir, AgentRestoreAnswer::Lapsed);
         return;
     }
     let mut updated = offer;
@@ -327,7 +336,8 @@ pub(crate) fn derive_agent_restore_offer(
     let Some(snapshot) = read_last_online_agents_snapshot(project_state_dir)? else {
         return Ok(None);
     };
-    if string_field(&snapshot, "writerInstanceId") == project_service_writer_id() {
+    let writer_instance_id = string_field(&snapshot, "writerInstanceId");
+    if writer_instance_id == project_service_writer_id() {
         return Ok(None);
     }
     let snapshot_id = string_field(&snapshot, "id");
@@ -345,7 +355,7 @@ pub(crate) fn derive_agent_restore_offer(
     let Some(daemon_boot_id) = trimmed_string(gate.get("daemonBootId")) else {
         return Ok(None);
     };
-    if acknowledgement_still_applies(project_state_dir, &gate, &snapshot_id) {
+    if acknowledgement_still_applies(project_state_dir, &gate, &snapshot_id, &writer_instance_id) {
         remove_agent_restore_offer(project_state_dir);
         return Ok(None);
     }
@@ -363,6 +373,7 @@ pub(crate) fn derive_agent_restore_offer(
         "snapshotId": snapshot_id,
         "snapshotUpdatedAt": string_field(&snapshot, "updatedAt"),
         "daemonBootId": daemon_boot_id,
+        "writerInstanceId": writer_instance_id,
         "source": "last-online",
         "createdAt": now,
         "updatedAt": now,
@@ -483,15 +494,45 @@ pub fn seed_agent_restore_prompt_gates_for_daemon_boot(
 /// The prompt gate beside it is already re-seeded on each daemon boot, which
 /// is exactly the unit of "a new occasion". The ack now carries the same
 /// stamp, so one from a previous boot is spent rather than permanent.
+///
+/// A dismissal is the exception, and it is the other half of the same bug. "No"
+/// is an answer about this fleet, not about this occasion -- but scoped to a
+/// boot it did not stick, so a reinstall re-offered agents that had died six
+/// weeks earlier and had already been turned down. It therefore lasts while the
+/// fleet is unchanged, which is `writerInstanceId` and not the snapshot id: the
+/// snapshot id is reused whenever the SET is unchanged, so keying a lasting
+/// answer on it would mute a genuinely new death of the same agents.
+///
+/// `writerInstanceId` is replaced whenever a run observes an agent online, so
+/// agents that have been alive again are always asked about afresh. It can also
+/// be replaced without an observation -- the session set changing, or
+/// `aimux doctor coherence` rebuilding the snapshot -- which costs one extra
+/// prompt. That is the safe direction; the unsafe one is a fleet nobody is
+/// asked about.
 fn acknowledgement_still_applies(
     project_state_dir: &Path,
     gate: &Value,
     snapshot_id: &str,
+    writer_instance_id: &str,
 ) -> bool {
     let ack = Value::Object(read_json_object(&agent_restore_ack_path(project_state_dir)));
     if trimmed_string(ack.get("snapshotId")).as_deref() != Some(snapshot_id) {
         return false;
     }
+    if trimmed_string(ack.get("answer")).as_deref() == Some("dismissed") {
+        let answered_fleet = trimmed_string(ack.get("writerInstanceId"));
+        let current_fleet = (!writer_instance_id.trim().is_empty()).then_some(writer_instance_id);
+        return match (answered_fleet, current_fleet) {
+            (Some(answered), Some(current)) => answered == current,
+            // A dismissal that cannot name the fleet it answered falls back to
+            // the boot rule below rather than lasting for ever.
+            _ => boot_acknowledgement_still_applies(&ack, gate),
+        };
+    }
+    boot_acknowledgement_still_applies(&ack, gate)
+}
+
+fn boot_acknowledgement_still_applies(ack: &Value, gate: &Value) -> bool {
     match (
         trimmed_string(ack.get("daemonBootId")),
         trimmed_string(gate.get("daemonBootId")),

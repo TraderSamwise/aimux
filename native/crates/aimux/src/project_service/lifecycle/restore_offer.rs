@@ -17,6 +17,41 @@ use super::{
     read_json_object, resume_agent_session, string_array_field, string_field, trimmed_string,
 };
 
+/// How an offer was answered, because the two answers do not last the same
+/// length of time.
+///
+/// Accepting a restore that did not work must not mute the next restart -- that
+/// is how twenty agents once went offline with no prompt, and why the
+/// acknowledgement is scoped to the boot that made it. Dismissing is the
+/// opposite: it is an answer about this fleet, not about this occasion, and
+/// because it was scoped to a boot as well it did not stick. That is why a
+/// reinstall re-offered agents that died six weeks earlier and had already been
+/// turned down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AgentRestoreAnswer {
+    /// The user asked for them back. Spent by the boot that made it, because
+    /// the restore that mutes everything after it is the one that did not work.
+    Restored,
+    /// The user said no. The one lasting answer, and the only variant a human
+    /// authors: it lasts until those agents have been alive again.
+    Dismissed,
+    /// Nobody answered -- there was nothing left to offer, because the sessions
+    /// the offer named stopped being restorable. Spent with the boot. Some of
+    /// the paths that reach this run on their own, such as the retired-worktree
+    /// reaper, so it must not read as a human saying no.
+    Lapsed,
+}
+
+impl AgentRestoreAnswer {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Restored => "restored",
+            Self::Dismissed => "dismissed",
+            Self::Lapsed => "lapsed",
+        }
+    }
+}
+
 pub(crate) fn read_displayable_agent_restore_offer(
     context: &ProjectServiceRequestContext,
     project_state_dir: &Path,
@@ -67,7 +102,7 @@ pub(super) fn route_agent_restore_previous(
             }),
         );
     };
-    acknowledge_agent_restore_offer(&project_state_dir);
+    acknowledge_agent_restore_offer(&project_state_dir, AgentRestoreAnswer::Restored);
     let session_ids = string_array_field(offer.get("sessionIds"));
     let transitions = session_ids
         .iter()
@@ -125,7 +160,7 @@ pub(super) fn route_agent_restore_previous(
 pub(super) fn route_agent_dismiss_restore_previous(
     context: &ProjectServiceRequestContext,
 ) -> ProjectServiceDispatchResponse {
-    acknowledge_agent_restore_offer(&context.project_state_dir());
+    acknowledge_agent_restore_offer(&context.project_state_dir(), AgentRestoreAnswer::Dismissed);
     ProjectServiceDispatchResponse::json(200, json!({ "ok": true }))
 }
 
@@ -157,6 +192,9 @@ fn normalize_agent_restore_offer(value: &Value) -> Option<Value> {
     // dropped on the way back to disk. The boot stamp is what scopes the offer
     // to one occasion; losing it would make every offer foreign.
     let daemon_boot_id = trimmed_string(value.get("daemonBootId"));
+    // Which run last recorded these agents. An answer of "no" is about this
+    // fleet, and this is what changes once they have been alive again.
+    let writer_instance_id = trimmed_string(value.get("writerInstanceId"));
     let session_ids = sessions
         .iter()
         .map(|session| Value::String(string_field(session, "id")))
@@ -167,6 +205,7 @@ fn normalize_agent_restore_offer(value: &Value) -> Option<Value> {
         "snapshotId": snapshot_id,
         "snapshotUpdatedAt": snapshot_updated_at,
         "daemonBootId": daemon_boot_id,
+        "writerInstanceId": writer_instance_id,
         "source": "last-online",
         "createdAt": created_at,
         "updatedAt": updated_at,
@@ -251,7 +290,10 @@ pub(super) fn reconcile_agent_restore_offer(
         return Some(offer);
     }
     if sessions.is_empty() {
-        acknowledge_agent_restore_offer(project_state_dir);
+        // Reached only from the restore route, so the user did press restore --
+        // and nothing the offer named is restorable any more. Spent with the
+        // boot, like any acceptance.
+        acknowledge_agent_restore_offer(project_state_dir, AgentRestoreAnswer::Restored);
         return None;
     }
     let mut updated = offer.clone();
@@ -278,7 +320,10 @@ pub(super) fn reconcile_agent_restore_offer(
     Some(updated)
 }
 
-pub(super) fn acknowledge_agent_restore_offer(project_state_dir: &Path) {
+pub(super) fn acknowledge_agent_restore_offer(
+    project_state_dir: &Path,
+    answer: AgentRestoreAnswer,
+) {
     if let Some(offer) = read_agent_restore_offer(project_state_dir) {
         let snapshot_id = string_field(&offer, "snapshotId");
         if !snapshot_id.is_empty() {
@@ -297,6 +342,13 @@ pub(super) fn acknowledge_agent_restore_offer(project_state_dir: &Path) {
                     // this" -- the gate's top-level field and its per-project
                     // one -- that could disagree for a project with no gate.
                     "daemonBootId": trimmed_string(offer.get("daemonBootId")),
+                    // Which fleet was answered, so a dismissal can last until
+                    // those agents have been alive again without muting a
+                    // genuinely new death of the same set -- the set alone
+                    // cannot tell those apart, because the snapshot id is
+                    // reused whenever the set is unchanged.
+                    "writerInstanceId": trimmed_string(offer.get("writerInstanceId")),
+                    "answer": answer.as_str(),
                     "source": "last-online",
                     "acknowledgedAt": now_iso(),
                 }),
