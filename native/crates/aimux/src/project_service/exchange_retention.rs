@@ -1,5 +1,5 @@
 use serde_json::{Map, Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const MESSAGE_BODY_COMPACTED: &str = "aimuxBodyCompacted";
 const MESSAGE_BODY_ORIGINAL_BYTES: &str = "aimuxBodyOriginalBytes";
@@ -409,6 +409,7 @@ fn select_retained_messages(exchange: &Value, retained_threads: &[Value]) -> Vec
             string_field(message, "threadId")
                 .is_some_and(|thread_id| thread_ids.contains(thread_id))
         })
+        .map(dedupe_message_recipients)
         .map(|message| {
             if has_pending_delivery(&message) {
                 return message;
@@ -534,16 +535,27 @@ fn sorted_by_updated_at_desc(records: &[Value]) -> Vec<&Value> {
     records
 }
 
+/// Insertion order is part of the contract -- callers downstream take the last
+/// N messages of each group -- so the index is kept beside the vec rather than
+/// replacing it with a map.
+///
+/// The linear `find` this replaces ran once per message over every group seen
+/// so far. At the size that prompted this change (11,524 messages across 423
+/// threads) that is roughly 4.9M comparisons plus a clone per message, on a
+/// path `write_runtime_exchange` takes on EVERY mutation.
 fn group_messages_by_thread_id(messages: &[Value]) -> Vec<(String, Vec<Value>)> {
     let mut grouped: Vec<(String, Vec<Value>)> = Vec::new();
+    let mut index: HashMap<&str, usize> = HashMap::new();
     for message in messages {
         let Some(thread_id) = string_field(message, "threadId") else {
             continue;
         };
-        if let Some((_, existing)) = grouped.iter_mut().find(|(id, _)| id == thread_id) {
-            existing.push(message.clone());
-        } else {
-            grouped.push((thread_id.to_owned(), vec![message.clone()]));
+        match index.get(thread_id) {
+            Some(&slot) => grouped[slot].1.push(message.clone()),
+            None => {
+                index.insert(thread_id, grouped.len());
+                grouped.push((thread_id.to_owned(), vec![message.clone()]));
+            }
         }
     }
     grouped
@@ -599,6 +611,36 @@ fn is_active_task(task: &Value) -> bool {
         string_field(task, "status"),
         Some("done" | "failed" | "canceled" | "cancelled" | "abandoned")
     )
+}
+
+/// Writing the list deduplicated stops NEW duplication; this is what shrinks
+/// what is already stored. Retention runs on every write, so an exchange that
+/// already holds a recipient twenty times is repaired by the next mutation
+/// rather than needing anyone to edit the file by hand.
+///
+/// Order is preserved because `has_pending_delivery` and the delivery plan
+/// both read this list, and the first recipient is the one a single-recipient
+/// caller meant.
+fn dedupe_message_recipients(message: Value) -> Value {
+    let mut message = message;
+    for field in ["to", "deliveredTo"] {
+        let recipients = string_array(&message, field);
+        if recipients.is_empty() {
+            continue;
+        }
+        let mut seen = HashSet::new();
+        let deduped = recipients
+            .iter()
+            .filter(|recipient| seen.insert(recipient.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if deduped.len() != recipients.len()
+            && let Value::Object(map) = &mut message
+        {
+            map.insert(field.into(), json!(deduped));
+        }
+    }
+    message
 }
 
 fn has_pending_delivery(message: &Value) -> bool {

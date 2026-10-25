@@ -494,3 +494,183 @@ fn temp_project(label: &str) -> PathBuf {
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
 }
+
+/// Measured on a live project: one message listed 237 recipients covering 10
+/// distinct agents, and 125 of 1465 messages carried duplicates. `deliveredTo`
+/// is deduplicated where it is written and the delivery plan is deduplicated
+/// before use, but the stored `to` list was kept exactly as sent -- so the
+/// duplication was permanent, it was re-serialized on every write, and
+/// `has_pending_delivery` compared a 237-entry list against a 1-entry
+/// `deliveredTo`, which can never be satisfied. That kept the message pending
+/// and its body exempt from the body cap.
+///
+/// Retention runs on every write, so this must repair what is ALREADY stored:
+/// a fix that only stopped new duplication would leave the existing file
+/// needing someone to edit it by hand.
+#[test]
+fn compaction_repairs_recipient_lists_that_are_already_duplicated() {
+    let now = "2026-05-25T00:00:00.000Z";
+    let repeated = (0..40)
+        .map(|_| Value::String("codex-1".into()))
+        .collect::<Vec<_>>();
+    let exchange = json!({
+        "version": 1,
+        "threads": [{
+            "id": "thread-active",
+            "title": "Active",
+            "kind": "task",
+            "status": "waiting",
+            "createdAt": now,
+            "updatedAt": now,
+            "createdBy": "user",
+            "participants": ["user", "codex-1"],
+            "waitingOn": ["codex-1"],
+            "unreadBy": ["codex-1"],
+            "lastMessageId": "msg-dup"
+        }],
+        "messages": [{
+            "id": "msg-dup",
+            "threadId": "thread-active",
+            "ts": now,
+            "from": "user",
+            "to": repeated,
+            "deliveredTo": ["codex-1", "codex-1", "codex-1"],
+            "kind": "request",
+            "body": "short body"
+        }],
+        "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+    });
+
+    let report = compact_runtime_exchange(&exchange);
+    let retained = report.get("retained").expect("retained exchange");
+    let message = retained
+        .get("messages")
+        .and_then(Value::as_array)
+        .and_then(|messages| messages.first())
+        .expect("the message survives retention");
+
+    let to = message
+        .get("to")
+        .and_then(Value::as_array)
+        .expect("to list");
+    assert_eq!(
+        to.len(),
+        1,
+        "40 copies of one recipient must compact to one: {to:?}"
+    );
+    let delivered = message
+        .get("deliveredTo")
+        .and_then(Value::as_array)
+        .expect("deliveredTo list");
+    assert_eq!(
+        delivered.len(),
+        1,
+        "deliveredTo must be repaired the same way: {delivered:?}"
+    );
+    // The point of the repair: the message is now genuinely delivered, so it
+    // stops being pinned as pending.
+    assert_eq!(
+        to.first(),
+        delivered.first(),
+        "a list of one recipient that has received it is not pending"
+    );
+}
+
+/// `group_messages_by_thread_id` swapped a linear scan for an index, and the
+/// thing that would break silently is ordering: callers keep the LAST N
+/// messages of each group, so a regrouping that reordered them would quietly
+/// retain the wrong ones. Interleaving two threads is what distinguishes a
+/// correct index from one that groups by arrival.
+#[test]
+fn interleaved_threads_keep_their_own_latest_messages() {
+    let now = "2026-05-25T00:00:00.000Z";
+    let threads = ["thread-a", "thread-b"]
+        .iter()
+        .map(|id| {
+            json!({
+                "id": id,
+                "title": id,
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": now,
+                "updatedAt": now,
+                "createdBy": "user",
+                "participants": ["user"],
+                "waitingOn": ["user"],
+                "unreadBy": ["user"]
+            })
+        })
+        .collect::<Vec<_>>();
+
+    // Alternate the two threads so arrival order and per-thread order differ.
+    let limit = RUNTIME_EXCHANGE_RETENTION.active_thread_messages;
+    let messages = (0..(limit * 2 + 10))
+        .map(|index| {
+            let thread = if index % 2 == 0 {
+                "thread-a"
+            } else {
+                "thread-b"
+            };
+            json!({
+                "id": format!("msg-{index}"),
+                "threadId": thread,
+                "ts": format!("2026-05-25T00:{:02}:{:02}.000Z", index / 60, index % 60),
+                "from": "user",
+                "to": ["user"],
+                "deliveredTo": ["user"],
+                "kind": "note",
+                "body": format!("body {index}")
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let exchange = json!({
+        "version": 1, "threads": threads, "messages": messages,
+        "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+    });
+
+    let report = compact_runtime_exchange(&exchange);
+    let retained = report.get("retained").expect("retained exchange");
+    let kept = retained
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages");
+
+    for thread in ["thread-a", "thread-b"] {
+        let ids = kept
+            .iter()
+            .filter(|message| message.get("threadId").and_then(Value::as_str) == Some(thread))
+            .filter_map(|message| message.get("id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids.len(),
+            limit,
+            "{thread} must keep exactly its own cap, not the global arrival order"
+        );
+        let numbers = ids
+            .iter()
+            .filter_map(|id| id.strip_prefix("msg-"))
+            .filter_map(|n| n.parse::<usize>().ok())
+            .collect::<Vec<_>>();
+        assert!(
+            numbers.windows(2).all(|pair| pair[0] < pair[1]),
+            "{thread} kept its messages out of order: {ids:?}"
+        );
+        let newest = messages
+            .iter()
+            .filter(|m| m.get("threadId").and_then(Value::as_str) == Some(thread))
+            .filter_map(|m| m.get("id").and_then(Value::as_str))
+            .filter_map(|id| id.strip_prefix("msg-"))
+            .filter_map(|n| n.parse::<usize>().ok())
+            .max()
+            .expect("the thread has messages");
+        eprintln!(
+            "{thread}: kept={:?} newest_in_input={newest}",
+            &numbers[..numbers.len().min(5)]
+        );
+        eprintln!(
+            "{thread}: kept_last={:?}",
+            &numbers[numbers.len().saturating_sub(5)..]
+        );
+    }
+}

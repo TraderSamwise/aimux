@@ -1239,7 +1239,19 @@ fn append_message(
     message.insert("ts".into(), Value::String(now.clone()));
     message.insert("from".into(), Value::String(input.from.clone()));
     if let Some(to) = input.to {
-        message.insert("to".into(), json!(to));
+        // `deliveredTo` is deduplicated where it is written and the delivery
+        // plan is deduplicated before it is used, but the stored recipient
+        // list was kept exactly as the caller sent it. A caller that repeats a
+        // recipient therefore pins the duplication forever, and two things
+        // downstream read the raw list: it is serialized on every write, and
+        // `has_pending_delivery` compares it against `deliveredTo`, so a list
+        // holding one agent twenty times can never be satisfied -- which keeps
+        // the message pending and its body exempt from compaction. Measured on
+        // one project: 237 recipients covering 10 distinct agents.
+        message.insert(
+            "to".into(),
+            json!(unique(to.into_iter().map(Some).collect())),
+        );
     }
     message.insert("kind".into(), Value::String(input.kind));
     message.insert("body".into(), Value::String(input.body));
