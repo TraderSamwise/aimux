@@ -30,7 +30,7 @@ use super::restore_offer::{
     AgentRestoreAnswer, acknowledge_agent_restore_offer, agent_restore_ack_path,
     agent_restore_offer_is_current, agent_restore_offer_path, build_agent_restore_worktree_groups,
     normalize_agent_restore_sessions, read_agent_restore_offer, read_agent_restore_prompt_gate,
-    remove_agent_restore_offer,
+    remove_agent_restore_offer, retain_offered_restore_failures,
 };
 use super::topology_helpers::read_json_object;
 
@@ -301,6 +301,7 @@ fn remove_agent_restore_offer_sessions(
         Value::Array(build_agent_restore_worktree_groups(&sessions)),
     );
     object_insert_mut(&mut updated, "sessions", Value::Array(sessions));
+    retain_offered_restore_failures(&mut updated);
     if let Err(error) = write_restore_state(&agent_restore_offer_path(project_state_dir), &updated)
     {
         log_restore_state_failure("trim restore offer", project_state_dir, &error);
@@ -419,6 +420,7 @@ fn decay_existing_offer(
         Value::Array(build_agent_restore_worktree_groups(&sessions)),
     );
     object_insert_mut(&mut updated, "sessions", Value::Array(sessions));
+    retain_offered_restore_failures(&mut updated);
     if let Err(error) = write_restore_state(&agent_restore_offer_path(project_state_dir), &updated)
     {
         log_restore_state_failure("decay restore offer", project_state_dir, &error);

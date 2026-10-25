@@ -1226,3 +1226,81 @@ fn accepting_a_restore_is_still_spent_by_its_own_boot() {
         "a restore that did not work must be asked about again next boot"
     );
 }
+
+/// A restore that stopped short has to say so, and the saying has to survive
+/// the trip through disk.
+///
+/// Restoring resumes every agent's task and those tasks run test suites, so the
+/// route asks the host for capacity between launches and stops while it can
+/// still say no -- restoring a whole fleet at once once emptied 61GB of RAM on
+/// sam-strix. The leftovers come back as a retry offer, and that offer was
+/// rendered with the same wording as a first one, so the reason appeared once in
+/// the footer and was unreachable after that. It read as aimux asking the same
+/// question again.
+///
+/// Asserted through the real route and then through the read surface the
+/// dashboard renders from, because the field is only useful if it survives
+/// `normalize_agent_restore_offer`, which rebuilds the offer from scratch.
+#[test]
+fn a_retry_offer_carries_what_stopped_the_restore() {
+    let project = TestProject::new("retry-says-why");
+    project.run_task();
+    project.simulate_process_death();
+    project.seed_prompt_gates("boot-1");
+    project.run_task_with_no_live_windows();
+
+    // The stub runtime refuses every window, so every offered agent fails.
+    let outcome = project.accept_restore_offer();
+    let failed = outcome["failed"].as_array().expect("failures");
+    assert_eq!(failed.len(), AGENT_IDS.len(), "{outcome}");
+
+    assert!(project.offer().is_some(), "the leftovers are offered back");
+
+    // Read back through the surface the dashboard renders from rather than off
+    // disk: `normalize_agent_restore_offer` rebuilds the offer from scratch, so
+    // a field it does not list is dropped on the way out and the prompt would
+    // never see it. The restore route's own first act is that read, and it
+    // returns what it read.
+    let served = project.accept_restore_offer();
+    let retry = &served["offer"];
+    let recorded = retry["restoreFailures"]
+        .as_array()
+        .expect("the retry offer records what failed");
+    assert_eq!(recorded.len(), AGENT_IDS.len(), "{retry}");
+    assert_eq!(
+        recorded[0]["error"], failed[0]["error"],
+        "the reason travels with the leftovers, not just the response: {retry}"
+    );
+}
+
+/// And it stops saying so once the agent it names is no longer offered. Every
+/// writer clones the offer forward, so an agent that came back on its own would
+/// otherwise stay named as a failure in the prompt for the rest of the boot.
+#[test]
+fn a_failure_stops_being_reported_once_that_agent_is_no_longer_offered() {
+    let project = TestProject::new("retry-decays");
+    project.run_task();
+    project.simulate_process_death();
+    project.seed_prompt_gates("boot-1");
+    project.run_task_with_no_live_windows();
+    project.accept_restore_offer();
+    assert!(
+        project.offer().expect("retry offer")["restoreFailures"]
+            .as_array()
+            .is_some_and(|failures| failures.len() == AGENT_IDS.len())
+    );
+
+    // One of them comes back on its own, which is what decay is for.
+    project.run_task_with_only_live_windows(&AGENT_WINDOW_IDS[..1]);
+    let decayed = project.offer().expect("the other is still offered");
+    assert_eq!(
+        session_ids(&decayed),
+        [AGENT_IDS[1]],
+        "decay drops the agent that came back: {decayed}"
+    );
+    let recorded = decayed["restoreFailures"]
+        .as_array()
+        .expect("the remaining failure is still reported");
+    assert_eq!(recorded.len(), 1, "{decayed}");
+    assert_eq!(recorded[0]["sessionId"], AGENT_IDS[1], "{decayed}");
+}

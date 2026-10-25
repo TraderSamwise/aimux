@@ -195,6 +195,29 @@ fn normalize_agent_restore_offer(value: &Value) -> Option<Value> {
     // Which run last recorded these agents. An answer of "no" is about this
     // fleet, and this is what changes once they have been alive again.
     let writer_instance_id = trimmed_string(value.get("writerInstanceId"));
+    // What a retry offer is: the leftovers of a restore that stopped short, and
+    // the reason it stopped. Carried so the prompt can say so instead of
+    // reading as the same question asked again.
+    let offered = sessions
+        .iter()
+        .map(|session| string_field(session, "id"))
+        .collect::<std::collections::BTreeSet<_>>();
+    let restore_failures = value
+        .get("restoreFailures")
+        .and_then(Value::as_array)
+        .map(|failures| {
+            // Normalize drops id-less and duplicate sessions, so it can shrink
+            // an offer too -- and then the headline's count would exceed the
+            // agents listed under it. Every other field here is validated on
+            // the way through; this one is no different.
+            failures
+                .iter()
+                .filter(|failure| offered.contains(&string_field(failure, "sessionId")))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .filter(|failures| !failures.is_empty());
+
     let session_ids = sessions
         .iter()
         .map(|session| Value::String(string_field(session, "id")))
@@ -206,6 +229,7 @@ fn normalize_agent_restore_offer(value: &Value) -> Option<Value> {
         "snapshotUpdatedAt": snapshot_updated_at,
         "daemonBootId": daemon_boot_id,
         "writerInstanceId": writer_instance_id,
+        "restoreFailures": restore_failures,
         "source": "last-online",
         "createdAt": created_at,
         "updatedAt": updated_at,
@@ -315,6 +339,7 @@ pub(super) fn reconcile_agent_restore_offer(
         "worktreeGroups",
         Value::Array(build_agent_restore_worktree_groups(&sessions)),
     );
+    retain_offered_restore_failures(&mut updated);
     let _ = write_json_atomic(agent_restore_offer_path(project_state_dir), &updated);
     mark_agent_restore_prompt_gate_asked(context, project_state_dir, &updated);
     Some(updated)
@@ -358,6 +383,41 @@ pub(super) fn acknowledge_agent_restore_offer(
     remove_agent_restore_offer(project_state_dir);
 }
 
+/// Keep a recorded failure only while the session it names is still offered.
+///
+/// `restoreFailures` describes one attempt, and every later writer clones the
+/// offer forward -- so an agent that came back on its own would otherwise stay
+/// named as a failure in the prompt. When the last one goes the fields go with
+/// it, and the prompt reads as a first offer again, which is what it is.
+pub(super) fn retain_offered_restore_failures(offer: &mut Value) {
+    let Some(failures) = offer.get("restoreFailures").and_then(Value::as_array) else {
+        return;
+    };
+    let offered = array_field(offer, "sessions")
+        .iter()
+        .map(|session| string_field(session, "id"))
+        .collect::<std::collections::BTreeSet<_>>();
+    let kept = failures
+        .iter()
+        .filter(|failure| offered.contains(&string_field(failure, "sessionId")))
+        .cloned()
+        .collect::<Vec<_>>();
+    if kept.is_empty() {
+        if let Value::Object(offer) = offer {
+            offer.remove("restoreFailures");
+        }
+        return;
+    }
+    object_insert_mut(offer, "restoreFailures", Value::Array(kept));
+}
+
+/// Offer back whatever a restore could not bring up, saying what stopped it.
+///
+/// The usual reason is the host refusing on memory: restoring resumes every
+/// agent's task and those tasks run test suites, so the route asks the host
+/// between launches and stops while it can still say no. Without the reason
+/// travelling with the leftovers, the next prompt read as aimux asking the
+/// same question again.
 pub(super) fn write_agent_restore_retry_offer(
     project_state_dir: &Path,
     offer: &Value,
@@ -380,6 +440,10 @@ pub(super) fn write_agent_restore_retry_offer(
     }
     let mut retry = offer.clone();
     object_insert_mut(&mut retry, "updatedAt", Value::String(now_iso()));
+    object_insert_mut(&mut retry, "restoreFailures", Value::Array(failed.to_vec()));
+    // `sessions` above is the failures intersected with what was offered, so a
+    // failure naming anything else has nothing to sit beside.
+    retain_offered_restore_failures(&mut retry);
     object_insert_mut(
         &mut retry,
         "sessionIds",

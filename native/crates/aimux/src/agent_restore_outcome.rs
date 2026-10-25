@@ -45,14 +45,30 @@ pub fn restore_outcome_message(body: &Value) -> Option<String> {
             plural(restored, "agent", "agents")
         ));
     }
-    Some(format!(
-        "Restored {restored} of {total}; {}",
-        describe_failures(failed),
-        total = restored + failed.len(),
-    ))
+    Some(restore_partial_message(restored, failed))
 }
 
-fn describe_failures(failed: &[Value]) -> String {
+fn restore_partial_message(restored: usize, failed: &[Value]) -> String {
+    format!(
+        "Restored {restored} of {total}; {}",
+        restore_failures_message(failed),
+        total = restored + failed.len(),
+    )
+}
+
+/// Which agents could not be restored and why, as one clause.
+///
+/// Shared with the prompt that offers those leftovers back. The route writes a
+/// retry offer for whatever failed, and that offer was rendered as if it were a
+/// fresh "restore previous agents?" question, so the reason -- usually the host
+/// refusing on memory -- was shown once in the footer and then lost.
+///
+/// The clause and not the whole sentence, deliberately. "Restored 6 of 8" is
+/// true of one attempt at the moment it finished; the prompt is a later moment,
+/// and an offer that has since decayed or been retried would be quoting
+/// arithmetic that is no longer true. What stays true is which of the agents
+/// still on offer could not be brought back, and why.
+pub fn restore_failures_message(failed: &[Value]) -> String {
     let named = failed
         .iter()
         .take(MAX_NAMED_FAILURES)
