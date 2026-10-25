@@ -3,7 +3,10 @@ use aimux::loop_watcher::{
     LoopWatcher, load_loop_watcher_state, loop_pause_key_from_loop_metadata,
     loop_watcher_state_path, save_loop_watcher_state,
 };
-use aimux::project_service::loop_watcher_task::DEFAULT_RECIPIENT_WAKE_FLOOR_MS;
+use aimux::project_service::loop_watcher_task::{
+    DEFAULT_RECIPIENT_WAKE_FLOOR_MS, DEFAULT_SCAN_INTERVAL_MS, DEFAULT_STOPPED_DWELL_MS,
+    DEFAULT_UNCHANGED_REMINDER_TICKS,
+};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
@@ -4573,6 +4576,66 @@ fn the_shipped_loop_config_carries_a_recipient_wake_floor() {
     );
 }
 
+/// Every machine that upgrades into this build loads a state file written
+/// before `lastBriefingWakeAt` existed. `#[serde(default)]` makes that load,
+/// but default is 0, and 0 is also the value the floor treats as "never
+/// briefed" -- so the upgrade must read as a dormant floor and a free first
+/// briefing, not as a clock pinned at the epoch that silences the fleet until
+/// 1970 plus a minute.
+#[test]
+fn a_state_file_written_before_the_floor_existed_loads_with_it_dormant() {
+    let directory = temp_state_dir("wake-floor-legacy-load");
+    let path = loop_watcher_state_path(&directory);
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 0,
+            "recipientWakeFloorMs": DEFAULT_RECIPIENT_WAKE_FLOOR_MS
+        }),
+    );
+
+    // Arm the floor, save, then strip the field the old build never wrote --
+    // at every level, because the clock that matters lives on the sub-watcher.
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(!watcher.scan(&input, NOW, &mut ok).is_empty());
+    save_loop_watcher_state(&path, &watcher).expect("save loop watcher state");
+    let raw = fs::read_to_string(&path).expect("read loop watcher state");
+    let stripped = raw
+        .lines()
+        .filter(|line| !line.contains("lastBriefingWakeAt"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        raw.contains("lastBriefingWakeAt") && !stripped.contains("lastBriefingWakeAt"),
+        "the fixture must actually drop the field it is named after"
+    );
+    fs::write(&path, &stripped).expect("write legacy loop watcher state");
+
+    let mut legacy = load_loop_watcher_state(&path).expect("a pre-field state file must load");
+    let first = legacy.scan(&input, NOW + 1_000, &mut ok);
+    assert!(
+        first
+            .iter()
+            .any(|send| send.kind == LoopSendKind::OverseerBriefing),
+        "an upgraded watcher has never briefed anyone, so its first briefing \
+         is free: {first:?}"
+    );
+    // And the floor arms normally from there, rather than staying dormant.
+    let inside = legacy.scan(&input, NOW + 2_000, &mut ok);
+    assert!(
+        !inside
+            .iter()
+            .any(|send| send.kind == LoopSendKind::OverseerBriefing),
+        "after the first post-upgrade briefing the floor must hold: {inside:?}"
+    );
+}
+
 /// The project service reloads watcher state from disk on EVERY tick, so the
 /// floor does not survive because it is held in memory -- it survives because
 /// `into_watcher` restores `last_briefing_wake_at`. Nothing exercised that
@@ -4629,11 +4692,20 @@ fn the_wake_floor_survives_the_reload_that_happens_every_tick() {
 
 /// What the floor actually trades, pinned so it is a decision rather than a
 /// surprise. A standing condition costs nothing: an agent that stays stopped
-/// is reported exactly as often with the floor as without it, because every
-/// briefing that does go is built fresh from whoever is due. An agent whose
-/// stop episode begins and ends inside a closed window is NOT reported, and
-/// that is the intended answer -- it unstuck itself, so a later briefing
-/// would describe something that had stopped being true.
+/// is reported exactly as often with the floor as without it AT THE SHIPPED
+/// NUMBERS, and that is an alignment, not a property: `stopped_candidate_due`
+/// fires only on exact multiples of `unchangedReminderTicks`, so a withheld
+/// due tick defers a whole reminder period rather than resuming when the
+/// floor lifts. The default floor is 60s and four scans at the default 15s
+/// cadence is also 60s, so the deferral lands on the next due tick and costs
+/// nothing. Raise the floor off that multiple and the steady agent starts
+/// paying too -- which is why this test builds its config from the shipped
+/// constants instead of literals, and why the second case below measures a
+/// floor that is NOT aligned.
+///
+/// An agent whose stop episode begins and ends inside a closed window is NOT
+/// reported, and that is the intended answer -- it unstuck itself, so a later
+/// briefing would describe something that had stopped being true.
 ///
 /// An earlier version of this reasoning claimed withholding only ever delays a
 /// batch and costs no agent its coverage. Measured, that is false: on a 45s
@@ -4658,9 +4730,9 @@ fn the_floor_bounds_the_rate_and_never_loses_a_standing_condition() {
                 "cycler": cycler_meta.clone()
             }}),
             json!({
-                "nudgeCooldownMs": 60_000,
-                "stoppedDwellMs": 30_000,
-                "unchangedReminderTicks": 4,
+                "nudgeCooldownMs": DEFAULT_RECIPIENT_WAKE_FLOOR_MS,
+                "stoppedDwellMs": DEFAULT_STOPPED_DWELL_MS,
+                "unchangedReminderTicks": DEFAULT_UNCHANGED_REMINDER_TICKS,
                 "recipientWakeFloorMs": floor_ms
             }),
         );
@@ -4668,13 +4740,13 @@ fn the_floor_bounds_the_rate_and_never_loses_a_standing_condition() {
         let mut ok = |_: &LoopSend| true;
         let (mut total, mut steady_seen, mut cycler_seen) = (0, 0, 0);
         for tick in 0..48i64 {
-            let activity = if (tick * 15_000) % 90_000 < 45_000 {
+            let activity = if (tick * DEFAULT_SCAN_INTERVAL_MS) % 90_000 < 45_000 {
                 "idle"
             } else {
                 "running"
             };
             input["metadata"]["sessions"]["cycler"]["derived"]["activity"] = json!(activity);
-            for send in watcher.scan(&input, NOW + tick * 15_000, &mut ok) {
+            for send in watcher.scan(&input, NOW + tick * DEFAULT_SCAN_INTERVAL_MS, &mut ok) {
                 if send.kind != LoopSendKind::OverseerBriefing {
                     continue;
                 }
@@ -4720,5 +4792,21 @@ fn the_floor_bounds_the_rate_and_never_loses_a_standing_condition() {
     assert!(
         floored_cycler < unbounded_cycler,
         "the trade this pins is real: {floored_cycler} vs {unbounded_cycler}"
+    );
+
+    // And the part the sentence above would otherwise overstate. The equality
+    // holds because the shipped floor is exactly four scans, the same period
+    // `unchangedReminderTicks` counts in; a withheld due tick defers a whole
+    // reminder period, so a floor off that multiple takes coverage from the
+    // STANDING agent too. Measured here rather than reasoned about, so that
+    // anyone raising `recipientWakeFloorMs` sees the price in a test instead
+    // of discovering it on a fleet.
+    let unaligned = DEFAULT_RECIPIENT_WAKE_FLOOR_MS + DEFAULT_SCAN_INTERVAL_MS / 2;
+    let (_, unaligned_steady, _) = run(unaligned);
+    assert!(
+        unaligned_steady < unbounded_steady,
+        "a floor off the reminder multiple must be shown to cost the standing \
+         agent too, or the claim above is only true by alignment: \
+         {unaligned_steady} vs {unbounded_steady}"
     );
 }

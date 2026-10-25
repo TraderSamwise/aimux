@@ -44,14 +44,14 @@ pub const NUDGEABLE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"]
 /// The watcher also needs offline sessions as data so it can report a loop
 /// member that died instead of waiting forever for a stopped activity edge.
 pub const LOOP_WATCH_SESSION_STATUSES: &[&str] = &["starting", "running", "idle", "offline"];
-const DEFAULT_SCAN_INTERVAL_MS: i64 = 15_000;
+pub const DEFAULT_SCAN_INTERVAL_MS: i64 = 15_000;
 const DEFAULT_SCAN_EVERY_TICKS: u64 = 60;
 /// A loop watcher that sleeps longer than this is indistinguishable from a
 /// dead watcher to the overseer. Keep the user-facing signal prompt even when
 /// a bad config briefly lands and is later removed.
 const MAX_SCAN_EVERY_TICKS: u64 = 240;
-const DEFAULT_STOPPED_DWELL_MS: i64 = 30_000;
-const DEFAULT_UNCHANGED_REMINDER_TICKS: u64 = 4;
+pub const DEFAULT_STOPPED_DWELL_MS: i64 = 30_000;
+pub const DEFAULT_UNCHANGED_REMINDER_TICKS: u64 = 4;
 /// Shortest gap between two overseer briefings landing on the same recipient.
 /// The per-agent gates cannot bound this: see
 /// `LoopWatcher::withhold_briefings_within_wake_floor`.
