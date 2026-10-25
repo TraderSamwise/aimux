@@ -41,6 +41,10 @@ use super::topology_helpers::read_json_object;
 /// unreadable snapshot as an absent one would silently drop a restore offer.
 pub(crate) type RestoreStateResult<T> = Result<T, String>;
 
+/// What a snapshot written before it recorded an observing run reads as. It
+/// names no fleet, so no answer may be attributed to it -- see `named_fleet`.
+const UNATTRIBUTED_FLEET: &str = "unknown";
+
 /// Identity of this process run, stamped into every snapshot it writes.
 ///
 /// Nothing in the Rust tree carried a per-run project-service identity. The one
@@ -90,7 +94,7 @@ fn normalize_last_online_snapshot(value: &Value) -> Option<Value> {
         "id": trimmed_string(value.get("id"))
             .unwrap_or_else(|| format!("online-{}", string_field(value, "updatedAt"))),
         "writerInstanceId": trimmed_string(value.get("writerInstanceId"))
-            .unwrap_or_else(|| "unknown".into()),
+            .unwrap_or_else(|| UNATTRIBUTED_FLEET.into()),
         "createdAt": trimmed_string(value.get("createdAt")).unwrap_or_else(|| now.clone()),
         "updatedAt": trimmed_string(value.get("updatedAt")).unwrap_or(now),
         "sessionIds": session_ids(&sessions),
@@ -547,8 +551,9 @@ fn acknowledgement_still_applies(
     // later and re-offered the other nineteen agents -- the exact bug this
     // whole change is named for, arriving by the back door.
     if trimmed_string(ack.get("answer")).as_deref() == Some("dismissed") {
-        let answered_fleet = trimmed_string(ack.get("writerInstanceId"));
-        let current_fleet = (!writer_instance_id.trim().is_empty()).then_some(writer_instance_id);
+        let answered = trimmed_string(ack.get("writerInstanceId"));
+        let answered_fleet = named_fleet(answered.as_deref());
+        let current_fleet = named_fleet(Some(writer_instance_id));
         return match (answered_fleet, current_fleet) {
             (Some(answered), Some(current)) => answered == current,
             // A dismissal that cannot name the fleet it answered falls back to
@@ -565,6 +570,19 @@ fn acknowledgement_still_applies(
         return false;
     }
     boot_acknowledgement_still_applies(&ack, gate)
+}
+
+/// A fleet this answer can be attributed to, or nothing.
+///
+/// `normalize_last_online_snapshot` fills a missing `writerInstanceId` with the
+/// literal `"unknown"`, and a dismissal is the one answer with no generation
+/// and no boot bound -- so a dismissal recorded against `"unknown"` would match
+/// every future unattributed snapshot for that project, silently and with no
+/// way back. The placeholder names no fleet.
+fn named_fleet(writer_instance_id: Option<&str>) -> Option<&str> {
+    writer_instance_id
+        .map(str::trim)
+        .filter(|writer| !writer.is_empty() && *writer != UNATTRIBUTED_FLEET)
 }
 
 fn boot_acknowledgement_still_applies(ack: &Value, gate: &Value) -> bool {

@@ -15,7 +15,7 @@ use super::runtime_adapter::ProjectLifecycleRuntime;
 use super::session_liveness::LiveWindows;
 use super::{
     array_field, json_error, lifecycle_transition_with_phase, now_iso, object_insert_mut,
-    read_json_object, resume_agent_session, string_array_field, string_field, trimmed_string,
+    resume_agent_session, string_array_field, string_field, trimmed_string,
 };
 
 /// How an offer was answered, because the two answers do not last the same
@@ -514,6 +514,15 @@ pub(super) fn read_agent_restore_prompt_gate(
     project_state_dir: &Path,
     project_id: &str,
 ) -> Option<Value> {
+    read_agent_restore_prompt_gate_file(project_state_dir)?
+        .get("projects")
+        .and_then(Value::as_object)
+        .and_then(|projects| projects.get(project_id))
+        .cloned()
+}
+
+/// The whole gate file, or nothing with a reason logged.
+fn read_agent_restore_prompt_gate_file(project_state_dir: &Path) -> Option<Value> {
     let path = agent_restore_prompt_gate_path(project_state_dir);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
@@ -527,23 +536,23 @@ pub(super) fn read_agent_restore_prompt_gate(
             return None;
         }
     };
-    let state = match serde_json::from_str::<Value>(&text) {
-        Ok(state) => state,
+    match serde_json::from_str::<Value>(&text) {
+        Ok(state) => Some(state),
         Err(error) => {
             log_restore_state_failure(
                 "parse restore prompt gates",
                 project_state_dir,
                 &error.to_string(),
             );
+            // Quarantined so it stops failing for ever; the daemon rewrites it
+            // whole at its next boot. It renames whatever is at the path now,
+            // so a file re-seeded in the meantime is moved aside too -- which
+            // costs a boot's gates and is still better than a file nothing can
+            // read.
             quarantine_corrupt_file(&path);
-            return None;
+            None
         }
-    };
-    state
-        .get("projects")
-        .and_then(Value::as_object)
-        .and_then(|projects| projects.get(project_id))
-        .cloned()
+    }
 }
 
 /// Whether an offer on disk belongs to the occasion that is open right now.
@@ -602,7 +611,16 @@ fn mark_agent_restore_prompt_gate_asked(
     project_state_dir: &Path,
 ) {
     let path = agent_restore_prompt_gate_path(project_state_dir);
-    let mut state = read_json_object(&path);
+    // Read through the same door as everything else, so an unreadable gate file
+    // is reported rather than silently treated as having no gates at all.
+    let Some(mut state) =
+        read_agent_restore_prompt_gate_file(project_state_dir).and_then(|state| match state {
+            Value::Object(state) => Some(state),
+            _ => None,
+        })
+    else {
+        return;
+    };
     let project_id = compute_project_id(context.project_root());
     let now = now_iso();
     let Some(Value::Object(projects)) = state.get_mut("projects") else {

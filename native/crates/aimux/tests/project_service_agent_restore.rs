@@ -1540,3 +1540,44 @@ fn a_snapshot_that_shrinks_with_nothing_alive_still_belongs_to_the_run_that_died
         .expect("the agents that really died must still be offered");
     assert_eq!(session_ids(&offer), AGENT_IDS);
 }
+
+/// A dismissal that names no fleet must not mute one for ever.
+///
+/// A snapshot written before it recorded an observing run normalizes to the
+/// literal `"unknown"`, and a dismissal is the one answer with no generation
+/// and no boot bound. So a dismissal recorded against `"unknown"` would match
+/// every later unattributed snapshot for that project -- silently, with the ack
+/// never deleted, and with nothing in the product able to undo it. The
+/// placeholder names no fleet, so it falls back to the boot rule like any other
+/// answer that cannot say what it answered.
+#[test]
+fn a_dismissal_against_an_unnamed_fleet_falls_back_to_its_boot() {
+    let project = TestProject::new("dismiss-unattributed");
+    project.run_task();
+    project.simulate_process_death_as("unknown");
+    project.seed_prompt_gates("boot-1");
+    project.run_task_with_no_live_windows();
+    project.dismiss_restore_offer();
+    let ack = project.ack().expect("the dismissal is recorded");
+    assert_eq!(ack["answer"], "dismissed", "{ack}");
+    assert_eq!(
+        ack["writerInstanceId"], "unknown",
+        "the fixture must reproduce the unattributed shape: {ack}"
+    );
+
+    // Within the boot it answered, it still answers.
+    project.run_task_with_no_live_windows();
+    assert!(
+        project.offer().is_none(),
+        "the dismissal answers its own boot: {:?}",
+        project.offer()
+    );
+
+    // A new boot must ask again rather than inheriting a mute nothing can lift.
+    project.seed_prompt_gates("boot-2");
+    project.run_task_with_no_live_windows();
+    assert!(
+        project.offer().is_some(),
+        "an unattributable dismissal must not mute the next boot"
+    );
+}
