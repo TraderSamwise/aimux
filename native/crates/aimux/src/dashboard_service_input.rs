@@ -1045,16 +1045,4 @@ mod tests {
             assert!(!rendered.contains("could not be restored"), "{rendered}");
         }
     }
-
-    #[test]
-    fn a_first_prompt_reports_no_failure_legacy_shape() {
-        let rendered =
-            render_agent_restore_confirm_overlay(&offer(serde_json::Map::new()), 100, 30);
-        assert!(rendered.contains("RESTORE PREVIOUS AGENTS"), "{rendered}");
-        assert!(
-            rendered.contains("2 agent session(s) from the previous run"),
-            "{rendered}"
-        );
-        assert!(!rendered.contains("could not be restored"), "{rendered}");
-    }
 }

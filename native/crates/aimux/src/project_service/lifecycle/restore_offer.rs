@@ -1,7 +1,7 @@
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 
-use crate::atomic_write::write_json_atomic;
+use crate::atomic_write::{quarantine_corrupt_file, write_json_atomic};
 use crate::host_capacity::{
     LAUNCH_SPACING, available_memory_bytes, launch_capacity, memory_floor_bytes,
 };
@@ -10,6 +10,7 @@ use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
+use super::restore_snapshot::log_restore_state_failure;
 use super::runtime_adapter::ProjectLifecycleRuntime;
 use super::session_liveness::LiveWindows;
 use super::{
@@ -166,12 +167,27 @@ pub(super) fn route_agent_dismiss_restore_previous(
 
 pub(super) fn read_agent_restore_offer(project_state_dir: &Path) -> Option<Value> {
     let path = agent_restore_offer_path(project_state_dir);
-    if !path.exists() {
-        return None;
-    }
-    let parsed = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())?;
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            // Not the same answer as "there is no offer". An unreadable file
+            // read as absent would hide a crash the user still has to answer,
+            // and say nothing about why.
+            log_restore_state_failure("read restore offer", project_state_dir, &error.to_string());
+            return None;
+        }
+    };
+    let parsed = match serde_json::from_str::<Value>(&text) {
+        Ok(parsed) => parsed,
+        // Quarantined, so it is genuinely absent rather than a read that keeps
+        // failing for ever -- the same treatment the snapshot beside it gets.
+        Err(error) => {
+            log_restore_state_failure("parse restore offer", project_state_dir, &error.to_string());
+            quarantine_corrupt_file(&path);
+            return None;
+        }
+    };
     if parsed.get("source").and_then(Value::as_str) == Some("restorable-inventory") {
         let _ = std::fs::remove_file(path);
         return None;
@@ -340,7 +356,13 @@ pub(super) fn reconcile_agent_restore_offer(
         Value::Array(build_agent_restore_worktree_groups(&sessions)),
     );
     retain_offered_restore_failures(&mut updated);
-    let _ = write_json_atomic(agent_restore_offer_path(project_state_dir), &updated);
+    if let Err(error) = write_json_atomic(agent_restore_offer_path(project_state_dir), &updated) {
+        log_restore_state_failure(
+            "reconcile restore offer",
+            project_state_dir,
+            &error.to_string(),
+        );
+    }
     mark_agent_restore_prompt_gate_asked(context, project_state_dir);
     Some(updated)
 }
@@ -356,7 +378,7 @@ pub(super) fn acknowledge_agent_restore_offer(
             // only a set of agents, and the set does not change when they are
             // killed and restarted, so one acknowledgement muted every
             // restart that followed.
-            let _ = write_json_atomic(
+            if let Err(error) = write_json_atomic(
                 agent_restore_ack_path(project_state_dir),
                 &json!({
                     "version": 1,
@@ -377,7 +399,15 @@ pub(super) fn acknowledge_agent_restore_offer(
                     "source": "last-online",
                     "acknowledgedAt": now_iso(),
                 }),
-            );
+            ) {
+                // The one durable record of a "no". Dropping it silently means
+                // the next boot asks again about a fleet the user turned down.
+                log_restore_state_failure(
+                    "record restore answer",
+                    project_state_dir,
+                    &error.to_string(),
+                );
+            }
         }
     }
     remove_agent_restore_offer(project_state_dir);
@@ -462,23 +492,58 @@ pub(super) fn write_agent_restore_retry_offer(
     // nothing to sit beside -- and filtering against the pre-trim list would
     // have kept it.
     retain_offered_restore_failures(&mut retry);
-    let _ = write_json_atomic(agent_restore_offer_path(project_state_dir), &retry);
+    if let Err(error) = write_json_atomic(agent_restore_offer_path(project_state_dir), &retry) {
+        log_restore_state_failure(
+            "write restore retry offer",
+            project_state_dir,
+            &error.to_string(),
+        );
+    }
 }
 
 /// The boot gate for one project, which is the only thing that authorizes
 /// showing an offer. Read in one place so the snapshot id and the boot id
 /// always come from the same gate object.
+///
+/// One global file for every project, so a corrupt one disables the prompt
+/// everywhere. It is quarantined and logged rather than read as an empty
+/// object: silently answering "no gate" for every project on the machine is
+/// how a crash goes unoffered with nothing to say why. The daemon re-seeds the
+/// file at its next boot.
 pub(super) fn read_agent_restore_prompt_gate(
     project_state_dir: &Path,
     project_id: &str,
 ) -> Option<Value> {
-    Value::Object(read_json_object(&agent_restore_prompt_gate_path(
-        project_state_dir,
-    )))
-    .get("projects")
-    .and_then(Value::as_object)
-    .and_then(|projects| projects.get(project_id))
-    .cloned()
+    let path = agent_restore_prompt_gate_path(project_state_dir);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            log_restore_state_failure(
+                "read restore prompt gates",
+                project_state_dir,
+                &error.to_string(),
+            );
+            return None;
+        }
+    };
+    let state = match serde_json::from_str::<Value>(&text) {
+        Ok(state) => state,
+        Err(error) => {
+            log_restore_state_failure(
+                "parse restore prompt gates",
+                project_state_dir,
+                &error.to_string(),
+            );
+            quarantine_corrupt_file(&path);
+            return None;
+        }
+    };
+    state
+        .get("projects")
+        .and_then(Value::as_object)
+        .and_then(|projects| projects.get(project_id))
+        .cloned()
 }
 
 /// Whether an offer on disk belongs to the occasion that is open right now.
@@ -554,7 +619,13 @@ fn mark_agent_restore_prompt_gate_asked(
     }
     gate.insert("askedAt".into(), Value::String(now.clone()));
     state.insert("updatedAt".into(), Value::String(now));
-    let _ = write_json_atomic(path, &Value::Object(state));
+    if let Err(error) = write_json_atomic(path, &Value::Object(state)) {
+        log_restore_state_failure(
+            "record restore acceptance",
+            project_state_dir,
+            &error.to_string(),
+        );
+    }
 }
 
 pub(super) fn build_agent_restore_worktree_groups(sessions: &[Value]) -> Vec<Value> {

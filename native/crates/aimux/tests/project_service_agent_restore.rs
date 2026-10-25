@@ -1456,3 +1456,87 @@ fn a_fleet_that_dies_after_an_agent_started_is_still_offered() {
         "{still}"
     );
 }
+
+/// Saying no survives one of the dead agents being tidied away.
+///
+/// The acknowledgement named the generation it answered, and the generation
+/// rolls whenever the SET changes -- which a single `aimux agent kill`, or the
+/// retired-worktree reaper, does. So a dismissal was cancelled one prune later
+/// and the remaining agents were offered again: the exact bug this change is
+/// named for, arriving by the back door. A dismissal answers the FLEET.
+#[test]
+fn a_dismissal_survives_one_of_the_dead_agents_being_pruned() {
+    let project = TestProject::new("dismiss-survives-a-prune");
+    project.run_task();
+    project.simulate_process_death_as("run-that-died");
+    project.seed_prompt_gates("boot-1");
+    project.run_task_with_no_live_windows();
+    project.dismiss_restore_offer();
+
+    let before = project.snapshot().expect("snapshot");
+    project.stop_agent(AGENT_IDS[0]);
+    let after = project.snapshot().expect("snapshot");
+    assert_ne!(
+        after["id"], before["id"],
+        "pruning must roll the generation, or this test proves nothing: {after}"
+    );
+    assert_eq!(
+        after["writerInstanceId"], "run-that-died",
+        "pruning keeps the fleet it was recorded by: {after}"
+    );
+
+    project.seed_prompt_gates("boot-2");
+    project.run_task_with_no_live_windows();
+    assert!(
+        project.offer().is_none(),
+        "a dismissed fleet must stay dismissed after one of it is pruned: {:?}",
+        project.offer()
+    );
+}
+
+/// A snapshot shrinking must not make a dead fleet look like this run's own.
+///
+/// The writer id is replaced when a run sees an agent alive, and the derive
+/// refuses to offer a snapshot this run wrote -- otherwise it would offer back
+/// agents that never went away. Tying the carry-over to the recorded SET also
+/// meant that a snapshot merely shrinking stamped the record as this run's with
+/// nothing alive at all, and then nothing was ever offered for the life of the
+/// run. Shrinking is not an observation of life.
+#[test]
+fn a_snapshot_that_shrinks_with_nothing_alive_still_belongs_to_the_run_that_died() {
+    let project = TestProject::new("shrink-keeps-the-fleet");
+    project.add_agent("claude-three", "@2");
+    project.run_task_with_only_live_windows(&["@0", "@1", "@2"]);
+    assert_eq!(
+        project.snapshot().expect("snapshot")["sessionIds"]
+            .as_array()
+            .map(Vec::len),
+        Some(3)
+    );
+    project.simulate_process_death_as("run-that-died");
+
+    // One of the dead agents' rows reaches a finished status, which is what a
+    // reconcile or a graveyard between two ticks leaves behind. The snapshot
+    // stops retaining it, so the recorded set shrinks -- with nothing alive.
+    project.set_session_status("claude-three", "graveyard");
+    project.run_task_with_no_live_windows();
+
+    let shrunk = project.snapshot().expect("snapshot");
+    assert_eq!(
+        shrunk["sessionIds"].as_array().map(Vec::len),
+        Some(2),
+        "the finished session is no longer retained: {shrunk}"
+    );
+    assert_eq!(
+        shrunk["writerInstanceId"], "run-that-died",
+        "a shrinking snapshot must still belong to the run that saw them alive: {shrunk}"
+    );
+
+    // Which is the thing that matters: the survivors are still offered.
+    project.seed_prompt_gates("boot-1");
+    project.run_task_with_no_live_windows();
+    let offer = project
+        .offer()
+        .expect("the agents that really died must still be offered");
+    assert_eq!(session_ids(&offer), AGENT_IDS);
+}
