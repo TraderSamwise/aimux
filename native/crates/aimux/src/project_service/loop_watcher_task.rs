@@ -52,6 +52,10 @@ const DEFAULT_SCAN_EVERY_TICKS: u64 = 60;
 const MAX_SCAN_EVERY_TICKS: u64 = 240;
 const DEFAULT_STOPPED_DWELL_MS: i64 = 30_000;
 const DEFAULT_UNCHANGED_REMINDER_TICKS: u64 = 4;
+/// Shortest gap between two overseer briefings landing on the same recipient.
+/// The per-agent gates cannot bound this: see
+/// `LoopWatcher::withhold_briefings_within_wake_floor`.
+const DEFAULT_RECIPIENT_WAKE_FLOOR_MS: i64 = 60_000;
 /// Blast-radius cap: no single scan may message more agents than this.
 const MAX_SENDS_PER_SCAN: usize = 8;
 /// Longest one scan may spend delivering loop checks. Keep this below the
@@ -654,7 +658,10 @@ fn now_ms() -> i64 {
     super::scheduler::scheduler_now_ms()
 }
 
-fn loop_config_from(config: &Value) -> Value {
+/// Public so a gate can assert what PRODUCTION runs with. The watcher itself
+/// defaults every one of these to an off value, so a test that builds its own
+/// config proves nothing about the shipped cadence.
+pub fn loop_config_from(config: &Value) -> Value {
     let mut config = config.get("loop").cloned().unwrap_or(Value::Null);
     let object = match &mut config {
         Value::Object(object) => object,
@@ -676,6 +683,11 @@ fn loop_config_from(config: &Value) -> Value {
         object,
         "idleFleetReminderTicks",
         DEFAULT_UNCHANGED_REMINDER_TICKS,
+    );
+    insert_default_i64(
+        object,
+        "recipientWakeFloorMs",
+        DEFAULT_RECIPIENT_WAKE_FLOOR_MS,
     );
     config
 }

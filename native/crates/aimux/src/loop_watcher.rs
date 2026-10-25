@@ -143,6 +143,13 @@ pub struct LoopWatcher {
     last_delivery_recipient: Option<String>,
     last_nudge_at: BTreeMap<String, i64>,
     last_overseer_wake_at: i64,
+    /// When a briefing was last DELIVERED to this recipient. Separate
+    /// from `last_overseer_wake_at`, which `LoopExit` shares and which
+    /// advances on a failed or buffered attempt: a floor read from that
+    /// one is armed by sends nobody received, and a trickle of loop
+    /// exits re-arms it at least as fast as it lifts, starving the very
+    /// briefings it exists to space out.
+    last_briefing_wake_at: i64,
     stopped_since: BTreeMap<LoopDwellKey, LoopStoppedState>,
     pending_send_keys: BTreeMap<String, Vec<LoopDwellKey>>,
     delivery_records: Vec<LoopDeliveryRecord>,
@@ -293,13 +300,76 @@ impl LoopWatcher {
         if recipients.is_empty() {
             return self.plan_sends_for_recipient(input, now_ms, None);
         }
+        let wake_floor_ms = config_i64(input, "recipientWakeFloorMs", 0);
         let mut sends = self.plan_session_token_announcements(input, now_ms);
         for id in recipients {
             let watcher = self.recipient_watchers.entry(id.clone()).or_default();
             watcher.paused_loop_alerts = self.paused_loop_alerts.clone();
-            sends.extend(watcher.plan_sends_for_recipient(input, now_ms, Some(id.clone())));
+            let planned = watcher.plan_sends_for_recipient(input, now_ms, Some(id.clone()));
+            sends.extend(watcher.withhold_briefings_within_wake_floor(
+                planned,
+                id,
+                now_ms,
+                wake_floor_ms,
+            ));
         }
         sends
+    }
+
+    /// Every gate above this one bounds how often ONE AGENT is reported.
+    /// Nothing bounded how often the RECIPIENT is interrupted, and those are
+    /// different numbers: the briefing is what ends the episode it reports --
+    /// the overseer reads it and nudges, the agent runs again and leaves the
+    /// candidate set, and `dwelled_candidates` evicts its dwell state, so its
+    /// next stop is a first report with `last_attempted_ms: None`. No agent
+    /// ever reaches the cooldown or the unchanged-tick cadence. N agents on
+    /// their own stop/brief/nudge/stop cycles therefore land on one recipient
+    /// at N times the per-agent rate; measured, that was 32 briefings in 18
+    /// minutes to a single overseer from a fleet of four.
+    ///
+    /// Withheld rather than buffered, which is the opposite of what the global
+    /// pause does and deliberately so. A buffered briefing is pinned to the
+    /// candidate keys it was built from and only ever shrinks, so buffering
+    /// would accumulate one stale entry per signature and flush them together
+    /// when the floor lifted -- the same burst through another door. A
+    /// standing condition needs no carrying: an agent that was not briefed is
+    /// not nudged, so it stays stopped, stays a candidate, and joins the next
+    /// briefing, which is built fresh from whoever is due by then. That is
+    /// also what makes this safe to apply to briefings alone; every other kind
+    /// carries one-shot or cadence-limited state that withholding would
+    /// advance without delivering.
+    ///
+    /// A global pause needs no special case here, and that is a consequence of
+    /// the clock rather than an accident: a paused scan commits every send as
+    /// `Buffered`, which never arms `last_briefing_wake_at`, so the floor is
+    /// dormant for the whole pause and the buffer it exists to fill is left
+    /// alone. Withholding runs BEFORE buffering, so a floor armed by attempts
+    /// would have emptied that buffer instead.
+    fn withhold_briefings_within_wake_floor(
+        &mut self,
+        sends: Vec<LoopSend>,
+        recipient_id: &str,
+        now_ms: i64,
+        floor_ms: i64,
+    ) -> Vec<LoopSend> {
+        if floor_ms <= 0 || self.last_briefing_wake_at <= 0 {
+            return sends;
+        }
+        if now_ms.saturating_sub(self.last_briefing_wake_at) >= floor_ms {
+            return sends;
+        }
+        let mut kept = Vec::with_capacity(sends.len());
+        for send in sends {
+            if send.kind == LoopSendKind::OverseerBriefing && send.session_id == recipient_id {
+                // Release the dwell keys this briefing claimed. Nothing will
+                // commit it, and leaving them here would hand the next send to
+                // land on this signature another briefing's candidates.
+                self.pending_send_keys.remove(&send.signature);
+                continue;
+            }
+            kept.push(send);
+        }
+        kept
     }
 
     fn plan_session_token_announcements(&mut self, input: &Value, now_ms: i64) -> Vec<LoopSend> {
@@ -569,6 +639,16 @@ impl LoopWatcher {
         match send.kind {
             LoopSendKind::OverseerBriefing | LoopSendKind::LoopExit => {
                 self.last_overseer_wake_at = now_ms;
+                // Only a briefing that LANDED spaces out the next one. An
+                // attempt that failed woke nobody, and a buffered one is held
+                // precisely because the recipient is not being interrupted
+                // yet -- arming the floor on either would trade a real
+                // interruption for a silence the sender never notices.
+                if send.kind == LoopSendKind::OverseerBriefing
+                    && matches!(outcome, LoopDeliveryOutcome::Delivered)
+                {
+                    self.last_briefing_wake_at = now_ms;
+                }
             }
             LoopSendKind::DirectNudge => {
                 self.last_nudge_at.insert(send.session_id.clone(), now_ms);
@@ -1596,6 +1676,8 @@ struct PersistentLoopWatcherState {
     last_delivery_recipient: Option<String>,
     last_nudge_at: BTreeMap<String, i64>,
     last_overseer_wake_at: i64,
+    #[serde(default)]
+    last_briefing_wake_at: i64,
     stopped_since: Vec<PersistentStoppedSince>,
     #[serde(default)]
     last_candidate_signature: Option<String>,
@@ -1689,6 +1771,7 @@ impl PersistentLoopWatcherState {
             last_delivery_recipient: watcher.last_delivery_recipient.clone(),
             last_nudge_at: watcher.last_nudge_at.clone(),
             last_overseer_wake_at: watcher.last_overseer_wake_at,
+            last_briefing_wake_at: watcher.last_briefing_wake_at,
             stopped_since: watcher
                 .stopped_since
                 .iter()
@@ -1769,6 +1852,7 @@ impl PersistentLoopWatcherState {
             last_delivery_recipient: self.last_delivery_recipient,
             last_nudge_at: self.last_nudge_at,
             last_overseer_wake_at: self.last_overseer_wake_at,
+            last_briefing_wake_at: self.last_briefing_wake_at,
             stopped_since: self
                 .stopped_since
                 .into_iter()
