@@ -664,13 +664,11 @@ fn interleaved_threads_keep_their_own_latest_messages() {
             .filter_map(|n| n.parse::<usize>().ok())
             .max()
             .expect("the thread has messages");
-        eprintln!(
-            "{thread}: kept={:?} newest_in_input={newest}",
-            &numbers[..numbers.len().min(5)]
-        );
-        eprintln!(
-            "{thread}: kept_last={:?}",
-            &numbers[numbers.len().saturating_sub(5)..]
+        assert_eq!(
+            *numbers.last().expect("a kept message"),
+            newest,
+            "{thread} must keep its NEWEST message, not the oldest {} it saw",
+            numbers.len()
         );
     }
 }
@@ -767,5 +765,123 @@ fn a_pending_body_is_compacted_once_it_falls_behind_but_not_before() {
     assert!(
         stale <= RUNTIME_EXCHANGE_RETENTION.delivered_message_body_bytes,
         "compacted to the same cap delivered bodies get: {stale} bytes"
+    );
+}
+
+/// Two properties the grace window could break quietly, and one limitation it
+/// has that is worth stating out loud rather than discovering later.
+///
+/// Compaction runs on EVERY write, so it has to be idempotent: a second pass
+/// over an already-compacted exchange must not keep eating it. And the clock
+/// is `max(ts)` over the messages, so one bogus future timestamp -- a machine
+/// whose clock jumped, a hand-edited file -- must not drag every other
+/// pending body past the window at once.
+#[test]
+fn the_grace_window_is_idempotent_and_one_bad_clock_only_costs_a_truncation() {
+    let huge = "x".repeat(RUNTIME_EXCHANGE_RETENTION.delivered_message_body_bytes * 4);
+    let message = |id: &str, ts: &str, delivered: bool| {
+        json!({
+            "id": id,
+            "threadId": "thread-active",
+            "ts": ts,
+            "from": "user",
+            "to": ["codex-1"],
+            "deliveredTo": if delivered { json!(["codex-1"]) } else { json!([]) },
+            "kind": "request",
+            "body": huge
+        })
+    };
+    let build = |messages: Value| {
+        json!({
+            "version": 1,
+            "threads": [{
+                "id": "thread-active",
+                "title": "Active",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": "2026-05-25T09:00:00.000Z",
+                "updatedAt": "2026-05-25T10:00:00.000Z",
+                "createdBy": "user",
+                "participants": ["user", "codex-1"],
+                "waitingOn": ["codex-1"],
+                "unreadBy": ["codex-1"]
+            }],
+            "messages": messages,
+            "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+        })
+    };
+    let body_of = |exchange: &Value, id: &str| -> usize {
+        exchange
+            .get("messages")
+            .and_then(Value::as_array)
+            .expect("messages")
+            .iter()
+            .find(|message| message.get("id").and_then(Value::as_str) == Some(id))
+            .and_then(|message| message.get("body"))
+            .and_then(Value::as_str)
+            .map(str::len)
+            .unwrap_or(0)
+    };
+    let compact_once = |exchange: &Value| -> Value {
+        compact_runtime_exchange(exchange)
+            .get("retained")
+            .cloned()
+            .expect("retained")
+    };
+
+    // Idempotence: a stale pending body compacts once and then holds steady.
+    let stale = build(json!([
+        message("msg-stale", "2026-05-24T10:00:00.000Z", false),
+        message("msg-recent", "2026-05-25T10:00:00.000Z", true),
+    ]));
+    let first = compact_once(&stale);
+    let second = compact_once(&first);
+    let third = compact_once(&second);
+    assert!(
+        body_of(&first, "msg-stale") < huge.len(),
+        "the stale body must compact on the first pass"
+    );
+    assert_eq!(
+        body_of(&second, "msg-stale"),
+        body_of(&first, "msg-stale"),
+        "a second pass must not compact it again"
+    );
+    assert_eq!(
+        body_of(&third, "msg-stale"),
+        body_of(&second, "msg-stale"),
+        "and it must stay put"
+    );
+
+    // A message dated far in the future DOES drag live traffic past the
+    // window -- `newest_message_ms` is a max, so one bad clock moves it. This
+    // pins the blast radius rather than claiming immunity: the body is
+    // compacted to the same cap and keeps head, tail and the marker, so the
+    // thread still reads and nothing is deleted. It also self-corrects, since
+    // real traffic walks the reference forward again.
+    let skewed = build(json!([
+        message("msg-live", "2026-05-25T10:00:00.000Z", false),
+        message("msg-skewed", "2031-01-01T00:00:00.000Z", true),
+    ]));
+    let compacted = compact_once(&skewed);
+    let live = compacted
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages")
+        .iter()
+        .find(|message| message.get("id").and_then(Value::as_str) == Some("msg-live"))
+        .and_then(|message| message.get("body"))
+        .and_then(Value::as_str)
+        .expect("the live message survives");
+    assert!(
+        live.len() <= RUNTIME_EXCHANGE_RETENTION.delivered_message_body_bytes,
+        "a skewed clock compacts live traffic -- known, and capped"
+    );
+    assert!(
+        live.contains("compacted from"),
+        "whatever it compacts must say so rather than silently truncating"
+    );
+    assert!(
+        live.starts_with('x') && live.ends_with('x'),
+        "head and tail are kept, so the thread still reads"
     );
 }
