@@ -1043,3 +1043,141 @@ fn compaction_drops_a_blank_recipient_that_would_pin_a_body_for_ever() {
         body.len()
     );
 }
+
+/// Retention carried its own idea of "closed" that omitted the `closed`
+/// status, while `thread_is_terminal` -- what every other reader uses --
+/// includes it. So a thread in that state was never closed here: it stayed
+/// active for ever, kept the active message cap instead of the closed one, and
+/// was never eligible to age out. The same fact answered two ways is how data
+/// quietly stays alive.
+///
+/// The message cap is the observable difference: active threads keep
+/// `active_thread_messages`, closed ones keep `closed_thread_messages`.
+#[test]
+fn a_thread_marked_closed_is_retained_as_closed_not_active() {
+    let now = "2026-05-25T00:00:00.000Z";
+    let kept = RUNTIME_EXCHANGE_RETENTION.closed_thread_messages;
+    let total = RUNTIME_EXCHANGE_RETENTION.active_thread_messages;
+    assert!(
+        kept < total,
+        "the caps must differ or this test cannot tell the states apart"
+    );
+
+    let messages = (0..total)
+        .map(|index| {
+            json!({
+                "id": format!("msg-{index}"),
+                "threadId": "thread-closed",
+                "ts": format!("2026-05-25T00:{:02}:{:02}.000Z", index / 60, index % 60),
+                "from": "user",
+                "to": ["codex-1"],
+                "deliveredTo": ["codex-1"],
+                "kind": "note",
+                "body": format!("body {index}")
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let exchange = json!({
+        "version": 1,
+        "threads": [{
+            "id": "thread-closed",
+            "title": "Closed",
+            "kind": "task",
+            "status": "closed",
+            "createdAt": now,
+            "updatedAt": now,
+            "createdBy": "user",
+            "participants": ["user", "codex-1"]
+        }],
+        "messages": messages,
+        "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+    });
+
+    let retained = compact_runtime_exchange(&exchange)
+        .get("retained")
+        .cloned()
+        .expect("retained");
+    let surviving = retained
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages")
+        .len();
+    assert_eq!(
+        surviving, kept,
+        "a `closed` thread must take the closed cap, not the active one"
+    );
+}
+
+/// A pending delivery held a message past its thread's COUNT cap as well as
+/// past the body cap, so message count grew on exactly the trigger that used
+/// to grow bytes: a recipient that never came back pinned the row for ever.
+/// Past the grace window it takes its chances with the cap like anything else,
+/// and inside it is still held -- a message whose recipient may yet arrive is
+/// not a candidate for eviction.
+#[test]
+fn a_stale_pending_message_stops_being_held_past_the_count_cap() {
+    let cap = RUNTIME_EXCHANGE_RETENTION.active_thread_messages;
+    let build = |pending_ts: &str| {
+        // One pending message, then a full cap's worth of newer delivered ones
+        // so the pending row is only in the result if something holds it.
+        let mut messages = vec![json!({
+            "id": "msg-pending",
+            "threadId": "thread-active",
+            "ts": pending_ts,
+            "from": "user",
+            "to": ["codex-gone"],
+            "deliveredTo": [],
+            "kind": "request",
+            "body": "short"
+        })];
+        messages.extend((0..cap).map(|index| {
+            json!({
+                "id": format!("msg-{index}"),
+                "threadId": "thread-active",
+                "ts": format!("2026-05-25T10:{:02}:{:02}.000Z", index / 60, index % 60),
+                "from": "user",
+                "to": ["codex-1"],
+                "deliveredTo": ["codex-1"],
+                "kind": "note",
+                "body": "short"
+            })
+        }));
+        json!({
+            "version": 1,
+            "threads": [{
+                "id": "thread-active",
+                "title": "Active",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": "2026-05-25T09:00:00.000Z",
+                "updatedAt": "2026-05-25T10:00:00.000Z",
+                "createdBy": "user",
+                "participants": ["user", "codex-1"],
+                "waitingOn": ["codex-1"],
+                "unreadBy": ["codex-1"]
+            }],
+            "messages": messages,
+            "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+        })
+    };
+    let held = |exchange: &Value| -> bool {
+        compact_runtime_exchange(exchange)
+            .get("retained")
+            .and_then(|retained| retained.get("messages"))
+            .and_then(Value::as_array)
+            .expect("messages")
+            .iter()
+            .any(|message| message.get("id").and_then(Value::as_str) == Some("msg-pending"))
+    };
+
+    assert!(
+        held(&build("2026-05-25T09:30:00.000Z")),
+        "a pending message inside the grace window must still be held"
+    );
+    assert!(
+        !held(&build("2026-05-20T09:30:00.000Z")),
+        "a pending message days behind the traffic must stop being held past \
+         the count cap"
+    );
+}

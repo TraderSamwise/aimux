@@ -1,4 +1,5 @@
 use aimux::project_api_contract::routes;
+use aimux::project_service::exchange_retention::compact_runtime_exchange;
 use aimux::project_service::notifications::{
     NotificationMutation, NotificationQuery, clear_notifications, list_notification_snapshot,
     mark_notifications_read,
@@ -384,4 +385,74 @@ fn temp_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+/// Reading a notification has to reach the thread, not just the inbox entry.
+///
+/// `record.unread` is derived from the inbox entry, so marking it done made
+/// the RECORD read as read while the thread it came from stayed unread for
+/// ever. One fact in two stores, disagreeing -- and not only a wrong number,
+/// because retention force-retains every notification thread with a non-empty
+/// `unreadBy` with no cap. On one project that pinned 446 read notifications
+/// past the 500 cap, each carrying a dozen repeated metadata keys, which was
+/// most of the notification bulk in the exchange.
+///
+/// Asserted across both stores rather than one each, since either alone
+/// passes happily while they disagree.
+#[test]
+fn marking_a_notification_read_clears_the_thread_not_only_the_inbox_entry() {
+    let project = temp_project("read-clears-thread");
+    let state_dir = project.join("state");
+    seed_exchange(&state_dir);
+
+    // The seed's threads carry no `unreadBy`; a real notification does, and
+    // one written without a session id gets the `project` participant that
+    // nothing else ever clears.
+    let path = runtime_exchange_path(&state_dir);
+    let mut exchange = read_runtime_exchange(&path);
+    exchange["threads"][1]["unreadBy"] = json!(["project", "codex-2"]);
+    write_runtime_exchange(&path, &exchange).expect("seed unreadBy");
+
+    let updated = mark_notifications_read(
+        &state_dir,
+        NotificationMutation {
+            id: Some("record-2".into()),
+            ..NotificationMutation::default()
+        },
+    )
+    .expect("mark notifications read");
+    assert_eq!(updated, 1, "the fixture must mark exactly one record read");
+
+    let after = read_runtime_exchange(&path);
+    let thread = after["threads"]
+        .as_array()
+        .expect("threads")
+        .iter()
+        .find(|thread| thread["id"] == "thread-2")
+        .expect("the notification thread survives");
+    assert_eq!(
+        thread["unreadBy"].as_array().map(Vec::len),
+        Some(0),
+        "the thread still reads as unread after its record was read: {thread:?}"
+    );
+
+    // The consequence that matters: retention stops pinning it.
+    let retained = compact_runtime_exchange(&after)
+        .get("retained")
+        .cloned()
+        .expect("retained");
+    let pinned_unread = retained["threads"]
+        .as_array()
+        .expect("threads")
+        .iter()
+        .any(|thread| {
+            thread["id"] == "thread-2"
+                && thread["unreadBy"]
+                    .as_array()
+                    .is_some_and(|ids| !ids.is_empty())
+        });
+    assert!(
+        !pinned_unread,
+        "a read notification must not be force-retained as unread: {retained:?}"
+    );
 }
