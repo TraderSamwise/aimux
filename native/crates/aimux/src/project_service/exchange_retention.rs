@@ -395,9 +395,15 @@ fn select_retained_messages(exchange: &Value, retained_threads: &[Value]) -> Vec
                 selected_ids.insert(id.to_owned());
             }
         }
+        // Same rule the body already follows, for the same reason. A pending
+        // delivery holds a message past its thread's count cap, so message
+        // COUNT grew on exactly the trigger that used to grow message BYTES --
+        // a recipient that never came back pinned the row for ever. Past the
+        // grace window it takes its chances with the cap like everything else.
         for message in messages
             .iter()
             .filter(|message| has_pending_delivery(message))
+            .filter(|message| within_pending_body_grace(message, newest_ms))
         {
             if let Some(id) = id(message) {
                 selected_ids.insert(id.to_owned());
