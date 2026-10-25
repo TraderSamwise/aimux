@@ -386,10 +386,22 @@ pub fn loop_delivery_queue(
             continue;
         }
         let queue = recipients.entry(send.session_id.clone()).or_default();
-        if !queue.iter().any(|queued| {
+        // One briefing per recipient per tick, whatever door it came through.
+        // The wake floor only governs what `plan_sends` produces; buffered
+        // sends are chained in above and never pass through it, so on the tick
+        // a pause lifts a recipient could take its buffered briefing AND a
+        // freshly planned one. Flooring that admission cannot work here --
+        // the whole queue is built at one `now_ms` while the wake clock only
+        // advances later, as each send is delivered -- but the dedupe below
+        // already owns "what this recipient gets this tick", and a second
+        // briefing is never news the first one lacks.
+        let duplicate = queue.iter().any(|queued| {
             queued.kind == send.kind
-                && (queued.signature == send.signature || queued.text == send.text)
-        }) {
+                && (send.kind == LoopSendKind::OverseerBriefing
+                    || queued.signature == send.signature
+                    || queued.text == send.text)
+        });
+        if !duplicate {
             queue.push_back(send);
         }
     }

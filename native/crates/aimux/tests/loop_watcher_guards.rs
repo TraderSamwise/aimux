@@ -4461,6 +4461,56 @@ fn collapsing_pause_briefings_hands_back_the_agents_the_dropped_ones_carried() {
     );
 }
 
+/// The wake floor governs only what the planner produces. Buffered sends are
+/// chained into the delivery queue without passing through it, so on the tick
+/// a pause lifts a recipient could take its buffered briefing AND a freshly
+/// planned one -- the wake clock is still cold, because a paused scan only
+/// ever buffered. Flooring that admission cannot work in the queue builder
+/// (one `now_ms` for the whole queue, clock advances later per delivery), so
+/// the per-recipient dedupe carries it instead.
+#[test]
+fn one_recipient_cannot_take_two_briefings_in_one_delivery_tick() {
+    use aimux::project_service::loop_watcher_task::loop_delivery_queue;
+
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let planned = watcher.plan_sends(&input, NOW);
+    let briefing = planned
+        .iter()
+        .find(|send| send.kind == LoopSendKind::OverseerBriefing)
+        .cloned()
+        .expect("a briefing must be planned");
+
+    // Two briefings for one recipient that the existing dedupe cannot see as
+    // the same: different signature AND different text, which is exactly what
+    // a buffered copy and a freshly planned one look like when the candidate
+    // set moved while the pause was held.
+    let stale = LoopSend {
+        session_id: briefing.session_id.clone(),
+        text: format!("{}\n- stale-worker (claude) @ /repo", briefing.text),
+        signature: format!("{}-stale", briefing.signature),
+        kind: LoopSendKind::OverseerBriefing,
+    };
+
+    let queue = loop_delivery_queue(&watcher, &input, vec![stale, briefing], NOW, 8);
+    let briefings = queue
+        .iter()
+        .filter(|send| send.kind == LoopSendKind::OverseerBriefing && send.session_id == "boss")
+        .count();
+    assert_eq!(
+        briefings, 1,
+        "a recipient must not be woken twice in one tick: {queue:?}"
+    );
+}
+
 /// What production actually runs with. Every cadence the watcher reads
 /// defaults to off, so a config a test wrote itself proves nothing about the
 /// shipped numbers -- this reads the same function the task does.
