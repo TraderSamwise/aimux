@@ -4603,9 +4603,9 @@ fn the_wake_floor_survives_the_reload_that_happens_every_tick() {
 }
 
 /// What the floor actually trades, pinned so it is a decision rather than a
-/// surprise. A standing condition is never lost: an agent that stays stopped
-/// is in every briefing that goes, because the briefing is built fresh from
-/// whoever is due. An agent whose stop episode begins and ends inside a closed
+/// surprise. A standing condition costs nothing: an agent that stays stopped
+/// is reported exactly as often with the floor as without it, because every
+/// briefing that does go is built fresh from whoever is due. An agent whose stop episode begins and ends inside a closed
 /// window is NOT reported, and that is the intended answer -- it unstuck
 /// itself, so a later briefing would describe something that had stopped being
 /// true.
@@ -4668,23 +4668,32 @@ fn the_floor_bounds_the_rate_and_never_loses_a_standing_condition() {
     let (unbounded_total, unbounded_steady, unbounded_cycler) = run(0);
     let (floored_total, floored_steady, floored_cycler) = run(DEFAULT_RECIPIENT_WAKE_FLOOR_MS);
 
-    assert!(
-        floored_total < unbounded_total,
-        "the shipped floor must bound the rate: {floored_total} vs {unbounded_total}"
-    );
-    assert!(
-        floored_steady > 0 && unbounded_steady > 0,
-        "an agent that never resumes must keep reaching the overseer"
+    // Asserted rather than bounded. A `<=` on the cycling agent would pass if
+    // the floor dropped it entirely, which is the failure this pins.
+    assert_eq!(
+        (unbounded_total, unbounded_steady, unbounded_cycler),
+        (16, 12, 8),
+        "the unfloored baseline moved; re-measure before changing the floor"
     );
     assert_eq!(
-        floored_steady, floored_total,
-        "a standing condition is in EVERY briefing that goes, because each one \
-         is built fresh from whoever is due"
+        (floored_total, floored_steady, floored_cycler),
+        (12, 12, 4),
+        "floored behaviour moved; the trade below is what this test exists for"
     );
-    // The documented cost. Not an equality, because it is not equal.
+
+    // The standing condition costs nothing. Note it is NOT that such an agent
+    // is in every briefing -- unfloored, 12 of 16 briefings mention it and the
+    // other 4 are about the cycling agent alone. It is that the floor removes
+    // none of its coverage.
+    assert_eq!(
+        floored_steady, unbounded_steady,
+        "a floor must not cost an agent that stays stopped any of its coverage"
+    );
+    // The whole cost falls on the agent that keeps unsticking itself, whose
+    // episodes begin and end inside a closed window. Half its coverage, and
+    // intended: those episodes had already resolved.
     assert!(
-        floored_cycler <= unbounded_cycler,
-        "a self-resolving agent may appear less often under a floor: \
-         {floored_cycler} vs {unbounded_cycler}"
+        floored_cycler < unbounded_cycler,
+        "the trade this pins is real: {floored_cycler} vs {unbounded_cycler}"
     );
 }

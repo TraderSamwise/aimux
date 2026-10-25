@@ -431,9 +431,13 @@ describe something that had stopped being true -- but it is a real reduction
 in what the overseer hears about a flapping agent, and raising the floor
 deepens it.
 
-A standing condition is never affected. An agent that stays stopped is in
-EVERY briefing that goes, because each briefing is built fresh from whoever is
-due rather than carried from an earlier one.
+A standing condition costs nothing. The agent that never resumes is reported
+exactly as often with the floor as without it -- 12 briefings either way in
+that same measurement -- because every briefing that does go is built fresh
+from whoever is due rather than carried from an earlier one. Note the weaker
+claim is the true one: it is not that such an agent appears in every briefing.
+Unfloored, 12 of the 16 mention it and the other four are about the cycling
+agent alone. The floor removes those four, and none of the standing agent's.
 
 Within the floor, a planned `stopped-loop-agents` briefing for that recipient
 is **withheld, not buffered** — buffering pins an alert to the candidate set it
