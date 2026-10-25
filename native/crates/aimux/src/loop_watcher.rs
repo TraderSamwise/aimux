@@ -894,17 +894,21 @@ impl LoopWatcher {
         // longer exists and then be withheld again by the wake floor.
         let mut released = Vec::new();
         if send.kind == LoopSendKind::OverseerBriefing {
-            // The `session_id` clause below is an invariant guard, not a live
-            // branch, and is kept deliberately rather than claimed as tested.
-            // One map holds one recipient's briefings: a briefing is minted at
-            // exactly one site, inside `plan_sends_for_recipient` with an
-            // overseer id, which `plan_sends` only ever calls on the
-            // sub-watcher it just created for that recipient -- so
-            // `buffer_send`'s delegation always finds that sub-watcher, and
-            // `into_watcher` recurses per level rather than flattening. Were a
-            // briefing ever minted somewhere else, dropping the clause would
-            // make this collapse silently eat another recipient's buffer,
-            // which is not a failure any test would show.
+            // The `session_id` clause below is kept deliberately and is NOT
+            // claimed as tested, because no ordinary flow reaches it. A
+            // briefing is minted at one site, inside `plan_sends_for_recipient`
+            // with an overseer id; `plan_sends` prunes `recipient_watchers`
+            // and THEN plans, in that order, so the sub-watcher for a briefing
+            // planned this tick always exists and `buffer_send` delegates into
+            // it. Two recipients therefore never share a map by that route.
+            //
+            // What the clause is actually for is state this build did not
+            // write: `into_watcher` keeps each level's buffers where it finds
+            // them, so briefings persisted at the root by an older layout stay
+            // at the root, and there the collapse would otherwise let one
+            // recipient's newest briefing delete another's. Reviews have read
+            // this clause both ways; the distinction is the prune-then-plan
+            // ordering, which is easy to miss.
             let kind = loop_send_kind_name(send.kind);
             self.buffered_sends.retain(|existing, buffered| {
                 let keep = existing == &key

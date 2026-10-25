@@ -4310,12 +4310,33 @@ fn a_global_pause_still_buffers_briefings_the_wake_floor_would_withhold() {
     );
     watcher.set_global_pause(NOW, NOW + 600_000, LoopAlertPauseProvenance::default());
 
-    // The task buffers whatever `plan_sends` hands it while a pause is active.
-    // These scans start on the far side of the armed floor, which is the state
-    // the comment on `withhold_briefings_within_wake_floor` describes: inside
-    // the floor a paused scan withholds and so buffers nothing, and that is
-    // harmless because the briefing is re-planned from current candidates once
-    // the floor lifts.
+    // INSIDE the armed floor the withholding is what runs, so there is nothing
+    // to buffer. This is the half that makes the test about the floor at all:
+    // run it only on the far side and deleting
+    // `withhold_briefings_within_wake_floor` changes nothing here.
+    for tick in 1..4i64 {
+        let at = NOW + tick * 15_000;
+        let planned = watcher.plan_sends(&input, at);
+        assert!(
+            !planned
+                .iter()
+                .any(|send| send.kind == LoopSendKind::OverseerBriefing),
+            "inside the floor a paused scan must withhold, not buffer: {planned:?}"
+        );
+        for send in &planned {
+            watcher.buffer_send(send, at);
+            watcher.commit_send_result(send, at, LoopDeliveryOutcome::Buffered);
+        }
+    }
+    assert_eq!(
+        watcher.buffered_send_count(),
+        0,
+        "nothing is buffered while the floor still holds"
+    );
+
+    // Once it lifts, the pause takes over and buffers again -- which is the
+    // contract the floor must not break, because a pause that silenced its own
+    // buffer would become the permanent suppression the design rejects.
     for tick in 4..8i64 {
         let at = NOW + tick * 15_000;
         let planned = watcher.plan_sends(&input, at);
@@ -4570,7 +4591,7 @@ fn the_wake_floor_survives_the_reload_that_happens_every_tick() {
         json!({
             "nudgeCooldownMs": 0,
             "stoppedDwellMs": 0,
-            "recipientWakeFloorMs": 60_000
+            "recipientWakeFloorMs": DEFAULT_RECIPIENT_WAKE_FLOOR_MS
         }),
     );
 
@@ -4587,9 +4608,13 @@ fn the_wake_floor_survives_the_reload_that_happens_every_tick() {
 
     // A fresh process, exactly as the scheduler does it.
     let mut restarted = load_loop_watcher_state(&path).expect("load loop watcher state");
+    let inside = restarted.scan(&input, NOW + 30_000, &mut ok);
     assert!(
-        restarted.scan(&input, NOW + 30_000, &mut ok).is_empty(),
-        "a reload inside the floor must not hand the recipient another briefing"
+        !inside
+            .iter()
+            .any(|send| send.kind == LoopSendKind::OverseerBriefing),
+        "a reload inside the floor must not hand the recipient another \
+         briefing: {inside:?}"
     );
     // And the floor still LIFTS after a reload -- a restore that pinned the
     // clock forward would pass the assertion above and silence the fleet.
