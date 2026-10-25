@@ -597,8 +597,12 @@ fn is_notification_thread(thread: &Value) -> bool {
         || string_field(thread, "id").is_some_and(|id| id.starts_with("notification-"))
 }
 
+/// One definition, shared with every other reader. Retention used to carry its
+/// own copy that omitted `closed`, so a thread in that state was never closed
+/// here and stayed active for ever -- the same fact answered two ways, which
+/// is the thing that quietly keeps data alive.
 fn is_closed_thread(thread: &Value) -> bool {
-    matches!(string_field(thread, "status"), Some("done" | "abandoned"))
+    crate::project_service::runtime_exchange::thread_is_terminal(thread)
 }
 
 fn is_active_thread(thread: &Value, active_task_ids: &HashSet<String>) -> bool {

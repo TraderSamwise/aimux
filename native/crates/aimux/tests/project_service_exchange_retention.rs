@@ -1043,3 +1043,68 @@ fn compaction_drops_a_blank_recipient_that_would_pin_a_body_for_ever() {
         body.len()
     );
 }
+
+/// Retention carried its own idea of "closed" that omitted the `closed`
+/// status, while `thread_is_terminal` -- what every other reader uses --
+/// includes it. So a thread in that state was never closed here: it stayed
+/// active for ever, kept the active message cap instead of the closed one, and
+/// was never eligible to age out. The same fact answered two ways is how data
+/// quietly stays alive.
+///
+/// The message cap is the observable difference: active threads keep
+/// `active_thread_messages`, closed ones keep `closed_thread_messages`.
+#[test]
+fn a_thread_marked_closed_is_retained_as_closed_not_active() {
+    let now = "2026-05-25T00:00:00.000Z";
+    let kept = RUNTIME_EXCHANGE_RETENTION.closed_thread_messages;
+    let total = RUNTIME_EXCHANGE_RETENTION.active_thread_messages;
+    assert!(
+        kept < total,
+        "the caps must differ or this test cannot tell the states apart"
+    );
+
+    let messages = (0..total)
+        .map(|index| {
+            json!({
+                "id": format!("msg-{index}"),
+                "threadId": "thread-closed",
+                "ts": format!("2026-05-25T00:{:02}:{:02}.000Z", index / 60, index % 60),
+                "from": "user",
+                "to": ["codex-1"],
+                "deliveredTo": ["codex-1"],
+                "kind": "note",
+                "body": format!("body {index}")
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let exchange = json!({
+        "version": 1,
+        "threads": [{
+            "id": "thread-closed",
+            "title": "Closed",
+            "kind": "task",
+            "status": "closed",
+            "createdAt": now,
+            "updatedAt": now,
+            "createdBy": "user",
+            "participants": ["user", "codex-1"]
+        }],
+        "messages": messages,
+        "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+    });
+
+    let retained = compact_runtime_exchange(&exchange)
+        .get("retained")
+        .cloned()
+        .expect("retained");
+    let surviving = retained
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages")
+        .len();
+    assert_eq!(
+        surviving, kept,
+        "a `closed` thread must take the closed cap, not the active one"
+    );
+}

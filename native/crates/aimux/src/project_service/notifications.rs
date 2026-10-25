@@ -672,6 +672,30 @@ fn mutate_notifications(
                 }
             }
         }
+        // The thread has to be told as well. `record.unread` is derived from
+        // the inbox entry above, so marking it done made the RECORD read as
+        // read while the thread it came from stayed unread for ever -- one
+        // fact in two stores, disagreeing.
+        //
+        // That is not only a wrong number. Retention force-retains every
+        // notification thread with a non-empty `unreadBy`, with no cap, so
+        // every notification ever read stayed pinned in the exchange: on one
+        // project 446 of them past the 500 cap, carrying a dozen repeated
+        // metadata keys each, which is most of the notification bulk. Nothing
+        // else clears `"project"`, the participant a notification written
+        // without a session id gets.
+        if let Some(threads) = exchange.get_mut("threads").and_then(Value::as_array_mut) {
+            for thread in threads {
+                if thread
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| thread_ids.iter().any(|thread_id| thread_id == id))
+                    && let Value::Object(thread) = thread
+                {
+                    thread.insert("unreadBy".into(), Value::Array(Vec::new()));
+                }
+            }
+        }
         if matches!(kind, NotificationMutationKind::Clear)
             && let Some(messages) = exchange.get_mut("messages").and_then(Value::as_array_mut)
         {
