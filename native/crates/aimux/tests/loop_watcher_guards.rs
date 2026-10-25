@@ -4088,3 +4088,449 @@ fn fast_delivery_succeeds_within_the_remaining_budget_and_preparation_cannot_res
         assert!(error.contains("remaining scan deadline (0ms)"), "{error}");
     });
 }
+
+/// The measured failure: four agents, each on its own stop -> brief -> nudge ->
+/// stop cycle, woke one overseer 32 times in 18 minutes. Every per-agent gate
+/// was working; none of them counts wakes. Reproduced here with two agents
+/// taking turns, the smallest fleet that defeats them -- each return is a
+/// first report, because the brief that ended one episode also evicted the
+/// dwell state that would have throttled the next.
+#[test]
+fn an_alternating_fleet_cannot_wake_one_overseer_faster_than_the_floor() {
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker_a, a_meta) = looping_session("worker-a", "idle");
+    let (worker_b, b_meta) = looping_session("worker-b", "running");
+    let mut input = input_with_config(
+        vec![boss, worker_a, worker_b],
+        json!({ "sessions": {
+            "boss": boss_meta,
+            "worker-a": a_meta,
+            "worker-b": b_meta
+        }}),
+        // Deliberately NOT equal to the floor. With both at 60s a floor that
+        // accidentally read `nudgeCooldownMs` would pass this gate, and the
+        // whole point is that the per-agent cooldown cannot do this job.
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 0,
+            "unchangedReminderTicks": 4,
+            "recipientWakeFloorMs": 60_000
+        }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let mut wake_times = Vec::new();
+    for tick in 0..=12i64 {
+        let (a, b) = if tick % 2 == 0 {
+            ("idle", "running")
+        } else {
+            ("running", "idle")
+        };
+        input["metadata"]["sessions"]["worker-a"]["derived"]["activity"] = json!(a);
+        input["metadata"]["sessions"]["worker-b"]["derived"]["activity"] = json!(b);
+        let at = NOW + tick * 15_000;
+        if !watcher.scan(&input, at, &mut ok).is_empty() {
+            wake_times.push(at);
+        }
+    }
+
+    for pair in wake_times.windows(2) {
+        assert!(
+            pair[1] - pair[0] >= 60_000,
+            "two briefings landed {}ms apart: {wake_times:?}",
+            pair[1] - pair[0]
+        );
+    }
+    // The other direction matters just as much: a floor that silenced the
+    // recipient entirely would pass the assertion above and lose the fleet.
+    assert!(
+        wake_times.len() >= 3,
+        "180s of a stopped fleet must still brief the overseer: {wake_times:?}"
+    );
+}
+
+/// Withholding is not dropping. The agent that was not briefed was therefore
+/// not nudged, so it is still stopped and still a candidate, and the briefing
+/// the floor finally allows is built fresh from whoever is due by then.
+#[test]
+fn a_standing_condition_withheld_by_the_floor_is_briefed_once_it_lifts() {
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 0,
+            "recipientWakeFloorMs": 60_000
+        }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let first = watcher.scan(&input, NOW, &mut ok);
+    assert_eq!(first.len(), 1);
+    assert!(briefing_mentions(&first[0], "worker"));
+
+    assert!(
+        watcher.scan(&input, NOW + 30_000, &mut ok).is_empty(),
+        "inside the floor the recipient is not woken"
+    );
+
+    let after = watcher.scan(&input, NOW + 60_000, &mut ok);
+    assert_eq!(after.len(), 1, "the condition is still standing");
+    assert!(
+        briefing_mentions(&after[0], "worker"),
+        "the withheld agent must be in the briefing the floor allowed"
+    );
+}
+
+/// The floor counts wakes of one recipient; a direct nudge carries the
+/// recipient's OWN goal and has its own cooldown. Gating it would make the
+/// overseer's own work hostage to the fleet's briefing cadence.
+#[test]
+fn the_wake_floor_does_not_withhold_an_overseers_own_goal_nudge() {
+    let (mut boss, mut boss_meta) = looping_session("boss", "idle");
+    boss["status"] = json!("running");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 0,
+            "recipientWakeFloorMs": 60_000
+        }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    let armed = watcher.scan(&input, NOW, &mut ok);
+    // The floor is armed by a DELIVERED briefing and nothing else, so without
+    // this the assertions below would pass vacuously on a run that never
+    // planned one.
+    assert!(
+        armed
+            .iter()
+            .any(|send| send.kind == LoopSendKind::OverseerBriefing),
+        "the first scan must deliver a briefing to arm the floor: {armed:?}"
+    );
+
+    let inside_floor = watcher.scan(&input, NOW + 15_000, &mut ok);
+    assert!(
+        inside_floor
+            .iter()
+            .all(|send| send.kind != LoopSendKind::OverseerBriefing),
+        "a briefing escaped the floor: {inside_floor:?}"
+    );
+    assert!(
+        inside_floor
+            .iter()
+            .any(|send| send.kind == LoopSendKind::DirectNudge && send.session_id == "boss"),
+        "the overseer's own goal nudge must not be withheld: {inside_floor:?}"
+    );
+}
+
+/// A floor armed by ATTEMPTS rather than wakes trades a real interruption for
+/// a silence nobody observes: the send failed, so the recipient learned
+/// nothing, and a failed briefing is never buffered -- the next scan is its
+/// only carrier.
+#[test]
+fn a_briefing_that_failed_to_deliver_does_not_arm_the_wake_floor() {
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 0,
+            "recipientWakeFloorMs": 60_000
+        }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut fail = |_: &LoopSend| false;
+    let attempted = watcher.scan(&input, NOW, &mut fail);
+    assert!(
+        attempted
+            .iter()
+            .any(|send| send.kind == LoopSendKind::OverseerBriefing),
+        "the scan under test must have attempted a briefing: {attempted:?}"
+    );
+
+    let mut ok = |_: &LoopSend| true;
+    let retry = watcher.scan(&input, NOW + 15_000, &mut ok);
+    assert!(
+        retry
+            .iter()
+            .any(|send| send.kind == LoopSendKind::OverseerBriefing),
+        "a briefing nobody received must not space out the next one: {retry:?}"
+    );
+}
+
+/// The floor withholds, and withholding happens BEFORE the global pause gets
+/// to buffer. A pause that silenced its own buffer would become the permanent
+/// suppression the pause design exists to prevent -- and it would get there on
+/// its own, because committing a send as `Buffered` advances the same wake
+/// clock the floor reads.
+#[test]
+fn a_global_pause_still_buffers_briefings_the_wake_floor_would_withhold() {
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({
+            "nudgeCooldownMs": 0,
+            "stoppedDwellMs": 0,
+            "recipientWakeFloorMs": 60_000
+        }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    watcher.set_global_pause(NOW, NOW + 600_000, LoopAlertPauseProvenance::default());
+
+    // The task buffers whatever `plan_sends` hands it while a pause is active,
+    // so every one of these scans must still produce the briefing to buffer.
+    for tick in 0..4i64 {
+        let at = NOW + tick * 15_000;
+        let planned = watcher.plan_sends(&input, at);
+        assert!(
+            planned
+                .iter()
+                .any(|send| send.kind == LoopSendKind::OverseerBriefing),
+            "a paused scan at +{}ms produced nothing to buffer: {planned:?}",
+            tick * 15_000
+        );
+        for send in &planned {
+            watcher.buffer_send(send, at);
+            watcher.commit_send_result(send, at, LoopDeliveryOutcome::Buffered);
+        }
+    }
+    assert!(
+        watcher.buffered_send_count() > 0,
+        "the pause must have something to flush when it lifts"
+    );
+}
+
+/// A pause buffers a briefing every scan, and the candidate set churns, so
+/// each one carries a different fingerprint and the delivery queue's dedupe
+/// (equal signature or equal text) never collapses them. Left alone, resuming
+/// handed the overseer a run of stale partial briefings -- the pause-end burst
+/// the alert design set out to avoid, arriving through the buffer instead of
+/// the planner.
+#[test]
+fn a_pause_keeps_one_briefing_per_recipient_however_often_the_fleet_changes() {
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker_a, a_meta) = looping_session("worker-a", "idle");
+    let (worker_b, b_meta) = looping_session("worker-b", "running");
+    let mut input = input_with_config(
+        vec![boss, worker_a, worker_b],
+        json!({ "sessions": {
+            "boss": boss_meta,
+            "worker-a": a_meta,
+            "worker-b": b_meta
+        }}),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    watcher.set_global_pause(NOW, NOW + 600_000, LoopAlertPauseProvenance::default());
+
+    let mut signatures = Vec::new();
+    for tick in 0..6i64 {
+        let (a, b) = if tick % 2 == 0 {
+            ("idle", "running")
+        } else {
+            ("idle", "idle")
+        };
+        input["metadata"]["sessions"]["worker-a"]["derived"]["activity"] = json!(a);
+        input["metadata"]["sessions"]["worker-b"]["derived"]["activity"] = json!(b);
+        let at = NOW + tick * 15_000;
+        for send in watcher.plan_sends(&input, at) {
+            if send.kind == LoopSendKind::OverseerBriefing {
+                signatures.push(send.signature.clone());
+            }
+            watcher.buffer_send(&send, at);
+            watcher.commit_send_result(&send, at, LoopDeliveryOutcome::Buffered);
+        }
+    }
+
+    let newest = signatures
+        .last()
+        .cloned()
+        .expect("the pause must have buffered at least one briefing");
+    signatures.dedup();
+    assert!(
+        signatures.len() > 1,
+        "the fleet must actually churn, or this gate proves nothing: {signatures:?}"
+    );
+    let briefings = watcher
+        .buffered_sends_to_deliver(8)
+        .into_iter()
+        .filter(|send| send.kind == LoopSendKind::OverseerBriefing)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        briefings.len(),
+        1,
+        "resuming must hand the overseer one current briefing, not one per \
+         fingerprint: {briefings:?}"
+    );
+    // Which one survived is the whole point: keeping the OLDEST would satisfy
+    // the count and hand the user a briefing about a fleet that has moved on.
+    assert_eq!(
+        briefings[0].signature, newest,
+        "the surviving buffer must be the newest briefing, not the first"
+    );
+}
+
+/// Collapsing the buffers must not strand the agents the dropped ones carried.
+/// Buffering stamps `last_attempted_ms` on every agent a briefing named, which
+/// holds that agent out of the next briefing for a cooldown -- so successive
+/// pause briefings are near-disjoint and the survivor is routinely NARROWER
+/// than what it replaced. An agent carried only by a dropped entry would
+/// otherwise sit suppressed by a briefing that no longer exists.
+#[test]
+fn collapsing_pause_briefings_hands_back_the_agents_the_dropped_ones_carried() {
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker_a, a_meta) = looping_session("worker-a", "idle");
+    let (worker_b, b_meta) = looping_session("worker-b", "running");
+    let mut input = input_with_config(
+        vec![boss, worker_a, worker_b],
+        json!({ "sessions": {
+            "boss": boss_meta,
+            "worker-a": a_meta,
+            "worker-b": b_meta
+        }}),
+        // A real cooldown, so a stamped agent really is held out of the next
+        // briefing -- that is what makes the two buffers disjoint.
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    watcher.set_global_pause(NOW, NOW + 600_000, LoopAlertPauseProvenance::default());
+
+    let first = watcher.plan_sends(&input, NOW);
+    assert!(
+        first.iter().any(|send| briefing_mentions(send, "worker-a")),
+        "the first buffered briefing must carry worker-a: {first:?}"
+    );
+    for send in &first {
+        watcher.buffer_send(send, NOW);
+        watcher.commit_send_result(send, NOW, LoopDeliveryOutcome::Buffered);
+    }
+
+    // worker-a stays stopped the whole time; it drops out of the SECOND
+    // briefing only because buffering the first one stamped it.
+    input["metadata"]["sessions"]["worker-b"]["derived"]["activity"] = json!("idle");
+    let second = watcher.plan_sends(&input, NOW + 15_000);
+    assert!(
+        second
+            .iter()
+            .any(|send| briefing_mentions(send, "worker-b")),
+        "the second buffered briefing must carry worker-b: {second:?}"
+    );
+    assert!(
+        !second
+            .iter()
+            .any(|send| briefing_mentions(send, "worker-a")),
+        "worker-a must be held out by its cooldown, or this gate proves nothing: {second:?}"
+    );
+    for send in &second {
+        watcher.buffer_send(send, NOW + 15_000);
+        watcher.commit_send_result(send, NOW + 15_000, LoopDeliveryOutcome::Buffered);
+    }
+
+    watcher.clear_global_pause();
+    let resumed = watcher.plan_sends(&input, NOW + 16_000);
+    assert!(
+        resumed
+            .iter()
+            .any(|send| briefing_mentions(send, "worker-a")),
+        "worker-a was carried only by the dropped buffer, so dropping it must \
+         hand worker-a back rather than leave it suppressed: {resumed:?}"
+    );
+}
+
+/// The wake floor governs only what the planner produces. Buffered sends are
+/// chained into the delivery queue without passing through it, so on the tick
+/// a pause lifts a recipient could take its buffered briefing AND a freshly
+/// planned one -- the wake clock is still cold, because a paused scan only
+/// ever buffered. Flooring that admission cannot work in the queue builder
+/// (one `now_ms` for the whole queue, clock advances later per delivery), so
+/// the per-recipient dedupe carries it instead.
+#[test]
+fn one_recipient_cannot_take_two_briefings_in_one_delivery_tick() {
+    use aimux::project_service::loop_watcher_task::loop_delivery_queue;
+
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let planned = watcher.plan_sends(&input, NOW);
+    let briefing = planned
+        .iter()
+        .find(|send| send.kind == LoopSendKind::OverseerBriefing)
+        .cloned()
+        .expect("a briefing must be planned");
+
+    // Two briefings for one recipient that the existing dedupe cannot see as
+    // the same: different signature AND different text, which is exactly what
+    // a buffered copy and a freshly planned one look like when the candidate
+    // set moved while the pause was held.
+    let stale = LoopSend {
+        session_id: briefing.session_id.clone(),
+        text: format!("{}\n- stale-worker (claude) @ /repo", briefing.text),
+        signature: format!("{}-stale", briefing.signature),
+        kind: LoopSendKind::OverseerBriefing,
+    };
+
+    let queue = loop_delivery_queue(&watcher, &input, vec![stale, briefing], NOW, 8);
+    let briefings = queue
+        .iter()
+        .filter(|send| send.kind == LoopSendKind::OverseerBriefing && send.session_id == "boss")
+        .count();
+    assert_eq!(
+        briefings, 1,
+        "a recipient must not be woken twice in one tick: {queue:?}"
+    );
+}
+
+/// What production actually runs with. Every cadence the watcher reads
+/// defaults to off, so a config a test wrote itself proves nothing about the
+/// shipped numbers -- this reads the same function the task does.
+#[test]
+fn the_shipped_loop_config_carries_a_recipient_wake_floor() {
+    use aimux::project_service::loop_watcher_task::loop_config_from;
+
+    let shipped = loop_config_from(&json!({}));
+    assert_eq!(
+        shipped.get("recipientWakeFloorMs").and_then(Value::as_i64),
+        Some(60_000),
+        "shipped loop config: {shipped}"
+    );
+
+    let overridden = loop_config_from(&json!({ "loop": { "recipientWakeFloorMs": 5_000 } }));
+    assert_eq!(
+        overridden
+            .get("recipientWakeFloorMs")
+            .and_then(Value::as_i64),
+        Some(5_000),
+        "an explicit floor must win: {overridden}"
+    );
+}

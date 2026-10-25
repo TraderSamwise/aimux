@@ -398,6 +398,39 @@ Recommended defaults:
 The exact numbers should remain config-backed under `loop`, but tests must
 document the defaults. A level cannot page the overseer every scan.
 
+### Why Edge Rules Alone Cannot Bound The Recipient
+
+Every cadence above counts one agent's alerts. None of them counts how often
+the recipient is interrupted, and in production those are different numbers.
+
+The briefing ends the episode it reports: the overseer reads it and nudges, the
+agent runs again and leaves the candidate set, and `dwelled_candidates` evicts
+its dwell state. Its next stop is therefore `new`, not `unchanged` — a first
+alert with `last_attempted_ms: None` — so neither the cooldown nor the
+unchanged-tick reminder ever applies. Measured on a four-agent fleet, that was
+32 briefings to a single overseer in 18 minutes, with every per-agent gate
+working exactly as documented.
+
+`recipientWakeFloorMs` (default 60s) is the only rule that counts wakes rather
+than agents. It is armed by a briefing that was **delivered**, and by nothing
+else: an attempt that failed woke nobody, a buffered one is held precisely
+because the recipient has not been interrupted yet, and `LoopExit` shares the
+older `last_overseer_wake_at` while never being withheld — a floor read from
+that clock would be re-armed by a trickle of exits at least as fast as it
+lifts, starving the briefings it exists to space out. A paused scan therefore
+leaves the floor dormant, because every send in it is buffered rather than
+delivered.
+
+Within the floor, a planned `stopped-loop-agents` briefing for that recipient
+is **withheld, not buffered** — buffering pins an alert to the candidate set it
+was built from, so a buffer per changing fingerprint would accumulate and flush
+as one burst. Withholding needs no carrying: an agent that
+was not briefed was not nudged, so it is still stopped, still a candidate, and
+joins the next briefing the floor allows, which is built fresh from whoever is
+due then. Every other alert kind is left on its own cadence, because each
+carries one-shot or tick-counted state that withholding would advance without
+delivering.
+
 ## Backpressure And Delivery
 
 The controller classifies every planned alert into one delivery outcome:
