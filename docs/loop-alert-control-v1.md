@@ -418,8 +418,9 @@ because the recipient has not been interrupted yet, and `LoopExit` shares the
 older `last_overseer_wake_at` while never being withheld — a floor read from
 that clock would be re-armed by a trickle of exits at least as fast as it
 lifts, starving the briefings it exists to space out. A paused scan therefore
-leaves the floor dormant, because every send in it is buffered rather than
-delivered.
+cannot ADD to the floor, because every send in it is buffered rather than
+delivered — though a pause can still begin inside a floor left by an earlier
+delivered briefing, and until that lifts it buffers nothing.
 
 What the floor costs, stated because it is a decision and not a free win: an
 agent whose stop episode begins AND ends inside a closed window is never

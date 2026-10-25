@@ -14,6 +14,12 @@ use std::path::PathBuf;
 /// Unix-millis, because the cooldown is measured against the epoch.
 const NOW: i64 = 1_788_000_000_000;
 
+/// `nudgeCooldownMs` has no exported default -- `config_i64(input,
+/// "nudgeCooldownMs", 60_000)` inlines it at four call sites. Named here so
+/// a harness that wants the shipped cooldown does not borrow an unrelated
+/// constant that merely happens to carry the same number.
+const NUDGE_COOLDOWN_DEFAULT_MS: i64 = 60_000;
+
 fn looping_session(id: &str, activity: &str) -> (Value, Value) {
     (
         json!({ "id": id, "tool": "claude", "worktreePath": "/repo" }),
@@ -4280,9 +4286,16 @@ fn a_briefing_that_failed_to_deliver_does_not_arm_the_wake_floor() {
 
 /// The floor withholds, and withholding happens BEFORE the global pause gets
 /// to buffer. A pause that silenced its own buffer would become the permanent
-/// suppression the pause design exists to prevent -- and it would get there on
-/// its own, because committing a send as `Buffered` advances the same wake
-/// clock the floor reads.
+/// suppression the pause design exists to prevent, so the two have to be
+/// shown not to fight.
+///
+/// They do not, and the reason is narrow enough to be worth pinning: a paused
+/// scan commits every send as `Buffered`, and `commit_send_result` arms
+/// `last_briefing_wake_at` only on `Delivered`. So a pause can never ADD to
+/// the floor. It can still begin inside one left by an earlier delivered
+/// briefing, which is the case this gate covers first -- an earlier version
+/// of this comment claimed a `Buffered` commit advanced the clock too, and it
+/// does not.
 #[test]
 fn a_global_pause_still_buffers_briefings_the_wake_floor_would_withhold() {
     let (boss, mut boss_meta) = non_loop_session("boss", "idle");
@@ -4756,7 +4769,7 @@ fn the_floor_bounds_the_rate_and_prices_the_coverage_it_costs() {
                 "cycler": cycler_meta.clone()
             }}),
             json!({
-                "nudgeCooldownMs": DEFAULT_RECIPIENT_WAKE_FLOOR_MS,
+                "nudgeCooldownMs": NUDGE_COOLDOWN_DEFAULT_MS,
                 "stoppedDwellMs": DEFAULT_STOPPED_DWELL_MS,
                 "unchangedReminderTicks": DEFAULT_UNCHANGED_REMINDER_TICKS,
                 "recipientWakeFloorMs": floor_ms
