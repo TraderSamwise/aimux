@@ -55,7 +55,7 @@ const DEFAULT_UNCHANGED_REMINDER_TICKS: u64 = 4;
 /// Shortest gap between two overseer briefings landing on the same recipient.
 /// The per-agent gates cannot bound this: see
 /// `LoopWatcher::withhold_briefings_within_wake_floor`.
-const DEFAULT_RECIPIENT_WAKE_FLOOR_MS: i64 = 60_000;
+pub const DEFAULT_RECIPIENT_WAKE_FLOOR_MS: i64 = 60_000;
 /// Blast-radius cap: no single scan may message more agents than this.
 const MAX_SENDS_PER_SCAN: usize = 8;
 /// Longest one scan may spend delivering loop checks. Keep this below the

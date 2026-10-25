@@ -341,10 +341,17 @@ impl LoopWatcher {
     ///
     /// A global pause needs no special case here, and that is a consequence of
     /// the clock rather than an accident: a paused scan commits every send as
-    /// `Buffered`, which never arms `last_briefing_wake_at`, so the floor is
-    /// dormant for the whole pause and the buffer it exists to fill is left
-    /// alone. Withholding runs BEFORE buffering, so a floor armed by attempts
-    /// would have emptied that buffer instead.
+    /// `Buffered`, which never arms `last_briefing_wake_at`. So a pause can
+    /// never ADD to the floor, and the buffer it exists to fill is left alone
+    /// for all but the opening of it. Withholding runs BEFORE buffering, so a
+    /// floor armed by attempts would have emptied that buffer instead.
+    ///
+    /// Not dormant for the WHOLE pause, which an earlier version of this said:
+    /// a pause that begins within `floor_ms` of a DELIVERED briefing withholds
+    /// -- and therefore buffers nothing -- until that floor lifts. Harmless,
+    /// because the withheld briefing is not owed to anyone: it is re-planned
+    /// from whoever is a candidate once the floor lifts, so the buffer simply
+    /// starts later holding fresher content.
     fn withhold_briefings_within_wake_floor(
         &mut self,
         sends: Vec<LoopSend>,
@@ -887,6 +894,17 @@ impl LoopWatcher {
         // longer exists and then be withheld again by the wake floor.
         let mut released = Vec::new();
         if send.kind == LoopSendKind::OverseerBriefing {
+            // The `session_id` clause below is an invariant guard, not a live
+            // branch, and is kept deliberately rather than claimed as tested.
+            // One map holds one recipient's briefings: a briefing is minted at
+            // exactly one site, inside `plan_sends_for_recipient` with an
+            // overseer id, which `plan_sends` only ever calls on the
+            // sub-watcher it just created for that recipient -- so
+            // `buffer_send`'s delegation always finds that sub-watcher, and
+            // `into_watcher` recurses per level rather than flattening. Were a
+            // briefing ever minted somewhere else, dropping the clause would
+            // make this collapse silently eat another recipient's buffer,
+            // which is not a failure any test would show.
             let kind = loop_send_kind_name(send.kind);
             self.buffered_sends.retain(|existing, buffered| {
                 let keep = existing == &key

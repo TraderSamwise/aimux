@@ -421,6 +421,20 @@ lifts, starving the briefings it exists to space out. A paused scan therefore
 leaves the floor dormant, because every send in it is buffered rather than
 delivered.
 
+What the floor costs, stated because it is a decision and not a free win: an
+agent whose stop episode begins AND ends inside a closed window is never
+reported. Measured on a 45s-stopped / 45s-running agent beside a permanently
+stopped one, over 48 scans at the 15s cadence, the cycling agent appears in 8
+briefings with no floor and 4 with the shipped one. That is the intended
+answer -- those four episodes had already resolved, so a later briefing would
+describe something that had stopped being true -- but it is a real reduction
+in what the overseer hears about a flapping agent, and raising the floor
+deepens it.
+
+A standing condition is never affected. An agent that stays stopped is in
+EVERY briefing that goes, because each briefing is built fresh from whoever is
+due rather than carried from an earlier one.
+
 Within the floor, a planned `stopped-loop-agents` briefing for that recipient
 is **withheld, not buffered** — buffering pins an alert to the candidate set it
 was built from, so a buffer per changing fingerprint would accumulate and flush
