@@ -498,11 +498,16 @@ fn cleanup(path: PathBuf) {
 /// Measured on a live project: one message listed 237 recipients covering 10
 /// distinct agents, and 125 of 1465 messages carried duplicates. `deliveredTo`
 /// is deduplicated where it is written and the delivery plan is deduplicated
-/// before use, but the stored `to` list was kept exactly as sent -- so the
-/// duplication was permanent, it was re-serialized on every write, and
-/// `has_pending_delivery` compared a 237-entry list against a 1-entry
-/// `deliveredTo`, which can never be satisfied. That kept the message pending
-/// and its body exempt from the body cap.
+/// before use, but the stored `to` list was kept exactly as sent, so the
+/// duplication was permanent and re-serialized on every write.
+///
+/// It is bytes, and only bytes. An earlier version of this comment claimed the
+/// duplication also kept the message PENDING; it does not.
+/// `has_pending_delivery` collects `deliveredTo` into a set and asks whether
+/// any recipient is absent from it, so `to: [a; 40]` against
+/// `deliveredTo: [a]` was never pending to begin with. The assertion below
+/// checks exactly that, which is why it is worth keeping: it pins the
+/// behaviour the wrong explanation had misread.
 ///
 /// Retention runs on every write, so this must repair what is ALREADY stored:
 /// a fix that only stopped new duplication would leave the existing file
@@ -567,12 +572,14 @@ fn compaction_repairs_recipient_lists_that_are_already_duplicated() {
         1,
         "deliveredTo must be repaired the same way: {delivered:?}"
     );
-    // The point of the repair: the message is now genuinely delivered, so it
-    // stops being pinned as pending.
+    // Repairing the list must not change whether the message is pending --
+    // it was not pending before and it is not after, because pendingness is a
+    // set comparison. A dedupe that silently flipped that would be a far worse
+    // bug than the bytes it saves.
     assert_eq!(
         to.first(),
         delivered.first(),
-        "a list of one recipient that has received it is not pending"
+        "the one remaining recipient is the one that received it: {to:?} / {delivered:?}"
     );
 }
 
@@ -883,5 +890,156 @@ fn the_grace_window_is_idempotent_and_one_bad_clock_only_costs_a_truncation() {
     assert!(
         live.starts_with('x') && live.ends_with('x'),
         "head and tail are kept, so the thread still reads"
+    );
+}
+
+/// The clamp is only observable against the real clock, so this builds its
+/// timestamps relative to now rather than from fixed dates. Without it, one
+/// message dated years ahead drags the reference forward and compacts a body
+/// that is an hour old; with it, the reference cannot exceed now and an
+/// hour-old body is comfortably inside the window.
+#[test]
+fn a_future_dated_message_cannot_compact_an_hour_old_body() {
+    fn iso(offset_ms: i64) -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_millis() as i64;
+        let total_seconds = (now + offset_ms) / 1000;
+        let days = total_seconds / 86_400;
+        let rest = total_seconds % 86_400;
+        // Civil-from-days, so the test does not need a date library.
+        let z = days + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z.rem_euclid(146_097);
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = if m <= 2 { y + 1 } else { y };
+        format!(
+            "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.000Z",
+            rest / 3600,
+            (rest % 3600) / 60,
+            rest % 60
+        )
+    }
+
+    let huge = "x".repeat(RUNTIME_EXCHANGE_RETENTION.delivered_message_body_bytes * 4);
+    let hour_old = iso(-60 * 60 * 1000);
+    let far_future = iso(5 * 365 * 24 * 60 * 60 * 1000);
+    let exchange = json!({
+        "version": 1,
+        "threads": [{
+            "id": "thread-active",
+            "title": "Active",
+            "kind": "task",
+            "status": "waiting",
+            "createdAt": hour_old,
+            "updatedAt": hour_old,
+            "createdBy": "user",
+            "participants": ["user", "codex-1"],
+            "waitingOn": ["codex-1"],
+            "unreadBy": ["codex-1"]
+        }],
+        "messages": [
+            {
+                "id": "msg-live", "threadId": "thread-active", "ts": hour_old,
+                "from": "user", "to": ["codex-1"], "deliveredTo": [],
+                "kind": "request", "body": huge
+            },
+            {
+                "id": "msg-skewed", "threadId": "thread-active", "ts": far_future,
+                "from": "user", "to": ["codex-1"], "deliveredTo": ["codex-1"],
+                "kind": "note", "body": "written while the clock was wrong"
+            }
+        ],
+        "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+    });
+
+    let retained = compact_runtime_exchange(&exchange)
+        .get("retained")
+        .cloned()
+        .expect("retained");
+    let live = retained
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages")
+        .iter()
+        .find(|message| message.get("id").and_then(Value::as_str) == Some("msg-live"))
+        .and_then(|message| message.get("body"))
+        .and_then(Value::as_str)
+        .expect("the live message survives");
+    assert_eq!(
+        live.len(),
+        huge.len(),
+        "an hour-old body must survive a message dated five years out"
+    );
+}
+
+/// A stored blank recipient is a recipient nothing can deliver to, so the
+/// message stays pending and its body stays pinned for ever. The write path's
+/// `unique` already trims and drops blanks; the retroactive repair has to do
+/// the same or it walks past exactly the messages it exists to unpin.
+#[test]
+fn compaction_drops_a_blank_recipient_that_would_pin_a_body_for_ever() {
+    let now = "2026-05-25T00:00:00.000Z";
+    let huge = "x".repeat(RUNTIME_EXCHANGE_RETENTION.delivered_message_body_bytes * 4);
+    let exchange = json!({
+        "version": 1,
+        "threads": [{
+            "id": "thread-active",
+            "title": "Active",
+            "kind": "task",
+            "status": "waiting",
+            "createdAt": now,
+            "updatedAt": now,
+            "createdBy": "user",
+            "participants": ["user", "codex-1"],
+            "waitingOn": ["codex-1"],
+            "unreadBy": ["codex-1"]
+        }],
+        "messages": [{
+            "id": "msg-blank",
+            "threadId": "thread-active",
+            "ts": now,
+            "from": "user",
+            "to": ["codex-1", "  ", ""],
+            "deliveredTo": ["codex-1"],
+            "kind": "request",
+            "body": huge
+        }],
+        "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+    });
+
+    let retained = compact_runtime_exchange(&exchange)
+        .get("retained")
+        .cloned()
+        .expect("retained");
+    let message = retained
+        .get("messages")
+        .and_then(Value::as_array)
+        .and_then(|messages| messages.first())
+        .cloned()
+        .expect("the message survives");
+    let to = message
+        .get("to")
+        .and_then(Value::as_array)
+        .expect("to list");
+    assert_eq!(
+        to.len(),
+        1,
+        "blank recipients must not survive the repair: {to:?}"
+    );
+    // And the point of removing them: the only real recipient has received it,
+    // so the message is no longer pending and its body is compacted like any
+    // other delivered body.
+    let body = message.get("body").and_then(Value::as_str).expect("a body");
+    assert!(
+        body.len() <= RUNTIME_EXCHANGE_RETENTION.delivered_message_body_bytes,
+        "with no phantom recipient left, the body stops being exempt: {} bytes",
+        body.len()
     );
 }

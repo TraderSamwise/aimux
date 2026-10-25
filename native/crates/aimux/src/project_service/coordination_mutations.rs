@@ -1241,13 +1241,17 @@ fn append_message(
     if let Some(to) = input.to {
         // `deliveredTo` is deduplicated where it is written and the delivery
         // plan is deduplicated before it is used, but the stored recipient
-        // list was kept exactly as the caller sent it. A caller that repeats a
-        // recipient therefore pins the duplication forever, and two things
-        // downstream read the raw list: it is serialized on every write, and
-        // `has_pending_delivery` compares it against `deliveredTo`, so a list
-        // holding one agent twenty times can never be satisfied -- which keeps
-        // the message pending and its body exempt from compaction. Measured on
-        // one project: 237 recipients covering 10 distinct agents.
+        // list was kept exactly as the caller sent it, so a caller that repeats
+        // a recipient pins the duplication forever and it is re-serialized on
+        // every write. Measured on one project: 237 recipients covering 10
+        // distinct agents, and 125 of 1465 messages affected.
+        //
+        // It does NOT affect whether the message counts as pending.
+        // `has_pending_delivery` collects `deliveredTo` into a set, so
+        // `to: [a; 40]` against `deliveredTo: [a]` was never pending. What
+        // pins a body is a distinct recipient that never arrives -- see
+        // `resolve_recipients`, which defaults `to` to every participant a
+        // thread has ever had.
         message.insert(
             "to".into(),
             json!(unique(to.into_iter().map(Some).collect())),
