@@ -348,3 +348,42 @@ fn real_tmux_inventory_does_not_panic_inside_the_tick_task() {
         "the tmux inventory must not panic when driven from an async task: {outcome:?}"
     );
 }
+
+/// The repair must leave the session's status alone, and this exists because
+/// changing it is a tempting one-line "fix" with a two-minute data-loss tail.
+///
+/// An unbacked live session READS as offline -- `agents.rs` downgrades it on
+/// read, after a successful tmux inventory -- and is never STORED that way.
+/// Store it and `offline` leaves `LIVE_SESSION_STATUSES`, so the row stops
+/// rescuing its retired worktree from `abandoned_retired_worktree_paths`, the
+/// retired-worktree reaper graveyards it within about two minutes, and
+/// `prune_restore_eligibility` deletes it from `last-online-agents.json` and
+/// from the restore offer before the user is ever asked. On a tmux server
+/// restart -- the event this whole file exists for -- that reaps agents that
+/// were restorable a moment earlier.
+#[test]
+fn persisting_an_invalidated_status_would_feed_the_reaper() {
+    let topology = topology_with_binding("@7", PROJECT_SESSION);
+    let repairs = plan_binding_repairs(&topology, &[]);
+    assert!(
+        matches!(repairs.as_slice(), [BindingRepair::Invalidate { .. }]),
+        "the fixture must produce an invalidation, or this proves nothing: {repairs:?}"
+    );
+
+    let repaired = apply_binding_repairs(topology, &repairs);
+
+    let bindings = repaired
+        .get("bindings")
+        .and_then(Value::as_array)
+        .expect("bindings");
+    assert!(
+        bindings.is_empty(),
+        "the stale binding must still be dropped: {bindings:?}"
+    );
+    assert_eq!(
+        repaired["sessions"][0]["status"].as_str(),
+        Some("running"),
+        "the stored status must be left alone; downgrading is a READ-time rule, and storing it feeds the reaper: {:?}",
+        repaired["sessions"][0]
+    );
+}
