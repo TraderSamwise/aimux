@@ -4415,3 +4415,118 @@ fn operation_failure_notification_bodies(state_dir: &std::path::Path) -> Vec<Str
     .map(|record| record["body"].as_str().unwrap_or_default().to_owned())
     .collect()
 }
+
+/// A held banner describes a probe against a window at one instant. Nothing
+/// retired it: `clear_agent_input_delivery_failure` is called only where a
+/// delivery SUCCEEDS, which a session that is offline or unbound can never
+/// reach. Measured on a live project, a probe failure from five days earlier
+/// was still the banner on the dashboard, naming a tmux window that had since
+/// been recycled to a different agent.
+///
+/// Once the session has moved on to a state its own dashboard row already
+/// shows, the banner is stale by construction and must go.
+#[test]
+fn a_held_banner_retires_once_its_session_is_no_longer_probeable() {
+    let project = temp_project("held-banner-retires");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    enqueue_agent_input_delivery(
+        &context,
+        "codex-1",
+        "@17",
+        "scribe check",
+        "active-client-recent-input",
+        now_ms,
+    )
+    .expect("enqueue");
+
+    // The probe fails against the bound window, which raises the banner.
+    let mut runtime = FakeActivityRuntime::default();
+    runtime
+        .input_activity
+        .push_back(Err("can't find window: @17".into()));
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
+    );
+    assert!(
+        list_dashboard_operation_failures(&state_dir)
+            .iter()
+            .any(|failure| failure["title"] == "Agent input delivery held"
+                && failure["cleared"] != serde_json::Value::Bool(true)),
+        "the probe failure must raise a banner, or this gate proves nothing"
+    );
+
+    // The agent then goes offline. Its row carries that, and the queued input
+    // waits for it -- so the window-probe banner no longer describes anything.
+    write_state_with_session_status(&state_dir, "offline");
+    let mut runtime = FakeActivityRuntime::default();
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + MAX_AGENT_INPUT_HOLD_MS + 2,
+    );
+
+    assert!(
+        !list_dashboard_operation_failures(&state_dir)
+            .iter()
+            .any(|failure| failure["title"] == "Agent input delivery held"
+                && failure["cleared"] != serde_json::Value::Bool(true)),
+        "a held banner must not outlive the probe it describes: {:?}",
+        list_dashboard_operation_failures(&state_dir)
+    );
+    // And the input itself is still queued -- retiring the banner is not
+    // dropping the message.
+    assert_eq!(queued_delivery_count(&state_dir), 1);
+    cleanup(project);
+}
+
+/// Retiring a stale banner must not erase a live one raised in the same pass.
+/// Two queued prompts for one departed agent resolve differently -- the older
+/// has outlived its hold budget and is reported as blocked, the newer has not
+/// and waits quietly -- so clearing inline on the wait would wipe the blocked
+/// banner the other entry had just written, leaving a real condition with no
+/// surface anywhere.
+#[test]
+fn retiring_a_stale_banner_does_not_erase_one_raised_in_the_same_pass() {
+    let project = temp_project("blocked-survives-sibling-wait");
+    let state_dir = project.join("state");
+    write_state_without_sessions(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+
+    // Older entry: past its hold budget by the time the drain runs, so the
+    // departed agent is reported as blocked.
+    enqueue_agent_input_delivery(&context, "codex-1", "@17", "older", "hold", now_ms)
+        .expect("enqueue older");
+    // Newer entry, same session: still inside its budget, so it only waits.
+    enqueue_agent_input_delivery(
+        &context,
+        "codex-1",
+        "@17",
+        "newer",
+        "hold",
+        now_ms + MAX_AGENT_INPUT_HOLD_MS,
+    )
+    .expect("enqueue newer");
+
+    let mut runtime = FakeActivityRuntime::default();
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
+    );
+
+    assert!(
+        list_dashboard_operation_failures(&state_dir)
+            .iter()
+            .any(|failure| failure["title"] == "Agent input delivery blocked"
+                && failure["cleared"] != serde_json::Value::Bool(true)),
+        "the blocked banner must survive its sibling's wait: {:?}",
+        list_dashboard_operation_failures(&state_dir)
+    );
+    cleanup(project);
+}
