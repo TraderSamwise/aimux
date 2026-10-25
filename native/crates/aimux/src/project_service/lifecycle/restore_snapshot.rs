@@ -29,8 +29,8 @@ use super::json_helpers::{array_field, object_insert_mut, string_field, trimmed_
 use super::restore_offer::{
     AgentRestoreAnswer, acknowledge_agent_restore_offer, agent_restore_ack_path,
     agent_restore_offer_is_current, agent_restore_offer_path, build_agent_restore_worktree_groups,
-    normalize_agent_restore_sessions, open_or_advance_agent_restore_prompt_gate,
-    read_agent_restore_offer, remove_agent_restore_offer, retain_offered_restore_failures,
+    normalize_agent_restore_sessions, read_agent_restore_offer, read_agent_restore_prompt_gate,
+    remove_agent_restore_offer, retain_offered_restore_failures,
 };
 use super::topology_helpers::read_json_object;
 
@@ -342,22 +342,28 @@ pub(crate) fn derive_agent_restore_offer(
         return Ok(None);
     }
     let snapshot_id = string_field(&snapshot, "id");
-    let Some(gate) = open_or_advance_agent_restore_prompt_gate(
-        project_state_dir,
-        project_id,
-        &snapshot_id,
-        &string_field(&snapshot, "updatedAt"),
-    ) else {
+    let Some(gate) = read_agent_restore_prompt_gate(project_state_dir, project_id) else {
         return Ok(None);
     };
-    if string_field(&gate, "snapshotId") != snapshot_id
-        || gate.get("askedAt").and_then(Value::as_str).is_some()
-    {
+    // Whether this boot's question has been accepted, which is the gate's whole
+    // job. `askedAt` is stamped by the restore route alone, so pressing restore
+    // is what spends the gate; saying no is recorded durably in the ack beside
+    // it, and deferring with Esc records nothing, which is why a deferred
+    // prompt comes back at the next look.
+    //
+    // The gate also records the generation it was seeded with, and that used to
+    // have to match -- but the generation rolls whenever the SET of agents
+    // changes, so starting one agent after boot left the gate naming a
+    // generation that no longer existed, and the whole fleet dying an hour
+    // later produced no prompt at all.
+    if gate.get("askedAt").and_then(Value::as_str).is_some() {
         return Ok(None);
     }
     // A gate with no boot stamp authorizes nothing. An offer written without one
     // reads as foreign on the very next tick, is removed, and is derived again --
-    // for ever, because `askedAt` is stamped only once an offer is displayed.
+    // for ever, because nothing between those two ticks records that it was
+    // asked: `askedAt` is stamped by the restore route, so it means the user
+    // ACCEPTED, and a dismissal is recorded in the per-project ack instead.
     let Some(daemon_boot_id) = trimmed_string(gate.get("daemonBootId")) else {
         return Ok(None);
     };

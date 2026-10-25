@@ -310,7 +310,7 @@ pub(super) fn reconcile_agent_restore_offer(
         .filter(|session| restorable.contains(string_field(session, "id").as_str()))
         .collect::<Vec<_>>();
     if sessions.len() == array_field(&offer, "sessions").len() {
-        mark_agent_restore_prompt_gate_asked(context, project_state_dir, &offer);
+        mark_agent_restore_prompt_gate_asked(context, project_state_dir);
         return Some(offer);
     }
     if sessions.is_empty() {
@@ -341,7 +341,7 @@ pub(super) fn reconcile_agent_restore_offer(
     );
     retain_offered_restore_failures(&mut updated);
     let _ = write_json_atomic(agent_restore_offer_path(project_state_dir), &updated);
-    mark_agent_restore_prompt_gate_asked(context, project_state_dir, &updated);
+    mark_agent_restore_prompt_gate_asked(context, project_state_dir);
     Some(updated)
 }
 
@@ -496,6 +496,15 @@ pub(super) fn read_agent_restore_prompt_gate(
 /// foreign -- the same reasoning `acknowledgement_still_applies` uses for an
 /// undatable acknowledgement. Both display surfaces ask this one question, so a
 /// read can never show an offer the derive would have deleted.
+///
+/// The boot, and only the boot. The gate also records the snapshot generation
+/// it was seeded with, and comparing that too is not extra safety -- it is a
+/// spin. The generation rolls whenever the SET of agents changes, and the
+/// derive now offers whatever generation is on disk, so an offer written after
+/// a roll would carry a generation the gate does not. This predicate would
+/// then reject the offer the derive had just written, every tick, for ever.
+/// What is live and what is still restorable are already trimmed by
+/// `decay_existing_offer` and `reconcile_agent_restore_offer`.
 pub(super) fn agent_restore_offer_is_current(
     project_state_dir: &Path,
     project_id: &str,
@@ -504,9 +513,6 @@ pub(super) fn agent_restore_offer_is_current(
     let Some(gate) = read_agent_restore_prompt_gate(project_state_dir, project_id) else {
         return false;
     };
-    if string_field(&gate, "snapshotId") != string_field(offer, "snapshotId") {
-        return false;
-    }
     match (
         trimmed_string(gate.get("daemonBootId")),
         trimmed_string(offer.get("daemonBootId")),
@@ -516,74 +522,23 @@ pub(super) fn agent_restore_offer_is_current(
     }
 }
 
-/// The gate for this project, opened or moved to the snapshot generation on
-/// disk now, so long as the boot's question has not been asked yet.
+/// Record that this boot's question has been accepted for this project.
 ///
-/// The gate records the generation that was on disk at daemon boot and nothing
-/// moved it afterwards -- and the snapshot id rolls whenever the SET of agents
-/// changes. So starting a single agent after boot left the gate naming a
-/// generation that no longer existed, and the whole fleet dying later that boot
-/// was never offered at all. The gate's job is to ask once per boot; it has not
-/// asked yet, so it follows the snapshot.
+/// Reached from the restore route alone, so the field named `askedAt` means the
+/// user pressed restore. Saying no is recorded durably in the per-project ack;
+/// deferring with Esc records nothing at all, so a deferred prompt is shown
+/// again at the next look, which is what deferring means.
 ///
-/// It also opens an entry for a project that has none. Seeding skips a project
-/// whose snapshot it could not read, and such a project was un-offerable for
-/// the rest of the boot. A project registered mid-boot needs no entry here: its
-/// snapshot is written by the run that is still alive, which is never offered
-/// back.
-///
-/// `None` means the gate could not be written, and the caller must not offer:
-/// an offer naming a generation the gate does not would read as foreign on the
-/// next tick, be removed, and be derived again every tick after that.
-pub(super) fn open_or_advance_agent_restore_prompt_gate(
-    project_state_dir: &Path,
-    project_id: &str,
-    snapshot_id: &str,
-    snapshot_updated_at: &str,
-) -> Option<Value> {
-    if let Some(gate) = read_agent_restore_prompt_gate(project_state_dir, project_id) {
-        // Asked already, whatever generation it was asked about. Moving the gate
-        // here would be the once-per-boot nagging it exists to prevent.
-        if gate.get("askedAt").and_then(Value::as_str).is_some() {
-            return Some(gate);
-        }
-        if string_field(&gate, "snapshotId") == snapshot_id {
-            return Some(gate);
-        }
-    }
-    let path = agent_restore_prompt_gate_path(project_state_dir);
-    let mut state = read_json_object(&path);
-    // The only legitimate read of the file's top-level boot: a project with no
-    // entry has no per-project copy to read, and "which daemon is up" is what
-    // the top-level field means.
-    let daemon_boot_id = trimmed_string(Value::Object(state.clone()).get("daemonBootId"))?;
-    let now = now_iso();
-    let gate = json!({
-        "version": 1,
-        "projectId": project_id,
-        "daemonBootId": daemon_boot_id,
-        "snapshotId": snapshot_id,
-        "snapshotUpdatedAt": snapshot_updated_at,
-        "createdAt": now,
-    });
-    let Some(Value::Object(projects)) = state.get_mut("projects") else {
-        return None;
-    };
-    projects.insert(project_id.to_owned(), gate.clone());
-    state.insert("updatedAt".into(), Value::String(now));
-    write_json_atomic(path, &Value::Object(state)).ok()?;
-    Some(gate)
-}
-
+/// Per boot, not per snapshot generation. It used to take the offer and require
+/// the gate's generation to match it, which meant an offer accepted after an
+/// unrelated agent started was never recorded at all.
 fn mark_agent_restore_prompt_gate_asked(
     context: &ProjectServiceRequestContext,
     project_state_dir: &Path,
-    offer: &Value,
 ) {
     let path = agent_restore_prompt_gate_path(project_state_dir);
     let mut state = read_json_object(&path);
     let project_id = compute_project_id(context.project_root());
-    let snapshot_id = string_field(offer, "snapshotId");
     let now = now_iso();
     let Some(Value::Object(projects)) = state.get_mut("projects") else {
         return;
@@ -591,9 +546,10 @@ fn mark_agent_restore_prompt_gate_asked(
     let Some(Value::Object(gate)) = projects.get_mut(&project_id) else {
         return;
     };
-    if gate.get("snapshotId").and_then(Value::as_str) != Some(snapshot_id.as_str())
-        || gate.get("askedAt").and_then(Value::as_str).is_some()
-    {
+    // Once per boot, whatever generation was on offer. Requiring the gate's
+    // generation to match meant an offer answered after an unrelated agent
+    // started was never recorded as asked at all.
+    if gate.get("askedAt").and_then(Value::as_str).is_some() {
         return;
     }
     gate.insert("askedAt".into(), Value::String(now.clone()));

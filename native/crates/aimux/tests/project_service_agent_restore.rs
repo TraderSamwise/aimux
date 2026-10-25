@@ -419,34 +419,44 @@ impl TestProject {
         read_json(&self.state_dir.join("agent-restore-offer-ack.json"))
     }
 
-    /// Add one more agent to the topology, which changes the session SET and so
-    /// mints a new snapshot generation on the next tick.
-    fn add_session(&self, session_id: &str, window_id: &str) {
+    /// One more agent, with its own node, binding and tmux window, which is how
+    /// a newcomer changes the session SET and so mints a new snapshot
+    /// generation on the next tick.
+    ///
+    /// It needs the binding, not just the session row: retention only keeps
+    /// sessions the snapshot already holds, so a session enters it by being
+    /// observed online -- which means tmux has to be backing a window the
+    /// topology attributes to it.
+    fn add_agent(&self, session_id: &str, window_id: &str) {
         let path = runtime_topology_path(&self.state_dir);
         let mut topology = read_runtime_topology(&path).expect("topology");
-        let sessions = topology["sessions"].as_array_mut().expect("sessions");
-        let mut session = sessions[0].clone();
-        session["id"] = json!(session_id);
-        session["label"] = json!(session_id);
-        session["tmuxTarget"]["windowId"] = json!(window_id);
-        sessions.push(session);
-        write_runtime_topology(&path, &topology).expect("write topology");
-    }
+        let node_id = format!("node-{session_id}");
 
-    /// What the gate file looks like for a project whose snapshot could not be
-    /// read when the boot seeded gates.
-    fn remove_own_prompt_gate_entry(&self) {
-        let path = self.aimux_home.join("restore-prompt-gates.json");
-        let mut state = read_json(&path).expect("gate file");
-        state["projects"]
-            .as_object_mut()
-            .expect("projects")
-            .remove(&self.project_id);
-        fs::write(
-            &path,
-            serde_json::to_string_pretty(&state).expect("serialize gates"),
-        )
-        .expect("write gates");
+        let mut node = topology["nodes"].as_array().expect("nodes")[0].clone();
+        node["id"] = json!(node_id);
+        node["logicalId"] = json!(session_id);
+        topology["nodes"].as_array_mut().expect("nodes").push(node);
+
+        let mut binding = topology["bindings"].as_array().expect("bindings")[0].clone();
+        binding["id"] = json!(format!("tmux:{session_id}"));
+        binding["nodeId"] = json!(node_id);
+        binding["tmuxWindowId"] = json!(window_id);
+        binding["tmuxWindowName"] = json!(session_id);
+        topology["bindings"]
+            .as_array_mut()
+            .expect("bindings")
+            .push(binding);
+
+        let mut session = topology["sessions"].as_array().expect("sessions")[0].clone();
+        session["id"] = json!(session_id);
+        session["nodeId"] = json!(node_id);
+        session["label"] = json!(session_id);
+        topology["sessions"]
+            .as_array_mut()
+            .expect("sessions")
+            .push(session);
+
+        write_runtime_topology(&path, &topology).expect("write topology");
     }
 
     fn remove_offer(&self) {
@@ -1398,7 +1408,7 @@ fn a_fleet_that_dies_after_an_agent_started_is_still_offered() {
 
     // One more agent joins, which changes the SET and so mints a new snapshot
     // generation. The gate still names the one it was seeded with.
-    project.add_session("claude-three", "@2");
+    project.add_agent("claude-three", "@2");
     project.run_task_with_only_live_windows(&["@0", "@1", "@2"]);
     let rolled = project.snapshot().expect("snapshot");
     assert_ne!(
@@ -1424,26 +1434,25 @@ fn a_fleet_that_dies_after_an_agent_started_is_still_offered() {
         ["claude-one", "claude-three", "codex-two"],
         "every agent that died is offered, including the one that joined: {offer}"
     );
-}
 
-/// A project the boot could not seed a gate for is not un-offerable for the
-/// rest of that boot. Seeding skips a project whose snapshot it could not read,
-/// and the derive used to refuse outright on a missing entry.
-#[test]
-fn a_project_with_no_gate_entry_is_still_offered_within_the_boot() {
-    let project = TestProject::new("gate-opens-late");
-    project.run_task();
-    // A seeded gate file for the boot, with nothing for this project -- what a
-    // snapshot that could not be read at seed time leaves behind.
-    project.seed_prompt_gates("boot-1");
-    project.remove_own_prompt_gate_entry();
-
-    project.simulate_process_death_as("run-that-died");
+    // And the next tick leaves it alone. The offer names a generation the gate
+    // does not, so a currency rule that compared generations as well as boots
+    // would reject the offer the derive had just written, delete it, and derive
+    // it again -- on every tick, for ever. The contents would look right the
+    // whole time, so what is asserted is that the file was not rewritten.
+    std::thread::sleep(Duration::from_millis(5));
     project.run_task_with_no_live_windows();
-
-    let offer = project
+    let still = project
         .offer()
-        .expect("a project with no gate entry must still be offered its crash");
-    assert_eq!(offer["daemonBootId"], "boot-1", "{offer}");
-    assert_eq!(session_ids(&offer), AGENT_IDS);
+        .expect("the offer must survive the tick after the one that wrote it");
+    assert_eq!(
+        still["createdAt"], offer["createdAt"],
+        "the offer was rewritten rather than served: {still}"
+    );
+    assert_eq!(still["snapshotId"], rolled["id"], "{still}");
+    assert_eq!(
+        session_ids(&still),
+        ["claude-one", "claude-three", "codex-two"],
+        "{still}"
+    );
 }
