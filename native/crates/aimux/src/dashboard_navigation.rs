@@ -5,6 +5,7 @@ use crate::dashboard_model::{
 use crate::project_service::desktop_state::{path_basename, worktree_path_identity};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub const DASHBOARD_QUICK_JUMP_LIMIT: usize = 9;
 
@@ -594,9 +595,21 @@ fn is_project_control_session(session: &DashboardSession) -> bool {
     is_dashboard_supervisor_plane_session(session)
 }
 
+/// How many times the worktree grouping has been built from scratch.
+///
+/// `dashboard_keypress_cost.rs` used to watch this through the filesystem:
+/// each rebuild canonicalised every path, so counting syscalls counted
+/// rebuilds, and one Down arrow cost 808 of them. Memoising the verdicts on
+/// the snapshot took that to zero -- correctly, there is nothing left to ask
+/// the disk -- but the eight rebuilds it was really gating are still there,
+/// now paid in CPU and invisible to a syscall counter. This is the proxy the
+/// memo cannot silence.
+pub static NAVIGATION_GROUP_BUILDS: AtomicUsize = AtomicUsize::new(0);
+
 pub fn dashboard_navigation_groups<'a>(
     snapshot: &'a DesktopStateSnapshot,
 ) -> Vec<DashboardNavigationGroup<'a>> {
+    NAVIGATION_GROUP_BUILDS.fetch_add(1, Ordering::Relaxed);
     if snapshot.worktree_groups.is_empty() && !snapshot.extra.contains_key("supervisorLane") {
         return Vec::new();
     }
@@ -622,48 +635,77 @@ pub fn dashboard_navigation_groups<'a>(
         });
     }
 
-    let mut main_sessions = Vec::new();
-    let mut main_services = Vec::new();
-    let mut sessions_by_path: BTreeMap<&str, Vec<&'a DashboardSession>> = BTreeMap::new();
-    let mut services_by_path: BTreeMap<&str, Vec<&'a DashboardService>> = BTreeMap::new();
-    let mut session_path_order = Vec::new();
-    let mut service_path_order = Vec::new();
-    let main_checkout_paths = main_checkout_verdicts(snapshot);
-    let is_main_path = |path: &str| main_checkout_paths.get(path).copied().unwrap_or(false);
-
-    for session in &snapshot.sessions {
-        if is_project_control_session(session) {
-            continue;
-        }
-        match session.worktree_path.as_deref() {
-            Some(path) if !is_main_path(path) => {
-                if !sessions_by_path.contains_key(path) {
-                    session_path_order.push(path);
-                }
-                sessions_by_path.entry(path).or_default().push(session);
-            }
-            _ => main_sessions.push(session),
-        }
-    }
-    for service in &snapshot.services {
-        match service.worktree_path.as_deref() {
-            Some(path) if !is_main_path(path) => {
-                if !services_by_path.contains_key(path) {
-                    service_path_order.push(path);
-                }
-                services_by_path.entry(path).or_default().push(service);
-            }
-            _ => main_services.push(service),
-        }
-    }
-    sort_sessions_by_created(&mut main_sessions);
-    sort_services_by_created(&mut main_services);
-    for sessions in sessions_by_path.values_mut() {
-        sort_sessions_by_created(sessions);
-    }
-    for services in services_by_path.values_mut() {
-        sort_services_by_created(services);
-    }
+    // Partitioned and sorted once per snapshot, not once per caller. This is
+    // the part that walks every agent; what follows only reads it.
+    let order = navigation_order(snapshot);
+    // `get` rather than indexing, here and below: the lengths are checked
+    // before the cached order is used, so this cannot miss -- but an index
+    // past the end would panic the TUI, and a dropped row will not.
+    let main_sessions: Vec<&'a DashboardSession> = order
+        .main_sessions
+        .iter()
+        .filter_map(|i| snapshot.sessions.get(*i))
+        .collect();
+    let main_services: Vec<&'a DashboardService> = order
+        .main_services
+        .iter()
+        .filter_map(|i| snapshot.services.get(*i))
+        .collect();
+    // Every borrowed path comes from the SNAPSHOT, not from the memo: the memo
+    // is a `Cow` and may be a temporary, so a `&str` into it would not outlive
+    // this function. Each path's first member is the one that supplied it.
+    let session_path = |indices: &Vec<usize>| -> Option<&'a str> {
+        indices
+            .first()
+            .and_then(|index| snapshot.sessions.get(*index))
+            .and_then(|session| session.worktree_path.as_deref())
+    };
+    let service_path = |indices: &Vec<usize>| -> Option<&'a str> {
+        indices
+            .first()
+            .and_then(|index| snapshot.services.get(*index))
+            .and_then(|service| service.worktree_path.as_deref())
+    };
+    let sessions_by_path: BTreeMap<&'a str, Vec<&'a DashboardSession>> = order
+        .sessions_by_path
+        .values()
+        .filter_map(|indices| {
+            session_path(indices).map(|path| {
+                (
+                    path,
+                    indices
+                        .iter()
+                        .filter_map(|i| snapshot.sessions.get(*i))
+                        .collect(),
+                )
+            })
+        })
+        .collect();
+    let services_by_path: BTreeMap<&'a str, Vec<&'a DashboardService>> = order
+        .services_by_path
+        .values()
+        .filter_map(|indices| {
+            service_path(indices).map(|path| {
+                (
+                    path,
+                    indices
+                        .iter()
+                        .filter_map(|i| snapshot.services.get(*i))
+                        .collect(),
+                )
+            })
+        })
+        .collect();
+    let session_path_order: Vec<&'a str> = order
+        .session_path_order
+        .iter()
+        .filter_map(|path| order.sessions_by_path.get(path).and_then(session_path))
+        .collect();
+    let service_path_order: Vec<&'a str> = order
+        .service_path_order
+        .iter()
+        .filter_map(|path| order.services_by_path.get(path).and_then(service_path))
+        .collect();
 
     if let Some((worktree_index, main_group)) = snapshot
         .worktree_groups
@@ -949,22 +991,260 @@ fn entries_for_group_services<'a>(
 /// same way: class, then tmux window position, then creation time for
 /// anything with no window. Sorting it createdAt-descending here made `j`/`k`
 /// step through a different sequence than the one on screen.
-fn sort_sessions_by_created(sessions: &mut [&DashboardSession]) {
-    sessions.sort_by(|left, right| {
-        crate::team_contract::compare_agent_canonical_order(
-            &navigation_order_probe(left),
-            &navigation_order_probe(right),
-        )
-    });
+/// Which agents and services belong to which worktree, in display order, by
+/// index into the snapshot's own lists.
+///
+/// Indices rather than references because this is cached ON the snapshot and
+/// a cache holding borrows of its owner is not expressible. See
+/// `DesktopStateSnapshot::navigation_order`.
+#[derive(Debug, Default, Clone)]
+pub struct NavigationOrder {
+    pub(crate) main_sessions: Vec<usize>,
+    pub(crate) main_services: Vec<usize>,
+    pub(crate) sessions_by_path: BTreeMap<String, Vec<usize>>,
+    pub(crate) services_by_path: BTreeMap<String, Vec<usize>>,
+    pub(crate) session_path_order: Vec<String>,
+    pub(crate) service_path_order: Vec<String>,
+    /// How many rows there were, checked separately from the hash.
+    ///
+    /// A hash collision on two different lists is vanishingly unlikely, but the
+    /// consequence would be indexing a shorter list and panicking the TUI.
+    /// Comparing the lengths is free and makes that unreachable: every stored
+    /// index is below the length it was built from.
+    sessions_len: usize,
+    services_len: usize,
+    /// What the snapshot's rows were when this was worked out.
+    ///
+    /// Checked on every read rather than trusted. `SnapshotMemo`'s contract
+    /// asks whoever holds a `&mut` to clear it, and its own doc claims no
+    /// caller mutates a snapshot after the grouping has been read -- but
+    /// `dashboard_controller.rs` does exactly that, retaining a subset of
+    /// `sessions` on a snapshot a controller has already seen. Verdicts
+    /// survive that as a wrong boolean. Indices do not: they index a list
+    /// that has moved, which panics. So the answer carries the question.
+    fingerprint: u64,
 }
 
-fn sort_services_by_created(services: &mut [&DashboardService]) {
-    services.sort_by(|left, right| {
-        crate::team_contract::compare_agent_canonical_order(
-            &navigation_service_order_probe(left),
-            &navigation_service_order_probe(right),
-        )
+/// Recomputed on every read, which is what makes the memo safe from callers.
+///
+/// It is not free, and an earlier revision of this file called it
+/// "microseconds against milliseconds", which was wrong twice over. Measured
+/// by difference -- a warm keypress with the check against one without -- it
+/// costs 0.13ms at 80 agents, 0.67ms at 240 and 1.29ms at 480, about 5% of
+/// the keypress. Before the lane below was reduced to the two fields the
+/// order reads, serialising it put the same figure near a quarter.
+///
+/// That is the price of not trusting callers to clear the memo, and six tests
+/// in this repo mutate a snapshot in place without doing so. Paying it per
+/// read is a consequence of the grouping being derived several times a
+/// keypress; threading it through one pass instead would remove both, and is
+/// a change of its own.
+///
+/// Every field the ORDER depends on, not just identity: the bucket comes from
+/// `worktree_path`, membership from `is_project_control_session`, and the sort
+/// from the classifier fields plus `tmux_window_index` and `created_at`.
+/// Hashing identity alone would have let a role or a window index change in
+/// place and be answered from a stale ordering.
+///
+/// The raw fields rather than `dashboard_session_classifier_probe`, which
+/// builds a `serde_json` object -- the very cost this change removed from the
+/// comparator, and not one to reintroduce per read.
+fn navigation_fingerprint(snapshot: &DesktopStateSnapshot) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    // Which path counts as the main checkout decides every bucket, so it
+    // belongs here as much as the rows do.
+    snapshot.main_checkout_path.hash(&mut hasher);
+    snapshot.sessions.len().hash(&mut hasher);
+    for session in &snapshot.sessions {
+        session.id.hash(&mut hasher);
+        session.worktree_path.hash(&mut hasher);
+        session.role.hash(&mut hasher);
+        session.overseer.hash(&mut hasher);
+        session.scribe.hash(&mut hasher);
+        session.project_control.hash(&mut hasher);
+        session.tmux_window_index.hash(&mut hasher);
+        session.created_at.hash(&mut hasher);
+        // Neither `team` nor `lane` is `Hash` -- one is a struct, the other a
+        // `serde_json::Value`. The fields the classifier reads off them are,
+        // and this is a fingerprint rather than a key.
+        session
+            .team
+            .as_ref()
+            .map(|team| {
+                (
+                    team.team_id.as_str(),
+                    team.parent_session_id.as_str(),
+                    team.role.as_deref(),
+                    team.label.as_deref(),
+                )
+            })
+            .hash(&mut hasher);
+        // And only the two fields the ORDER takes from a lane:
+        // `stored_agent_lane` reads `kind`, and `worktreePath` when the kind is
+        // "worktree". Serialising the whole value would allocate a string per
+        // session, on a path that runs several times a keypress.
+        session
+            .lane
+            .as_ref()
+            .map(|lane| {
+                (
+                    lane.get("kind").and_then(Value::as_str),
+                    lane.get("worktreePath").and_then(Value::as_str),
+                )
+            })
+            .hash(&mut hasher);
+    }
+    snapshot.services.len().hash(&mut hasher);
+    for service in &snapshot.services {
+        service.id.hash(&mut hasher);
+        service.worktree_path.hash(&mut hasher);
+        service.tmux_window_index.hash(&mut hasher);
+        service.created_at.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// How many times the ordering has actually been worked out.
+///
+/// The grouping is still assembled per caller -- it borrows from the snapshot,
+/// so it cannot be cached -- but assembling it only reads this. One keypress
+/// must work it out once; `dashboard_keypress_cost.rs` gates that.
+pub static NAVIGATION_ORDER_BUILDS: AtomicUsize = AtomicUsize::new(0);
+
+fn navigation_order(snapshot: &DesktopStateSnapshot) -> std::borrow::Cow<'_, NavigationOrder> {
+    let cached = snapshot
+        .navigation_order
+        .get_or_init(|| build_navigation_order(snapshot, main_checkout_verdicts(snapshot)));
+    if cached.sessions_len == snapshot.sessions.len()
+        && cached.services_len == snapshot.services.len()
+        && cached.fingerprint == navigation_fingerprint(snapshot)
+    {
+        return std::borrow::Cow::Borrowed(cached);
+    }
+    // The snapshot changed under the answer, so this one is worked out and
+    // dropped -- a `OnceLock` cannot be refilled through a shared reference.
+    //
+    // With FRESH verdicts, not the memoised ones. Those were worked out before
+    // the change too, and a path the change introduced is simply absent from
+    // them -- which `unwrap_or(false)` reads as "not the main checkout", so a
+    // main-checkout agent would be grouped as its own orphan worktree. A
+    // rebuild that trusts half of what it is rebuilding away is not a rebuild.
+    std::borrow::Cow::Owned(build_navigation_order(
+        snapshot,
+        &build_main_checkout_verdicts(snapshot),
+    ))
+}
+
+fn build_navigation_order(
+    snapshot: &DesktopStateSnapshot,
+    verdicts: &BTreeMap<String, bool>,
+) -> NavigationOrder {
+    NAVIGATION_ORDER_BUILDS.fetch_add(1, Ordering::Relaxed);
+    let mut order = NavigationOrder {
+        fingerprint: navigation_fingerprint(snapshot),
+        sessions_len: snapshot.sessions.len(),
+        services_len: snapshot.services.len(),
+        ..NavigationOrder::default()
+    };
+    let main_checkout_paths = verdicts;
+    let is_main_path = |path: &str| main_checkout_paths.get(path).copied().unwrap_or(false);
+
+    // Indices from the start, so nothing has to search the list for a row it
+    // already had.
+    let mut sessions_by_path: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    let mut services_by_path: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (index, session) in snapshot.sessions.iter().enumerate() {
+        if is_project_control_session(session) {
+            continue;
+        }
+        match session.worktree_path.as_deref() {
+            Some(path) if !is_main_path(path) => {
+                if !sessions_by_path.contains_key(path) {
+                    order.session_path_order.push(path.to_owned());
+                }
+                sessions_by_path.entry(path).or_default().push(index);
+            }
+            _ => order.main_sessions.push(index),
+        }
+    }
+    for (index, service) in snapshot.services.iter().enumerate() {
+        match service.worktree_path.as_deref() {
+            Some(path) if !is_main_path(path) => {
+                if !services_by_path.contains_key(path) {
+                    order.service_path_order.push(path.to_owned());
+                }
+                services_by_path.entry(path).or_default().push(index);
+            }
+            _ => order.main_services.push(index),
+        }
+    }
+    sort_session_indices(&snapshot.sessions, &mut order.main_sessions);
+    sort_service_indices(&snapshot.services, &mut order.main_services);
+    for (path, mut indices) in sessions_by_path {
+        sort_session_indices(&snapshot.sessions, &mut indices);
+        order.sessions_by_path.insert(path.to_owned(), indices);
+    }
+    for (path, mut indices) in services_by_path {
+        sort_service_indices(&snapshot.services, &mut indices);
+        order.services_by_path.insert(path.to_owned(), indices);
+    }
+    order
+}
+
+/// Sorted on a key built once per row, not once per comparison.
+///
+/// The comparator reads JSON, so the probe below builds a `serde_json` object
+/// and clones three strings every time it is called -- and calling it from
+/// inside `sort_by` called it about `2 n log n` times. At 240 agents that was
+/// some 3,800 object constructions for 240 rows, and most of the cost of
+/// building the grouping at all. Decorating once is the same order of
+/// comparisons and a fraction of the allocation.
+/// The canonical agent order, decorated once per row.
+///
+/// Three surfaces sort by this rule and each built its probe inside its own
+/// comparator. One of them was the dashboard grouping, where it cost
+/// milliseconds; the other two are short teammate lists where it costs little
+/// -- but they carried a verbatim copy of the same comment, and two copies of
+/// an ordering rule is how the dashboard and the footer chips came to disagree
+/// about agent order in the first place.
+pub fn sort_sessions_by_canonical_order(sessions: &mut [&DashboardSession]) {
+    let mut decorated: Vec<(Value, &DashboardSession)> = sessions
+        .iter()
+        .map(|session| (navigation_order_probe(session), *session))
+        .collect();
+    decorated.sort_by(|(left, _), (right, _)| {
+        crate::team_contract::compare_agent_canonical_order(left, right)
     });
+    for (slot, (_, session)) in sessions.iter_mut().zip(decorated) {
+        *slot = session;
+    }
+}
+
+fn sort_session_indices(sessions: &[DashboardSession], indices: &mut [usize]) {
+    let mut decorated: Vec<(Value, usize)> = indices
+        .iter()
+        .map(|index| (navigation_order_probe(&sessions[*index]), *index))
+        .collect();
+    decorated.sort_by(|(left, _), (right, _)| {
+        crate::team_contract::compare_agent_canonical_order(left, right)
+    });
+    for (slot, (_, index)) in indices.iter_mut().zip(decorated) {
+        *slot = index;
+    }
+}
+
+fn sort_service_indices(services: &[DashboardService], indices: &mut [usize]) {
+    let mut decorated: Vec<(Value, usize)> = indices
+        .iter()
+        .map(|index| (navigation_service_order_probe(&services[*index]), *index))
+        .collect();
+    decorated.sort_by(|(left, _), (right, _)| {
+        crate::team_contract::compare_agent_canonical_order(left, right)
+    });
+    for (slot, (_, index)) in indices.iter_mut().zip(decorated) {
+        *slot = index;
+    }
 }
 
 /// The comparator reads JSON and these are typed rows, so hand it the fields

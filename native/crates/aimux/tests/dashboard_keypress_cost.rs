@@ -20,8 +20,11 @@ use aimux::atomic_write::{WRITE_COUNTERS, write_counts_since};
 use aimux::dashboard_controller::{
     DashboardController, DashboardControllerEffect, DashboardKey, DashboardScreen,
 };
-use aimux::dashboard_model::DesktopStateSnapshot;
-use aimux::dashboard_navigation::{DashboardNavigationState, dashboard_navigation_groups};
+use aimux::dashboard_model::{DashboardService, DesktopStateSnapshot};
+use aimux::dashboard_navigation::{
+    DashboardNavigationState, NAVIGATION_GROUP_BUILDS, NAVIGATION_ORDER_BUILDS,
+    dashboard_navigation_groups,
+};
 use aimux::dashboard_renderer::{DashboardRenderInput, render_dashboard_frame};
 use aimux::dashboard_ui_state::DashboardUiStatePersistence;
 use aimux::project_service::desktop_state::{
@@ -282,6 +285,8 @@ fn what_one_repaint_costs_the_operating_system() {
     );
 
     let before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
+    let builds_before = NAVIGATION_GROUP_BUILDS.load(Ordering::Relaxed);
+    let orders_before = NAVIGATION_ORDER_BUILDS.load(Ordering::Relaxed);
     let effect = controller.handle_key(&base, DashboardKey::Down);
     let frame = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &base,
@@ -314,6 +319,8 @@ fn what_one_repaint_costs_the_operating_system() {
         &controller.navigation,
     );
     let keypress_calls = CANONICALIZE_CALLS.load(Ordering::Relaxed) - before;
+    let keypress_builds = NAVIGATION_GROUP_BUILDS.load(Ordering::Relaxed) - builds_before;
+    let keypress_orders = NAVIGATION_ORDER_BUILDS.load(Ordering::Relaxed) - orders_before;
     let _ = std::fs::remove_dir_all(&root);
     remove_snapshot_tree("base");
     remove_snapshot_tree("more-agents");
@@ -328,12 +335,88 @@ fn what_one_repaint_costs_the_operating_system() {
     // screen, so once its verdicts are worked out there is nothing left for a
     // keypress to ask the filesystem. This was 808 calls, eight rebuilds of the
     // whole grouping, before the memo.
-    println!("one Down arrow -> {keypress_calls} calls");
+    println!(
+        "one Down arrow -> {keypress_calls} calls, {keypress_builds} groupings assembled, \
+         {keypress_orders} orderings worked out"
+    );
     assert_eq!(
         keypress_calls, 0,
         "a keypress on a snapshot already on screen must ask the filesystem \
          nothing at all; {keypress_calls} calls means something is rebuilding \
          the worktree grouping from scratch, {base_calls} lookups at a time"
+    );
+
+    // And the multiplier this file says it gates, measured directly rather
+    // than through the filesystem. The verdict memo took the syscalls to zero
+    // and left the rebuilds untouched, so the proxy stopped being able to see
+    // the thing it was for: eight rebuilds, each walking and sorting every
+    // agent, for one keypress.
+    //
+    // What is gated is the WORK, not the call count. The grouping borrows from
+    // the snapshot so it cannot be cached and is still assembled per caller --
+    // cheaply, by reading the ordering. The ordering is the part that walks
+    // every agent, and it is worked out once.
+    // Zero, for the same reason the syscalls are zero: the snapshot cannot
+    // change while it is on screen, so once its ordering is worked out a
+    // keypress has nothing to work out. The warm pass above did it.
+    assert_eq!(
+        keypress_orders, 0,
+        "a keypress on a snapshot already on screen must work nothing out; \
+         {keypress_orders} means something is sorting every agent again, \
+         {keypress_builds} groupings into the frame"
+    );
+    // Reported rather than bounded. The grouping is still assembled per
+    // caller -- cheaply, by reading the ordering -- and pinning that number
+    // would only fight a future change that reduces it. If assembling it ever
+    // becomes the expensive part, gate it then.
+    assert!(
+        keypress_builds >= 1,
+        "a keypress that paints has to assemble the grouping at least once"
+    );
+
+    // The other half: a snapshot the dashboard has never seen must work its
+    // ordering out ONCE across a whole first pass, not once per consumer. Six
+    // assemblies, one ordering -- before this, six orderings, each sorting
+    // every agent.
+    let fresh = snapshot("fresh-pass", 4, 8);
+    // Before the controller, which derives it too -- the window has to cover
+    // the whole first pass or it measures the second one.
+    let orders_before = NAVIGATION_ORDER_BUILDS.load(Ordering::Relaxed);
+    let mut fresh_controller = DashboardController::new(&fresh);
+    let _ = fresh_controller.handle_key(&fresh, DashboardKey::Down);
+    let fresh_frame = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &fresh,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 40,
+        nav_level: fresh_controller.navigation.level,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: fresh_controller.navigation.focused_worktree_path(&fresh),
+        focused_group_index: None,
+        runtime_label: Some("native"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        details_sidebar_visible: fresh_controller.details_sidebar_visible,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let fresh_orders = NAVIGATION_ORDER_BUILDS.load(Ordering::Relaxed) - orders_before;
+    remove_snapshot_tree("fresh-pass");
+    assert!(
+        !fresh_frame.frame.is_empty(),
+        "the fresh pass has to paint too"
+    );
+    assert_eq!(
+        fresh_orders, 1,
+        "a snapshot's first pass must work its ordering out once; \
+         {fresh_orders} means each consumer is sorting every agent for itself"
     );
 }
 
@@ -415,7 +498,10 @@ fn mutating_a_snapshot_in_place_discards_what_was_worked_out_about_it() {
         "and the second does not"
     );
 
-    base.main_checkout_verdicts.clear();
+    // Through the one method, because the ordering is derived from the
+    // verdicts: clearing the verdicts alone would leave an ordering built from
+    // what was just thrown away, and that is why it is not a field each.
+    base.forget_derived();
 
     let before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
     let _ = dashboard_navigation_groups(&base);
@@ -426,5 +512,413 @@ fn mutating_a_snapshot_in_place_discards_what_was_worked_out_about_it() {
         after_clear, first,
         "a cleared memo pays the full cost again; a mutator that cleared \
          nothing would leave the previous answer in place"
+    );
+}
+
+/// The memo answers about the snapshot it is ASKED about, not the one it was
+/// built from.
+///
+/// `SnapshotMemo`'s contract asks whoever holds a `&mut` to clear it, and its
+/// doc claims nothing mutates a snapshot after the grouping has been read.
+/// `dashboard_controller.rs` does: six of its tests retain a subset of
+/// `sessions` on a snapshot a controller has already seen. The verdict memo
+/// survives that as a wrong boolean; an ordering of INDICES does not -- it
+/// indexes a list that has moved, and panics. So the ordering carries a
+/// fingerprint of the rows it describes and is worked out again when they
+/// differ.
+#[test]
+fn an_ordering_is_not_reused_for_a_snapshot_that_has_changed_underneath_it() {
+    let _counters = counters();
+    let mut base = snapshot("stale", 3, 9);
+
+    let before = dashboard_navigation_groups(&base);
+    let counted: usize = before.iter().map(|group| group.sessions.len()).sum();
+    assert!(counted > 1, "the fixture has to have rows to lose");
+
+    // In place, after the grouping has been read, without clearing anything --
+    // exactly what the controller tests do.
+    let keep = base.sessions[0].id.clone();
+    base.sessions.retain(|session| session.id == keep);
+    for group in &mut base.worktree_groups {
+        group.sessions.retain(|session| session.id == keep);
+    }
+
+    let after = dashboard_navigation_groups(&base);
+    let remaining: usize = after.iter().map(|group| group.sessions.len()).sum();
+    let surviving: Vec<&str> = after
+        .iter()
+        .flat_map(|group| group.sessions.iter().map(|session| session.id.as_str()))
+        .collect();
+    remove_snapshot_tree("stale");
+    assert_eq!(
+        remaining, 1,
+        "the grouping must describe the snapshot it was handed; {remaining} \
+         rows means a stale ordering was reused"
+    );
+    // The row count alone would pass on a stale-but-in-range ordering, which
+    // is how a bug in the rebuild stayed invisible. This says WHICH row.
+    assert_eq!(
+        surviving,
+        vec![keep.as_str()],
+        "and it must be the row that was kept"
+    );
+}
+
+/// A rebuild works everything out again, including what it asks the other memo.
+///
+/// `build_navigation_order` reads the main-checkout verdicts, which are
+/// memoised separately. On the mismatch path those were worked out BEFORE the
+/// change, so a worktree path the change introduced is simply absent from
+/// them -- and absent reads as "not the main checkout". A main-checkout agent
+/// then grouped as its own orphan worktree, named by basename, while the
+/// rebuild looked correct by every other measure.
+#[test]
+fn a_rebuild_does_not_trust_verdicts_worked_out_before_the_change() {
+    let _counters = counters();
+    let mut base = snapshot("rebuild-verdicts", 2, 4);
+    let main = base
+        .main_checkout_path
+        .clone()
+        .expect("the fixture names a main checkout");
+
+    // Fill both memos while no session sits on the main checkout path, so the
+    // verdict map has no entry for it.
+    base.sessions
+        .retain(|session| session.worktree_path.as_deref() != Some(main.as_str()));
+    let _ = dashboard_navigation_groups(&base);
+
+    // Now put one there, in place, without clearing anything.
+    let mut moved = base.sessions[0].clone();
+    moved.id = "agent-on-main".into();
+    moved.worktree_path = Some(main.clone());
+    base.sessions.push(moved);
+
+    let groups = dashboard_navigation_groups(&base);
+    let in_main_group = groups
+        .iter()
+        .filter(|group| group.path.is_none())
+        .flat_map(|group| group.sessions.iter().map(|session| session.id.as_str()))
+        .any(|id| id == "agent-on-main");
+    let orphaned = groups
+        .iter()
+        .filter(|group| group.path == Some(main.as_str()))
+        .count();
+    remove_snapshot_tree("rebuild-verdicts");
+
+    assert!(
+        in_main_group,
+        "an agent on the main checkout belongs to the main group; a rebuild \
+         reusing stale verdicts puts it in a worktree group of its own"
+    );
+    assert_eq!(
+        orphaned, 0,
+        "and there must be no worktree group named after the main checkout"
+    );
+}
+
+/// The fingerprint covers what the ORDER depends on, not just what identifies
+/// a row.
+///
+/// Hashing ids and paths alone was enough to stop the panic, so nothing failed
+/// when the sort keys were left out -- and the doc beside it claimed to catch
+/// any mutation, which the next caller would have believed. The sort keys on
+/// `tmux_window_index` among others, so changing one in place has to change
+/// the answer.
+#[test]
+fn an_ordering_is_not_reused_when_only_the_sort_keys_changed() {
+    let _counters = counters();
+    let mut base = snapshot("sort-keys", 1, 4);
+    // A group carrying its own `sessions` renders in THAT order --
+    // `entries_for_group_sessions` only falls back to the sorted flat list for
+    // a group without one. So the order under test is reachable only with the
+    // group lists cleared.
+    for group in &mut base.worktree_groups {
+        group.sessions.clear();
+    }
+    let before: Vec<String> = dashboard_navigation_groups(&base)
+        .iter()
+        .flat_map(|group| group.sessions.iter().map(|session| session.id.clone()))
+        .collect();
+    assert!(before.len() > 1, "the fixture has to have rows to reorder");
+
+    // Reverse the window order in place. Every id and path is untouched, so a
+    // fingerprint over identity alone sees no change at all.
+    let count = base.sessions.len();
+    for (position, session) in base.sessions.iter_mut().enumerate() {
+        session.tmux_window_index = Some(count - position);
+    }
+
+    let after: Vec<String> = dashboard_navigation_groups(&base)
+        .iter()
+        .flat_map(|group| group.sessions.iter().map(|session| session.id.clone()))
+        .collect();
+    remove_snapshot_tree("sort-keys");
+    assert_ne!(
+        before, after,
+        "reordering by a sort key must reorder the grouping; an identical \
+         order means a stale ordering was answered from"
+    );
+}
+
+/// The SERVICES half of the ordering is cached and indexed too.
+///
+/// Every fixture in this file has `"services": []`, so deleting the services
+/// block from `navigation_fingerprint` left the whole suite green -- while a
+/// stale services ordering indexes `snapshot.services` and panics the TUI
+/// exactly as the sessions half did. Review found this by deleting it.
+#[test]
+fn a_services_ordering_is_not_reused_for_a_snapshot_that_has_changed() {
+    let _counters = counters();
+    let mut base = snapshot("stale-services", 2, 2);
+    let worktree = base
+        .worktrees
+        .iter()
+        .map(|worktree| worktree.path.clone())
+        .find(|path| !path.is_empty())
+        .expect("the fixture has a worktree");
+
+    // From JSON rather than a struct literal: `DashboardService` has no
+    // `Default`, and this stays correct when it gains a field.
+    let service = |id: &str, window: usize| -> DashboardService {
+        serde_json::from_value(json!({
+            "id": id,
+            "status": "running",
+            "active": true,
+            "args": [],
+            "tmuxWindowIndex": window,
+            "worktreePath": worktree,
+        }))
+        .expect("a service deserialises")
+    };
+    base.services.push(service("svc-a", 1));
+    base.services.push(service("svc-b", 2));
+    base.forget_derived();
+
+    let before: usize = dashboard_navigation_groups(&base)
+        .iter()
+        .map(|group| group.services.len())
+        .sum();
+    assert_eq!(before, 2, "both services are grouped");
+
+    // In place, after the grouping has been read, without clearing anything.
+    base.services.retain(|service| service.id == "svc-a");
+
+    let after: Vec<String> = dashboard_navigation_groups(&base)
+        .iter()
+        .flat_map(|group| group.services.iter().map(|service| service.id.clone()))
+        .collect();
+    assert_eq!(
+        after,
+        vec!["svc-a".to_string()],
+        "the grouping must describe the services it was handed"
+    );
+
+    // A length change is caught by the length check alone, so the hash's
+    // service CONTENTS need a mutation that keeps the count: dropping the
+    // services block from the fingerprint left the test above green.
+    base.services.push(service("svc-b", 9));
+    base.forget_derived();
+    let ordered: Vec<String> = dashboard_navigation_groups(&base)
+        .iter()
+        .flat_map(|group| group.services.iter().map(|svc| svc.id.clone()))
+        .collect();
+    for (position, svc) in base.services.iter_mut().enumerate() {
+        svc.tmux_window_index = Some(100 - position);
+    }
+    let reordered: Vec<String> = dashboard_navigation_groups(&base)
+        .iter()
+        .flat_map(|group| group.services.iter().map(|svc| svc.id.clone()))
+        .collect();
+    remove_snapshot_tree("stale-services");
+    assert_eq!(ordered.len(), 2, "both services are grouped again");
+
+    // `created_at` orders only the rows with NO window index --
+    // `agent_canonical_sort_key` returns on the index when there is one, and
+    // never reads the date. So this is the shape that gates it.
+    for svc in &mut base.services {
+        svc.tmux_window_index = None;
+        svc.created_at = Some("2026-01-05T00:00:00.000Z".into());
+    }
+    base.forget_derived();
+    let tied: Vec<String> = dashboard_navigation_groups(&base)
+        .iter()
+        .flat_map(|group| group.services.iter().map(|svc| svc.id.clone()))
+        .collect();
+    for (position, svc) in base.services.iter_mut().enumerate() {
+        svc.created_at = Some(format!("2026-01-0{}T00:00:00.000Z", 9 - position));
+    }
+    let retied: Vec<String> = dashboard_navigation_groups(&base)
+        .iter()
+        .flat_map(|group| group.services.iter().map(|svc| svc.id.clone()))
+        .collect();
+    assert_ne!(
+        tied, retied,
+        "with no window index, changing createdAt must reorder the services"
+    );
+    assert_ne!(
+        ordered, reordered,
+        "reordering services by window index must reorder the grouping; an \
+         identical order means the services half of the fingerprint is blind"
+    );
+}
+
+/// And the bucket a row lands in is part of the ordering, not just its place
+/// within one.
+///
+/// Dropping `session.worktree_path` from the fingerprint also left the suite
+/// green, because nothing moved a row between worktrees in place.
+#[test]
+fn an_ordering_is_not_reused_when_a_row_changed_worktree() {
+    let _counters = counters();
+    let mut base = snapshot("moved-worktree", 2, 4);
+    // Not the main checkout: its agents are bucketed by the verdict map rather
+    // than by path, and the fixture puts none of them on its own path.
+    let main = base.main_checkout_path.clone().unwrap_or_default();
+    let paths: Vec<String> = base
+        .worktrees
+        .iter()
+        .map(|worktree| worktree.path.clone())
+        .filter(|path| !path.is_empty() && *path != main)
+        .collect();
+    assert!(
+        paths.len() > 1,
+        "two worktrees of its own are needed to move between"
+    );
+    // A group carrying its own `sessions` renders in that order and with that
+    // membership; the flat list is the fallback. So the bucket a path chooses
+    // is only observable with the group lists cleared.
+    for group in &mut base.worktree_groups {
+        group.sessions.clear();
+    }
+
+    let moving = base
+        .sessions
+        .iter()
+        .position(|session| {
+            paths
+                .iter()
+                .any(|p| session.worktree_path.as_deref() == Some(p))
+        })
+        .expect("a session on a worktree of its own");
+    let from = base.sessions[moving]
+        .worktree_path
+        .clone()
+        .expect("that session names its worktree");
+    let to = paths
+        .iter()
+        .find(|path| **path != from)
+        .expect("a different worktree")
+        .clone();
+    let moving_id = base.sessions[moving].id.clone();
+    let before = dashboard_navigation_groups(&base)
+        .iter()
+        .find(|group| group.path == Some(from.as_str()))
+        .map(|group| group.sessions.iter().any(|s| s.id == moving_id))
+        .unwrap_or(false);
+    assert!(before, "it starts on the first worktree");
+
+    // Moved in place. Its id is unchanged, so a fingerprint over identity
+    // alone sees nothing.
+    base.sessions[moving].worktree_path = Some(to.clone());
+
+    let groups = dashboard_navigation_groups(&base);
+    let still_there = groups
+        .iter()
+        .find(|group| group.path == Some(from.as_str()))
+        .map(|group| group.sessions.iter().any(|s| s.id == moving_id))
+        .unwrap_or(false);
+    let arrived = groups
+        .iter()
+        .find(|group| group.path == Some(to.as_str()))
+        .map(|group| group.sessions.iter().any(|s| s.id == moving_id))
+        .unwrap_or(false);
+    remove_snapshot_tree("moved-worktree");
+    assert!(!still_there, "it must leave the worktree it was moved off");
+    assert!(arrived, "and appear on the one it was moved to");
+}
+
+/// The classifier fields are part of the order too.
+///
+/// The comparator keys on CLASS before position, so a role changed in place
+/// reorders the rows -- and deleting `role`, `overseer`, `scribe`,
+/// `project_control`, `team` and `lane` from the fingerprint left the whole
+/// suite green until this.
+#[test]
+fn an_ordering_is_not_reused_when_a_class_changed() {
+    let _counters = counters();
+    let mut base = snapshot("class-change", 1, 4);
+    for group in &mut base.worktree_groups {
+        group.sessions.clear();
+    }
+    // One window apiece, so class is the only thing left to order by.
+    for session in &mut base.sessions {
+        session.tmux_window_index = Some(1);
+        session.role = None;
+    }
+    base.forget_derived();
+    let before: Vec<String> = dashboard_navigation_groups(&base)
+        .iter()
+        .flat_map(|group| group.sessions.iter().map(|session| session.id.clone()))
+        .collect();
+    assert!(before.len() > 1, "the fixture has to have rows to reorder");
+
+    // In place, same count, same ids and paths.
+    if let Some(last) = base.sessions.last_mut() {
+        last.role = Some("overseer".into());
+        last.overseer = Some(true);
+    }
+
+    let after: Vec<String> = dashboard_navigation_groups(&base)
+        .iter()
+        .flat_map(|group| group.sessions.iter().map(|session| session.id.clone()))
+        .collect();
+    remove_snapshot_tree("class-change");
+    assert_ne!(
+        before, after,
+        "promoting an agent to overseer must reorder the grouping; an \
+         identical order means the classifier fields are not in the \
+         fingerprint"
+    );
+}
+
+/// Which path counts as the main checkout decides every bucket, so it is in
+/// the fingerprint -- and nothing gated that until this.
+#[test]
+fn an_ordering_is_not_reused_when_the_main_checkout_moved() {
+    let _counters = counters();
+    let mut base = snapshot("main-moved", 2, 4);
+    for group in &mut base.worktree_groups {
+        group.sessions.clear();
+    }
+    let elsewhere = base
+        .sessions
+        .iter()
+        .find_map(|session| session.worktree_path.clone())
+        .expect("a session names a worktree");
+    base.forget_derived();
+
+    // The GROUP comes from the topology either way; what the verdict decides
+    // is which rows sit in it rather than in the main group.
+    let rows_on_it = |groups: &[aimux::dashboard_navigation::DashboardNavigationGroup<'_>]| {
+        groups
+            .iter()
+            .filter(|group| group.path == Some(elsewhere.as_str()))
+            .flat_map(|group| group.sessions.iter().map(|session| session.id.clone()))
+            .count()
+    };
+    let before = rows_on_it(&dashboard_navigation_groups(&base));
+    assert!(before > 0, "that worktree starts with rows of its own");
+
+    // In place: the same rows, now sitting on what is suddenly the main
+    // checkout. Their ids and paths are untouched.
+    base.main_checkout_path = Some(elsewhere.clone());
+
+    let after = rows_on_it(&dashboard_navigation_groups(&base));
+    remove_snapshot_tree("main-moved");
+    assert_eq!(
+        after, 0,
+        "once that path IS the main checkout its agents belong to the main \
+         group; {after} rows still on it means the main checkout path is not \
+         in the fingerprint"
     );
 }
