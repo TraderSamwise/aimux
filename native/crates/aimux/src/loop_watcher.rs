@@ -341,10 +341,17 @@ impl LoopWatcher {
     ///
     /// A global pause needs no special case here, and that is a consequence of
     /// the clock rather than an accident: a paused scan commits every send as
-    /// `Buffered`, which never arms `last_briefing_wake_at`, so the floor is
-    /// dormant for the whole pause and the buffer it exists to fill is left
-    /// alone. Withholding runs BEFORE buffering, so a floor armed by attempts
-    /// would have emptied that buffer instead.
+    /// `Buffered`, which never arms `last_briefing_wake_at`. So a pause can
+    /// never ADD to the floor, and the buffer it exists to fill is left alone
+    /// for all but the opening of it. Withholding runs BEFORE buffering, so a
+    /// floor armed by attempts would have emptied that buffer instead.
+    ///
+    /// Not dormant for the WHOLE pause, which an earlier version of this said:
+    /// a pause that begins within `floor_ms` of a DELIVERED briefing withholds
+    /// -- and therefore buffers nothing -- until that floor lifts. Harmless,
+    /// because the withheld briefing is not owed to anyone: it is re-planned
+    /// from whoever is a candidate once the floor lifts, so the buffer simply
+    /// starts later holding fresher content.
     fn withhold_briefings_within_wake_floor(
         &mut self,
         sends: Vec<LoopSend>,
@@ -887,6 +894,21 @@ impl LoopWatcher {
         // longer exists and then be withheld again by the wake floor.
         let mut released = Vec::new();
         if send.kind == LoopSendKind::OverseerBriefing {
+            // The `session_id` clause below is kept deliberately and is NOT
+            // claimed as tested, because no ordinary flow reaches it. A
+            // briefing is minted at one site, inside `plan_sends_for_recipient`
+            // with an overseer id; `plan_sends` prunes `recipient_watchers`
+            // and THEN plans, in that order, so the sub-watcher for a briefing
+            // planned this tick always exists and `buffer_send` delegates into
+            // it. Two recipients therefore never share a map by that route.
+            //
+            // What the clause is actually for is state this build did not
+            // write: `into_watcher` keeps each level's buffers where it finds
+            // them, so briefings persisted at the root by an older layout stay
+            // at the root, and there the collapse would otherwise let one
+            // recipient's newest briefing delete another's. Reviews have read
+            // this clause both ways; the distinction is the prune-then-plan
+            // ordering, which is easy to miss.
             let kind = loop_send_kind_name(send.kind);
             self.buffered_sends.retain(|existing, buffered| {
                 let keep = existing == &key

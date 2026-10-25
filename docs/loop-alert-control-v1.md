@@ -418,8 +418,57 @@ because the recipient has not been interrupted yet, and `LoopExit` shares the
 older `last_overseer_wake_at` while never being withheld — a floor read from
 that clock would be re-armed by a trickle of exits at least as fast as it
 lifts, starving the briefings it exists to space out. A paused scan therefore
-leaves the floor dormant, because every send in it is buffered rather than
-delivered.
+cannot ADD to the floor, because every send in it is buffered rather than
+delivered — though a pause can still begin inside a floor left by an earlier
+delivered briefing, and until that lifts it buffers nothing.
+
+What the floor costs, stated because it is a decision and not a free win: an
+agent whose stop episode begins AND ends inside a closed window is never
+reported. Measured on a 45s-stopped / 45s-running agent beside a permanently
+stopped one, over 48 scans at the 15s cadence, the cycling agent appears in 8
+briefings with no floor and 4 with the shipped one. That is the intended
+answer -- those four episodes had already resolved, so a later briefing would
+describe something that had stopped being true -- but it is a real reduction
+in what the overseer hears about a flapping agent.
+
+At the shipped floor a standing condition costs nothing: the agent that never
+resumes is reported exactly as often with the floor as without it, 12
+briefings either way in that same measurement. It is not that such an agent
+appears in every briefing -- unfloored, 12 of the 16 mention it and the other
+four are about the cycling agent alone -- it is that the floor removes those
+four and none of its own.
+
+That equality is a boundary, not a property, and it does not survive a bigger
+floor. Measured with the same harness, briefings mentioning each agent over 48
+scans:
+
+| floor | none | 45s | 60s (shipped) | 67.5s | 90s | 120s | 180s |
+| ----- | ---- | --- | ------------- | ----- | --- | ---- | ---- |
+| standing | 12 | 12 | 12 | 4 | 4 | 6 | 4 |
+| cycling | 8 | 4 | 4 | 8 | 8 | 2 | 4 |
+
+Two tidy summaries of that table are both false. "Off an exact multiple of the
+reminder period costs coverage" fails on 120s, which is a multiple and still
+costs. "A bigger floor costs more" fails twice: 120s treats the standing agent
+better than 90s, and 90s costs the cycling agent nothing at all. The floor and
+`unchangedReminderTicks` are two cadences that alias, because
+`stopped_candidate_due` fires only on exact multiples of the reminder count,
+so a withheld due tick defers a whole reminder period instead of resuming when
+the floor lifts.
+
+The controlling quantity is magnitude against one reminder period, not
+divisibility: a delivered briefing resets the tick count, the next due tick
+falls exactly one period later, and any floor longer than that drops it. Four
+scans of 15s is 60s, which is exactly the shipped floor — that is the reason to
+leave it there.
+
+That boundary is the best case, not a guarantee. It was measured with one
+standing agent and one cycler, and a briefing delivered for any other agent
+also arms the recipient's clock, so on a busier fleet a standing agent's due
+tick can be withheld by a floor well under one reminder period. Anything above
+the shipped value should be chosen from a measurement of the fleet in hand
+rather than from this table, and the test asserts both sides of the boundary so
+the price shows up there rather than in production.
 
 Within the floor, a planned `stopped-loop-agents` briefing for that recipient
 is **withheld, not buffered** — buffering pins an alert to the candidate set it
