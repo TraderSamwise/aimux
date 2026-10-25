@@ -4320,6 +4320,147 @@ fn a_global_pause_still_buffers_briefings_the_wake_floor_would_withhold() {
     );
 }
 
+/// A pause buffers a briefing every scan, and the candidate set churns, so
+/// each one carries a different fingerprint and the delivery queue's dedupe
+/// (equal signature or equal text) never collapses them. Left alone, resuming
+/// handed the overseer a run of stale partial briefings -- the pause-end burst
+/// the alert design set out to avoid, arriving through the buffer instead of
+/// the planner.
+#[test]
+fn a_pause_keeps_one_briefing_per_recipient_however_often_the_fleet_changes() {
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker_a, a_meta) = looping_session("worker-a", "idle");
+    let (worker_b, b_meta) = looping_session("worker-b", "running");
+    let mut input = input_with_config(
+        vec![boss, worker_a, worker_b],
+        json!({ "sessions": {
+            "boss": boss_meta,
+            "worker-a": a_meta,
+            "worker-b": b_meta
+        }}),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    watcher.set_global_pause(NOW, NOW + 600_000, LoopAlertPauseProvenance::default());
+
+    let mut signatures = Vec::new();
+    for tick in 0..6i64 {
+        let (a, b) = if tick % 2 == 0 {
+            ("idle", "running")
+        } else {
+            ("idle", "idle")
+        };
+        input["metadata"]["sessions"]["worker-a"]["derived"]["activity"] = json!(a);
+        input["metadata"]["sessions"]["worker-b"]["derived"]["activity"] = json!(b);
+        let at = NOW + tick * 15_000;
+        for send in watcher.plan_sends(&input, at) {
+            if send.kind == LoopSendKind::OverseerBriefing {
+                signatures.push(send.signature.clone());
+            }
+            watcher.buffer_send(&send, at);
+            watcher.commit_send_result(&send, at, LoopDeliveryOutcome::Buffered);
+        }
+    }
+
+    let newest = signatures
+        .last()
+        .cloned()
+        .expect("the pause must have buffered at least one briefing");
+    signatures.dedup();
+    assert!(
+        signatures.len() > 1,
+        "the fleet must actually churn, or this gate proves nothing: {signatures:?}"
+    );
+    let briefings = watcher
+        .buffered_sends_to_deliver(8)
+        .into_iter()
+        .filter(|send| send.kind == LoopSendKind::OverseerBriefing)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        briefings.len(),
+        1,
+        "resuming must hand the overseer one current briefing, not one per \
+         fingerprint: {briefings:?}"
+    );
+    // Which one survived is the whole point: keeping the OLDEST would satisfy
+    // the count and hand the user a briefing about a fleet that has moved on.
+    assert_eq!(
+        briefings[0].signature, newest,
+        "the surviving buffer must be the newest briefing, not the first"
+    );
+}
+
+/// Collapsing the buffers must not strand the agents the dropped ones carried.
+/// Buffering stamps `last_attempted_ms` on every agent a briefing named, which
+/// holds that agent out of the next briefing for a cooldown -- so successive
+/// pause briefings are near-disjoint and the survivor is routinely NARROWER
+/// than what it replaced. An agent carried only by a dropped entry would
+/// otherwise sit suppressed by a briefing that no longer exists.
+#[test]
+fn collapsing_pause_briefings_hands_back_the_agents_the_dropped_ones_carried() {
+    let (boss, mut boss_meta) = non_loop_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker_a, a_meta) = looping_session("worker-a", "idle");
+    let (worker_b, b_meta) = looping_session("worker-b", "running");
+    let mut input = input_with_config(
+        vec![boss, worker_a, worker_b],
+        json!({ "sessions": {
+            "boss": boss_meta,
+            "worker-a": a_meta,
+            "worker-b": b_meta
+        }}),
+        // A real cooldown, so a stamped agent really is held out of the next
+        // briefing -- that is what makes the two buffers disjoint.
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    watcher.set_global_pause(NOW, NOW + 600_000, LoopAlertPauseProvenance::default());
+
+    let first = watcher.plan_sends(&input, NOW);
+    assert!(
+        first.iter().any(|send| briefing_mentions(send, "worker-a")),
+        "the first buffered briefing must carry worker-a: {first:?}"
+    );
+    for send in &first {
+        watcher.buffer_send(send, NOW);
+        watcher.commit_send_result(send, NOW, LoopDeliveryOutcome::Buffered);
+    }
+
+    // worker-a stays stopped the whole time; it drops out of the SECOND
+    // briefing only because buffering the first one stamped it.
+    input["metadata"]["sessions"]["worker-b"]["derived"]["activity"] = json!("idle");
+    let second = watcher.plan_sends(&input, NOW + 15_000);
+    assert!(
+        second
+            .iter()
+            .any(|send| briefing_mentions(send, "worker-b")),
+        "the second buffered briefing must carry worker-b: {second:?}"
+    );
+    assert!(
+        !second
+            .iter()
+            .any(|send| briefing_mentions(send, "worker-a")),
+        "worker-a must be held out by its cooldown, or this gate proves nothing: {second:?}"
+    );
+    for send in &second {
+        watcher.buffer_send(send, NOW + 15_000);
+        watcher.commit_send_result(send, NOW + 15_000, LoopDeliveryOutcome::Buffered);
+    }
+
+    watcher.clear_global_pause();
+    let resumed = watcher.plan_sends(&input, NOW + 16_000);
+    assert!(
+        resumed
+            .iter()
+            .any(|send| briefing_mentions(send, "worker-a")),
+        "worker-a was carried only by the dropped buffer, so dropping it must \
+         hand worker-a back rather than leave it suppressed: {resumed:?}"
+    );
+}
+
 /// What production actually runs with. Every cadence the watcher reads
 /// defaults to off, so a config a test wrote itself proves nothing about the
 /// shipped numbers -- this reads the same function the task does.

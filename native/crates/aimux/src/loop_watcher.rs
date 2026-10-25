@@ -867,6 +867,42 @@ impl LoopWatcher {
             return;
         }
         let key = buffered_send_key(send);
+        // One briefing per recipient, newest wins. Buffering happens only
+        // under a global pause, and a pause buffers a fresh fingerprint on
+        // every scan -- the candidate set churns, so the signature does too.
+        // The delivery queue's dedupe only collapses equal signatures or equal
+        // text, so each of those became its own entry and resuming flushed a
+        // run of stale partial briefings, bounded by nothing but the per-scan
+        // send cap. Dripping eight obsolete briefings at a human who just
+        // asked to be caught up is worse than handing them the current one,
+        // and the newest is the one still describing agents that are still
+        // stopped.
+        //
+        // Successive pause briefings are near-disjoint rather than nested --
+        // buffering stamps `last_attempted_ms` on the agents it carried, which
+        // then holds them out of the next one for a cooldown -- so the
+        // survivor is routinely NARROWER than what it replaces. Every agent
+        // only the dropped entries carried therefore has to be handed back its
+        // unstamped state, or it would sit suppressed by a briefing that no
+        // longer exists and then be withheld again by the wake floor.
+        let mut released = Vec::new();
+        if send.kind == LoopSendKind::OverseerBriefing {
+            let kind = loop_send_kind_name(send.kind);
+            self.buffered_sends.retain(|existing, buffered| {
+                let keep = existing == &key
+                    || buffered.kind != kind
+                    || buffered.session_id != send.session_id;
+                if !keep {
+                    released.extend(
+                        buffered
+                            .candidate_keys
+                            .iter()
+                            .map(BufferedLoopCandidateKey::to_dwell_key),
+                    );
+                }
+                keep
+            });
+        }
         let candidate_keys = self
             .pending_send_keys
             .remove(&send.signature)
@@ -902,6 +938,20 @@ impl LoopWatcher {
                 .iter()
                 .map(BufferedLoopCandidateKey::from_dwell_key)
                 .collect();
+        }
+        let survivor = entry
+            .candidate_keys
+            .iter()
+            .map(BufferedLoopCandidateKey::to_dwell_key)
+            .collect::<BTreeSet<_>>();
+        for dropped in released {
+            if survivor.contains(&dropped) {
+                continue;
+            }
+            if let Some(state) = self.stopped_since.get_mut(&dropped) {
+                state.last_attempted_ms = None;
+                state.unchanged_candidate_ticks = 0;
+            }
         }
     }
 
