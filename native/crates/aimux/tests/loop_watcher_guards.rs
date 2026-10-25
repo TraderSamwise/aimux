@@ -4318,7 +4318,7 @@ fn a_global_pause_still_buffers_briefings_the_wake_floor_would_withhold() {
     // run it only on the far side and deleting
     // `withhold_briefings_within_wake_floor` changes nothing here.
     for tick in 1..4i64 {
-        let at = NOW + tick * 15_000;
+        let at = NOW + tick * DEFAULT_SCAN_INTERVAL_MS;
         let planned = watcher.plan_sends(&input, at);
         assert!(
             !planned
@@ -4341,7 +4341,7 @@ fn a_global_pause_still_buffers_briefings_the_wake_floor_would_withhold() {
     // contract the floor must not break, because a pause that silenced its own
     // buffer would become the permanent suppression the design rejects.
     for tick in 4..8i64 {
-        let at = NOW + tick * 15_000;
+        let at = NOW + tick * DEFAULT_SCAN_INTERVAL_MS;
         let planned = watcher.plan_sends(&input, at);
         assert!(
             planned
@@ -4603,7 +4603,13 @@ fn a_state_file_written_before_the_floor_existed_loads_with_it_dormant() {
     // at every level, because the clock that matters lives on the sub-watcher.
     let mut watcher = LoopWatcher::new();
     let mut ok = |_: &LoopSend| true;
-    assert!(!watcher.scan(&input, NOW, &mut ok).is_empty());
+    let armed = watcher.scan(&input, NOW, &mut ok);
+    assert!(
+        armed
+            .iter()
+            .any(|send| send.kind == LoopSendKind::OverseerBriefing),
+        "the fixture's clock must be armed by a real briefing: {armed:?}"
+    );
     save_loop_watcher_state(&path, &watcher).expect("save loop watcher state");
     let raw = fs::read_to_string(&path).expect("read loop watcher state");
     let stripped = raw
@@ -4710,11 +4716,18 @@ fn the_wake_floor_survives_the_reload_that_happens_every_tick() {
 /// resuming when the floor lifts -- and past the boundary the two beat
 /// against each other non-monotonically.
 ///
-/// What holds is the boundary itself: coverage is untouched while the floor
-/// is no larger than one reminder period, which at the shipped defaults is
-/// four scans of 15s, exactly 60s. The shipped floor sits on that line. Both
-/// sides of it are asserted below, so raising `recipientWakeFloorMs` shows
-/// its price here rather than on a fleet.
+/// The controlling quantity is magnitude against one reminder period, not
+/// divisibility: a delivered briefing resets the tick count, the next due tick
+/// is exactly one period later, and any floor longer than that drops it. Four
+/// scans of 15s is 60s, which is exactly the shipped floor, so it sits on the
+/// line. Both sides of it are asserted below.
+///
+/// Stated for THIS harness, and the scope is load-bearing: one steady agent
+/// and one cycler. A briefing delivered for some other agent also arms the
+/// recipient's clock, so with a busier fleet a standing agent's due tick can
+/// be withheld by a floor well under one reminder period. What the boundary
+/// gives is the best case, not a guarantee -- pick a floor from a measurement
+/// of the fleet you have.
 ///
 /// An agent whose stop episode begins and ends inside a closed window is NOT
 /// reported, and that is the intended answer -- it unstuck itself, so a later

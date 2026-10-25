@@ -455,12 +455,19 @@ better than 90s, and 90s costs the cycling agent nothing at all. The floor and
 so a withheld due tick defers a whole reminder period instead of resuming when
 the floor lifts.
 
-What holds is the boundary: coverage is untouched while the floor is no larger
-than one reminder period, which at the shipped defaults is four scans of 15s,
-exactly 60s. The shipped floor sits on that line, which is the reason to leave
-it there. Anything above it should be chosen from a fresh measurement rather
-than from a rule of thumb, and the test asserts both sides so the price shows
-up there rather than on a fleet.
+The controlling quantity is magnitude against one reminder period, not
+divisibility: a delivered briefing resets the tick count, the next due tick
+falls exactly one period later, and any floor longer than that drops it. Four
+scans of 15s is 60s, which is exactly the shipped floor — that is the reason to
+leave it there.
+
+That boundary is the best case, not a guarantee. It was measured with one
+standing agent and one cycler, and a briefing delivered for any other agent
+also arms the recipient's clock, so on a busier fleet a standing agent's due
+tick can be withheld by a floor well under one reminder period. Anything above
+the shipped value should be chosen from a measurement of the fleet in hand
+rather than from this table, and the test asserts both sides of the boundary so
+the price shows up there rather than in production.
 
 Within the floor, a planned `stopped-loop-agents` briefing for that recipient
 is **withheld, not buffered** — buffering pins an alert to the candidate set it
