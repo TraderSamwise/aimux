@@ -684,6 +684,12 @@ fn mutate_notifications(
         // metadata keys each, which is most of the notification bulk. Nothing
         // else clears `"project"`, the participant a notification written
         // without a session id gets.
+        //
+        // Emptying the array rather than removing one reader is exact here,
+        // not a shortcut: `write_notification` sets `unreadBy` to a single
+        // participant and replaces the thread wholesale, so a notification
+        // thread never accumulates readers, and the mutation's filters are
+        // target-scoped -- there is no reading-session parameter to remove.
         if let Some(threads) = exchange.get_mut("threads").and_then(Value::as_array_mut) {
             for thread in threads {
                 if thread

@@ -398,8 +398,15 @@ fn select_retained_messages(exchange: &Value, retained_threads: &[Value]) -> Vec
         // Same rule the body already follows, for the same reason. A pending
         // delivery holds a message past its thread's count cap, so message
         // COUNT grew on exactly the trigger that used to grow message BYTES --
-        // a recipient that never came back pinned the row for ever. Past the
-        // grace window it takes its chances with the cap like everything else.
+        // a recipient that never came back pinned the row for ever.
+        //
+        // The window is measured against the newest message, not the clock, so
+        // "stale" means "left behind by traffic" rather than "old". A project
+        // that goes quiet right after a stuck delivery holds that row
+        // indefinitely, because the stuck message is itself the newest thing
+        // in the exchange. That is the price of compaction staying a pure
+        // function of its input, and it is the right one: a quiet exchange is
+        // not the one growing.
         for message in messages
             .iter()
             .filter(|message| has_pending_delivery(message))
@@ -603,10 +610,13 @@ fn is_notification_thread(thread: &Value) -> bool {
         || string_field(thread, "id").is_some_and(|id| id.starts_with("notification-"))
 }
 
-/// One definition, shared with every other reader. Retention used to carry its
-/// own copy that omitted `closed`, so a thread in that state was never closed
-/// here and stayed active for ever -- the same fact answered two ways, which
-/// is the thing that quietly keeps data alive.
+/// One definition, shared with every other reader. Retention carried its own
+/// copy that omitted `closed`, so a thread in that state would never be closed
+/// here -- it would stay active for ever and keep the active message cap.
+///
+/// Stated as a hazard rather than an incident: nothing in this repo writes
+/// that status today, only the API contract admits it, so this is a divergence
+/// waiting for a caller rather than something observed in the wild.
 fn is_closed_thread(thread: &Value) -> bool {
     crate::project_service::runtime_exchange::thread_is_terminal(thread)
 }
