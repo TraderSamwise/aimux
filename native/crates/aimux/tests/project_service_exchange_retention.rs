@@ -494,3 +494,394 @@ fn temp_project(label: &str) -> PathBuf {
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
 }
+
+/// Measured on a live project: one message listed 237 recipients covering 10
+/// distinct agents, and 125 of 1465 messages carried duplicates. `deliveredTo`
+/// is deduplicated where it is written and the delivery plan is deduplicated
+/// before use, but the stored `to` list was kept exactly as sent -- so the
+/// duplication was permanent, it was re-serialized on every write, and
+/// `has_pending_delivery` compared a 237-entry list against a 1-entry
+/// `deliveredTo`, which can never be satisfied. That kept the message pending
+/// and its body exempt from the body cap.
+///
+/// Retention runs on every write, so this must repair what is ALREADY stored:
+/// a fix that only stopped new duplication would leave the existing file
+/// needing someone to edit it by hand.
+#[test]
+fn compaction_repairs_recipient_lists_that_are_already_duplicated() {
+    let now = "2026-05-25T00:00:00.000Z";
+    let repeated = (0..40)
+        .map(|_| Value::String("codex-1".into()))
+        .collect::<Vec<_>>();
+    let exchange = json!({
+        "version": 1,
+        "threads": [{
+            "id": "thread-active",
+            "title": "Active",
+            "kind": "task",
+            "status": "waiting",
+            "createdAt": now,
+            "updatedAt": now,
+            "createdBy": "user",
+            "participants": ["user", "codex-1"],
+            "waitingOn": ["codex-1"],
+            "unreadBy": ["codex-1"],
+            "lastMessageId": "msg-dup"
+        }],
+        "messages": [{
+            "id": "msg-dup",
+            "threadId": "thread-active",
+            "ts": now,
+            "from": "user",
+            "to": repeated,
+            "deliveredTo": ["codex-1", "codex-1", "codex-1"],
+            "kind": "request",
+            "body": "short body"
+        }],
+        "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+    });
+
+    let report = compact_runtime_exchange(&exchange);
+    let retained = report.get("retained").expect("retained exchange");
+    let message = retained
+        .get("messages")
+        .and_then(Value::as_array)
+        .and_then(|messages| messages.first())
+        .expect("the message survives retention");
+
+    let to = message
+        .get("to")
+        .and_then(Value::as_array)
+        .expect("to list");
+    assert_eq!(
+        to.len(),
+        1,
+        "40 copies of one recipient must compact to one: {to:?}"
+    );
+    let delivered = message
+        .get("deliveredTo")
+        .and_then(Value::as_array)
+        .expect("deliveredTo list");
+    assert_eq!(
+        delivered.len(),
+        1,
+        "deliveredTo must be repaired the same way: {delivered:?}"
+    );
+    // The point of the repair: the message is now genuinely delivered, so it
+    // stops being pinned as pending.
+    assert_eq!(
+        to.first(),
+        delivered.first(),
+        "a list of one recipient that has received it is not pending"
+    );
+}
+
+/// `group_messages_by_thread_id` swapped a linear scan for an index, and the
+/// thing that would break silently is ordering: callers keep the LAST N
+/// messages of each group, so a regrouping that reordered them would quietly
+/// retain the wrong ones. Interleaving two threads is what distinguishes a
+/// correct index from one that groups by arrival.
+#[test]
+fn interleaved_threads_keep_their_own_latest_messages() {
+    let now = "2026-05-25T00:00:00.000Z";
+    let threads = ["thread-a", "thread-b"]
+        .iter()
+        .map(|id| {
+            json!({
+                "id": id,
+                "title": id,
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": now,
+                "updatedAt": now,
+                "createdBy": "user",
+                "participants": ["user"],
+                "waitingOn": ["user"],
+                "unreadBy": ["user"]
+            })
+        })
+        .collect::<Vec<_>>();
+
+    // Alternate the two threads so arrival order and per-thread order differ.
+    let limit = RUNTIME_EXCHANGE_RETENTION.active_thread_messages;
+    let messages = (0..(limit * 2 + 10))
+        .map(|index| {
+            let thread = if index % 2 == 0 {
+                "thread-a"
+            } else {
+                "thread-b"
+            };
+            json!({
+                "id": format!("msg-{index}"),
+                "threadId": thread,
+                "ts": format!("2026-05-25T00:{:02}:{:02}.000Z", index / 60, index % 60),
+                "from": "user",
+                "to": ["user"],
+                "deliveredTo": ["user"],
+                "kind": "note",
+                "body": format!("body {index}")
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let exchange = json!({
+        "version": 1, "threads": threads, "messages": messages,
+        "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+    });
+
+    let report = compact_runtime_exchange(&exchange);
+    let retained = report.get("retained").expect("retained exchange");
+    let kept = retained
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages");
+
+    for thread in ["thread-a", "thread-b"] {
+        let ids = kept
+            .iter()
+            .filter(|message| message.get("threadId").and_then(Value::as_str) == Some(thread))
+            .filter_map(|message| message.get("id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids.len(),
+            limit,
+            "{thread} must keep exactly its own cap, not the global arrival order"
+        );
+        let numbers = ids
+            .iter()
+            .filter_map(|id| id.strip_prefix("msg-"))
+            .filter_map(|n| n.parse::<usize>().ok())
+            .collect::<Vec<_>>();
+        assert!(
+            numbers.windows(2).all(|pair| pair[0] < pair[1]),
+            "{thread} kept its messages out of order: {ids:?}"
+        );
+        let newest = messages
+            .iter()
+            .filter(|m| m.get("threadId").and_then(Value::as_str) == Some(thread))
+            .filter_map(|m| m.get("id").and_then(Value::as_str))
+            .filter_map(|id| id.strip_prefix("msg-"))
+            .filter_map(|n| n.parse::<usize>().ok())
+            .max()
+            .expect("the thread has messages");
+        assert_eq!(
+            *numbers.last().expect("a kept message"),
+            newest,
+            "{thread} must keep its NEWEST message, not the oldest {} it saw",
+            numbers.len()
+        );
+    }
+}
+
+/// A pending delivery exempts a body from the size cap. That is right while
+/// the message is live and wrong once it is not: nothing re-reads a stored
+/// body in order to deliver it, so the exemption only protects the archived
+/// copy -- while a recipient that never came back pinned a full body for ever.
+/// Measured on one project, 4.84 MB of 6.03 MB of message bytes was held that
+/// way, and bounding it at six hours recovers 2.86 MB of a 7.37 MB file.
+///
+/// Both directions matter. A bound that compacted everything would truncate
+/// live traffic; a bound that compacted nothing is the bug.
+#[test]
+fn a_pending_body_is_compacted_once_it_falls_behind_but_not_before() {
+    let huge = "x".repeat(RUNTIME_EXCHANGE_RETENTION.delivered_message_body_bytes * 4);
+    let exchange = |sent: &str, newest: &str| {
+        json!({
+            "version": 1,
+            "threads": [{
+                "id": "thread-active",
+                "title": "Active",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": sent,
+                "updatedAt": newest,
+                "createdBy": "user",
+                "participants": ["user", "codex-1"],
+                "waitingOn": ["codex-1"],
+                "unreadBy": ["codex-1"],
+                "lastMessageId": "msg-recent"
+            }],
+            "messages": [
+                {
+                    "id": "msg-pending",
+                    "threadId": "thread-active",
+                    "ts": sent,
+                    "from": "user",
+                    "to": ["codex-1"],
+                    "deliveredTo": [],
+                    "kind": "request",
+                    "body": huge
+                },
+                {
+                    "id": "msg-recent",
+                    "threadId": "thread-active",
+                    "ts": newest,
+                    "from": "user",
+                    "to": ["codex-1"],
+                    "deliveredTo": ["codex-1"],
+                    "kind": "note",
+                    "body": "latest traffic"
+                }
+            ],
+            "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+        })
+    };
+    let stored_body = |exchange: &Value| -> usize {
+        let report = compact_runtime_exchange(exchange);
+        report
+            .get("retained")
+            .and_then(|retained| retained.get("messages"))
+            .and_then(Value::as_array)
+            .expect("messages")
+            .iter()
+            .find(|message| message.get("id").and_then(Value::as_str) == Some("msg-pending"))
+            .and_then(|message| message.get("body"))
+            .and_then(Value::as_str)
+            .expect("the pending message survives")
+            .len()
+    };
+
+    // One hour behind the newest traffic: still live, still exempt.
+    let live = stored_body(&exchange(
+        "2026-05-25T09:00:00.000Z",
+        "2026-05-25T10:00:00.000Z",
+    ));
+    assert_eq!(
+        live,
+        huge.len(),
+        "a body inside the grace window must not be touched"
+    );
+
+    // A day behind: nothing is going to receive this intact, and the queued
+    // copy a recipient would get was captured when it was queued.
+    let stale = stored_body(&exchange(
+        "2026-05-24T10:00:00.000Z",
+        "2026-05-25T10:00:00.000Z",
+    ));
+    assert!(
+        stale < huge.len(),
+        "a body that fell behind the grace window must be compacted: {stale} bytes"
+    );
+    assert!(
+        stale <= RUNTIME_EXCHANGE_RETENTION.delivered_message_body_bytes,
+        "compacted to the same cap delivered bodies get: {stale} bytes"
+    );
+}
+
+/// Two properties the grace window could break quietly, and one limitation it
+/// has that is worth stating out loud rather than discovering later.
+///
+/// Compaction runs on EVERY write, so it has to be idempotent: a second pass
+/// over an already-compacted exchange must not keep eating it. And the clock
+/// is `max(ts)` over the messages, so one bogus future timestamp -- a machine
+/// whose clock jumped, a hand-edited file -- must not drag every other
+/// pending body past the window at once.
+#[test]
+fn the_grace_window_is_idempotent_and_one_bad_clock_only_costs_a_truncation() {
+    let huge = "x".repeat(RUNTIME_EXCHANGE_RETENTION.delivered_message_body_bytes * 4);
+    let message = |id: &str, ts: &str, delivered: bool| {
+        json!({
+            "id": id,
+            "threadId": "thread-active",
+            "ts": ts,
+            "from": "user",
+            "to": ["codex-1"],
+            "deliveredTo": if delivered { json!(["codex-1"]) } else { json!([]) },
+            "kind": "request",
+            "body": huge
+        })
+    };
+    let build = |messages: Value| {
+        json!({
+            "version": 1,
+            "threads": [{
+                "id": "thread-active",
+                "title": "Active",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": "2026-05-25T09:00:00.000Z",
+                "updatedAt": "2026-05-25T10:00:00.000Z",
+                "createdBy": "user",
+                "participants": ["user", "codex-1"],
+                "waitingOn": ["codex-1"],
+                "unreadBy": ["codex-1"]
+            }],
+            "messages": messages,
+            "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+        })
+    };
+    let body_of = |exchange: &Value, id: &str| -> usize {
+        exchange
+            .get("messages")
+            .and_then(Value::as_array)
+            .expect("messages")
+            .iter()
+            .find(|message| message.get("id").and_then(Value::as_str) == Some(id))
+            .and_then(|message| message.get("body"))
+            .and_then(Value::as_str)
+            .map(str::len)
+            .unwrap_or(0)
+    };
+    let compact_once = |exchange: &Value| -> Value {
+        compact_runtime_exchange(exchange)
+            .get("retained")
+            .cloned()
+            .expect("retained")
+    };
+
+    // Idempotence: a stale pending body compacts once and then holds steady.
+    let stale = build(json!([
+        message("msg-stale", "2026-05-24T10:00:00.000Z", false),
+        message("msg-recent", "2026-05-25T10:00:00.000Z", true),
+    ]));
+    let first = compact_once(&stale);
+    let second = compact_once(&first);
+    let third = compact_once(&second);
+    assert!(
+        body_of(&first, "msg-stale") < huge.len(),
+        "the stale body must compact on the first pass"
+    );
+    assert_eq!(
+        body_of(&second, "msg-stale"),
+        body_of(&first, "msg-stale"),
+        "a second pass must not compact it again"
+    );
+    assert_eq!(
+        body_of(&third, "msg-stale"),
+        body_of(&second, "msg-stale"),
+        "and it must stay put"
+    );
+
+    // A message dated far in the future DOES drag live traffic past the
+    // window -- `newest_message_ms` is a max, so one bad clock moves it. This
+    // pins the blast radius rather than claiming immunity: the body is
+    // compacted to the same cap and keeps head, tail and the marker, so the
+    // thread still reads and nothing is deleted. It also self-corrects, since
+    // real traffic walks the reference forward again.
+    let skewed = build(json!([
+        message("msg-live", "2026-05-25T10:00:00.000Z", false),
+        message("msg-skewed", "2031-01-01T00:00:00.000Z", true),
+    ]));
+    let compacted = compact_once(&skewed);
+    let live = compacted
+        .get("messages")
+        .and_then(Value::as_array)
+        .expect("messages")
+        .iter()
+        .find(|message| message.get("id").and_then(Value::as_str) == Some("msg-live"))
+        .and_then(|message| message.get("body"))
+        .and_then(Value::as_str)
+        .expect("the live message survives");
+    assert!(
+        live.len() <= RUNTIME_EXCHANGE_RETENTION.delivered_message_body_bytes,
+        "a skewed clock compacts live traffic -- known, and capped"
+    );
+    assert!(
+        live.contains("compacted from"),
+        "whatever it compacts must say so rather than silently truncating"
+    );
+    assert!(
+        live.starts_with('x') && live.ends_with('x'),
+        "head and tail are kept, so the thread still reads"
+    );
+}

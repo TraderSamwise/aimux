@@ -1,5 +1,5 @@
 use serde_json::{Map, Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const MESSAGE_BODY_COMPACTED: &str = "aimuxBodyCompacted";
 const MESSAGE_BODY_ORIGINAL_BYTES: &str = "aimuxBodyOriginalBytes";
@@ -14,6 +14,9 @@ pub struct RuntimeExchangeRetention {
     pub closed_thread_messages: usize,
     pub notification_thread_messages: usize,
     pub delivered_message_body_bytes: usize,
+    /// How far a message may fall behind the newest traffic in the exchange
+    /// before its body is compacted even though a delivery is still pending.
+    pub pending_body_grace_ms: i64,
     pub closed_task_text_bytes: usize,
 }
 
@@ -25,6 +28,7 @@ pub const RUNTIME_EXCHANGE_RETENTION: RuntimeExchangeRetention = RuntimeExchange
     closed_thread_messages: 20,
     notification_thread_messages: 1,
     delivered_message_body_bytes: 4 * 1024,
+    pending_body_grace_ms: 6 * 60 * 60 * 1000,
     closed_task_text_bytes: 2 * 1024,
 };
 
@@ -339,7 +343,9 @@ fn select_retained_task_ids(
 }
 
 fn select_retained_messages(exchange: &Value, retained_threads: &[Value]) -> Vec<Value> {
-    let grouped = group_messages_by_thread_id(array_field(exchange, "messages"));
+    let all_messages = array_field(exchange, "messages");
+    let newest_ms = newest_message_ms(all_messages);
+    let grouped = group_messages_by_thread_id(all_messages);
     let thread_ids = retained_threads
         .iter()
         .filter_map(|thread| id(thread).map(str::to_owned))
@@ -409,8 +415,9 @@ fn select_retained_messages(exchange: &Value, retained_threads: &[Value]) -> Vec
             string_field(message, "threadId")
                 .is_some_and(|thread_id| thread_ids.contains(thread_id))
         })
+        .map(dedupe_message_recipients)
         .map(|message| {
-            if has_pending_delivery(&message) {
+            if has_pending_delivery(&message) && within_pending_body_grace(&message, newest_ms) {
                 return message;
             }
             let Some(body) = string_field(&message, "body") else {
@@ -534,16 +541,27 @@ fn sorted_by_updated_at_desc(records: &[Value]) -> Vec<&Value> {
     records
 }
 
+/// Insertion order is part of the contract -- callers downstream take the last
+/// N messages of each group -- so the index is kept beside the vec rather than
+/// replacing it with a map.
+///
+/// The linear `find` this replaces ran once per message over every group seen
+/// so far. At the size that prompted this change (11,524 messages across 423
+/// threads) that is roughly 4.9M comparisons plus a clone per message, on a
+/// path `write_runtime_exchange` takes on EVERY mutation.
 fn group_messages_by_thread_id(messages: &[Value]) -> Vec<(String, Vec<Value>)> {
     let mut grouped: Vec<(String, Vec<Value>)> = Vec::new();
+    let mut index: HashMap<&str, usize> = HashMap::new();
     for message in messages {
         let Some(thread_id) = string_field(message, "threadId") else {
             continue;
         };
-        if let Some((_, existing)) = grouped.iter_mut().find(|(id, _)| id == thread_id) {
-            existing.push(message.clone());
-        } else {
-            grouped.push((thread_id.to_owned(), vec![message.clone()]));
+        match index.get(thread_id) {
+            Some(&slot) => grouped[slot].1.push(message.clone()),
+            None => {
+                index.insert(thread_id, grouped.len());
+                grouped.push((thread_id.to_owned(), vec![message.clone()]));
+            }
         }
     }
     grouped
@@ -599,6 +617,67 @@ fn is_active_task(task: &Value) -> bool {
         string_field(task, "status"),
         Some("done" | "failed" | "canceled" | "cancelled" | "abandoned")
     )
+}
+
+/// Writing the list deduplicated stops NEW duplication; this is what shrinks
+/// what is already stored. Retention runs on every write, so an exchange that
+/// already holds a recipient twenty times is repaired by the next mutation
+/// rather than needing anyone to edit the file by hand.
+///
+/// Order is preserved because `has_pending_delivery` and the delivery plan
+/// both read this list, and the first recipient is the one a single-recipient
+/// caller meant.
+fn dedupe_message_recipients(message: Value) -> Value {
+    let mut message = message;
+    for field in ["to", "deliveredTo"] {
+        let recipients = string_array(&message, field);
+        if recipients.is_empty() {
+            continue;
+        }
+        let mut seen = HashSet::new();
+        let deduped = recipients
+            .iter()
+            .filter(|recipient| seen.insert(recipient.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if deduped.len() != recipients.len()
+            && let Value::Object(map) = &mut message
+        {
+            map.insert(field.into(), json!(deduped));
+        }
+    }
+    message
+}
+
+/// A pending delivery exempts a body from the size cap, which is right while
+/// the message is live and wrong once it is not: nothing re-reads a stored
+/// body to deliver it. `PendingAgentInputDelivery` carries its own copy of the
+/// prompt from the moment it is queued, and the immediate path builds its text
+/// at plan time -- so the exemption only ever protected the archived copy,
+/// while a recipient that never came back pinned a full body for ever.
+/// Measured on one project, that held 4.84 MB of 6.03 MB of message bytes.
+///
+/// Age is measured against the newest message in the exchange rather than the
+/// wall clock, so compaction stays a pure function of its input: the same
+/// exchange compacts the same way in a test, on a machine whose clock has
+/// drifted, and on a project that has been idle for a week.
+fn within_pending_body_grace(message: &Value, newest_ms: Option<i64>) -> bool {
+    let (Some(newest_ms), Some(ts)) = (newest_ms, string_field(message, "ts")) else {
+        // No usable clock on either side: keep the old behaviour and exempt it.
+        return true;
+    };
+    let Some(sent_ms) = crate::visual_client_leases::parse_iso_millis(ts) else {
+        return true;
+    };
+    newest_ms.saturating_sub(sent_ms) <= RUNTIME_EXCHANGE_RETENTION.pending_body_grace_ms
+}
+
+fn newest_message_ms(messages: &[Value]) -> Option<i64> {
+    messages
+        .iter()
+        .filter_map(|message| string_field(message, "ts"))
+        .filter_map(crate::visual_client_leases::parse_iso_millis)
+        .max()
 }
 
 fn has_pending_delivery(message: &Value) -> bool {
