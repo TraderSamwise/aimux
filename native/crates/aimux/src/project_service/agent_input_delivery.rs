@@ -384,6 +384,10 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
     }
 
     let mut remaining = Vec::new();
+    // Sessions whose stale banner this pass wants to retire, and sessions this
+    // pass raised a banner for. A session in both keeps its banner.
+    let mut retiring = BTreeSet::<String>::new();
+    let mut reported = BTreeSet::<String>::new();
     let mut ready = VecDeque::from(deduplicate_pending_agent_input_deliveries(state.pending));
     let mut delivery_attempts = 0usize;
     while let Some(pending) = ready.pop_front() {
@@ -404,7 +408,13 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
                 // without this it outlives its own truth for ever. Measured on
                 // one project, a probe failure from five days earlier was
                 // still the banner on the dashboard.
-                clear_agent_input_delivery_failure(context, &pending.session_id);
+                //
+                // Deferred to the end of the pass rather than done here: two
+                // entries for ONE session can resolve differently in the same
+                // drain -- one past its hold budget and so Blocked, a newer
+                // one still Waiting -- and clearing inline would erase the
+                // blocked banner the other entry had just raised.
+                retiring.insert(pending.session_id.clone());
                 log_at(
                     LogLevel::Debug,
                     "Agent input waiting for its agent",
@@ -415,6 +425,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
                 continue;
             }
             QueuedDeliveryTarget::Blocked(reason) => {
+                reported.insert(pending.session_id.clone());
                 record_agent_input_delivery_failure(
                     context,
                     Some(&pending.session_id),
@@ -504,6 +515,10 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
         }
     }
 
+    for session_id in retiring.difference(&reported) {
+        clear_agent_input_delivery_failure(context, session_id);
+    }
+
     let state = AgentInputDeliveryState {
         version: 1,
         pending: remaining,
@@ -584,6 +599,10 @@ pub async fn run_pending_agent_input_deliveries_async(
         .collect::<BTreeSet<_>>();
     let pending = deduplicate_pending_agent_input_deliveries(state.pending);
     let mut remaining = Vec::new();
+    // Sessions whose stale banner this pass wants to retire, and sessions this
+    // pass raised a banner for. A session in both keeps its banner.
+    let mut retiring = BTreeSet::<String>::new();
+    let mut reported = BTreeSet::<String>::new();
     let mut ready = VecDeque::from(pending);
     let mut delivery_attempts = 0usize;
     let mut failures = Vec::new();
@@ -603,8 +622,8 @@ pub async fn run_pending_agent_input_deliveries_async(
                 // how a wait became an error on every project.
                 //
                 // See the sibling branch above for why the stale banner is
-                // retired here: nothing else ever does it.
-                clear_agent_input_delivery_failure(context, &pending.session_id);
+                // retired, and why it waits until the pass is over.
+                retiring.insert(pending.session_id.clone());
                 log_at(
                     LogLevel::Debug,
                     "Agent input waiting for its agent",
@@ -615,6 +634,7 @@ pub async fn run_pending_agent_input_deliveries_async(
                 continue;
             }
             QueuedDeliveryTarget::Blocked(reason) => {
+                reported.insert(pending.session_id.clone());
                 record_agent_input_delivery_failure(
                     context,
                     Some(&pending.session_id),
@@ -712,6 +732,10 @@ pub async fn run_pending_agent_input_deliveries_async(
                 }
             }
         }
+    }
+
+    for session_id in retiring.difference(&reported) {
+        clear_agent_input_delivery_failure(context, session_id);
     }
 
     let _guard = context.agent_input_delivery_queue.lock();

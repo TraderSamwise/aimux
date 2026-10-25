@@ -4483,3 +4483,50 @@ fn a_held_banner_retires_once_its_session_is_no_longer_probeable() {
     assert_eq!(queued_delivery_count(&state_dir), 1);
     cleanup(project);
 }
+
+/// Retiring a stale banner must not erase a live one raised in the same pass.
+/// Two queued prompts for one departed agent resolve differently -- the older
+/// has outlived its hold budget and is reported as blocked, the newer has not
+/// and waits quietly -- so clearing inline on the wait would wipe the blocked
+/// banner the other entry had just written, leaving a real condition with no
+/// surface anywhere.
+#[test]
+fn retiring_a_stale_banner_does_not_erase_one_raised_in_the_same_pass() {
+    let project = temp_project("blocked-survives-sibling-wait");
+    let state_dir = project.join("state");
+    write_state_without_sessions(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+
+    // Older entry: past its hold budget by the time the drain runs, so the
+    // departed agent is reported as blocked.
+    enqueue_agent_input_delivery(&context, "codex-1", "@17", "older", "hold", now_ms)
+        .expect("enqueue older");
+    // Newer entry, same session: still inside its budget, so it only waits.
+    enqueue_agent_input_delivery(
+        &context,
+        "codex-1",
+        "@17",
+        "newer",
+        "hold",
+        now_ms + MAX_AGENT_INPUT_HOLD_MS,
+    )
+    .expect("enqueue newer");
+
+    let mut runtime = FakeActivityRuntime::default();
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
+    );
+
+    assert!(
+        list_dashboard_operation_failures(&state_dir)
+            .iter()
+            .any(|failure| failure["title"] == "Agent input delivery blocked"
+                && failure["cleared"] != serde_json::Value::Bool(true)),
+        "the blocked banner must survive its sibling's wait: {:?}",
+        list_dashboard_operation_failures(&state_dir)
+    );
+    cleanup(project);
+}
