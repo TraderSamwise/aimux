@@ -634,11 +634,17 @@ fn dedupe_message_recipients(message: Value) -> Value {
         if recipients.is_empty() {
             continue;
         }
+        // Matches the write path's `unique`, which also trims and drops blanks.
+        // Without that, a stored `to: [""]` is a recipient nothing can ever
+        // deliver to, so the message stays pending and its body stays pinned,
+        // and the repair that exists to unpin it walks straight past.
         let mut seen = HashSet::new();
         let deduped = recipients
             .iter()
-            .filter(|recipient| seen.insert(recipient.as_str()))
-            .cloned()
+            .map(|recipient| recipient.trim())
+            .filter(|recipient| !recipient.is_empty())
+            .filter(|recipient| seen.insert(*recipient))
+            .map(str::to_owned)
             .collect::<Vec<_>>();
         if deduped.len() != recipients.len()
             && let Value::Object(map) = &mut message
@@ -672,12 +678,35 @@ fn within_pending_body_grace(message: &Value, newest_ms: Option<i64>) -> bool {
     newest_ms.saturating_sub(sent_ms) <= RUNTIME_EXCHANGE_RETENTION.pending_body_grace_ms
 }
 
+/// The newest message is the reference the grace window measures against, and
+/// a plain `max` trusts every timestamp in the file. One message dated in the
+/// future -- a machine whose clock was wrong when it wrote, then corrected by
+/// NTP -- moves that reference forward by years and compacts every pending
+/// body in the exchange on the next write, irreversibly.
+///
+/// Clamping to the wall clock bounds that to "six hours behind now", which is
+/// what the window was always supposed to mean. It costs nothing in
+/// determinism: for an exchange whose timestamps are all in the past -- every
+/// fixture, and every real file not written by a broken clock -- `max` is
+/// already below `now`, so the clamp does not apply and compaction stays a
+/// pure function of its input.
 fn newest_message_ms(messages: &[Value]) -> Option<i64> {
-    messages
+    let newest = messages
         .iter()
         .filter_map(|message| string_field(message, "ts"))
         .filter_map(crate::visual_client_leases::parse_iso_millis)
-        .max()
+        .max()?;
+    Some(match wall_clock_ms() {
+        Some(now) => newest.min(now),
+        None => newest,
+    })
+}
+
+fn wall_clock_ms() -> Option<i64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
 }
 
 fn has_pending_delivery(message: &Value) -> bool {
