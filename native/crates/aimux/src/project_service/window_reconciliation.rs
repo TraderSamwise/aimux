@@ -168,6 +168,55 @@ pub fn apply_binding_repairs(mut topology: Value, repairs: &[BindingRepair]) -> 
         })
         .collect::<Vec<_>>();
     topology["bindings"] = Value::Array(repaired);
+
+    // Dropping the binding is only half of what this repair means. The doc at
+    // the top of this file says an invalidated session should "read as offline
+    // and restorable rather than focusable", and every surface that asks tmux
+    // does read it that way -- `aimux ps` reports offline because the window
+    // is not there. But the session record kept saying `running`, so anything
+    // reading the stored field disagreed with anything asking tmux.
+    //
+    // Measured on one project: 20 `inventoried-session-missing-window`
+    // mismatches from `aimux doctor`, and `queued_session_disposition` calling
+    // a session RunningButUnbound while `aimux ps` called it offline. Same
+    // fact, two surfaces, two answers.
+    //
+    // Safe on the same evidence the binding drop already rests on:
+    // `plan_binding_repairs` only invalidates when the window inventory is
+    // COMPLETE -- a caller that could not ask tmux plans nothing at all -- and
+    // only when no owned window carries that id. And it is the exact inverse
+    // of `resurrect_topology_session`, which pairs status `offline` with
+    // clearing the binding.
+    let invalidated = repairs
+        .iter()
+        .filter_map(|repair| match repair {
+            BindingRepair::Invalidate { session_id, .. } => Some(session_id.as_str()),
+            BindingRepair::Rebind { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    if !invalidated.is_empty()
+        && let Some(sessions) = topology.get_mut("sessions").and_then(Value::as_array_mut)
+    {
+        for session in sessions.iter_mut() {
+            let Some(id) = string_field(session, "id") else {
+                continue;
+            };
+            if !invalidated.contains(&id.as_str()) {
+                continue;
+            }
+            // Only from a status that claimed the session was up. A graveyard
+            // or error row is a different answer and keeps it.
+            if !matches!(
+                string_field(session, "status").as_deref(),
+                Some("running" | "idle" | "starting")
+            ) {
+                continue;
+            }
+            if let Value::Object(map) = session {
+                map.insert("status".into(), Value::String("offline".into()));
+            }
+        }
+    }
     topology
 }
 
