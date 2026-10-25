@@ -1185,6 +1185,39 @@ pub fn run_native_dashboard_with_seams(
                             pending_selection.as_deref(),
                             carried_selection.as_ref(),
                         );
+                        // On a worktree ROW the pointer is not on any agent, so
+                        // the two signals above are both empty and the filter
+                        // takes every offline agent in that group. The row
+                        // itself survives on `kept.paths`, which leaves a group
+                        // you can see, cannot enter -- `step_in` refuses on an
+                        // empty group -- and cannot reveal, because pointing at
+                        // the agent is the one thing that would have kept it.
+                        //
+                        // So at this level "the thing the pointer is on" is the
+                        // GROUP, and keeping it means keeping what it contains.
+                        // That is narrower than it looks: it holds only the
+                        // focused group, it ends as soon as the pointer moves
+                        // off, and one refresh after stepping in the level
+                        // becomes `Sessions` and the ordinary single-agent rule
+                        // takes over again.
+                        //
+                        // Reading `focused_group` off the outgoing snapshot is
+                        // what makes it stable rather than one-frame: the
+                        // agents it names are kept, so they are still in the
+                        // snapshot this pass produces, and the next pass finds
+                        // them there again.
+                        if controller.as_ref().is_some_and(|controller| {
+                            controller.navigation.level == DashboardNavLevel::Worktrees
+                        }) && let Some(group) = focused_group
+                            .as_ref()
+                            .filter(|group| group.kind == DashboardNavigationGroupKind::Worktree)
+                        {
+                            for session in &group.sessions {
+                                if !kept.sessions.iter().any(|id| id == &session.id) {
+                                    kept.sessions.push(session.id.clone());
+                                }
+                            }
+                        }
                         let visible_model = filter_dashboard_visible_model(
                             &loaded.snapshot,
                             hide_offline_agents,

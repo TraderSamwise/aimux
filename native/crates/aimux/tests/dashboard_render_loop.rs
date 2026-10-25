@@ -1134,3 +1134,135 @@ fn fresh_restart_discards_buffered_enter_and_y_until_a_new_key_after_the_warning
         );
     }
 }
+
+/// `a` must not strand a worktree whose agents it hid.
+///
+/// The sibling test above drives the key with no worktree groups at all, so it
+/// only ever runs at `Sessions` level -- the grouped path, which is every real
+/// dashboard, had no loop-level gate. On a worktree ROW the pointer is on no
+/// agent, so the filter took the group's offline agents, the row survived on
+/// `kept.paths`, and what was left was a group you could see, could not enter
+/// because `step_in` refuses an empty one, and could not reveal because
+/// pointing at the agent was the only thing that would have kept it.
+///
+/// Two groups, because "the focused group was kept" and "nothing was filtered"
+/// are otherwise the same outcome.
+#[test]
+fn toggling_offline_agents_keeps_the_worktree_the_pointer_is_on_enterable() {
+    let painted = Captured::default();
+    let frames = Arc::clone(&painted.0);
+    let root = std::env::temp_dir().join(format!(
+        "aimux-render-loop-group-kept-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("project root");
+
+    let mut fixture = snapshot();
+    let template = fixture.sessions[0].clone();
+    let offline_in = |id: &str, label: &str, path: &str| {
+        let mut session = template.clone();
+        session.id = id.into();
+        session.label = Some(label.into());
+        session.status = aimux::dashboard_model::SessionStatus::Offline;
+        session.semantic = None;
+        session.overseer = None;
+        session.scribe = None;
+        session.project_control = None;
+        session.team = None;
+        session.worktree_path = Some(path.into());
+        session
+    };
+    let focused = offline_in("claude-focused", "alpha", "/repo/.aimux/worktrees/one");
+    let elsewhere = offline_in("claude-elsewhere", "beta", "/repo/.aimux/worktrees/two");
+
+    fixture.sessions = vec![focused.clone(), elsewhere.clone()];
+    fixture.teammates.clear();
+    fixture.services.clear();
+    let group_template = fixture.worktree_groups[0].clone();
+    let group_of = |path: &str, session: aimux::dashboard_model::DashboardSession| {
+        let mut group = group_template.clone();
+        group.path = Some(path.into());
+        group.services.clear();
+        group.sessions = vec![session];
+        group
+    };
+    fixture.worktree_groups = vec![
+        group_of("/repo/.aimux/worktrees/one", focused),
+        group_of("/repo/.aimux/worktrees/two", elsewhere),
+    ];
+
+    // No Down and no step-in: navigation starts at `Worktrees` when groups
+    // exist, which is exactly the state that was broken.
+    let script = Arc::new(Mutex::new(std::collections::VecDeque::from(vec![
+        (0_u64, vec![]),
+        (NO_EXTRA_IDLE, vec![DashboardKey::ToggleOfflineAgents]),
+        (NO_EXTRA_IDLE, vec![]),
+    ])));
+    let key_script = Arc::clone(&script);
+    let before_toggle = Arc::clone(&painted.0);
+    let seam_snapshot = fixture.clone();
+    let seams = DashboardLoopSeams {
+        keys: Box::new(
+            move || match key_script.lock().expect("key script").pop_front() {
+                Some((idle_ms, keys)) => {
+                    std::thread::sleep(Duration::from_millis(idle_ms));
+                    if keys.contains(&DashboardKey::ToggleOfflineAgents) {
+                        before_toggle.lock().expect("captured frame").clear();
+                    }
+                    keys
+                }
+                None => Vec::new(),
+            },
+        ),
+        snapshot: Box::new(move || {
+            Ok(DashboardSnapshotLoad {
+                snapshot: seam_snapshot.clone(),
+                endpoint: None,
+            })
+        }),
+        stop: Box::new(move || script.lock().expect("stop script").is_empty()),
+        output: Box::new(painted.clone()),
+        frame: Box::new(|_| {}),
+        deferral: DashboardRefreshDeferral::PRODUCTION,
+    };
+
+    let options = NativeDashboardOptions {
+        project_root: root.clone(),
+        desktop_state_file: Some(root.join("desktop-state.json")),
+        cols: 120,
+        rows: 40,
+        once: false,
+    };
+    let outcome = run_native_dashboard_with_seams(options, Some(seams));
+    let _ = std::fs::remove_dir_all(&root);
+    outcome.expect("the driven loop returns");
+
+    let painted = frames.lock().expect("captured frames").clone();
+    assert!(
+        !painted.is_empty(),
+        "nothing was painted after the toggle, so this proves neither outcome"
+    );
+    assert!(
+        painted.contains("alpha"),
+        "the focused worktree's agent went off screen, leaving a group that \
+         cannot be entered: {painted}"
+    );
+    assert!(
+        !painted.contains("beta"),
+        "the keep must be scoped to the focused worktree, not a filter that \
+         stopped running: {painted}"
+    );
+    // The header count follows the same rule, and has since the original fix:
+    // what the pointer holds on screen is not hidden, so the number moves as
+    // you arrow between groups. Pinned here because this change makes the step
+    // a group's worth rather than one agent's.
+    assert!(
+        painted.contains("1 hidden"),
+        "the header must account for the agent in the group nobody is on: \
+         {painted}"
+    );
+}
