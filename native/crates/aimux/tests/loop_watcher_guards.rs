@@ -4630,10 +4630,10 @@ fn the_wake_floor_survives_the_reload_that_happens_every_tick() {
 /// What the floor actually trades, pinned so it is a decision rather than a
 /// surprise. A standing condition costs nothing: an agent that stays stopped
 /// is reported exactly as often with the floor as without it, because every
-/// briefing that does go is built fresh from whoever is due. An agent whose stop episode begins and ends inside a closed
-/// window is NOT reported, and that is the intended answer -- it unstuck
-/// itself, so a later briefing would describe something that had stopped being
-/// true.
+/// briefing that does go is built fresh from whoever is due. An agent whose
+/// stop episode begins and ends inside a closed window is NOT reported, and
+/// that is the intended answer -- it unstuck itself, so a later briefing
+/// would describe something that had stopped being true.
 ///
 /// An earlier version of this reasoning claimed withholding only ever delays a
 /// batch and costs no agent its coverage. Measured, that is false: on a 45s
