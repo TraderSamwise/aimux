@@ -4693,15 +4693,28 @@ fn the_wake_floor_survives_the_reload_that_happens_every_tick() {
 /// What the floor actually trades, pinned so it is a decision rather than a
 /// surprise. A standing condition costs nothing: an agent that stays stopped
 /// is reported exactly as often with the floor as without it AT THE SHIPPED
-/// NUMBERS, and that is an alignment, not a property: `stopped_candidate_due`
-/// fires only on exact multiples of `unchangedReminderTicks`, so a withheld
-/// due tick defers a whole reminder period rather than resuming when the
-/// floor lifts. The default floor is 60s and four scans at the default 15s
-/// cadence is also 60s, so the deferral lands on the next due tick and costs
-/// nothing. Raise the floor off that multiple and the steady agent starts
-/// paying too -- which is why this test builds its config from the shipped
-/// constants instead of literals, and why the second case below measures a
-/// floor that is NOT aligned.
+/// NUMBERS. That is a boundary, not a property, and two tidy explanations of
+/// it are both wrong -- measured, with this harness, steady coverage by floor:
+///
+/// ```text
+/// floor   45s  60s  67.5s  90s  120s  180s
+/// steady   12   12      4    4     6     4
+/// ```
+///
+/// It is not "off an exact multiple of the reminder period costs coverage":
+/// 120s is an exact multiple of 60s and still costs. It is not "a bigger
+/// floor costs more" either: 120s scores better than 90s. The floor and
+/// `unchangedReminderTicks` are two cadences that alias, because
+/// `stopped_candidate_due` fires only on exact multiples of the reminder
+/// count, so a withheld due tick defers a whole reminder period rather than
+/// resuming when the floor lifts -- and past the boundary the two beat
+/// against each other non-monotonically.
+///
+/// What holds is the boundary itself: coverage is untouched while the floor
+/// is no larger than one reminder period, which at the shipped defaults is
+/// four scans of 15s, exactly 60s. The shipped floor sits on that line. Both
+/// sides of it are asserted below, so raising `recipientWakeFloorMs` shows
+/// its price here rather than on a fleet.
 ///
 /// An agent whose stop episode begins and ends inside a closed window is NOT
 /// reported, and that is the intended answer -- it unstuck itself, so a later
@@ -4715,7 +4728,7 @@ fn the_wake_floor_survives_the_reload_that_happens_every_tick() {
 /// the four it drops had already resolved -- but the cost is real and belongs
 /// in a test rather than a commit message.
 #[test]
-fn the_floor_bounds_the_rate_and_never_loses_a_standing_condition() {
+fn the_floor_bounds_the_rate_and_prices_the_coverage_it_costs() {
     let (boss, mut boss_meta) = non_loop_session("boss", "idle");
     boss_meta["overseer"] = json!(true);
     let (steady, steady_meta) = looping_session("steady", "idle");
@@ -4794,19 +4807,30 @@ fn the_floor_bounds_the_rate_and_never_loses_a_standing_condition() {
         "the trade this pins is real: {floored_cycler} vs {unbounded_cycler}"
     );
 
-    // And the part the sentence above would otherwise overstate. The equality
-    // holds because the shipped floor is exactly four scans, the same period
-    // `unchangedReminderTicks` counts in; a withheld due tick defers a whole
-    // reminder period, so a floor off that multiple takes coverage from the
-    // STANDING agent too. Measured here rather than reasoned about, so that
-    // anyone raising `recipientWakeFloorMs` sees the price in a test instead
-    // of discovering it on a fleet.
-    let unaligned = DEFAULT_RECIPIENT_WAKE_FLOOR_MS + DEFAULT_SCAN_INTERVAL_MS / 2;
-    let (_, unaligned_steady, _) = run(unaligned);
+    // Both sides of the boundary, because the equality above is only true on
+    // it. One reminder period is `unchangedReminderTicks` scans; under it and
+    // on it the standing agent keeps every briefing it would have had.
+    let reminder_period_ms = DEFAULT_SCAN_INTERVAL_MS * DEFAULT_UNCHANGED_REMINDER_TICKS as i64;
+    assert_eq!(
+        reminder_period_ms, DEFAULT_RECIPIENT_WAKE_FLOOR_MS,
+        "the shipped floor is supposed to sit exactly on one reminder period; \
+         if that changed, re-measure the table above before trusting it"
+    );
+    let (_, under_steady, _) = run(reminder_period_ms - DEFAULT_SCAN_INTERVAL_MS);
+    assert_eq!(
+        under_steady, unbounded_steady,
+        "under the boundary the standing agent must keep all its coverage"
+    );
+
+    // And over it, it does not. Asserted on a floor one half-scan past the
+    // line rather than a large one, because the cost is not proportional:
+    // measured, 120s scores BETTER than 90s. A `<` on a much larger floor
+    // would pass while hiding that.
+    let over = reminder_period_ms + DEFAULT_SCAN_INTERVAL_MS / 2;
+    let (_, over_steady, _) = run(over);
     assert!(
-        unaligned_steady < unbounded_steady,
-        "a floor off the reminder multiple must be shown to cost the standing \
-         agent too, or the claim above is only true by alignment: \
-         {unaligned_steady} vs {unbounded_steady}"
+        over_steady < unbounded_steady,
+        "past the boundary the standing agent pays too, which is the half of \
+         this trade the shipped numbers hide: {over_steady} vs {unbounded_steady}"
     );
 }

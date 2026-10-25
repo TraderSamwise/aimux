@@ -428,16 +428,39 @@ stopped one, over 48 scans at the 15s cadence, the cycling agent appears in 8
 briefings with no floor and 4 with the shipped one. That is the intended
 answer -- those four episodes had already resolved, so a later briefing would
 describe something that had stopped being true -- but it is a real reduction
-in what the overseer hears about a flapping agent, and raising the floor
-deepens it.
+in what the overseer hears about a flapping agent.
 
-A standing condition costs nothing. The agent that never resumes is reported
-exactly as often with the floor as without it -- 12 briefings either way in
-that same measurement -- because every briefing that does go is built fresh
-from whoever is due rather than carried from an earlier one. Note the weaker
-claim is the true one: it is not that such an agent appears in every briefing.
-Unfloored, 12 of the 16 mention it and the other four are about the cycling
-agent alone. The floor removes those four, and none of the standing agent's.
+At the shipped floor a standing condition costs nothing: the agent that never
+resumes is reported exactly as often with the floor as without it, 12
+briefings either way in that same measurement. It is not that such an agent
+appears in every briefing -- unfloored, 12 of the 16 mention it and the other
+four are about the cycling agent alone -- it is that the floor removes those
+four and none of its own.
+
+That equality is a boundary, not a property, and it does not survive a bigger
+floor. Measured with the same harness, briefings mentioning each agent over 48
+scans:
+
+| floor | none | 45s | 60s (shipped) | 67.5s | 90s | 120s | 180s |
+| ----- | ---- | --- | ------------- | ----- | --- | ---- | ---- |
+| standing | 12 | 12 | 12 | 4 | 4 | 6 | 4 |
+| cycling | 8 | 4 | 4 | 8 | 8 | 2 | 4 |
+
+Two tidy summaries of that table are both false. "Off an exact multiple of the
+reminder period costs coverage" fails on 120s, which is a multiple and still
+costs. "A bigger floor costs more" fails twice: 120s treats the standing agent
+better than 90s, and 90s costs the cycling agent nothing at all. The floor and
+`unchangedReminderTicks` are two cadences that alias, because
+`stopped_candidate_due` fires only on exact multiples of the reminder count,
+so a withheld due tick defers a whole reminder period instead of resuming when
+the floor lifts.
+
+What holds is the boundary: coverage is untouched while the floor is no larger
+than one reminder period, which at the shipped defaults is four scans of 15s,
+exactly 60s. The shipped floor sits on that line, which is the reason to leave
+it there. Anything above it should be chosen from a fresh measurement rather
+than from a rule of thumb, and the test asserts both sides so the price shows
+up there rather than on a fleet.
 
 Within the floor, a planned `stopped-loop-agents` briefing for that recipient
 is **withheld, not buffered** — buffering pins an alert to the candidate set it
