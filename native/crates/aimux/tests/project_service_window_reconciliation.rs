@@ -349,74 +349,41 @@ fn real_tmux_inventory_does_not_panic_inside_the_tick_task() {
     );
 }
 
-/// The two surfaces that answer "is this session up" must not disagree.
+/// The repair must leave the session's status alone, and this exists because
+/// changing it is a tempting one-line "fix" with a two-minute data-loss tail.
 ///
-/// This file's own doc says an invalidated session should "read as offline and
-/// restorable rather than focusable", and every surface that asks tmux reads it
-/// that way -- `aimux ps` reports offline because the window is not there. The
-/// stored record kept saying `running`, so anything reading the field answered
-/// differently from anything asking tmux: on one project that was 20
-/// `inventoried-session-missing-window` mismatches from `aimux doctor`, and
-/// `queued_session_disposition` calling a session RunningButUnbound while
-/// `aimux ps` called it offline.
-///
-/// Compared against each other rather than one assertion per surface, because
-/// a per-surface test passes happily while the surfaces drift.
+/// An unbacked live session READS as offline -- `agents.rs` downgrades it on
+/// read, after a successful tmux inventory -- and is never STORED that way.
+/// Store it and `offline` leaves `LIVE_SESSION_STATUSES`, so the row stops
+/// rescuing its retired worktree from `abandoned_retired_worktree_paths`, the
+/// retired-worktree reaper graveyards it within about two minutes, and
+/// `prune_restore_eligibility` deletes it from `last-online-agents.json` and
+/// from the restore offer before the user is ever asked. On a tmux server
+/// restart -- the event this whole file exists for -- that reaps agents that
+/// were restorable a moment earlier.
 #[test]
-fn an_invalidated_binding_leaves_no_session_claiming_to_be_running() {
+fn persisting_an_invalidated_status_would_feed_the_reaper() {
     let topology = topology_with_binding("@7", PROJECT_SESSION);
-    // Nothing this project owns carries that window id, which is the only
-    // evidence that separates "moved" from "gone".
     let repairs = plan_binding_repairs(&topology, &[]);
     assert!(
         matches!(repairs.as_slice(), [BindingRepair::Invalidate { .. }]),
-        "the fixture must produce an invalidation, or this proves nothing: \
-         {repairs:?}"
+        "the fixture must produce an invalidation, or this proves nothing: {repairs:?}"
     );
 
     let repaired = apply_binding_repairs(topology, &repairs);
 
-    // Surface one: the binding is gone, so anything asking tmux finds no
-    // window and reads the session as offline.
     let bindings = repaired
         .get("bindings")
         .and_then(Value::as_array)
         .expect("bindings");
     assert!(
         bindings.is_empty(),
-        "the stale binding must be dropped: {bindings:?}"
+        "the stale binding must still be dropped: {bindings:?}"
     );
-
-    // Surface two: the stored status, which is what every reader that does not
-    // ask tmux consults. It must give the same answer.
-    let session = repaired
-        .get("sessions")
-        .and_then(Value::as_array)
-        .and_then(|sessions| sessions.first())
-        .expect("the session survives");
-    assert_eq!(
-        session.get("status").and_then(Value::as_str),
-        Some("offline"),
-        "the stored status still claims the session is up while no binding \
-         names a window for it: {session:?}"
-    );
-}
-
-/// The transition is scoped to statuses that claimed the session was up. A
-/// graveyarded row is a different answer and keeps it -- overwriting that
-/// would resurrect something the user deliberately put away.
-#[test]
-fn invalidating_a_binding_does_not_overwrite_a_graveyard_status() {
-    let mut topology = topology_with_binding("@7", PROJECT_SESSION);
-    topology["sessions"][0]["status"] = json!("graveyard");
-
-    let repairs = plan_binding_repairs(&topology, &[]);
-    let repaired = apply_binding_repairs(topology, &repairs);
-
     assert_eq!(
         repaired["sessions"][0]["status"].as_str(),
-        Some("graveyard"),
-        "a graveyarded session must keep its status: {:?}",
+        Some("running"),
+        "the stored status must be left alone; downgrading is a READ-time rule, and storing it feeds the reaper: {:?}",
         repaired["sessions"][0]
     );
 }
