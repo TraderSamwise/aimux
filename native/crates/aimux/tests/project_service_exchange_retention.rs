@@ -674,3 +674,98 @@ fn interleaved_threads_keep_their_own_latest_messages() {
         );
     }
 }
+
+/// A pending delivery exempts a body from the size cap. That is right while
+/// the message is live and wrong once it is not: nothing re-reads a stored
+/// body in order to deliver it, so the exemption only protects the archived
+/// copy -- while a recipient that never came back pinned a full body for ever.
+/// Measured on one project, 4.84 MB of 6.03 MB of message bytes was held that
+/// way, and bounding it at six hours recovers 2.86 MB of a 7.37 MB file.
+///
+/// Both directions matter. A bound that compacted everything would truncate
+/// live traffic; a bound that compacted nothing is the bug.
+#[test]
+fn a_pending_body_is_compacted_once_it_falls_behind_but_not_before() {
+    let huge = "x".repeat(RUNTIME_EXCHANGE_RETENTION.delivered_message_body_bytes * 4);
+    let exchange = |sent: &str, newest: &str| {
+        json!({
+            "version": 1,
+            "threads": [{
+                "id": "thread-active",
+                "title": "Active",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": sent,
+                "updatedAt": newest,
+                "createdBy": "user",
+                "participants": ["user", "codex-1"],
+                "waitingOn": ["codex-1"],
+                "unreadBy": ["codex-1"],
+                "lastMessageId": "msg-recent"
+            }],
+            "messages": [
+                {
+                    "id": "msg-pending",
+                    "threadId": "thread-active",
+                    "ts": sent,
+                    "from": "user",
+                    "to": ["codex-1"],
+                    "deliveredTo": [],
+                    "kind": "request",
+                    "body": huge
+                },
+                {
+                    "id": "msg-recent",
+                    "threadId": "thread-active",
+                    "ts": newest,
+                    "from": "user",
+                    "to": ["codex-1"],
+                    "deliveredTo": ["codex-1"],
+                    "kind": "note",
+                    "body": "latest traffic"
+                }
+            ],
+            "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+        })
+    };
+    let stored_body = |exchange: &Value| -> usize {
+        let report = compact_runtime_exchange(exchange);
+        report
+            .get("retained")
+            .and_then(|retained| retained.get("messages"))
+            .and_then(Value::as_array)
+            .expect("messages")
+            .iter()
+            .find(|message| message.get("id").and_then(Value::as_str) == Some("msg-pending"))
+            .and_then(|message| message.get("body"))
+            .and_then(Value::as_str)
+            .expect("the pending message survives")
+            .len()
+    };
+
+    // One hour behind the newest traffic: still live, still exempt.
+    let live = stored_body(&exchange(
+        "2026-05-25T09:00:00.000Z",
+        "2026-05-25T10:00:00.000Z",
+    ));
+    assert_eq!(
+        live,
+        huge.len(),
+        "a body inside the grace window must not be touched"
+    );
+
+    // A day behind: nothing is going to receive this intact, and the queued
+    // copy a recipient would get was captured when it was queued.
+    let stale = stored_body(&exchange(
+        "2026-05-24T10:00:00.000Z",
+        "2026-05-25T10:00:00.000Z",
+    ));
+    assert!(
+        stale < huge.len(),
+        "a body that fell behind the grace window must be compacted: {stale} bytes"
+    );
+    assert!(
+        stale <= RUNTIME_EXCHANGE_RETENTION.delivered_message_body_bytes,
+        "compacted to the same cap delivered bodies get: {stale} bytes"
+    );
+}

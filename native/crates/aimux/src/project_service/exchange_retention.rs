@@ -14,6 +14,9 @@ pub struct RuntimeExchangeRetention {
     pub closed_thread_messages: usize,
     pub notification_thread_messages: usize,
     pub delivered_message_body_bytes: usize,
+    /// How far a message may fall behind the newest traffic in the exchange
+    /// before its body is compacted even though a delivery is still pending.
+    pub pending_body_grace_ms: i64,
     pub closed_task_text_bytes: usize,
 }
 
@@ -25,6 +28,7 @@ pub const RUNTIME_EXCHANGE_RETENTION: RuntimeExchangeRetention = RuntimeExchange
     closed_thread_messages: 20,
     notification_thread_messages: 1,
     delivered_message_body_bytes: 4 * 1024,
+    pending_body_grace_ms: 6 * 60 * 60 * 1000,
     closed_task_text_bytes: 2 * 1024,
 };
 
@@ -339,7 +343,9 @@ fn select_retained_task_ids(
 }
 
 fn select_retained_messages(exchange: &Value, retained_threads: &[Value]) -> Vec<Value> {
-    let grouped = group_messages_by_thread_id(array_field(exchange, "messages"));
+    let all_messages = array_field(exchange, "messages");
+    let newest_ms = newest_message_ms(all_messages);
+    let grouped = group_messages_by_thread_id(all_messages);
     let thread_ids = retained_threads
         .iter()
         .filter_map(|thread| id(thread).map(str::to_owned))
@@ -411,7 +417,7 @@ fn select_retained_messages(exchange: &Value, retained_threads: &[Value]) -> Vec
         })
         .map(dedupe_message_recipients)
         .map(|message| {
-            if has_pending_delivery(&message) {
+            if has_pending_delivery(&message) && within_pending_body_grace(&message, newest_ms) {
                 return message;
             }
             let Some(body) = string_field(&message, "body") else {
@@ -641,6 +647,37 @@ fn dedupe_message_recipients(message: Value) -> Value {
         }
     }
     message
+}
+
+/// A pending delivery exempts a body from the size cap, which is right while
+/// the message is live and wrong once it is not: nothing re-reads a stored
+/// body to deliver it. `PendingAgentInputDelivery` carries its own copy of the
+/// prompt from the moment it is queued, and the immediate path builds its text
+/// at plan time -- so the exemption only ever protected the archived copy,
+/// while a recipient that never came back pinned a full body for ever.
+/// Measured on one project, that held 4.84 MB of 6.03 MB of message bytes.
+///
+/// Age is measured against the newest message in the exchange rather than the
+/// wall clock, so compaction stays a pure function of its input: the same
+/// exchange compacts the same way in a test, on a machine whose clock has
+/// drifted, and on a project that has been idle for a week.
+fn within_pending_body_grace(message: &Value, newest_ms: Option<i64>) -> bool {
+    let (Some(newest_ms), Some(ts)) = (newest_ms, string_field(message, "ts")) else {
+        // No usable clock on either side: keep the old behaviour and exempt it.
+        return true;
+    };
+    let Some(sent_ms) = crate::visual_client_leases::parse_iso_millis(ts) else {
+        return true;
+    };
+    newest_ms.saturating_sub(sent_ms) <= RUNTIME_EXCHANGE_RETENTION.pending_body_grace_ms
+}
+
+fn newest_message_ms(messages: &[Value]) -> Option<i64> {
+    messages
+        .iter()
+        .filter_map(|message| string_field(message, "ts"))
+        .filter_map(crate::visual_client_leases::parse_iso_millis)
+        .max()
 }
 
 fn has_pending_delivery(message: &Value) -> bool {
