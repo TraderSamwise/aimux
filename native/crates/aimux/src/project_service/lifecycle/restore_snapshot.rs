@@ -29,8 +29,8 @@ use super::json_helpers::{array_field, object_insert_mut, string_field, trimmed_
 use super::restore_offer::{
     AgentRestoreAnswer, acknowledge_agent_restore_offer, agent_restore_ack_path,
     agent_restore_offer_is_current, agent_restore_offer_path, build_agent_restore_worktree_groups,
-    normalize_agent_restore_sessions, read_agent_restore_offer, read_agent_restore_prompt_gate,
-    remove_agent_restore_offer, retain_offered_restore_failures,
+    normalize_agent_restore_sessions, open_or_advance_agent_restore_prompt_gate,
+    read_agent_restore_offer, remove_agent_restore_offer, retain_offered_restore_failures,
 };
 use super::topology_helpers::read_json_object;
 
@@ -342,7 +342,12 @@ pub(crate) fn derive_agent_restore_offer(
         return Ok(None);
     }
     let snapshot_id = string_field(&snapshot, "id");
-    let Some(gate) = read_agent_restore_prompt_gate(project_state_dir, project_id) else {
+    let Some(gate) = open_or_advance_agent_restore_prompt_gate(
+        project_state_dir,
+        project_id,
+        &snapshot_id,
+        &string_field(&snapshot, "updatedAt"),
+    ) else {
         return Ok(None);
     };
     if string_field(&gate, "snapshotId") != snapshot_id

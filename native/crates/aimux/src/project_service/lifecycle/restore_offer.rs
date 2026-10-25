@@ -441,9 +441,6 @@ pub(super) fn write_agent_restore_retry_offer(
     let mut retry = offer.clone();
     object_insert_mut(&mut retry, "updatedAt", Value::String(now_iso()));
     object_insert_mut(&mut retry, "restoreFailures", Value::Array(failed.to_vec()));
-    // `sessions` above is the failures intersected with what was offered, so a
-    // failure naming anything else has nothing to sit beside.
-    retain_offered_restore_failures(&mut retry);
     object_insert_mut(
         &mut retry,
         "sessionIds",
@@ -460,6 +457,11 @@ pub(super) fn write_agent_restore_retry_offer(
         "worktreeGroups",
         Value::Array(build_agent_restore_worktree_groups(&sessions)),
     );
+    // After `sessions` is in place, not before: `sessions` is the failures
+    // intersected with what was offered, so a failure naming anything else has
+    // nothing to sit beside -- and filtering against the pre-trim list would
+    // have kept it.
+    retain_offered_restore_failures(&mut retry);
     let _ = write_json_atomic(agent_restore_offer_path(project_state_dir), &retry);
 }
 
@@ -512,6 +514,65 @@ pub(super) fn agent_restore_offer_is_current(
         (Some(current), Some(offered)) => current == offered,
         _ => false,
     }
+}
+
+/// The gate for this project, opened or moved to the snapshot generation on
+/// disk now, so long as the boot's question has not been asked yet.
+///
+/// The gate records the generation that was on disk at daemon boot and nothing
+/// moved it afterwards -- and the snapshot id rolls whenever the SET of agents
+/// changes. So starting a single agent after boot left the gate naming a
+/// generation that no longer existed, and the whole fleet dying later that boot
+/// was never offered at all. The gate's job is to ask once per boot; it has not
+/// asked yet, so it follows the snapshot.
+///
+/// It also opens an entry for a project that has none. Seeding skips a project
+/// whose snapshot it could not read, and such a project was un-offerable for
+/// the rest of the boot. A project registered mid-boot needs no entry here: its
+/// snapshot is written by the run that is still alive, which is never offered
+/// back.
+///
+/// `None` means the gate could not be written, and the caller must not offer:
+/// an offer naming a generation the gate does not would read as foreign on the
+/// next tick, be removed, and be derived again every tick after that.
+pub(super) fn open_or_advance_agent_restore_prompt_gate(
+    project_state_dir: &Path,
+    project_id: &str,
+    snapshot_id: &str,
+    snapshot_updated_at: &str,
+) -> Option<Value> {
+    if let Some(gate) = read_agent_restore_prompt_gate(project_state_dir, project_id) {
+        // Asked already, whatever generation it was asked about. Moving the gate
+        // here would be the once-per-boot nagging it exists to prevent.
+        if gate.get("askedAt").and_then(Value::as_str).is_some() {
+            return Some(gate);
+        }
+        if string_field(&gate, "snapshotId") == snapshot_id {
+            return Some(gate);
+        }
+    }
+    let path = agent_restore_prompt_gate_path(project_state_dir);
+    let mut state = read_json_object(&path);
+    // The only legitimate read of the file's top-level boot: a project with no
+    // entry has no per-project copy to read, and "which daemon is up" is what
+    // the top-level field means.
+    let daemon_boot_id = trimmed_string(Value::Object(state.clone()).get("daemonBootId"))?;
+    let now = now_iso();
+    let gate = json!({
+        "version": 1,
+        "projectId": project_id,
+        "daemonBootId": daemon_boot_id,
+        "snapshotId": snapshot_id,
+        "snapshotUpdatedAt": snapshot_updated_at,
+        "createdAt": now,
+    });
+    let Some(Value::Object(projects)) = state.get_mut("projects") else {
+        return None;
+    };
+    projects.insert(project_id.to_owned(), gate.clone());
+    state.insert("updatedAt".into(), Value::String(now));
+    write_json_atomic(path, &Value::Object(state)).ok()?;
+    Some(gate)
 }
 
 fn mark_agent_restore_prompt_gate_asked(

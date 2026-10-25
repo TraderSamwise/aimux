@@ -2148,13 +2148,27 @@ impl DashboardController {
             );
             return DashboardControllerEffect::Request(request);
         }
-        if matches!(key, DashboardKey::Back | DashboardKey::Printable('n')) {
+        // `n` is the lasting no, and it is the only key that answers for more
+        // than this dashboard. The dismiss route records it against the fleet,
+        // so the question does not come back until those agents have been alive
+        // again -- which is the whole point of the key, and also why Esc must
+        // not share it.
+        if matches!(key, DashboardKey::Printable('n')) {
             self.agent_restore_prompt_dismissed = true;
             return DashboardControllerEffect::Request(DashboardActionRequest {
                 method: "POST",
                 path: routes::agents::DISMISS_RESTORE_PREVIOUS,
                 body: json!({}),
             });
+        }
+        // Esc closes an overlay everywhere else in the dashboard, with no
+        // confirmation, so it cannot be the key that answers for good. It
+        // defers: this dashboard stops showing the prompt and the offer stays
+        // on disk for the next look. Sharing it with `n` meant one reflexive
+        // keypress on twenty dead agents threw the only record of them away.
+        if matches!(key, DashboardKey::Back) {
+            self.agent_restore_prompt_dismissed = true;
+            return DashboardControllerEffect::Render;
         }
         DashboardControllerEffect::Render
     }

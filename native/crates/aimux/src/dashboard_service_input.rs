@@ -420,7 +420,12 @@ pub fn render_agent_restore_confirm_overlay(
         ));
     }
     body.push(String::new());
-    body.push(modal_hints("[Enter/y] restore  [n/Esc] not now"));
+    // Three outcomes, three words: restore them, never ask again, or ask me
+    // later. The old hint read "[n/Esc] not now" for a key that answered for
+    // good.
+    body.push(modal_hints(
+        "[Enter/y] restore  [n] don't ask again  [Esc] not now",
+    ));
     render_overlay_box(&OverlayBoxSpec {
         title: if failures.is_some() {
             "Restore Agents That Did Not Come Back"
@@ -1003,19 +1008,20 @@ mod tests {
         );
         assert!(rendered.contains("2 could not be restored"), "{rendered}");
         // Beside each agent, not only in the headline: the box truncates one
-        // line, and the headline's tail is where the later reasons are.
+        // line, and the headline's tail is where the later reasons are. Matched
+        // on a row that is NOT the headline, since the headline names both
+        // agents and both reasons and would satisfy a looser search.
+        // The frame positions rows with cursor moves rather than newlines, so
+        // the cells are what sits between the box's vertical rules.
+        let rows = crate::tui_render::text::strip_ansi(&rendered);
         for session_id in ["codex-one", "claude-two"] {
-            let line = rendered
-                .split("\x1b[")
-                .find(|chunk| chunk.contains(session_id) && chunk.contains("host is low"))
-                .or_else(|| {
-                    rendered
-                        .lines()
-                        .find(|line| line.contains(session_id) && line.contains("host is low"))
-                });
             assert!(
-                line.is_some(),
-                "{session_id} has no reason beside it: {rendered}"
+                rows.split('\u{2502}').any(|row| {
+                    row.contains(session_id)
+                        && row.contains("host is low on memory")
+                        && !row.contains("could not be restored")
+                }),
+                "{session_id} has no reason on its own row: {rows}"
             );
         }
     }
@@ -1024,6 +1030,24 @@ mod tests {
     /// up as a failure.
     #[test]
     fn a_first_prompt_reports_no_failure() {
+        // Both shapes a first offer can have: no key at all, and the key
+        // present but empty, which is what a retry offer decays to once the
+        // last failure it named stopped being offered.
+        let mut empty = serde_json::Map::new();
+        empty.insert("restoreFailures".into(), json!([]));
+        for extra in [serde_json::Map::new(), empty] {
+            let rendered = render_agent_restore_confirm_overlay(&offer(extra), 100, 30);
+            assert!(rendered.contains("RESTORE PREVIOUS AGENTS"), "{rendered}");
+            assert!(
+                rendered.contains("2 agent session(s) from the previous run"),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("could not be restored"), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn a_first_prompt_reports_no_failure_legacy_shape() {
         let rendered =
             render_agent_restore_confirm_overlay(&offer(serde_json::Map::new()), 100, 30);
         assert!(rendered.contains("RESTORE PREVIOUS AGENTS"), "{rendered}");

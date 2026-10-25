@@ -6230,6 +6230,58 @@ mod bulk_graveyard_tests {
     use crate::tui_render::text::strip_ansi;
     use serde_json::json;
 
+    /// Esc defers the restore prompt; only `n` answers it.
+    ///
+    /// The hint read "[n/Esc] not now" for a key pair that both posted the
+    /// dismiss route -- and that route now records an answer which outlives the
+    /// boot. Esc closes every other overlay in this dashboard with no
+    /// confirmation, so a reflexive Esc on a prompt offering twenty dead agents
+    /// threw away the only record of how to bring them back. It now hides the
+    /// prompt here and leaves the offer on disk for the next look.
+    #[test]
+    fn escape_defers_the_restore_prompt_and_only_n_answers_it() {
+        let mut snapshot =
+            serde_json::from_str::<crate::dashboard_model::DesktopStateGoldenFixture>(
+                include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json"),
+            )
+            .unwrap()
+            .runtime_light;
+        snapshot.agent_restore_offer = Some(
+            serde_json::from_value(json!({
+                "id": "restore-online-1",
+                "updatedAt": "2026-10-25T00:00:00.000Z",
+                "sessionIds": ["codex-one"],
+                "sessions": [{ "id": "codex-one" }],
+            }))
+            .expect("offer"),
+        );
+
+        let mut deferring = DashboardController::new(&snapshot);
+        assert!(
+            deferring.agent_restore_prompt_active(&snapshot),
+            "the fixture must reach the prompt"
+        );
+        let effect = deferring.handle_key(&snapshot, DashboardKey::Back);
+        assert!(
+            matches!(effect, DashboardControllerEffect::Render),
+            "Esc must not answer the offer: {effect:?}"
+        );
+        assert!(
+            !deferring.agent_restore_prompt_active(&snapshot),
+            "Esc still hides the prompt for this dashboard"
+        );
+
+        let mut answering = DashboardController::new(&snapshot);
+        match answering.handle_key(&snapshot, DashboardKey::Printable('n')) {
+            DashboardControllerEffect::Request(request) => assert_eq!(
+                request.path,
+                crate::project_api_contract::routes::agents::DISMISS_RESTORE_PREVIOUS,
+                "`n` is the key that answers for good"
+            ),
+            other => panic!("`n` must answer the offer: {other:?}"),
+        }
+    }
+
     #[test]
     fn bulk_graveyard_wide_unicode_errors_remain_visible_in_terminal_cells_when_scrolled() {
         let snapshot = serde_json::from_str::<crate::dashboard_model::DesktopStateGoldenFixture>(

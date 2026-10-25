@@ -419,6 +419,36 @@ impl TestProject {
         read_json(&self.state_dir.join("agent-restore-offer-ack.json"))
     }
 
+    /// Add one more agent to the topology, which changes the session SET and so
+    /// mints a new snapshot generation on the next tick.
+    fn add_session(&self, session_id: &str, window_id: &str) {
+        let path = runtime_topology_path(&self.state_dir);
+        let mut topology = read_runtime_topology(&path).expect("topology");
+        let sessions = topology["sessions"].as_array_mut().expect("sessions");
+        let mut session = sessions[0].clone();
+        session["id"] = json!(session_id);
+        session["label"] = json!(session_id);
+        session["tmuxTarget"]["windowId"] = json!(window_id);
+        sessions.push(session);
+        write_runtime_topology(&path, &topology).expect("write topology");
+    }
+
+    /// What the gate file looks like for a project whose snapshot could not be
+    /// read when the boot seeded gates.
+    fn remove_own_prompt_gate_entry(&self) {
+        let path = self.aimux_home.join("restore-prompt-gates.json");
+        let mut state = read_json(&path).expect("gate file");
+        state["projects"]
+            .as_object_mut()
+            .expect("projects")
+            .remove(&self.project_id);
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&state).expect("serialize gates"),
+        )
+        .expect("write gates");
+    }
+
     fn remove_offer(&self) {
         let _ = fs::remove_file(self.state_dir.join("agent-restore-offer.json"));
     }
@@ -1212,7 +1242,13 @@ fn accepting_a_restore_is_still_spent_by_its_own_boot() {
 
     // The stub runtime cannot create windows, so nothing actually came back.
     // Within this boot the acceptance answers for it; the next boot must ask.
+    //
+    // Re-seeded on the SAME boot before asserting, because accepting also
+    // stamps the gate's `askedAt` and the fresh derive bails on that before it
+    // ever reads the acknowledgement. Without the re-seed this half of the test
+    // passes whatever the ack says, which is exactly how it was wrong.
     project.remove_offer();
+    project.seed_prompt_gates("boot-1");
     project.run_task_with_no_live_windows();
     assert!(
         project.offer().is_none(),
@@ -1303,4 +1339,111 @@ fn a_failure_stops_being_reported_once_that_agent_is_no_longer_offered() {
         .expect("the remaining failure is still reported");
     assert_eq!(recorded.len(), 1, "{decayed}");
     assert_eq!(recorded[0]["sessionId"], AGENT_IDS[1], "{decayed}");
+}
+
+/// An offer that stopped being restorable was not answered by anyone, and some
+/// of the paths that notice run on their own.
+///
+/// `prune_restore_eligibility` is reached from `aimux agent stop` and `kill`,
+/// but also from the retired-worktree reaper and the dead-agent reap. Recording
+/// those as a dismissal would let an automatic sweep write a lasting "no"
+/// nobody said -- the one answer that outlives its boot.
+#[test]
+fn an_offer_that_lapsed_is_not_recorded_as_a_dismissal() {
+    let project = TestProject::new("offer-lapsed");
+    project.run_task();
+    project.simulate_process_death_as("run-that-died");
+    project.seed_prompt_gates("boot-1");
+    project.run_task_with_no_live_windows();
+    assert_eq!(session_ids(&project.offer().expect("offer")), AGENT_IDS);
+
+    // Stop every agent the offer named, which empties it.
+    for session_id in AGENT_IDS {
+        project.stop_agent(session_id);
+    }
+    assert!(
+        project.offer().is_none(),
+        "an emptied offer is not an offer: {:?}",
+        project.offer()
+    );
+    let ack = project.ack().expect("the lapse is recorded");
+    assert_eq!(
+        ack["answer"], "lapsed",
+        "an automatic prune must not read as a human saying no: {ack}"
+    );
+    assert_ne!(ack["answer"], "dismissed", "{ack}");
+}
+
+/// A fleet that dies after the boot is still offered.
+///
+/// The gate records the snapshot generation that was on disk at daemon boot,
+/// and nothing moved it afterwards -- while the snapshot id rolls whenever the
+/// SET of agents changes. So starting one agent after boot left the gate naming
+/// a generation that no longer existed, and when the whole fleet died later
+/// that boot there was no prompt at all. Which is the shape of the failure the
+/// acknowledgement rules were written for, arriving by a different route.
+#[test]
+fn a_fleet_that_dies_after_an_agent_started_is_still_offered() {
+    let project = TestProject::new("gate-follows-snapshot");
+    project.run_task();
+    let boot_snapshot_id = project
+        .snapshot()
+        .expect("snapshot")
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("snapshot id")
+        .to_owned();
+    let gate = project.seed_prompt_gates("boot-1");
+    assert_eq!(gate["snapshotId"], boot_snapshot_id);
+
+    // One more agent joins, which changes the SET and so mints a new snapshot
+    // generation. The gate still names the one it was seeded with.
+    project.add_session("claude-three", "@2");
+    project.run_task_with_only_live_windows(&["@0", "@1", "@2"]);
+    let rolled = project.snapshot().expect("snapshot");
+    assert_ne!(
+        rolled["id"], boot_snapshot_id,
+        "a changed set must mint a new generation, or this test proves nothing: {rolled}"
+    );
+
+    // Now everything dies.
+    project.simulate_process_death_as("run-that-died");
+    project.run_task_with_no_live_windows();
+
+    let offer = project
+        .offer()
+        .expect("a fleet that died after the boot must still be offered");
+    assert_eq!(
+        offer["snapshotId"], rolled["id"],
+        "the offer names the generation that actually died: {offer}"
+    );
+    assert_eq!(offer["daemonBootId"], "boot-1", "{offer}");
+    assert_eq!(
+        session_ids(&offer),
+        // Canonical order, which is what the restore replays.
+        ["claude-one", "claude-three", "codex-two"],
+        "every agent that died is offered, including the one that joined: {offer}"
+    );
+}
+
+/// A project the boot could not seed a gate for is not un-offerable for the
+/// rest of that boot. Seeding skips a project whose snapshot it could not read,
+/// and the derive used to refuse outright on a missing entry.
+#[test]
+fn a_project_with_no_gate_entry_is_still_offered_within_the_boot() {
+    let project = TestProject::new("gate-opens-late");
+    project.run_task();
+    // A seeded gate file for the boot, with nothing for this project -- what a
+    // snapshot that could not be read at seed time leaves behind.
+    project.seed_prompt_gates("boot-1");
+    project.remove_own_prompt_gate_entry();
+
+    project.simulate_process_death_as("run-that-died");
+    project.run_task_with_no_live_windows();
+
+    let offer = project
+        .offer()
+        .expect("a project with no gate entry must still be offered its crash");
+    assert_eq!(offer["daemonBootId"], "boot-1", "{offer}");
+    assert_eq!(session_ids(&offer), AGENT_IDS);
 }
