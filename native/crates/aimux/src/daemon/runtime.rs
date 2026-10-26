@@ -7234,11 +7234,13 @@ mod tests {
 
     /// The one invariant that keeps a reinstall from taking the agents down.
     ///
-    /// `scripts/install.sh` ends in `aimux restart --all`, which stops the
-    /// daemon with `DAEMON_RESTART_SIGNAL` -- and this shutdown skips stopping
-    /// the per-project services for exactly that signal. Nothing else in the
-    /// restart path touches tmux, so the agents survive. Send any other signal
-    /// and every reinstall stops every project service.
+    /// Reinstalling over an existing install ends `scripts/install.sh` in
+    /// `aimux restart --all`, which stops the daemon with
+    /// `DAEMON_RESTART_SIGNAL` -- and this shutdown skips stopping the
+    /// per-project services for exactly that signal. The restart's own tmux
+    /// work is a contract repair that configures rather than kills, so the
+    /// agents survive. Send any other signal and every reinstall stops every
+    /// project service.
     ///
     /// Compared against each other rather than asserted once each: the CLI's
     /// choice of signal and this exemption used to be two copies of the same

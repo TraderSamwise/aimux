@@ -156,14 +156,21 @@ not do:
 | | |
 |---|---|
 | the daemon | replaced — stopped and a new one started |
-| each project service | restarted |
-| the dashboard window | reloaded |
+| each project service | replaced when the installed binary moved, which an upgrade does; reused in place when it did not, which reinstalling the same version does |
+| the dashboard window | reloaded — the window survives, the process in it is respawned |
 | the tmux runtime | repaired per project when the runtime contract changed: session options re-applied, the dashboard window ensured |
 | agent windows and the processes in them | left alone |
 
+A project service is only replaced when its binary is no longer the one being
+run now, compared by path. Reinstalling the same version re-extracts over the
+same directory, so the services are reused — and go on running the old
+binary's inode until something restarts them. `aimux doctor versions` is what
+tells you when the fleet has drifted apart like that.
+
 That tmux repair is not a rare path — an upgrade that bumps the tmux runtime
-contract makes it run for every project — but it only creates and configures.
-It has no branch that kills an agent window.
+contract makes it run for every project. It creates and configures, and it
+respawns the dashboard window's process, but it has no branch that kills an
+agent window.
 
 Three things keep the agents out of the rest of it, and they are independent:
 
@@ -177,9 +184,12 @@ Three things keep the agents out of the rest of it, and they are independent:
    signal to the service cannot reach them. (The service stop inside
    `aimux daemon stop` is a different routine, and that one does stop the tmux
    runtime first.)
-3. The restart's orphan cleanup may only kill *dashboard* windows, in sessions
-   whose project root it does not recognize. An agent window is never a
-   candidate, even in an unrecognized project.
+3. The restart's orphan cleanup kills three kinds of thing: tmux sessions left
+   behind by the test harness, processes that are not inside a live tmux pane,
+   and *dashboard* windows in sessions whose project root it does not
+   recognize. An agent is none of those — it runs in a live pane, in a window
+   that is not a dashboard — so it is never a candidate, even in an
+   unrecognized project.
 
 The commands that *do* take the runtime down are `aimux daemon stop`,
 `aimux projects remove` and `aimux restart-runtime`. Those are the ones
@@ -192,11 +202,17 @@ reinstall path reaches none of them.
 ```
 Aimux Restart
   daemon: restarted pid=<old> -> pid=<new>
+  projects: 3
+  services ensured: 3
+  ...
 ```
 
 `restarted` is the normal line, because the daemon really is replaced. A
 `retained` line means the restart was served by a daemon nobody replaced, which
-is what calling the restart route directly looks like.
+is what calling the restart route directly looks like. `started -> pid=<new>`
+means the restart found no daemon to stop — including the narrow case where the
+daemon info file was unreadable while a daemon was in fact running, in which
+case the pid it replaced is not something the CLI ever knew.
 
 ### If the agents really are gone
 

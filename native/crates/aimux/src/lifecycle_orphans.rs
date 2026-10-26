@@ -1589,11 +1589,12 @@ mod tests {
 
     /// Reinstalling must not take the agents down with it.
     ///
-    /// `scripts/install.sh` ends in `aimux restart --all`, and that restart runs
-    /// this cleanup. The only windows it may kill are dashboards in sessions
-    /// whose project root it does not recognize -- which is exactly the shape a
-    /// reinstall sees for a project whose registry entry is missing or whose
-    /// root has moved. The agents in such a session must survive it.
+    /// Reinstalling over an existing install ends `scripts/install.sh` in
+    /// `aimux restart --all`, and that restart runs this cleanup. The only
+    /// windows it may kill are dashboards in sessions whose project root it
+    /// does not recognize -- which is exactly the shape a reinstall sees for a
+    /// project whose registry entry is missing or whose root has moved. The
+    /// agents in such a session must survive it.
     ///
     /// The sparing was only ever asserted with no project-service scope at all
     /// (`lifecycle_cleanup_never_reaps_live_dashboard_or_agent_or_idle_session`),

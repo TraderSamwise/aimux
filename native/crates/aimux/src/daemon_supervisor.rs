@@ -839,9 +839,11 @@ pub fn stop_daemon_info(
 /// It names the restart contract, not the signal: the daemon's own signal
 /// shutdown leaves the per-project services running for exactly this signal
 /// (`daemon_signal_shutdown_stops_project_services`), which is what keeps a
-/// reinstall from taking the agents down with it -- `scripts/install.sh` ends
-/// in `aimux restart --all`, the daemon is replaced, and nothing in that path
-/// touches tmux. `stop_daemon_info` below means the opposite by the same
+/// reinstall from taking the agents down with it: an existing install ends
+/// `scripts/install.sh` in `aimux restart --all`, the daemon is replaced, and
+/// the only tmux that path touches is a contract repair that configures
+/// sessions and the dashboard window without killing an agent's.
+/// `stop_daemon_info` below means the opposite by the same
 /// signal: an explicit `daemon stop` tears the tmux runtime down and escalates
 /// to SIGKILL whatever signal it was given.
 ///
