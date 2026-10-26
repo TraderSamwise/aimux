@@ -519,3 +519,60 @@ fn a_machine_full_of_distinct_bugs_says_so_and_still_counts_repeats() {
         "{outcome:?}"
     );
 }
+
+/// A value with newlines in it must not break the line framing.
+///
+/// The store is one record per line, so a field carrying a newline -- which
+/// `--evidence` legitimately does, being an excerpt of output -- would split
+/// one record into two unparseable ones if it were written raw. JSON string
+/// escaping is what prevents that, and this is the test that says so rather
+/// than leaving it to be assumed.
+#[test]
+fn a_report_whose_fields_contain_newlines_stays_one_line() {
+    let machine = Machine::new("framing");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+
+    let mut multiline = report();
+    multiline.what = "first line\nsecond line".into();
+    multiline.evidence = Some("verified: false\nattempts: 3\n{\"not\":\"a record\"}".into());
+    file(&machine, &multiline).expect("stored");
+
+    let text = fs::read_to_string(store_path(&machine.resolver())).expect("read");
+    assert_eq!(
+        text.lines().count(),
+        1,
+        "one record is one line whatever the fields contain: {text:?}"
+    );
+    let bugs = summarize(&machine.resolver()).expect("summarize");
+    assert_eq!(bugs.len(), 1);
+    assert!(
+        bugs[0].report.what.contains('\n'),
+        "and the newline survives the round trip: {:?}",
+        bugs[0].report.what
+    );
+}
+
+/// A line that is valid JSON but not a report is an error, and so is a
+/// half-written final line -- the two shapes a crash or a foreign writer
+/// leaves behind.
+#[test]
+fn a_record_missing_its_report_is_an_error_not_an_empty_bug() {
+    let machine = Machine::new("incomplete-record");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+    file(&machine, &report()).expect("stored");
+    let path = store_path(&machine.resolver());
+
+    let good = fs::read_to_string(&path).expect("read");
+    fs::write(
+        &path,
+        format!("{good}{{\"kind\":\"{BUG_REPORT_RECORD_KIND}\",\"fingerprint\":\"x\"}}\n"),
+    )
+    .expect("write");
+    let error = summarize(&machine.resolver()).expect_err("a record with no report is an error");
+    assert!(error.contains("read bug report"), "{error}");
+
+    // And a final line cut off mid-write.
+    fs::write(&path, format!("{good}{{\"kind\":\"ag")).expect("write");
+    let error = summarize(&machine.resolver()).expect_err("a torn line is an error");
+    assert!(error.contains("line 2"), "{error}");
+}
