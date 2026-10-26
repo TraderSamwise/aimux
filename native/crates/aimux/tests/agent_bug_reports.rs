@@ -600,10 +600,21 @@ fn a_torn_final_line_is_skipped_and_a_torn_middle_line_is_not() {
     let bugs = summarize(&machine.resolver()).expect("a torn tail does not brick the store");
     assert_eq!(bugs.len(), 1, "the complete records are still readable");
 
-    // And filing still works, which is the point.
+    // And filing still works, which is the point -- including the read that
+    // comes after it. Appending onto a line with no newline would splice the
+    // torn prefix onto the new record, turning a state the reader tolerates
+    // into a malformed MIDDLE line it refuses for ever: a recoverable store
+    // made permanently unreadable by the very act of using it.
     let mut next = report();
     next.what = "something else broke".into();
     file(&machine, &next).expect("a torn tail does not stop the next filing");
+    let bugs =
+        summarize(&machine.resolver()).expect("and the store is still readable after that filing");
+    assert_eq!(
+        bugs.len(),
+        2,
+        "both the surviving bug and the new one: {bugs:?}"
+    );
 
     // The same damage in the middle of the file is corruption.
     fs::write(&path, format!("{{\"kind\":\"ag\n{good}")).expect("write");

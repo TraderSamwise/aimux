@@ -348,6 +348,7 @@ fn append_line(path: &Path, record: &Value) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
     }
+    drop_torn_final_line(path)?;
     let mut line = serde_json::to_string(record).map_err(|error| error.to_string())?;
     line.push('\n');
     let mut file = OpenOptions::new()
@@ -371,6 +372,42 @@ fn append_line(path: &Path, record: &Value) -> Result<(), String> {
     file.sync_all()
         .map_err(|error| format!("sync {}: {error}", path.display()))?;
     Ok(())
+}
+
+/// Throw away a final line that was never finished, before appending after it.
+///
+/// `read_all` tolerates a torn final line, which is what keeps one interrupted
+/// append from making the store unreadable for ever. But appending *after* one
+/// would splice the torn prefix onto the front of the new record -- turning a
+/// line the reader skips into a malformed line in the MIDDLE of the file,
+/// which it refuses. The store would then be broken permanently by the very
+/// act of using it, which is worse than the problem the tolerance was added
+/// for.
+///
+/// So the torn bytes go first. They were never a complete record: the only
+/// thing lost is a sighting that was already not written.
+fn drop_torn_final_line(path: &Path) -> Result<(), String> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("read {}: {error}", path.display())),
+    };
+    if text.is_empty() || text.ends_with('\n') {
+        return Ok(());
+    }
+    let keep = text.rfind('\n').map(|index| index + 1).unwrap_or(0);
+    crate::debug_logging::log_lifecycle_always(
+        "dropped a torn final line from the bug report store",
+        "bug-reports",
+        Some(json!({
+            "path": path.to_string_lossy(),
+            "droppedBytes": text.len() - keep,
+        })),
+    );
+    // Through a temporary file rather than in place, so a crash here leaves
+    // either the old contents or the repaired ones.
+    crate::atomic_write::write_text_atomic(path, &text[..keep])
+        .map_err(|error| format!("repair {}: {error}", path.display()))
 }
 
 /// One bug, however many times it was seen.
