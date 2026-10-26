@@ -421,9 +421,18 @@ fn the_same_bug_filed_twice_is_one_record_with_a_count() {
         other => panic!("expected a count, got {other:?}"),
     }
 
-    let bugs = summarize(&machine.resolver()).expect("summarize");
+    let found = read_store(&machine.resolver()).expect("read");
+    let digest = summarize_records(&found.records);
+    let bugs = &digest.bugs;
     assert_eq!(bugs.len(), 1, "one bug however many sightings: {bugs:?}");
     assert_eq!(bugs[0].count, 2);
+    // A repeat carries no body, by design -- only the first sighting does. It
+    // must not therefore be counted as a record grouping could not place: the
+    // existing-bug branch has to be reached before the body is looked for.
+    assert_eq!(
+        digest.unattributable, 0,
+        "a legitimate repeat is not an unplaceable record: {digest:?}"
+    );
     assert_eq!(
         bugs[0].report.repro, "aimux agent input --session codex-1 --text hello",
         "the first filing's detail is the one surfaced: {bugs:?}"
