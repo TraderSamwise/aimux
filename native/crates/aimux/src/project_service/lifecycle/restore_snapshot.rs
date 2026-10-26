@@ -34,7 +34,6 @@ use super::restore_offer::{
     normalize_agent_restore_sessions, read_agent_restore_offer, read_agent_restore_prompt_gate,
     remove_agent_restore_offer, retain_offered_restore_failures,
 };
-use super::topology_helpers::read_json_object;
 
 /// A read that could not be performed is not the same answer as "nothing was
 /// there". Every caller here has to say which one it got, because treating an
@@ -544,7 +543,7 @@ fn acknowledgement_still_applies(
     snapshot_id: &str,
     writer_instance_id: &str,
 ) -> bool {
-    let ack = Value::Object(read_json_object(&agent_restore_ack_path(project_state_dir)));
+    let ack = read_agent_restore_acknowledgement(project_state_dir);
     // A dismissal is answered about the FLEET, and deliberately not about the
     // generation: the generation rolls whenever the SET changes, which a single
     // prune or reap does. Requiring it here cancelled the dismissal one prune
@@ -570,6 +569,40 @@ fn acknowledgement_still_applies(
         return false;
     }
     boot_acknowledgement_still_applies(&ack, gate)
+}
+
+/// The answer on disk, or an empty object with a reason logged.
+///
+/// Reading a corrupt acknowledgement as "nothing was answered" costs one extra
+/// prompt rather than a silent mute, which is the right direction -- but it is
+/// the only state file here whose failure said nothing at all, and the whole
+/// point of this corner of the code is that a question is asked for a reason
+/// somebody can find.
+fn read_agent_restore_acknowledgement(project_state_dir: &Path) -> Value {
+    let path = agent_restore_ack_path(project_state_dir);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(ack) => ack,
+            Err(error) => {
+                log_restore_state_failure(
+                    "parse restore acknowledgement",
+                    project_state_dir,
+                    &error.to_string(),
+                );
+                quarantine_corrupt_file(&path);
+                Value::Object(Map::new())
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Object(Map::new()),
+        Err(error) => {
+            log_restore_state_failure(
+                "read restore acknowledgement",
+                project_state_dir,
+                &error.to_string(),
+            );
+            Value::Object(Map::new())
+        }
+    }
 }
 
 /// A fleet this answer can be attributed to, or nothing.
