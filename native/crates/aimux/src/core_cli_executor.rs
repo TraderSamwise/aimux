@@ -756,11 +756,15 @@ where
     }
     ensure_daemon_running()?;
     let mut payload = Map::new();
-    // The answer comes from a daemon this function started, which cannot know
-    // it replaced anything -- so it reported `retained pid=<new pid>` on every
-    // reinstall. Say what actually happened; the daemon fills it into the
-    // report it renders.
-    payload.insert("daemonReplacedByCaller".into(), json!(true));
+    // The answer comes from a daemon this function started -- unconditionally,
+    // because `ensure_daemon_running` above is called with
+    // `adopt_existing: Some(false)` and so starts a fresh one whether or not
+    // there was an old one to stop. That daemon cannot know it was started for
+    // this request, so it reported `retained pid=<new pid>` on every reinstall.
+    // Say what happened; the daemon fills it into the report it renders, and
+    // `previous_daemon` is what distinguishes replacing one from starting the
+    // first.
+    payload.insert("daemonStartedByCaller".into(), json!(true));
     if let Some(previous_daemon) = previous_daemon {
         payload.insert("previousDaemon".into(), previous_daemon);
     }
@@ -3505,7 +3509,7 @@ mod tests {
                     "payload": {
                         // What the CLI did to the daemon, which the daemon it
                         // just started cannot know.
-                        "daemonReplacedByCaller": true,
+                        "daemonStartedByCaller": true,
                         "previousDaemon": { "pid": 9000 },
                         "force": true,
                         "backendIdCapturePrechecked": true,

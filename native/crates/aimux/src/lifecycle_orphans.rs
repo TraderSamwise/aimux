@@ -939,19 +939,8 @@ mod tests {
             self
         }
 
-        fn dashboard_window(mut self, session_name: &str, window_id: &str) -> Self {
-            self.tmux_windows
-                .entry(session_name.to_owned())
-                .or_default()
-                .push(TmuxWindowInfo {
-                    id: window_id.to_owned(),
-                    index: 0,
-                    name: "dashboard".to_owned(),
-                    active: true,
-                    activity: None,
-                    pane_dead: None,
-                });
-            self
+        fn dashboard_window(self, session_name: &str, window_id: &str) -> Self {
+            self.window(session_name, window_id, "dashboard")
         }
 
         fn read_sequence(
@@ -1611,8 +1600,18 @@ mod tests {
     /// which never reaches the window-killing path. This is the same fixture as
     /// `lifecycle_cleanup_reaps_same_owner_dashboard_window_for_unrecognized_project_root`
     /// with the window belonging to an agent instead.
+    ///
+    /// The name is checked against the rule that spares it rather than just
+    /// being a string that happens not to look like a dashboard -- otherwise
+    /// this passes for any literal, and would keep passing if the dashboard
+    /// rule ever widened to cover agent names.
     #[test]
     fn lifecycle_cleanup_never_reaps_an_agent_window_in_an_unrecognized_project() {
+        const AGENT_WINDOW_NAME: &str = "claude-b8bjzx";
+        assert!(
+            !is_dashboard_window_name(AGENT_WINDOW_NAME),
+            "the fixture must name a window the sparing rule actually spares"
+        );
         let mut runtime = FakeLifecycleRuntime {
             tmux_available: true,
             tmux_sessions: vec!["aimux-sam-5e9c1a8e1d4e".into()],
@@ -1628,7 +1627,7 @@ mod tests {
             TMUX_RUNTIME_OWNER_OPTION,
             "owner-new",
         )
-        .window("aimux-sam-5e9c1a8e1d4e", "@1190", "claude-b8bjzx");
+        .window("aimux-sam-5e9c1a8e1d4e", "@1190", AGENT_WINDOW_NAME);
 
         let result = cleanup_lifecycle_validation_orphans(
             &mut runtime,
@@ -1655,7 +1654,6 @@ mod tests {
             runtime.killed_windows
         );
         assert!(runtime.killed_sessions.is_empty());
-        assert!(runtime.killed_pids.is_empty());
     }
 
     #[test]

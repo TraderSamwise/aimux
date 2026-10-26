@@ -237,7 +237,7 @@ pub fn route_core_command(
                     );
                 }
             }
-            let caller_replaced_daemon = bool_payload_param(payload, "daemonReplacedByCaller");
+            let caller_started_daemon = bool_payload_param(payload, "daemonStartedByCaller");
             let previous_daemon = payload
                 .and_then(|payload| payload.get("previousDaemon"))
                 .cloned();
@@ -246,9 +246,9 @@ pub fn route_core_command(
                 .map(|mut result| {
                     if let Some(restart) = result.get_mut("restart") {
                         let notices = attach_restart_guard_notices(restart, &restart_guard_notices);
-                        let daemon = attach_caller_daemon_replacement(
+                        let daemon = attach_caller_started_daemon(
                             restart,
-                            caller_replaced_daemon,
+                            caller_started_daemon,
                             previous_daemon,
                         );
                         if notices || daemon {
@@ -280,12 +280,12 @@ pub fn route_core_command(
 /// `previous` absent with `retained` false is the honest shape for a restart
 /// that found no daemon to stop and started one: the renderer prints
 /// `started -> pid=<new>` rather than claiming a predecessor.
-fn attach_caller_daemon_replacement(
+fn attach_caller_started_daemon(
     restart: &mut Value,
-    caller_replaced_daemon: bool,
+    caller_started_daemon: bool,
     previous_daemon: Option<Value>,
 ) -> bool {
-    if !caller_replaced_daemon {
+    if !caller_started_daemon {
         return false;
     }
     // The claim is the caller's word about its own actions and cannot be
@@ -298,6 +298,8 @@ fn attach_caller_daemon_replacement(
         .and_then(|daemon| daemon.get("current"))
         .and_then(|current| current.get("pid"))
         .and_then(Value::as_i64);
+    // Anything that is not a daemon record names no predecessor.
+    let previous_daemon = previous_daemon.filter(Value::is_object);
     let previous_pid = previous_daemon
         .as_ref()
         .and_then(|previous| previous.get("pid"))
@@ -672,7 +674,7 @@ fn path_resolve(path: &str) -> String {
 }
 
 #[cfg(test)]
-mod caller_daemon_replacement_tests {
+mod caller_started_daemon_tests {
     use super::*;
 
     fn restart_result() -> Value {
@@ -696,7 +698,7 @@ mod caller_daemon_replacement_tests {
     #[test]
     fn a_restart_that_replaced_the_daemon_reports_the_pid_it_replaced() {
         let mut restart = restart_result();
-        assert!(attach_caller_daemon_replacement(
+        assert!(attach_caller_started_daemon(
             &mut restart,
             true,
             Some(json!({ "pid": 9000 })),
@@ -717,7 +719,7 @@ mod caller_daemon_replacement_tests {
     #[test]
     fn a_restart_that_started_a_daemon_claims_no_predecessor() {
         let mut restart = restart_result();
-        assert!(attach_caller_daemon_replacement(&mut restart, true, None));
+        assert!(attach_caller_started_daemon(&mut restart, true, None));
         assert_eq!(restart["daemon"]["retained"], json!(false));
         assert_eq!(restart["daemon"]["previous"], Value::Null);
         assert_eq!(
@@ -739,7 +741,7 @@ mod caller_daemon_replacement_tests {
     #[test]
     fn a_caller_cannot_claim_it_replaced_the_daemon_answering_it() {
         let mut restart = restart_result();
-        assert!(!attach_caller_daemon_replacement(
+        assert!(!attach_caller_started_daemon(
             &mut restart,
             true,
             Some(json!({ "pid": 9001 })),
@@ -756,7 +758,7 @@ mod caller_daemon_replacement_tests {
     #[test]
     fn a_restart_nobody_replaced_the_daemon_for_still_reports_retained() {
         let mut restart = restart_result();
-        assert!(!attach_caller_daemon_replacement(&mut restart, false, None));
+        assert!(!attach_caller_started_daemon(&mut restart, false, None));
         assert_eq!(restart["daemon"]["retained"], json!(true));
         assert_eq!(
             render_runtime_restart_result(&restart)

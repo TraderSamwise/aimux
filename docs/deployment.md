@@ -148,7 +148,9 @@ HS256 daemon tokens it mints).
 per-project services and the dashboard are all replaced; the windows your
 agents run in are not touched.
 
-`scripts/install.sh` ends in `aimux restart --all`. What that does, and does
+When there is an existing install, `scripts/install.sh` ends in
+`aimux restart --all` (a first install has nothing to restart, and
+`AIMUX_SKIP_POST_INSTALL_RESTART=1` skips it). What that restart does, and does
 not do:
 
 | | |
@@ -156,17 +158,25 @@ not do:
 | the daemon | replaced — stopped and a new one started |
 | each project service | restarted |
 | the dashboard window | reloaded |
+| the tmux runtime | repaired per project when the runtime contract changed: session options re-applied, the dashboard window ensured |
 | agent windows and the processes in them | left alone |
 
-Three things keep the agents out of it, and they are independent:
+That tmux repair is not a rare path — an upgrade that bumps the tmux runtime
+contract makes it run for every project — but it only creates and configures.
+It has no branch that kills an agent window.
+
+Three things keep the agents out of the rest of it, and they are independent:
 
 1. The restart stops the daemon with `SIGHUP`, and the daemon's signal
    shutdown deliberately leaves the per-project services running for exactly
-   that signal. An explicit `aimux daemon stop` is the opposite: it tears the
-   tmux runtime down on purpose.
-2. Even where a project service is stopped, that only signals the service's
-   own verified pid. It is not a process-group kill and it never asks tmux for
-   anything. Agents are children of the tmux server, not of the service.
+   that signal. An explicit `aimux daemon stop` means the opposite by the same
+   signal: it tears the tmux runtime down on purpose and escalates to SIGKILL.
+2. Where the restart stops a project service, it signals that service's own
+   verified pid and nothing else — not a process group, and no tmux call. The
+   agents are children of the tmux server rather than of the service, so a
+   signal to the service cannot reach them. (The service stop inside
+   `aimux daemon stop` is a different routine, and that one does stop the tmux
+   runtime first.)
 3. The restart's orphan cleanup may only kill *dashboard* windows, in sessions
    whose project root it does not recognize. An agent window is never a
    candidate, even in an unrecognized project.
