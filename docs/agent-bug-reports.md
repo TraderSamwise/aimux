@@ -85,18 +85,25 @@ and two agents hitting the same bug would file it twice.
   last-seen time, and a repeat changes only those two: the first filing's
   detail is the one somebody will read.
 - Each machine may hold a **fixed number of distinct bugs**. The budget is on
-  distinct bugs rather than on filings, because a repeat of something already
-  on file costs nothing — it is one record either way, so it is always counted
-  even when the machine is full.
+  distinct bugs rather than on sightings, because a sighting of something
+  already on file costs nobody any triage.
+- Each bug is recorded a **fixed number of times** and then not again. The
+  store is append-only, so a sighting costs a line and an agent in a loop would
+  otherwise grow the file without bound. Past that, the agent is told the bug
+  is already recorded: the count stops rising because nothing more is being
+  learned, not because anyone stopped listening.
 - An agent that is refused is **told why**, whether the refusal is the opt-in,
   a missing field, or a full machine. The answer is never a silent drop,
   because an agent that believes it filed a report will not mention the bug any
   other way.
 
-A per-fingerprint cooldown was specified here and then not built: with one
-record per bug there is nothing for it to do that the dedupe does not already
-do, and a cooldown that suppressed the rewrite would lose counts on a crash.
-This section describes what exists.
+The store is append-only and a bug is a group of lines sharing a fingerprint.
+The first design kept one record per bug and rewrote it in place, which has a
+lost-update race: two agents filing two different new bugs at the same moment
+each read a store without the other's line, and whichever wrote second erased
+the other's report. A lost count would have been tolerable; a lost report is
+not. The per-fingerprint cooldown this section once specified went with that
+design -- the sighting cap above is what bounds growth now.
 
 ## Reading them back
 

@@ -6,7 +6,7 @@
 
 use aimux::agent_bug_reports::{
     AgentBugReport, BUG_REPORT_RECORD_KIND, BugReportOutcome, BugReportRefusal,
-    DISTINCT_BUG_BUDGET, is_enabled, read_all, record, store_path,
+    DISTINCT_BUG_BUDGET, SIGHTINGS_PER_BUG, is_enabled, read_all, record, store_path, summarize,
 };
 use aimux::paths::PathResolver;
 use serde_json::{Value, json};
@@ -295,6 +295,82 @@ fn a_report_missing_a_required_field_is_refused_by_name() {
     );
 }
 
+/// A bug stops being written once it is recorded often enough.
+///
+/// The store is append-only, so a sighting costs a line and an agent in a loop
+/// would grow the file without bound. Past the cap it is told the bug is
+/// already recorded, and nothing is written -- the count stops rising because
+/// nothing more is being learned, not because the agent was ignored.
+#[test]
+fn a_bug_stops_being_recorded_once_it_is_recorded_often_enough() {
+    let machine = Machine::new("sightings-cap");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+
+    for _ in 0..SIGHTINGS_PER_BUG {
+        file(&machine, &report()).expect("within the cap");
+    }
+    let lines = read_all(&machine.resolver()).expect("read").len();
+    assert_eq!(lines as u64, SIGHTINGS_PER_BUG);
+
+    let outcome = file(&machine, &report()).expect("answered, not refused");
+    match &outcome {
+        BugReportOutcome::AlreadyRecorded { count, .. } => assert_eq!(*count, SIGHTINGS_PER_BUG),
+        other => panic!("expected the cap, got {other:?}"),
+    }
+    assert_eq!(
+        read_all(&machine.resolver()).expect("read").len(),
+        lines,
+        "nothing is written past the cap"
+    );
+    assert!(
+        outcome.message().contains("already recorded"),
+        "{}",
+        outcome.message()
+    );
+}
+
+/// Two agents filing two different new bugs at the same moment must both
+/// survive.
+///
+/// The first version of the store read every record, updated one in place and
+/// rewrote the file. That has a lost-update race: each writer reads a store
+/// without the other's line, and whichever writes second erases the other's
+/// report entirely. A lost count would be tolerable; a lost report is not.
+/// Append-only is what fixes it, and this is the test that would have caught
+/// it -- the interleaving is forced rather than hoped for, by filing the second
+/// bug from a store state captured before the first was written.
+#[test]
+fn two_bugs_filed_against_the_same_store_both_survive() {
+    let machine = Machine::new("no-lost-update");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+    let path = store_path(&machine.resolver());
+
+    let mut first = report();
+    first.what = "the first agent's bug".into();
+    file(&machine, &first).expect("filed");
+    let after_first = fs::read_to_string(&path).expect("read");
+
+    // What the second agent would have read: the store as it was before the
+    // first agent's line existed. A rewrite-based store would write this back
+    // plus its own record, erasing the first.
+    fs::write(&path, "").expect("truncate to the pre-first state");
+    let mut second = report();
+    second.what = "the second agent's bug".into();
+    file(&machine, &second).expect("filed");
+    let second_only = fs::read_to_string(&path).expect("read");
+
+    // Restore the interleaving: both lines, in either order, must be readable.
+    fs::write(&path, format!("{after_first}{second_only}")).expect("write");
+    let bugs = summarize(&machine.resolver()).expect("summarize");
+    assert_eq!(bugs.len(), 2, "both reports survive: {bugs:?}");
+    assert_eq!(bugs[0].report.what, "the first agent's bug");
+    assert_eq!(bugs[1].report.what, "the second agent's bug");
+    assert!(
+        bugs.iter().all(|bug| bug.count == 1),
+        "and neither is counted as a repeat of the other: {bugs:?}"
+    );
+}
+
 /// Reports accumulate one line at a time, oldest first.
 #[test]
 fn reports_accumulate_in_the_order_they_were_filed() {
@@ -362,13 +438,12 @@ fn the_same_bug_filed_twice_is_one_record_with_a_count() {
         other => panic!("expected a count, got {other:?}"),
     }
 
-    let stored = read_all(&machine.resolver()).expect("read");
-    assert_eq!(stored.len(), 1, "one record per bug: {stored:?}");
-    assert_eq!(stored[0]["count"], 2);
-    assert_eq!(stored[0]["lastSeenAt"], "2026-10-26T00:00:00.000Z");
+    let bugs = summarize(&machine.resolver()).expect("summarize");
+    assert_eq!(bugs.len(), 1, "one bug however many sightings: {bugs:?}");
+    assert_eq!(bugs[0].count, 2);
     assert_eq!(
-        stored[0]["report"]["repro"], "aimux agent input --session codex-1 --text hello",
-        "the first filing's detail is the one kept: {stored:?}"
+        bugs[0].report.repro, "aimux agent input --session codex-1 --text hello",
+        "the first filing's detail is the one surfaced: {bugs:?}"
     );
     assert!(
         second.message().contains("already on file"),
@@ -397,7 +472,7 @@ fn a_different_bug_is_filed_separately() {
         other.fingerprint(),
         "two different bugs must not share a fingerprint"
     );
-    assert_eq!(read_all(&machine.resolver()).expect("read").len(), 2);
+    assert_eq!(summarize(&machine.resolver()).expect("summarize").len(), 2);
 }
 
 /// A machine may only have so many distinct bugs on file, and is told when it
@@ -416,7 +491,7 @@ fn a_machine_full_of_distinct_bugs_says_so_and_still_counts_repeats() {
         file(&machine, &next).expect("within budget");
     }
     assert_eq!(
-        read_all(&machine.resolver()).expect("read").len(),
+        summarize(&machine.resolver()).expect("summarize").len(),
         DISTINCT_BUG_BUDGET
     );
 
@@ -429,7 +504,7 @@ fn a_machine_full_of_distinct_bugs_says_so_and_still_counts_repeats() {
         other => panic!("expected the budget to be spent, got {other:?}"),
     }
     assert_eq!(
-        read_all(&machine.resolver()).expect("read").len(),
+        summarize(&machine.resolver()).expect("summarize").len(),
         DISTINCT_BUG_BUDGET,
         "a refused report is not stored"
     );

@@ -25,10 +25,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::fs;
-use std::path::PathBuf;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-use crate::atomic_write::write_text_atomic;
 use crate::config::load_global_config_with_resolver;
 use crate::paths::PathResolver;
 
@@ -48,11 +48,18 @@ const EVIDENCE_BUDGET: usize = 2_000;
 
 /// How many distinct bugs one machine may have on file.
 ///
-/// Not a rate limit on filing -- a repeat of a bug already on file is free,
-/// because it is one record either way. This bounds how many DIFFERENT things
-/// a machine can claim are broken, which is the only way the store grows. An
-/// agent in a loop hits the dedupe long before it reaches this.
+/// This bounds how many DIFFERENT things a machine can claim are broken.
 pub const DISTINCT_BUG_BUDGET: usize = 100;
+
+/// How many times one bug may be recorded before further sightings are
+/// answered without writing anything.
+///
+/// The store is append-only, so a repeat costs a line. An agent hitting a bug
+/// every iteration of a loop would otherwise grow the file without bound; past
+/// this it is told the bug is already recorded and nothing is written. Twenty
+/// sightings is already more than anyone reading the store needs to believe
+/// it is recurring.
+pub const SIGHTINGS_PER_BUG: u64 = 20;
 
 /// What an agent is allowed to say about a bug in aimux.
 ///
@@ -185,14 +192,18 @@ impl BugReportRefusal {
 pub enum BugReportOutcome {
     /// A bug nothing had filed before.
     Filed { fingerprint: String },
-    /// A bug already on file; its count went up and nothing else changed.
+    /// A bug already on file; this sighting was recorded too.
     Counted { fingerprint: String, count: u64 },
+    /// A bug already recorded as often as it will be. Nothing was written.
+    AlreadyRecorded { fingerprint: String, count: u64 },
 }
 
 impl BugReportOutcome {
     pub fn fingerprint(&self) -> &str {
         match self {
-            Self::Filed { fingerprint } | Self::Counted { fingerprint, .. } => fingerprint,
+            Self::Filed { fingerprint }
+            | Self::Counted { fingerprint, .. }
+            | Self::AlreadyRecorded { fingerprint, .. } => fingerprint,
         }
     }
 
@@ -202,6 +213,10 @@ impl BugReportOutcome {
             Self::Counted { fingerprint, count } => {
                 format!("bug report {fingerprint} was already on file; seen {count} times now")
             }
+            Self::AlreadyRecorded { fingerprint, count } => format!(
+                "bug report {fingerprint} is already recorded {count} times; \
+                 nothing more to add"
+            ),
         }
     }
 }
@@ -212,6 +227,18 @@ impl BugReportOutcome {
 /// directory is made, nothing is written. An agent is told plainly rather than
 /// being allowed to believe it filed something, because an agent that thinks
 /// it reported a bug will not mention it any other way.
+/// Store one sighting of a bug, or say why not.
+///
+/// Append-only, deliberately. The first version of this read the store,
+/// updated a record in place and rewrote the file -- which has a lost-update
+/// race: two agents filing two DIFFERENT new bugs at the same moment each read
+/// a store without the other's line, and whichever wrote second erased the
+/// other's report. A lost count would have been tolerable; a lost report is
+/// not, since a reported bug is the one thing nobody will think to re-file.
+///
+/// So a sighting is a line, the reader groups lines by fingerprint, and growth
+/// is bounded by refusing to write past `SIGHTINGS_PER_BUG` rather than by
+/// rewriting what is already there.
 pub fn record(
     resolver: &PathResolver,
     report: &AgentBugReport,
@@ -225,68 +252,124 @@ pub fn record(
     }
     let report = report.normalized().map_err(BugReportRefusal::Invalid)?;
     let fingerprint = report.fingerprint();
-    let mut stored = read_all(resolver).map_err(BugReportRefusal::Invalid)?;
+    let bugs = summarize(resolver).map_err(BugReportRefusal::Invalid)?;
+    let seen = bugs
+        .iter()
+        .find(|bug| bug.fingerprint == fingerprint)
+        .map(|bug| bug.count)
+        .unwrap_or(0);
 
-    if let Some(existing) = stored
-        .iter_mut()
-        .find(|record| record.get("fingerprint").and_then(Value::as_str) == Some(&fingerprint))
-    {
-        // One record per bug, however many agents hit it. The count and the
-        // last-seen time are the only things a repeat changes: the first
-        // filing's evidence is the one somebody will read, and overwriting it
-        // on every repeat would churn the file for nothing.
-        let count = existing.get("count").and_then(Value::as_u64).unwrap_or(1) + 1;
-        if let Value::Object(existing) = existing {
-            existing.insert("count".into(), Value::from(count));
-            existing.insert("lastSeenAt".into(), Value::String(at.to_owned()));
-        }
-        write_all(resolver, &stored).map_err(BugReportRefusal::Invalid)?;
-        return Ok(BugReportOutcome::Counted { fingerprint, count });
+    if seen >= SIGHTINGS_PER_BUG {
+        // Already as recorded as it is going to get. The agent is told, rather
+        // than being left to believe nothing happened.
+        return Ok(BugReportOutcome::AlreadyRecorded {
+            fingerprint,
+            count: seen,
+        });
     }
-
-    // The budget is on DISTINCT bugs, counted before adding this one.
-    if stored.len() >= DISTINCT_BUG_BUDGET {
+    // The budget is on DISTINCT bugs. A sighting of one already on file is
+    // never refused by it: that line costs nothing anybody has to triage.
+    if seen == 0 && bugs.len() >= DISTINCT_BUG_BUDGET {
         return Err(BugReportRefusal::BudgetSpent {
-            distinct: stored.len(),
+            distinct: bugs.len(),
         });
     }
 
-    stored.push(json!({
-        "kind": BUG_REPORT_RECORD_KIND,
-        "fingerprint": fingerprint,
-        "firstSeenAt": at,
-        "lastSeenAt": at,
-        "count": 1,
-        // The opaque machine id, never the machine NAME: the name is a
-        // hostname, and a report is read by someone who should be able to tell
-        // two machines apart without being told whose they are.
-        "machineId": machine_id,
-        "tool": tool,
-        "build": build,
-        "report": report,
-    }));
-    write_all(resolver, &stored).map_err(BugReportRefusal::Invalid)?;
-    Ok(BugReportOutcome::Filed { fingerprint })
+    append_line(
+        &store_path(resolver),
+        &json!({
+            "kind": BUG_REPORT_RECORD_KIND,
+            "fingerprint": fingerprint,
+            "at": at,
+            // The opaque machine id, never the machine NAME: the name is a
+            // hostname, and a report is read by someone who should be able to
+            // tell two machines apart without being told whose they are.
+            "machineId": machine_id,
+            "tool": tool,
+            "build": build,
+            "report": report,
+        }),
+    )
+    .map_err(BugReportRefusal::Invalid)?;
+
+    Ok(if seen == 0 {
+        BugReportOutcome::Filed { fingerprint }
+    } else {
+        BugReportOutcome::Counted {
+            fingerprint,
+            count: seen + 1,
+        }
+    })
 }
 
-/// Rewrite the store.
-///
-/// A repeat updates a record in place, so the store cannot be append-only. It
-/// stays small by construction -- one line per distinct bug, bounded by
-/// `DISTINCT_BUG_BUDGET` -- and the write is atomic, so a crash leaves the
-/// previous contents rather than half a store.
-fn write_all(resolver: &PathResolver, records: &[Value]) -> Result<(), String> {
-    let path = store_path(resolver);
+fn append_line(path: &Path, record: &Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
     }
-    let mut text = String::new();
-    for record in records {
-        text.push_str(&serde_json::to_string(record).map_err(|error| error.to_string())?);
-        text.push('\n');
+    let line = serde_json::to_string(record).map_err(|error| error.to_string())?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|error| format!("open {}: {error}", path.display()))?;
+    // One `write` of a line that is far below the pipe-atomic size, to a
+    // descriptor opened for append: two agents writing at once interleave
+    // lines, not bytes within a line.
+    writeln!(file, "{line}").map_err(|error| format!("write {}: {error}", path.display()))?;
+    // A reported bug is the one thing nobody will think to re-file.
+    file.sync_all()
+        .map_err(|error| format!("sync {}: {error}", path.display()))?;
+    Ok(())
+}
+
+/// One bug, however many times it was seen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BugSummary {
+    pub fingerprint: String,
+    pub count: u64,
+    pub first_seen_at: String,
+    pub last_seen_at: String,
+    /// The first filing's report. Later sightings of the same bug carry their
+    /// own repro and evidence, and this is the one somebody will read.
+    pub report: AgentBugReport,
+}
+
+/// Every distinct bug on file, in the order each was first seen.
+///
+/// This is where the dedupe lives, now that the store is append-only: the
+/// lines are sightings and a bug is a group of them.
+pub fn summarize(resolver: &PathResolver) -> Result<Vec<BugSummary>, String> {
+    let mut bugs: Vec<BugSummary> = Vec::new();
+    for record in read_all(resolver)? {
+        let fingerprint = record
+            .get("fingerprint")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let at = record
+            .get("at")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        if let Some(bug) = bugs.iter_mut().find(|bug| bug.fingerprint == fingerprint) {
+            bug.count += 1;
+            bug.last_seen_at = at;
+            continue;
+        }
+        let report = serde_json::from_value::<AgentBugReport>(
+            record.get("report").cloned().unwrap_or(Value::Null),
+        )
+        .map_err(|error| format!("read bug report {fingerprint}: {error}"))?;
+        bugs.push(BugSummary {
+            fingerprint,
+            count: 1,
+            first_seen_at: at.clone(),
+            last_seen_at: at,
+            report,
+        });
     }
-    write_text_atomic(&path, &text).map_err(|error| format!("write {}: {error}", path.display()))
+    Ok(bugs)
 }
 
 /// Every stored report, oldest first.
