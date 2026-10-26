@@ -1181,3 +1181,143 @@ fn a_stale_pending_message_stops_being_held_past_the_count_cap() {
          the count cap"
     );
 }
+
+/// Build a notification thread held by `holders`, stamped at `updated_at`.
+fn unread_notification_thread(index: usize, holders: &[&str], updated_at: &str) -> Value {
+    json!({
+        "id": format!("notification-{index}"),
+        "title": format!("Notification {index}"),
+        "kind": "notification",
+        "status": "open",
+        "createdAt": updated_at,
+        "updatedAt": updated_at,
+        "createdBy": "aimux",
+        "participants": holders,
+        "waitingOn": [],
+        "unreadBy": holders,
+    })
+}
+
+fn exchange_of(threads: Vec<Value>) -> Value {
+    json!({
+        "version": 1,
+        "generatedAt": "2026-05-25T00:00:00.000Z",
+        "threads": threads,
+        "messages": [],
+        "tasks": [], "handoffs": [], "reviews": [], "inbox": [], "waits": []
+    })
+}
+
+fn retained_thread_ids(exchange: &Value) -> Vec<String> {
+    compact_runtime_exchange(exchange)["retained"]["threads"]
+        .as_array()
+        .expect("retained threads")
+        .iter()
+        .filter_map(|thread| thread.get("id").and_then(Value::as_str).map(str::to_owned))
+        .collect()
+}
+
+/// A notification nobody can ever read must not be kept for ever.
+///
+/// `project` is the participant a notification written without a session id
+/// gets, and `clear_notification_threads` only ever drops a SESSION id from
+/// `unreadBy` when that session is viewed -- no session is named `project`, so
+/// that holder is never removed by any path. Retention treated it as pending
+/// anyway, which pinned the thread permanently. Measured on one project: 121
+/// threads stranded exactly this way, inside a store at 15,923 threads against
+/// a cap of 500.
+///
+/// The inverse is the same assertion's other half: a thread held by a real
+/// session IS still kept, because that one can genuinely still be read.
+#[test]
+fn a_notification_only_project_holds_is_not_kept_for_ever() {
+    let old = "2026-01-01T00:00:00.000Z";
+    // Far enough past the plain cap that nothing but the force-retain could
+    // keep either of these.
+    let mut threads = (0..RUNTIME_EXCHANGE_RETENTION.notification_threads)
+        .map(|index| {
+            unread_notification_thread(1000 + index, &["codex-filler"], "2026-05-25T00:00:00.000Z")
+        })
+        .collect::<Vec<_>>();
+    threads.push(unread_notification_thread(1, &["project"], old));
+    threads.push(unread_notification_thread(2, &["codex-1"], old));
+
+    let retained = retained_thread_ids(&exchange_of(threads));
+    assert!(
+        !retained.contains(&"notification-1".to_owned()),
+        "a thread only `project` holds is stranded, not pending: {retained:?}"
+    );
+    assert!(
+        retained.contains(&"notification-2".to_owned()),
+        "but a thread a real session holds is still kept: {retained:?}"
+    );
+}
+
+/// And the set of genuinely-unread notifications is bounded.
+///
+/// The force-retain had no cap at all, so this was the clause that let one
+/// project reach 15,923 threads: every notification any agent had not read
+/// stayed, and the only drain was viewing that agent. An agent sitting on 909
+/// unread notifications will not read the oldest of them, so the backlog is
+/// kept newest-first up to a limit.
+///
+/// This is deliberately a BACKSTOP rather than the remedy -- the leak itself
+/// was fixed by making a read notification clear its thread (822dc422b). It is
+/// what makes an existing oversized store heal, since retention re-runs over
+/// the whole store on every write.
+#[test]
+fn the_unread_notification_backlog_is_capped_newest_first() {
+    let over = RUNTIME_EXCHANGE_RETENTION.unread_notification_threads + 50;
+    let threads = (0..over)
+        .map(|index| {
+            // Ascending timestamps, so the highest indices are newest.
+            let updated_at = format!(
+                "2026-05-{:02}T00:00:{:02}.000Z",
+                1 + index / 1000,
+                index % 60
+            );
+            unread_notification_thread(index, &["codex-1"], &updated_at)
+        })
+        .collect::<Vec<_>>();
+
+    let retained = retained_thread_ids(&exchange_of(threads));
+    assert!(
+        retained.len() < over,
+        "an unbounded unread backlog is what filled the store: kept {} of {over}",
+        retained.len()
+    );
+    assert!(
+        retained.len() <= RUNTIME_EXCHANGE_RETENTION.unread_notification_threads,
+        "and the bound is the one declared: kept {} for a cap of {}",
+        retained.len(),
+        RUNTIME_EXCHANGE_RETENTION.unread_notification_threads
+    );
+    // Newest-first, like every other cap in this file: the last one written
+    // survives and the first one does not.
+    assert!(
+        retained.contains(&format!("notification-{}", over - 1)),
+        "the newest unread notification is kept"
+    );
+    assert!(
+        !retained.contains(&"notification-0".to_owned()),
+        "the oldest is not"
+    );
+}
+
+/// Under the cap, nothing is dropped.
+///
+/// The inverse of the test above, so a cap that silently discarded a small
+/// backlog could not pass.
+#[test]
+fn an_unread_backlog_under_the_cap_is_kept_whole() {
+    let threads = (0..20)
+        .map(|index| unread_notification_thread(index, &["codex-1"], "2026-05-25T00:00:00.000Z"))
+        .collect::<Vec<_>>();
+
+    let retained = retained_thread_ids(&exchange_of(threads));
+    assert_eq!(
+        retained.len(),
+        20,
+        "a backlog well under the cap survives entirely: {retained:?}"
+    );
+}
