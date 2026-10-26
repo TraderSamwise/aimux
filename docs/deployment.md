@@ -142,6 +142,61 @@ Server-side, the relay needs `CLERK_SECRET_KEY` (verifies the user's
 Clerk session during `aimux login`) and `RELAY_TOKEN_SECRET` (signs the
 HS256 daemon tokens it mints).
 
+## Upgrading without stopping your agents
+
+**Reinstalling or upgrading aimux does not stop your agents.** The daemon, the
+per-project services and the dashboard are all replaced; the windows your
+agents run in are not touched.
+
+`scripts/install.sh` ends in `aimux restart --all`. What that does, and does
+not do:
+
+| | |
+|---|---|
+| the daemon | replaced — stopped and a new one started |
+| each project service | restarted |
+| the dashboard window | reloaded |
+| agent windows and the processes in them | left alone |
+
+Three things keep the agents out of it, and they are independent:
+
+1. The restart stops the daemon with `SIGHUP`, and the daemon's signal
+   shutdown deliberately leaves the per-project services running for exactly
+   that signal. An explicit `aimux daemon stop` is the opposite: it tears the
+   tmux runtime down on purpose.
+2. Even where a project service is stopped, that only signals the service's
+   own verified pid. It is not a process-group kill and it never asks tmux for
+   anything. Agents are children of the tmux server, not of the service.
+3. The restart's orphan cleanup may only kill *dashboard* windows, in sessions
+   whose project root it does not recognize. An agent window is never a
+   candidate, even in an unrecognized project.
+
+The commands that *do* take the runtime down are `aimux daemon stop`,
+`aimux projects remove` and `aimux restart-runtime`. Those are the ones
+`assert_agents_are_restorable` guards, refusing to proceed unless the snapshot
+records every running agent — `AIMUX_STOP_WITHOUT_RESTORE=1` overrides it. The
+reinstall path reaches none of them.
+
+### What a reinstall prints
+
+```
+Aimux Restart
+  daemon: restarted pid=<old> -> pid=<new>
+```
+
+`restarted` is the normal line, because the daemon really is replaced. A
+`retained` line means the restart was served by a daemon nobody replaced, which
+is what calling the restart route directly looks like.
+
+### If the agents really are gone
+
+Something took the tmux server with it — a reboot, a `tmux kill-server`, a
+crash. aimux records the agents that were online and offers them back once per
+death: press Enter to restore them, `n` to say no and not be asked again until
+those agents have been alive again, or Esc to be asked at the next look. A
+restore stops early if the host is low on memory and offers the remainder back,
+saying so.
+
 ## 5. Mobile App (iOS/Android)
 
 The iOS and Android apps are built from the same Expo client as the web app.
