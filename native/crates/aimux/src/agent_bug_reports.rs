@@ -24,10 +24,11 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::path::PathBuf;
 
+use crate::atomic_write::write_text_atomic;
 use crate::config::load_global_config_with_resolver;
 use crate::paths::PathResolver;
 
@@ -44,6 +45,14 @@ const LINE_BUDGET: usize = 300;
 
 /// The evidence field: a handful of lines of aimux's own output, not a log.
 const EVIDENCE_BUDGET: usize = 2_000;
+
+/// How many distinct bugs one machine may have on file.
+///
+/// Not a rate limit on filing -- a repeat of a bug already on file is free,
+/// because it is one record either way. This bounds how many DIFFERENT things
+/// a machine can claim are broken, which is the only way the store grows. An
+/// agent in a loop hits the dedupe long before it reaches this.
+pub const DISTINCT_BUG_BUDGET: usize = 100;
 
 /// What an agent is allowed to say about a bug in aimux.
 ///
@@ -67,6 +76,23 @@ pub struct AgentBugReport {
 }
 
 impl AgentBugReport {
+    /// What makes two filings the same bug.
+    ///
+    /// The four one-line fields, and deliberately not the repro or the
+    /// evidence: those vary between two agents hitting the same thing, and a
+    /// fingerprint that varied with them would file one record per agent --
+    /// which is the spam this exists to prevent.
+    pub fn fingerprint(&self) -> String {
+        let mut hasher = Sha256::new();
+        for field in [&self.what, &self.surface, &self.expected, &self.observed] {
+            // Length-prefixed, so two fields cannot run together into the same
+            // digest as a different pair that happens to concatenate equally.
+            hasher.update(field.len().to_le_bytes());
+            hasher.update(field.as_bytes());
+        }
+        format!("{:x}", hasher.finalize())[..24].to_owned()
+    }
+
     /// Trim every field to its budget and reject one that says nothing.
     ///
     /// Capping rather than refusing, because an agent that wrote three lines
@@ -133,6 +159,8 @@ pub enum BugReportRefusal {
     Disabled,
     /// The report does not meet the standard.
     Invalid(String),
+    /// This machine already has as many distinct bugs on file as it may.
+    BudgetSpent { distinct: usize },
 }
 
 impl BugReportRefusal {
@@ -143,6 +171,37 @@ impl BugReportRefusal {
                  docs/agent-bug-reports.md"
                 .to_owned(),
             Self::Invalid(reason) => reason.clone(),
+            Self::BudgetSpent { distinct } => format!(
+                "this machine already has {distinct} distinct bug reports on file, the most \
+                 it may hold. Go through them before filing more; see \
+                 docs/agent-bug-reports.md"
+            ),
+        }
+    }
+}
+
+/// What filing a report did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BugReportOutcome {
+    /// A bug nothing had filed before.
+    Filed { fingerprint: String },
+    /// A bug already on file; its count went up and nothing else changed.
+    Counted { fingerprint: String, count: u64 },
+}
+
+impl BugReportOutcome {
+    pub fn fingerprint(&self) -> &str {
+        match self {
+            Self::Filed { fingerprint } | Self::Counted { fingerprint, .. } => fingerprint,
+        }
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            Self::Filed { fingerprint } => format!("filed bug report {fingerprint}"),
+            Self::Counted { fingerprint, count } => {
+                format!("bug report {fingerprint} was already on file; seen {count} times now")
+            }
         }
     }
 }
@@ -160,14 +219,44 @@ pub fn record(
     tool: &str,
     build: &str,
     at: &str,
-) -> Result<PathBuf, BugReportRefusal> {
+) -> Result<BugReportOutcome, BugReportRefusal> {
     if !is_enabled(resolver) {
         return Err(BugReportRefusal::Disabled);
     }
     let report = report.normalized().map_err(BugReportRefusal::Invalid)?;
-    let record = json!({
+    let fingerprint = report.fingerprint();
+    let mut stored = read_all(resolver).map_err(BugReportRefusal::Invalid)?;
+
+    if let Some(existing) = stored
+        .iter_mut()
+        .find(|record| record.get("fingerprint").and_then(Value::as_str) == Some(&fingerprint))
+    {
+        // One record per bug, however many agents hit it. The count and the
+        // last-seen time are the only things a repeat changes: the first
+        // filing's evidence is the one somebody will read, and overwriting it
+        // on every repeat would churn the file for nothing.
+        let count = existing.get("count").and_then(Value::as_u64).unwrap_or(1) + 1;
+        if let Value::Object(existing) = existing {
+            existing.insert("count".into(), Value::from(count));
+            existing.insert("lastSeenAt".into(), Value::String(at.to_owned()));
+        }
+        write_all(resolver, &stored).map_err(BugReportRefusal::Invalid)?;
+        return Ok(BugReportOutcome::Counted { fingerprint, count });
+    }
+
+    // The budget is on DISTINCT bugs, counted before adding this one.
+    if stored.len() >= DISTINCT_BUG_BUDGET {
+        return Err(BugReportRefusal::BudgetSpent {
+            distinct: stored.len(),
+        });
+    }
+
+    stored.push(json!({
         "kind": BUG_REPORT_RECORD_KIND,
-        "at": at,
+        "fingerprint": fingerprint,
+        "firstSeenAt": at,
+        "lastSeenAt": at,
+        "count": 1,
         // The opaque machine id, never the machine NAME: the name is a
         // hostname, and a report is read by someone who should be able to tell
         // two machines apart without being told whose they are.
@@ -175,29 +264,29 @@ pub fn record(
         "tool": tool,
         "build": build,
         "report": report,
-    });
-    let path = store_path(resolver);
-    append_line(&path, &record).map_err(BugReportRefusal::Invalid)?;
-    Ok(path)
+    }));
+    write_all(resolver, &stored).map_err(BugReportRefusal::Invalid)?;
+    Ok(BugReportOutcome::Filed { fingerprint })
 }
 
-fn append_line(path: &Path, record: &Value) -> Result<(), String> {
+/// Rewrite the store.
+///
+/// A repeat updates a record in place, so the store cannot be append-only. It
+/// stays small by construction -- one line per distinct bug, bounded by
+/// `DISTINCT_BUG_BUDGET` -- and the write is atomic, so a crash leaves the
+/// previous contents rather than half a store.
+fn write_all(resolver: &PathResolver, records: &[Value]) -> Result<(), String> {
+    let path = store_path(resolver);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
     }
-    let line = serde_json::to_string(record).map_err(|error| error.to_string())?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|error| format!("open {}: {error}", path.display()))?;
-    writeln!(file, "{line}").map_err(|error| format!("write {}: {error}", path.display()))?;
-    // Reported bugs are the one thing nobody will think to re-file, so the
-    // line is on disk before this returns.
-    file.sync_all()
-        .map_err(|error| format!("sync {}: {error}", path.display()))?;
-    Ok(())
+    let mut text = String::new();
+    for record in records {
+        text.push_str(&serde_json::to_string(record).map_err(|error| error.to_string())?);
+        text.push('\n');
+    }
+    write_text_atomic(&path, &text).map_err(|error| format!("write {}: {error}", path.display()))
 }
 
 /// Every stored report, oldest first.

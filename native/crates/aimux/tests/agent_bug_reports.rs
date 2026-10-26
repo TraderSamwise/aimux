@@ -5,8 +5,8 @@
 //! user's repository open.
 
 use aimux::agent_bug_reports::{
-    AgentBugReport, BUG_REPORT_RECORD_KIND, BugReportRefusal, is_enabled, read_all, record,
-    store_path,
+    AgentBugReport, BUG_REPORT_RECORD_KIND, BugReportOutcome, BugReportRefusal,
+    DISTINCT_BUG_BUDGET, is_enabled, read_all, record, store_path,
 };
 use aimux::paths::PathResolver;
 use serde_json::{Value, json};
@@ -86,7 +86,7 @@ fn report() -> AgentBugReport {
     }
 }
 
-fn file(machine: &Machine, report: &AgentBugReport) -> Result<PathBuf, BugReportRefusal> {
+fn file(machine: &Machine, report: &AgentBugReport) -> Result<BugReportOutcome, BugReportRefusal> {
     record(
         &machine.resolver(),
         report,
@@ -198,8 +198,12 @@ fn the_machine_owners_config_does_turn_reporting_on() {
     machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
 
     assert!(is_enabled(&machine.resolver()));
-    let path = file(&machine, &report()).expect("a report is stored once reporting is on");
-    assert_eq!(path, store_path(&machine.resolver()));
+    let outcome = file(&machine, &report()).expect("a report is stored once reporting is on");
+    assert!(
+        matches!(outcome, BugReportOutcome::Filed { .. }),
+        "{outcome:?}"
+    );
+    assert!(machine.store_exists());
 
     let stored = read_all(&machine.resolver()).expect("read the store");
     assert_eq!(stored.len(), 1, "{stored:?}");
@@ -329,4 +333,114 @@ fn an_unreadable_line_is_reported_rather_than_skipped() {
     let error = read_all(&machine.resolver()).expect_err("a foreign line is an error");
     assert!(error.contains("line 2"), "{error}");
     assert!(error.contains(BUG_REPORT_RECORD_KIND), "{error}");
+}
+
+/// The same bug twice is one record with a count.
+///
+/// An agent hitting a bug in a loop would otherwise file it every iteration,
+/// and two agents hitting the same bug would file it twice. The fingerprint is
+/// the four one-line fields, so a different repro or a different excerpt of
+/// evidence is still the same bug.
+#[test]
+fn the_same_bug_filed_twice_is_one_record_with_a_count() {
+    let machine = Machine::new("dedupe");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+
+    let first = file(&machine, &report()).expect("filed");
+    assert!(matches!(first, BugReportOutcome::Filed { .. }), "{first:?}");
+
+    // A second agent, hitting the same thing, with its own repro and evidence.
+    let mut again = report();
+    again.repro = "aimux agent input --session claude-2 --text other".into();
+    again.evidence = Some("a different excerpt".into());
+    let second = file(&machine, &again).expect("counted");
+    match &second {
+        BugReportOutcome::Counted { count, fingerprint } => {
+            assert_eq!(*count, 2);
+            assert_eq!(fingerprint, first.fingerprint());
+        }
+        other => panic!("expected a count, got {other:?}"),
+    }
+
+    let stored = read_all(&machine.resolver()).expect("read");
+    assert_eq!(stored.len(), 1, "one record per bug: {stored:?}");
+    assert_eq!(stored[0]["count"], 2);
+    assert_eq!(stored[0]["lastSeenAt"], "2026-10-26T00:00:00.000Z");
+    assert_eq!(
+        stored[0]["report"]["repro"], "aimux agent input --session codex-1 --text hello",
+        "the first filing's detail is the one kept: {stored:?}"
+    );
+    assert!(
+        second.message().contains("already on file"),
+        "the agent is told it was a repeat: {}",
+        second.message()
+    );
+}
+
+/// And a genuinely different bug is not swallowed by the dedupe.
+#[test]
+fn a_different_bug_is_filed_separately() {
+    let machine = Machine::new("distinct");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+
+    file(&machine, &report()).expect("filed");
+    let mut other = report();
+    other.surface = "aimux ps".into();
+    other.what = "ps took eleven seconds".into();
+    let second = file(&machine, &other).expect("filed");
+    assert!(
+        matches!(second, BugReportOutcome::Filed { .. }),
+        "{second:?}"
+    );
+    assert_ne!(
+        report().fingerprint(),
+        other.fingerprint(),
+        "two different bugs must not share a fingerprint"
+    );
+    assert_eq!(read_all(&machine.resolver()).expect("read").len(), 2);
+}
+
+/// A machine may only have so many distinct bugs on file, and is told when it
+/// is full rather than having the filing silently dropped.
+///
+/// The budget is on distinct bugs, not on filings: a repeat of something
+/// already on file is free, because it is one record either way.
+#[test]
+fn a_machine_full_of_distinct_bugs_says_so_and_still_counts_repeats() {
+    let machine = Machine::new("budget");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+
+    for index in 0..DISTINCT_BUG_BUDGET {
+        let mut next = report();
+        next.what = format!("distinct failure {index}");
+        file(&machine, &next).expect("within budget");
+    }
+    assert_eq!(
+        read_all(&machine.resolver()).expect("read").len(),
+        DISTINCT_BUG_BUDGET
+    );
+
+    let mut over = report();
+    over.what = "one too many".into();
+    match file(&machine, &over).expect_err("over budget") {
+        BugReportRefusal::BudgetSpent { distinct } => {
+            assert_eq!(distinct, DISTINCT_BUG_BUDGET);
+        }
+        other => panic!("expected the budget to be spent, got {other:?}"),
+    }
+    assert_eq!(
+        read_all(&machine.resolver()).expect("read").len(),
+        DISTINCT_BUG_BUDGET,
+        "a refused report is not stored"
+    );
+
+    // A repeat of something already on file is still counted: the budget is
+    // not a reason to lose a signal that costs nothing to record.
+    let mut repeat = report();
+    repeat.what = "distinct failure 0".into();
+    let outcome = file(&machine, &repeat).expect("a repeat is free");
+    assert!(
+        matches!(outcome, BugReportOutcome::Counted { count: 2, .. }),
+        "{outcome:?}"
+    );
 }

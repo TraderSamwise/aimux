@@ -76,15 +76,27 @@ file one is told that reporting is disabled rather than silently succeeding.
 
 ## Not spamming
 
-An agent that hits a bug in a loop would otherwise file it every iteration.
+An agent that hits a bug in a loop would otherwise file it every iteration,
+and two agents hitting the same bug would file it twice.
 
-- Reports are **deduplicated by fingerprint**, derived from the required
-  fields. The same bug twice is one record with a count and a last-seen time.
-- Each fingerprint has a **cooldown**: a repeat inside it updates the count and
-  nothing else.
-- Each machine has a **budget per window**. An agent over budget is told so —
-  the answer is never a silent drop, because an agent that believes it filed a
-  report will not mention the bug any other way.
+- Reports are **deduplicated by fingerprint** — the four one-line fields, and
+  deliberately not the repro or the evidence, which differ between two agents
+  hitting the same thing. The same bug is one record with a count and a
+  last-seen time, and a repeat changes only those two: the first filing's
+  detail is the one somebody will read.
+- Each machine may hold a **fixed number of distinct bugs**. The budget is on
+  distinct bugs rather than on filings, because a repeat of something already
+  on file costs nothing — it is one record either way, so it is always counted
+  even when the machine is full.
+- An agent that is refused is **told why**, whether the refusal is the opt-in,
+  a missing field, or a full machine. The answer is never a silent drop,
+  because an agent that believes it filed a report will not mention the bug any
+  other way.
+
+A per-fingerprint cooldown was specified here and then not built: with one
+record per bug there is nothing for it to do that the dedupe does not already
+do, and a cooldown that suppressed the rewrite would lose counts on a crash.
+This section describes what exists.
 
 ## Reading them back
 
