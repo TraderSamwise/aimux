@@ -7,7 +7,7 @@
 use aimux::agent_bug_reports::{
     AgentBugReport, BUG_REPORT_RECORD_KIND, BugReportOutcome, BugReportRefusal,
     DISTINCT_BUG_BUDGET, SIGHTINGS_PER_BUG, is_enabled, read_all, read_store, record,
-    sanitized_tool, store_path, summarize,
+    sanitized_tool, store_path, summarize, summarize_records,
 };
 use aimux::paths::PathResolver;
 use serde_json::{Value, json};
@@ -714,8 +714,17 @@ fn a_complete_final_record_missing_only_its_newline_survives_the_next_filing() {
     );
 }
 
-/// A record that cannot be grouped is skipped and counted rather than merged
-/// into an invented bug or taken as a reason to refuse the store.
+/// A record that cannot be grouped is skipped AND COUNTED, rather than merged
+/// into an invented bug, taken as a reason to refuse the store, or dropped
+/// silently.
+///
+/// The silent drop is the one that nearly shipped: `read_store` counts these
+/// lines as perfectly readable, because they are -- they parse and carry the
+/// right kind. It is grouping that cannot place them. So a listing that
+/// reported only unreadable lines showed fewer sightings than the file held
+/// and said nothing about the difference, which is exactly the quiet failure
+/// this store is built to avoid. An earlier version of this test asserted only
+/// the bug count and would have passed through that.
 #[test]
 fn a_record_with_no_fingerprint_is_skipped_and_counted() {
     let machine = Machine::new("no-fingerprint");
@@ -729,6 +738,44 @@ fn a_record_with_no_fingerprint_is_skipped_and_counted() {
     )
     .expect("write");
 
-    let bugs = summarize(&machine.resolver()).expect("one ungroupable record is not fatal");
-    assert_eq!(bugs.len(), 1, "only the groupable one is a bug: {bugs:?}");
+    let found = read_store(&machine.resolver()).expect("one ungroupable record is not fatal");
+    assert_eq!(
+        found.unreadable, 0,
+        "the line reads perfectly well, which is the trap: {found:?}"
+    );
+    let digest = summarize_records(&found.records);
+    assert_eq!(digest.bugs.len(), 1, "only the groupable one is a bug");
+    assert_eq!(
+        digest.unattributable, 1,
+        "and the one that could not be placed is counted: {digest:?}"
+    );
+}
+
+/// A fingerprint whose first sighting is gone is counted too.
+///
+/// Only the first sighting carries the report body, so if that line is the one
+/// a crash truncated, every later sighting of that bug is readable and
+/// unplaceable. Counted for the same reason.
+#[test]
+fn sightings_whose_first_is_gone_are_counted_rather_than_dropped_silently() {
+    let machine = Machine::new("orphaned-sightings");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+    file(&machine, &report()).expect("first");
+    file(&machine, &report()).expect("second");
+    let path = store_path(&machine.resolver());
+
+    // Drop the first line -- the only one with a body.
+    let text = fs::read_to_string(&path).expect("read");
+    let orphaned = text.split_inclusive('\n').skip(1).collect::<String>();
+    fs::write(&path, orphaned).expect("write");
+
+    let found = read_store(&machine.resolver()).expect("readable");
+    assert_eq!(found.records.len(), 1, "the later sighting still reads");
+    assert_eq!(found.unreadable, 0);
+    let digest = summarize_records(&found.records);
+    assert!(digest.bugs.is_empty(), "it cannot be shown: {digest:?}");
+    assert_eq!(
+        digest.unattributable, 1,
+        "but it is not dropped silently: {digest:?}"
+    );
 }

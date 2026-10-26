@@ -431,8 +431,30 @@ pub struct BugSummary {
 /// This is where the dedupe lives, now that the store is append-only: the
 /// lines are sightings and a bug is a group of them.
 pub fn summarize(resolver: &PathResolver) -> Result<Vec<BugSummary>, String> {
+    Ok(summarize_records(&read_store(resolver)?.records).bugs)
+}
+
+/// The bugs in a set of records already read, and how many of those records
+/// could not be attributed to one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BugDigest {
+    pub bugs: Vec<BugSummary>,
+    /// Records that read cleanly but belong to no bug -- no fingerprint, or a
+    /// fingerprint whose first sighting is gone. Counted, not hidden: a
+    /// listing that showed fewer sightings than the file holds without saying
+    /// so would be the quiet failure this store is built to avoid.
+    pub unattributable: usize,
+}
+
+/// Group records into bugs, over records the caller has already read.
+///
+/// Taking the records rather than the resolver so a caller can read the file
+/// ONCE. `bug list` used to call this and `read_store` separately, and a
+/// filing in between made the two halves of its own output disagree.
+pub fn summarize_records(records: &[Value]) -> BugDigest {
     let mut bugs: Vec<BugSummary> = Vec::new();
-    for record in read_all(resolver)? {
+    let mut unattributable_count = 0;
+    for record in records {
         // A record with no fingerprint cannot be grouped, and defaulting it to
         // the empty string would merge every such line into one invented bug.
         // Skipped like any other line that cannot be accounted for: the store
@@ -444,6 +466,7 @@ pub fn summarize(resolver: &PathResolver) -> Result<Vec<BugSummary>, String> {
             .filter(|fingerprint| !fingerprint.is_empty())
             .map(str::to_owned)
         else {
+            unattributable(&mut unattributable_count, "no fingerprint");
             continue;
         };
         let at = record
@@ -466,6 +489,7 @@ pub fn summarize(resolver: &PathResolver) -> Result<Vec<BugSummary>, String> {
             .cloned()
             .and_then(|report| serde_json::from_value::<AgentBugReport>(report).ok())
         else {
+            unattributable(&mut unattributable_count, "no first sighting on file");
             continue;
         };
         bugs.push(BugSummary {
@@ -476,7 +500,23 @@ pub fn summarize(resolver: &PathResolver) -> Result<Vec<BugSummary>, String> {
             report,
         });
     }
-    Ok(bugs)
+    BugDigest {
+        bugs,
+        unattributable: unattributable_count,
+    }
+}
+
+/// Count a record that read cleanly but belongs to no bug, and say so.
+///
+/// Logged as well as counted, because `read_store` logs every line it cannot
+/// read and these were the one kind of skip that happened silently.
+fn unattributable(count: &mut usize, reason: &str) {
+    crate::debug_logging::log_lifecycle_always(
+        "a bug report record could not be attributed to a bug",
+        "bug-reports",
+        Some(json!({ "reason": reason })),
+    );
+    *count += 1;
 }
 
 /// Every stored report, oldest first.

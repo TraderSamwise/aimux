@@ -2129,15 +2129,23 @@ fn run_bug_report(
 /// Every distinct bug this machine has on file.
 fn run_bug_list(output_mode: CoreCliOutputMode) -> Result<CoreCliExecution, String> {
     let resolver = PathResolver::from_env();
-    let bugs = crate::agent_bug_reports::summarize(&resolver)?;
-    // Lines the store could not account for are skipped so that one bad write
-    // cannot stop every read -- but they are said out loud here, because a
-    // listing that quietly omitted reports would be the worse failure.
-    let unreadable = crate::agent_bug_reports::read_store(&resolver)?.unreadable;
+    // Read ONCE. Calling `summarize` and `read_store` separately meant a
+    // filing in between could make the two halves of this output disagree.
+    let found = crate::agent_bug_reports::read_store(&resolver)?;
+    let digest = crate::agent_bug_reports::summarize_records(&found.records);
+    let bugs = digest.bugs;
+    // Two different kinds of line this cannot show, and both are said out
+    // loud. `unreadable` is what did not parse at all; `unattributable` are
+    // records that read fine but belong to no bug -- no fingerprint, or a
+    // fingerprint whose first sighting is gone. Reporting only the first would
+    // quietly show fewer sightings than the file holds.
+    let unattributable = digest.unattributable;
+    let unreadable = found.unreadable;
     match output_mode {
         CoreCliOutputMode::Json => Ok(CoreCliExecution::ok(vec![
             serde_json::to_string_pretty(&json!({
                 "unreadableLines": unreadable,
+                "unattributableRecords": unattributable,
                 "bugs": bugs
                     .iter()
                     .map(|bug| json!({
@@ -2152,7 +2160,7 @@ fn run_bug_list(output_mode: CoreCliOutputMode) -> Result<CoreCliExecution, Stri
             .map_err(|error| error.to_string())?,
         ])),
         CoreCliOutputMode::Text => {
-            if bugs.is_empty() && unreadable == 0 {
+            if bugs.is_empty() && unreadable == 0 && unattributable == 0 {
                 return Ok(CoreCliExecution::ok(vec![
                     "No bug reports on this machine.".to_owned(),
                 ]));
@@ -2161,6 +2169,11 @@ fn run_bug_list(output_mode: CoreCliOutputMode) -> Result<CoreCliExecution, Stri
             if unreadable > 0 {
                 lines.push(format!(
                     "  {unreadable} line(s) could not be read and were skipped"
+                ));
+            }
+            if unattributable > 0 {
+                lines.push(format!(
+                    "  {unattributable} record(s) read but not attributable to a bug"
                 ));
             }
             for bug in &bugs {
