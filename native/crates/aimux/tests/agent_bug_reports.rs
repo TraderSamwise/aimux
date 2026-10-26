@@ -576,6 +576,68 @@ fn a_record_missing_its_report_is_an_error_not_an_empty_bug() {
     );
 }
 
+/// A complete final record missing only its newline must not be thrown away.
+///
+/// The repair and the reader have to agree on what counts as damage. The
+/// reader skips a final line only when it does not PARSE, so a record that is
+/// complete and valid with the newline simply not written yet is a report that
+/// was successfully filed -- and dropping it because of the missing byte would
+/// be the one loss this whole design refuses. It is terminated instead, so the
+/// next append does not splice onto it.
+#[test]
+fn a_complete_final_record_missing_only_its_newline_is_kept() {
+    let machine = Machine::new("unterminated");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+    file(&machine, &report()).expect("filed");
+    let path = store_path(&machine.resolver());
+
+    // Exactly what a two-syscall write leaves behind: a whole record, no
+    // newline.
+    let whole = fs::read_to_string(&path).expect("read");
+    fs::write(&path, whole.trim_end()).expect("write");
+    assert_eq!(
+        summarize(&machine.resolver()).expect("readable").len(),
+        1,
+        "the reader keeps a record that parses"
+    );
+
+    // And filing again must not delete it.
+    let mut next = report();
+    next.what = "something else broke".into();
+    file(&machine, &next).expect("filed");
+    let bugs = summarize(&machine.resolver()).expect("still readable");
+    assert_eq!(
+        bugs.len(),
+        2,
+        "the unterminated record survives the next filing: {bugs:?}"
+    );
+    assert!(
+        bugs.iter().any(
+            |bug| bug.report.what == "agent input reported success while the pane stayed empty"
+        ),
+        "and it is the original one, not a replacement: {bugs:?}"
+    );
+}
+
+/// A record with no fingerprint cannot be grouped, and must not be grouped
+/// with every other such record under one invented bug.
+#[test]
+fn a_record_with_no_fingerprint_is_an_error() {
+    let machine = Machine::new("no-fingerprint");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+    file(&machine, &report()).expect("filed");
+    let path = store_path(&machine.resolver());
+    let good = fs::read_to_string(&path).expect("read");
+    fs::write(
+        &path,
+        format!("{good}{{\"kind\":\"{BUG_REPORT_RECORD_KIND}\",\"at\":\"x\"}}\n"),
+    )
+    .expect("write");
+
+    let error = summarize(&machine.resolver()).expect_err("ungroupable");
+    assert!(error.contains("no fingerprint"), "{error}");
+}
+
 /// A final line cut off mid-append is survivable; a bad line in the middle is
 /// not.
 ///
@@ -583,9 +645,9 @@ fn a_record_missing_its_report_is_an_error_not_an_empty_bug() {
 /// as a hard error meant one interrupted append -- a crash, a full disk --
 /// would make `bug list` AND every future filing fail for ever. A file that
 /// does not end in a newline has exactly one suspect line, at the end, and
-/// skipping it costs one sighting. A malformed line anywhere else is
-/// corruption and still refuses, because then the file is not what it claims
-/// to be.
+/// skipping it costs a sighting that was never fully written. A malformed line
+/// anywhere else is corruption and still refuses, because then the file is not
+/// what it claims to be.
 #[test]
 fn a_torn_final_line_is_skipped_and_a_torn_middle_line_is_not() {
     let machine = Machine::new("torn");

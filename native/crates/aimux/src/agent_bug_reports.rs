@@ -396,6 +396,22 @@ fn drop_torn_final_line(path: &Path) -> Result<(), String> {
         return Ok(());
     }
     let keep = text.rfind('\n').map(|index| index + 1).unwrap_or(0);
+    // Dropped on the SAME condition the reader skips it: that it does not
+    // parse. A missing newline alone is not damage -- a record can be complete
+    // and valid with the newline simply not written yet, which is what the
+    // two-syscall `writeln!` this replaced actually produced. The reader keeps
+    // such a line, so dropping it here would silently delete a report that had
+    // been successfully filed. That is the one loss this whole design refuses.
+    if serde_json::from_str::<Value>(text[keep..].trim()).is_ok() {
+        // Terminate it instead, so the next append does not splice onto it.
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(path)
+            .map_err(|error| format!("open {}: {error}", path.display()))?;
+        return file
+            .write_all(b"\n")
+            .map_err(|error| format!("terminate {}: {error}", path.display()));
+    }
     crate::debug_logging::log_lifecycle_always(
         "dropped a torn final line from the bug report store",
         "bug-reports",
@@ -404,9 +420,15 @@ fn drop_torn_final_line(path: &Path) -> Result<(), String> {
             "droppedBytes": text.len() - keep,
         })),
     );
-    // Through a temporary file rather than in place, so a crash here leaves
-    // either the old contents or the repaired ones.
-    crate::atomic_write::write_text_atomic(path, &text[..keep])
+    // Truncated in place rather than rewritten through a temporary file: a
+    // rename would orphan the inode that a concurrent filer already has open
+    // for append, and that filer's record would vanish with it -- the race
+    // append-only was chosen to avoid. Shortening the file keeps the inode.
+    let file = OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|error| format!("open {}: {error}", path.display()))?;
+    file.set_len(keep as u64)
         .map_err(|error| format!("repair {}: {error}", path.display()))
 }
 

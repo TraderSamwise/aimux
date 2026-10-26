@@ -122,8 +122,10 @@ aimux bug report \
 ```
 
 There is no `--context`, `--log`, `--file` or `--project`, and an unknown flag
-is refused rather than ignored. The tool the report is attributed to comes from
-the environment aimux gave the agent, not from an argument.
+is refused rather than ignored. The tool the report is attributed to is read
+from the agent's environment rather than taken as an argument — which does not
+make it trustworthy, since an agent's own shell sets that environment, so it is
+reduced to a short lowercase word or recorded as `unknown`.
 
 Filing is local and needs no daemon, which matters because an agent is most
 likely to have something to report about aimux exactly when the daemon is down.
