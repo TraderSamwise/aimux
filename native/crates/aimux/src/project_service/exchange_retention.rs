@@ -8,6 +8,16 @@ const MIN_COMPACTED_TEXT_SAVINGS_BYTES: usize = 512;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeExchangeRetention {
     pub notification_threads: usize,
+    /// A backstop on notification threads held past `notification_threads`
+    /// because somebody has not read them.
+    ///
+    /// That force-retain had NO cap, so every unread notification stayed for
+    /// ever and the only drain was `mark_session_viewed`, one session at a
+    /// time. Measured on one project: 15,923 threads against a cap of 500,
+    /// 3,997 of them pinned by `unreadBy`. An agent sitting on 909 unread
+    /// notifications is not going to read the oldest of them, so the backlog
+    /// is kept newest-first and bounded rather than kept entirely.
+    pub unread_notification_threads: usize,
     pub closed_workflow_threads: usize,
     pub closed_tasks: usize,
     pub active_thread_messages: usize,
@@ -22,6 +32,7 @@ pub struct RuntimeExchangeRetention {
 
 pub const RUNTIME_EXCHANGE_RETENTION: RuntimeExchangeRetention = RuntimeExchangeRetention {
     notification_threads: 500,
+    unread_notification_threads: 1000,
     closed_workflow_threads: 300,
     closed_tasks: 500,
     active_thread_messages: 80,
@@ -284,13 +295,20 @@ fn select_retained_thread_ids(exchange: &Value) -> HashSet<String> {
             retained.insert(id.to_owned());
         }
     }
-    for thread in &notification_threads {
-        if (!string_array(thread, "waitingOn").is_empty()
-            || !string_array(thread, "unreadBy").is_empty())
-            && let Some(id) = id(thread)
-        {
-            retained.insert(id.to_owned());
-        }
+    // Held because somebody has yet to read it -- but only somebody who still
+    // could, and only so many. Both halves used to be missing: a thread whose
+    // only holder was `project` was pinned for ever, since nothing clears that
+    // participant, and the set itself was uncapped.
+    let unread_notification_threads = notification_threads
+        .iter()
+        .filter(|thread| notification_thread_awaits_a_reader(thread))
+        .cloned()
+        .collect::<Vec<_>>();
+    for id in select_latest_ids(
+        &unread_notification_threads,
+        RUNTIME_EXCHANGE_RETENTION.unread_notification_threads,
+    ) {
+        retained.insert(id);
     }
     for id in select_latest_ids(
         &notification_threads,
@@ -617,6 +635,26 @@ fn is_notification_thread(thread: &Value) -> bool {
 /// Stated as a hazard rather than an incident: nothing in this repo writes
 /// that status today, only the API contract admits it, so this is a divergence
 /// waiting for a caller rather than something observed in the wild.
+/// Whether a notification thread is still waiting on somebody who could read it.
+///
+/// `project` is the participant a notification written without a session id
+/// gets, and NOTHING clears it -- `clear_notification_threads` drops one
+/// session id from `unreadBy` when that session is viewed, and no session is
+/// ever named `project`. So a thread whose only holder is `project` is not
+/// pending, it is stranded, and treating it as pending kept it for ever.
+fn notification_thread_awaits_a_reader(thread: &Value) -> bool {
+    [
+        string_array(thread, "waitingOn"),
+        string_array(thread, "unreadBy"),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|holder| holder != UNCLEARABLE_NOTIFICATION_HOLDER)
+}
+
+/// The `unreadBy` participant that no code path can ever remove.
+const UNCLEARABLE_NOTIFICATION_HOLDER: &str = "project";
+
 fn is_closed_thread(thread: &Value) -> bool {
     crate::project_service::runtime_exchange::thread_is_terminal(thread)
 }
