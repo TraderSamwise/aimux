@@ -412,6 +412,22 @@ fn renders_threads_tasks_messages_and_review_follow_up_order() {
         ),
         vec!["thread th-1", "message m-1", "delivered a,b"]
     );
+    // `aimux message send` posts to the same thread-send route, so it can
+    // receive `undeliverableTo` too, and shares `delivery_notice_lines`.
+    assert_eq!(
+        render_core_message_send_lines(&json!({
+            "thread": { "id": "th-1" },
+            "message": { "id": "m-1" },
+            "deliveredTo": ["a"],
+            "undeliverableTo": ["b"]
+        })),
+        vec![
+            "thread th-1",
+            "message m-1",
+            "delivered a",
+            "no live window for b"
+        ]
+    );
     assert_eq!(
         render_core_review_request_changes_lines(
             &json!({ "task": { "id": "t-1" }, "thread": { "id": "th-1" }, "followUpTask": { "id": "t-2" } })

@@ -7,6 +7,14 @@
 #[path = "support/mod.rs"]
 mod support;
 
+// KEEP THIS TARGET TO ONE TEST. The test below swaps the process-wide panic
+// hook for a no-op and restores it, and the runner only passes
+// `--test-threads=1` to non-integration targets, so a second `#[test]` here
+// would run concurrently with that swap and could leave the no-op installed --
+// silently swallowing another test's panic message. Pass/fail would still be
+// reported correctly; the diagnostics would not. A new case about the shared
+// isolation belongs in the binary that exercises it.
+
 /// One failing test must not take out the rest of the binary.
 ///
 /// The lock was taken with `.expect("test env lock")`, so a test that panicked
