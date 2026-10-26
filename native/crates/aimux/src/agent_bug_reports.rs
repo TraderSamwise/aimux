@@ -43,6 +43,9 @@ pub const BUG_REPORT_RECORD_KIND: &str = "agent-bug-report";
 /// anything into.
 const LINE_BUDGET: usize = 300;
 
+/// The longest a tool name may be. Every tool aimux knows is one short word.
+const TOOL_BUDGET: usize = 32;
+
 /// The evidence field: a handful of lines of aimux's own output, not a log.
 const EVIDENCE_BUDGET: usize = 2_000;
 
@@ -142,6 +145,32 @@ fn capped(value: &str, budget: usize) -> String {
         Some((index, _)) => format!("{}…", &trimmed[..index]),
     }
 }
+
+/// The agent's tool, reduced to something that cannot carry a secret.
+///
+/// This arrives from `AIMUX_TOOL`, and a shell sets the environment of its own
+/// children -- so an agent can put anything there, including the contents of a
+/// file. setting `AIMUX_TOOL` to the contents of a private key and filing a report would
+/// otherwise have written a private key into the store, which is the one
+/// category the standard is most explicit about. Anything that is not a short
+/// lowercase word is not a tool name, and is recorded as unknown rather than
+/// recorded as itself.
+pub fn sanitized_tool(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let plausible = !trimmed.is_empty()
+        && trimmed.len() <= TOOL_BUDGET
+        && trimmed.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        });
+    if plausible {
+        trimmed.to_owned()
+    } else {
+        UNKNOWN_TOOL.to_owned()
+    }
+}
+
+/// What a tool that cannot be named is called.
+pub const UNKNOWN_TOOL: &str = "unknown";
 
 pub fn store_path(resolver: &PathResolver) -> PathBuf {
     resolver.global_aimux_dir().join(STORE_RELATIVE_PATH)
@@ -275,22 +304,34 @@ pub fn record(
         });
     }
 
-    append_line(
-        &store_path(resolver),
-        &json!({
-            "kind": BUG_REPORT_RECORD_KIND,
-            "fingerprint": fingerprint,
-            "at": at,
-            // The opaque machine id, never the machine NAME: the name is a
-            // hostname, and a report is read by someone who should be able to
-            // tell two machines apart without being told whose they are.
-            "machineId": machine_id,
-            "tool": tool,
-            "build": build,
-            "report": report,
-        }),
-    )
-    .map_err(BugReportRefusal::Invalid)?;
+    let mut record = json!({
+        "kind": BUG_REPORT_RECORD_KIND,
+        "fingerprint": fingerprint,
+        "at": at,
+        // The opaque machine id, never the machine NAME: the name is a
+        // hostname, and a report is read by someone who should be able to tell
+        // two machines apart without being told whose they are.
+        "machineId": machine_id,
+        // Bounded and charset-checked: this comes from the agent's own
+        // environment, which the agent controls.
+        "tool": sanitized_tool(tool),
+        "build": build,
+    });
+    if seen == 0 {
+        // The report body goes with the FIRST sighting only. A later sighting
+        // of the same bug carries its own repro and evidence, which `summarize`
+        // never surfaces -- storing them would be tens of kilobytes of agent
+        // text per bug that nothing reads, in a store whose whole point is
+        // being readable by someone who does not have the machine.
+        if let Value::Object(record) = &mut record {
+            record.insert(
+                "report".into(),
+                serde_json::to_value(&report)
+                    .map_err(|error| BugReportRefusal::Invalid(error.to_string()))?,
+            );
+        }
+    }
+    append_line(&store_path(resolver), &record).map_err(BugReportRefusal::Invalid)?;
 
     Ok(if seen == 0 {
         BugReportOutcome::Filed { fingerprint }
@@ -307,16 +348,25 @@ fn append_line(path: &Path, record: &Value) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
     }
-    let line = serde_json::to_string(record).map_err(|error| error.to_string())?;
+    let mut line = serde_json::to_string(record).map_err(|error| error.to_string())?;
+    line.push('\n');
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
         .map_err(|error| format!("open {}: {error}", path.display()))?;
-    // One `write` of a line that is far below the pipe-atomic size, to a
-    // descriptor opened for append: two agents writing at once interleave
-    // lines, not bytes within a line.
-    writeln!(file, "{line}").map_err(|error| format!("write {}: {error}", path.display()))?;
+    // ONE `write_all` of the line and its newline together. `writeln!` goes
+    // through `fmt::write`, which issues a write per piece -- so the line and
+    // the newline were two syscalls, and two agents filing at once could
+    // produce `{a}{b}\n\n`.
+    //
+    // No test pins this: an interleaving of two syscalls is not something a
+    // test can force deterministically, and a test that sometimes reproduced
+    // it would be worse than none. What IS pinned is the consequence being
+    // survivable -- `read_all` skips a torn final line rather than refusing
+    // the store for ever. Treat this as belt and braces behind that.
+    file.write_all(line.as_bytes())
+        .map_err(|error| format!("write {}: {error}", path.display()))?;
     // A reported bug is the one thing nobody will think to re-file.
     file.sync_all()
         .map_err(|error| format!("sync {}: {error}", path.display()))?;
@@ -339,13 +389,20 @@ pub struct BugSummary {
 ///
 /// This is where the dedupe lives, now that the store is append-only: the
 /// lines are sightings and a bug is a group of them.
+fn path_text(resolver: &PathResolver) -> String {
+    store_path(resolver).to_string_lossy().into_owned()
+}
+
 pub fn summarize(resolver: &PathResolver) -> Result<Vec<BugSummary>, String> {
     let mut bugs: Vec<BugSummary> = Vec::new();
     for record in read_all(resolver)? {
+        // A record with no fingerprint cannot be grouped, and defaulting it to
+        // the empty string would merge every such line into one invented bug.
         let fingerprint = record
             .get("fingerprint")
             .and_then(Value::as_str)
-            .unwrap_or_default()
+            .filter(|fingerprint| !fingerprint.is_empty())
+            .ok_or_else(|| format!("{}: a record with no fingerprint", path_text(resolver)))?
             .to_owned();
         let at = record
             .get("at")
@@ -357,8 +414,16 @@ pub fn summarize(resolver: &PathResolver) -> Result<Vec<BugSummary>, String> {
             bug.last_seen_at = at;
             continue;
         }
+        // Only a first sighting carries the body. One that is missing it for a
+        // fingerprint nothing has introduced is a record whose first sighting
+        // was lost, which is worth saying rather than showing as a blank bug.
         let report = serde_json::from_value::<AgentBugReport>(
-            record.get("report").cloned().unwrap_or(Value::Null),
+            record.get("report").cloned().ok_or_else(|| {
+                format!(
+                    "{}: {fingerprint} has no first sighting",
+                    path_text(resolver)
+                )
+            })?,
         )
         .map_err(|error| format!("read bug report {fingerprint}: {error}"))?;
         bugs.push(BugSummary {
@@ -384,13 +449,37 @@ pub fn read_all(resolver: &PathResolver) -> Result<Vec<Value>, String> {
         Err(error) => return Err(format!("read {}: {error}", path.display())),
     };
     let mut records = Vec::new();
+    // A file that does not end in a newline has a final line that was cut off
+    // mid-append -- a crash, a full disk. That one line is skipped, loudly,
+    // because the alternative is that one bad write makes every future filing
+    // fail: `record` reads the store before it writes. A malformed line
+    // anywhere else is corruption and still an error.
+    let complete = text.ends_with('\n');
+    let total = text.lines().count();
     for (index, raw_line) in text.lines().enumerate() {
         let line = raw_line.trim();
         if line.is_empty() {
             continue;
         }
-        let value = serde_json::from_str::<Value>(line)
-            .map_err(|error| format!("parse {} line {}: {error}", path.display(), index + 1))?;
+        let torn_tail = !complete && index + 1 == total;
+        let value = match serde_json::from_str::<Value>(line) {
+            Ok(value) => value,
+            Err(error) if torn_tail => {
+                crate::debug_logging::log_lifecycle_always(
+                    "bug report store has a torn final line",
+                    "bug-reports",
+                    Some(json!({ "path": path.to_string_lossy(), "error": error.to_string() })),
+                );
+                continue;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "parse {} line {}: {error}",
+                    path.display(),
+                    index + 1
+                ));
+            }
+        };
         if value.get("kind").and_then(Value::as_str) != Some(BUG_REPORT_RECORD_KIND) {
             return Err(format!(
                 "{} line {} is not a {BUG_REPORT_RECORD_KIND}",

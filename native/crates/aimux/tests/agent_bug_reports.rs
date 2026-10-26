@@ -6,7 +6,8 @@
 
 use aimux::agent_bug_reports::{
     AgentBugReport, BUG_REPORT_RECORD_KIND, BugReportOutcome, BugReportRefusal,
-    DISTINCT_BUG_BUDGET, SIGHTINGS_PER_BUG, is_enabled, read_all, record, store_path, summarize,
+    DISTINCT_BUG_BUDGET, SIGHTINGS_PER_BUG, is_enabled, read_all, record, sanitized_tool,
+    store_path, summarize,
 };
 use aimux::paths::PathResolver;
 use serde_json::{Value, json};
@@ -569,10 +570,125 @@ fn a_record_missing_its_report_is_an_error_not_an_empty_bug() {
     )
     .expect("write");
     let error = summarize(&machine.resolver()).expect_err("a record with no report is an error");
-    assert!(error.contains("read bug report"), "{error}");
+    assert!(
+        error.contains("no first sighting"),
+        "a fingerprint whose first sighting is missing is named, not shown blank: {error}"
+    );
+}
 
-    // And a final line cut off mid-write.
+/// A final line cut off mid-append is survivable; a bad line in the middle is
+/// not.
+///
+/// `record` reads the store before it writes, so treating every malformed line
+/// as a hard error meant one interrupted append -- a crash, a full disk --
+/// would make `bug list` AND every future filing fail for ever. A file that
+/// does not end in a newline has exactly one suspect line, at the end, and
+/// skipping it costs one sighting. A malformed line anywhere else is
+/// corruption and still refuses, because then the file is not what it claims
+/// to be.
+#[test]
+fn a_torn_final_line_is_skipped_and_a_torn_middle_line_is_not() {
+    let machine = Machine::new("torn");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+    file(&machine, &report()).expect("stored");
+    let path = store_path(&machine.resolver());
+    let good = fs::read_to_string(&path).expect("read");
+
+    // Interrupted mid-append: no trailing newline, so the last line is the
+    // only one that can be half-written.
     fs::write(&path, format!("{good}{{\"kind\":\"ag")).expect("write");
-    let error = summarize(&machine.resolver()).expect_err("a torn line is an error");
-    assert!(error.contains("line 2"), "{error}");
+    let bugs = summarize(&machine.resolver()).expect("a torn tail does not brick the store");
+    assert_eq!(bugs.len(), 1, "the complete records are still readable");
+
+    // And filing still works, which is the point.
+    let mut next = report();
+    next.what = "something else broke".into();
+    file(&machine, &next).expect("a torn tail does not stop the next filing");
+
+    // The same damage in the middle of the file is corruption.
+    fs::write(&path, format!("{{\"kind\":\"ag\n{good}")).expect("write");
+    let error = summarize(&machine.resolver()).expect_err("a torn middle line is an error");
+    assert!(error.contains("line 1"), "{error}");
+}
+
+/// The tool name cannot carry a secret.
+///
+/// It arrives from `AIMUX_TOOL`, and a shell sets the environment of its own
+/// children -- so an agent can put anything there, including the contents of a
+/// file. setting `AIMUX_TOOL` to the contents of a private key and filing a report would
+/// otherwise have written a private key into a store meant to be readable by
+/// someone else, which is the category the standard is most explicit about.
+#[test]
+fn a_tool_name_that_could_carry_a_secret_is_recorded_as_unknown() {
+    let machine = Machine::new("tool-name");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+
+    for hostile in [
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA",
+        "/Users/sam/cs/private-repo/src/secrets.rs",
+        "claude; cat ~/.aws/credentials",
+        "AKIAIOSFODNN7EXAMPLE",
+        &"x".repeat(500),
+        "",
+        "   ",
+    ] {
+        assert_eq!(
+            sanitized_tool(hostile),
+            "unknown",
+            "{hostile:?} is not a tool name"
+        );
+    }
+    // And the real ones survive, or the guard would just erase the field.
+    for real in ["claude", "codex", "aider", "claude-5"] {
+        assert_eq!(sanitized_tool(real), real);
+    }
+
+    let stored = record(
+        &machine.resolver(),
+        &report(),
+        "49ded980156d91ab8ecbc5dc",
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "local-abc1234",
+        "2026-10-26T00:00:00.000Z",
+    )
+    .expect("filed");
+    assert!(matches!(stored, BugReportOutcome::Filed { .. }));
+    let lines = fs::read_to_string(store_path(&machine.resolver())).expect("read");
+    assert!(
+        !lines.contains("PRIVATE KEY"),
+        "nothing resembling a key reaches the store: {lines}"
+    );
+    assert!(lines.contains("\"tool\":\"unknown\""), "{lines}");
+}
+
+/// A repeat sighting does not store a second copy of the report.
+///
+/// `summarize` surfaces the first sighting's detail, so storing each later
+/// one's repro and evidence would be tens of kilobytes per bug that nothing
+/// reads -- in a store whose whole purpose is being readable by someone who
+/// does not have the machine.
+#[test]
+fn a_repeat_sighting_carries_no_second_copy_of_the_report() {
+    let machine = Machine::new("no-second-copy");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+    file(&machine, &report()).expect("filed");
+
+    let mut again = report();
+    again.evidence = Some("a second agent's much longer excerpt".into());
+    file(&machine, &again).expect("counted");
+
+    let records = read_all(&machine.resolver()).expect("read");
+    assert_eq!(records.len(), 2, "two sightings");
+    assert!(records[0].get("report").is_some(), "the first carries it");
+    assert!(
+        records[1].get("report").is_none(),
+        "the second does not: {:?}",
+        records[1]
+    );
+    assert!(
+        !fs::read_to_string(store_path(&machine.resolver()))
+            .expect("read")
+            .contains("much longer excerpt"),
+        "and the text nothing would surface is not on disk"
+    );
 }

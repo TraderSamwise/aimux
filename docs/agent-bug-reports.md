@@ -40,8 +40,10 @@ fields that do take text are capped.
 | `observed` | one line |
 | `repro` | the shortest sequence that shows it, as aimux commands |
 | `evidence` | optional, capped: the smallest excerpt of **aimux's own** output or logs that shows the failure |
-| `build` | filled in automatically: version, build stamp, platform |
+| `build` | filled in automatically: the aimux version |
 | `at` | filled in automatically |
+| `machineId` | filled in automatically: the opaque id from `machine.json`, never the machine's name, which is a hostname |
+| `tool` | filled in automatically: which agent tool was running, reduced to a short lowercase word or `unknown` |
 
 ### What a report must never contain
 
@@ -56,7 +58,9 @@ written on, and it is written by an agent that has the user's repository open.
   commands in `repro`.
 - **No credentials, tokens, keys or URLs with secrets in them** — and because
   that cannot be checked reliably, no raw log lines that were not produced by
-  aimux itself.
+  aimux itself. The automatic fields are held to the same rule: `tool` comes
+  from the agent's own environment, which the agent controls, so it is reduced
+  to a short lowercase word or recorded as `unknown`.
 - **No prompts or model output**, the user's or the agent's.
 - **No other user's data** in any form.
 
