@@ -1,7 +1,7 @@
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 
-use crate::atomic_write::write_json_atomic;
+use crate::atomic_write::{quarantine_corrupt_file, write_json_atomic};
 use crate::host_capacity::{
     LAUNCH_SPACING, available_memory_bytes, launch_capacity, memory_floor_bytes,
 };
@@ -10,19 +10,56 @@ use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
+use super::restore_snapshot::log_restore_state_failure;
 use super::runtime_adapter::ProjectLifecycleRuntime;
 use super::session_liveness::LiveWindows;
 use super::{
     array_field, json_error, lifecycle_transition_with_phase, now_iso, object_insert_mut,
-    read_json_object, resume_agent_session, string_array_field, string_field, trimmed_string,
+    resume_agent_session, string_array_field, string_field, trimmed_string,
 };
+
+/// How an offer was answered, because the two answers do not last the same
+/// length of time.
+///
+/// Accepting a restore that did not work must not mute the next restart -- that
+/// is how twenty agents once went offline with no prompt, and why the
+/// acknowledgement is scoped to the boot that made it. Dismissing is the
+/// opposite: it is an answer about this fleet, not about this occasion, and
+/// because it was scoped to a boot as well it did not stick. That is why a
+/// reinstall re-offered agents that died six weeks earlier and had already been
+/// turned down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AgentRestoreAnswer {
+    /// The user asked for them back. Spent by the boot that made it, because
+    /// the restore that mutes everything after it is the one that did not work.
+    Restored,
+    /// The user said no. The one lasting answer, and the only variant a human
+    /// authors: it lasts until those agents have been alive again.
+    Dismissed,
+    /// Nobody answered -- there was nothing left to offer, because the sessions
+    /// the offer named stopped being restorable. Spent with the boot. Some of
+    /// the paths that reach this run on their own, such as the retired-worktree
+    /// reaper, so it must not read as a human saying no.
+    Lapsed,
+}
+
+impl AgentRestoreAnswer {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Restored => "restored",
+            Self::Dismissed => "dismissed",
+            Self::Lapsed => "lapsed",
+        }
+    }
+}
 
 pub(crate) fn read_displayable_agent_restore_offer(
     context: &ProjectServiceRequestContext,
     project_state_dir: &Path,
 ) -> Option<Value> {
     let offer = read_agent_restore_offer(project_state_dir)?;
-    if agent_restore_offer_has_prompt_gate(context, project_state_dir, &offer) {
+    let project_id = compute_project_id(context.project_root());
+    if agent_restore_offer_is_current(project_state_dir, &project_id, &offer) {
         Some(offer)
     } else {
         remove_agent_restore_offer(project_state_dir);
@@ -66,7 +103,7 @@ pub(super) fn route_agent_restore_previous(
             }),
         );
     };
-    acknowledge_agent_restore_offer(&project_state_dir);
+    acknowledge_agent_restore_offer(&project_state_dir, AgentRestoreAnswer::Restored);
     let session_ids = string_array_field(offer.get("sessionIds"));
     let transitions = session_ids
         .iter()
@@ -124,18 +161,33 @@ pub(super) fn route_agent_restore_previous(
 pub(super) fn route_agent_dismiss_restore_previous(
     context: &ProjectServiceRequestContext,
 ) -> ProjectServiceDispatchResponse {
-    acknowledge_agent_restore_offer(&context.project_state_dir());
+    acknowledge_agent_restore_offer(&context.project_state_dir(), AgentRestoreAnswer::Dismissed);
     ProjectServiceDispatchResponse::json(200, json!({ "ok": true }))
 }
 
 pub(super) fn read_agent_restore_offer(project_state_dir: &Path) -> Option<Value> {
     let path = agent_restore_offer_path(project_state_dir);
-    if !path.exists() {
-        return None;
-    }
-    let parsed = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())?;
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            // Not the same answer as "there is no offer". An unreadable file
+            // read as absent would hide a crash the user still has to answer,
+            // and say nothing about why.
+            log_restore_state_failure("read restore offer", project_state_dir, &error.to_string());
+            return None;
+        }
+    };
+    let parsed = match serde_json::from_str::<Value>(&text) {
+        Ok(parsed) => parsed,
+        // Quarantined, so it is genuinely absent rather than a read that keeps
+        // failing for ever -- the same treatment the snapshot beside it gets.
+        Err(error) => {
+            log_restore_state_failure("parse restore offer", project_state_dir, &error.to_string());
+            quarantine_corrupt_file(&path);
+            return None;
+        }
+    };
     if parsed.get("source").and_then(Value::as_str) == Some("restorable-inventory") {
         let _ = std::fs::remove_file(path);
         return None;
@@ -152,6 +204,36 @@ fn normalize_agent_restore_offer(value: &Value) -> Option<Value> {
     let id = trimmed_string(value.get("id")).unwrap_or_else(|| format!("restore-{snapshot_id}"));
     let created_at = trimmed_string(value.get("createdAt")).unwrap_or_else(|| now.clone());
     let updated_at = trimmed_string(value.get("updatedAt")).unwrap_or(now);
+    // Normalize rebuilds the object from scratch, so a field not listed here is
+    // dropped on the way back to disk. The boot stamp is what scopes the offer
+    // to one occasion; losing it would make every offer foreign.
+    let daemon_boot_id = trimmed_string(value.get("daemonBootId"));
+    // Which run last recorded these agents. An answer of "no" is about this
+    // fleet, and this is what changes once they have been alive again.
+    let writer_instance_id = trimmed_string(value.get("writerInstanceId"));
+    // What a retry offer is: the leftovers of a restore that stopped short, and
+    // the reason it stopped. Carried so the prompt can say so instead of
+    // reading as the same question asked again.
+    let offered = sessions
+        .iter()
+        .map(|session| string_field(session, "id"))
+        .collect::<std::collections::BTreeSet<_>>();
+    let restore_failures = value
+        .get("restoreFailures")
+        .and_then(Value::as_array)
+        .map(|failures| {
+            // Normalize drops id-less and duplicate sessions, so it can shrink
+            // an offer too -- and then the headline's count would exceed the
+            // agents listed under it. Every other field here is validated on
+            // the way through; this one is no different.
+            failures
+                .iter()
+                .filter(|failure| offered.contains(&string_field(failure, "sessionId")))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .filter(|failures| !failures.is_empty());
+
     let session_ids = sessions
         .iter()
         .map(|session| Value::String(string_field(session, "id")))
@@ -161,6 +243,9 @@ fn normalize_agent_restore_offer(value: &Value) -> Option<Value> {
         "id": id,
         "snapshotId": snapshot_id,
         "snapshotUpdatedAt": snapshot_updated_at,
+        "daemonBootId": daemon_boot_id,
+        "writerInstanceId": writer_instance_id,
+        "restoreFailures": restore_failures,
         "source": "last-online",
         "createdAt": created_at,
         "updatedAt": updated_at,
@@ -241,11 +326,14 @@ pub(super) fn reconcile_agent_restore_offer(
         .filter(|session| restorable.contains(string_field(session, "id").as_str()))
         .collect::<Vec<_>>();
     if sessions.len() == array_field(&offer, "sessions").len() {
-        mark_agent_restore_prompt_gate_asked(context, project_state_dir, &offer);
+        mark_agent_restore_prompt_gate_asked(context, project_state_dir);
         return Some(offer);
     }
     if sessions.is_empty() {
-        acknowledge_agent_restore_offer(project_state_dir);
+        // Reached only from the restore route, so the user did press restore --
+        // and nothing the offer named is restorable any more. Spent with the
+        // boot, like any acceptance.
+        acknowledge_agent_restore_offer(project_state_dir, AgentRestoreAnswer::Restored);
         return None;
     }
     let mut updated = offer.clone();
@@ -267,24 +355,22 @@ pub(super) fn reconcile_agent_restore_offer(
         "worktreeGroups",
         Value::Array(build_agent_restore_worktree_groups(&sessions)),
     );
-    let _ = write_json_atomic(agent_restore_offer_path(project_state_dir), &updated);
-    mark_agent_restore_prompt_gate_asked(context, project_state_dir, &updated);
+    retain_offered_restore_failures(&mut updated);
+    if let Err(error) = write_json_atomic(agent_restore_offer_path(project_state_dir), &updated) {
+        log_restore_state_failure(
+            "reconcile restore offer",
+            project_state_dir,
+            &error.to_string(),
+        );
+    }
+    mark_agent_restore_prompt_gate_asked(context, project_state_dir);
     Some(updated)
 }
 
-/// The boot the prompt gate was seeded for, which is what an acknowledgement
-/// is answering. Read from the gate rather than recomputed, so the two cannot
-/// disagree about which occasion this is.
-fn current_daemon_boot_id(project_state_dir: &Path) -> Option<String> {
-    trimmed_string(
-        Value::Object(read_json_object(&agent_restore_prompt_gate_path(
-            project_state_dir,
-        )))
-        .get("daemonBootId"),
-    )
-}
-
-pub(super) fn acknowledge_agent_restore_offer(project_state_dir: &Path) {
+pub(super) fn acknowledge_agent_restore_offer(
+    project_state_dir: &Path,
+    answer: AgentRestoreAnswer,
+) {
     if let Some(offer) = read_agent_restore_offer(project_state_dir) {
         let snapshot_id = string_field(&offer, "snapshotId");
         if !snapshot_id.is_empty() {
@@ -292,21 +378,76 @@ pub(super) fn acknowledge_agent_restore_offer(project_state_dir: &Path) {
             // only a set of agents, and the set does not change when they are
             // killed and restarted, so one acknowledgement muted every
             // restart that followed.
-            let _ = write_json_atomic(
+            if let Err(error) = write_json_atomic(
                 agent_restore_ack_path(project_state_dir),
                 &json!({
                     "version": 1,
                     "snapshotId": snapshot_id,
-                    "daemonBootId": current_daemon_boot_id(project_state_dir),
+                    // The occasion being answered is the one the offer was
+                    // authorized under, which the offer itself carries. Reading
+                    // it back off the gate meant two readers of "which boot is
+                    // this" -- the gate's top-level field and its per-project
+                    // one -- that could disagree for a project with no gate.
+                    "daemonBootId": trimmed_string(offer.get("daemonBootId")),
+                    // Which fleet was answered, so a dismissal can last until
+                    // those agents have been alive again without muting a
+                    // genuinely new death of the same set -- the set alone
+                    // cannot tell those apart, because the snapshot id is
+                    // reused whenever the set is unchanged.
+                    "writerInstanceId": trimmed_string(offer.get("writerInstanceId")),
+                    "answer": answer.as_str(),
                     "source": "last-online",
                     "acknowledgedAt": now_iso(),
                 }),
-            );
+            ) {
+                // The one durable record of a "no". Dropping it silently means
+                // the next boot asks again about a fleet the user turned down.
+                log_restore_state_failure(
+                    "record restore answer",
+                    project_state_dir,
+                    &error.to_string(),
+                );
+            }
         }
     }
     remove_agent_restore_offer(project_state_dir);
 }
 
+/// Keep a recorded failure only while the session it names is still offered.
+///
+/// `restoreFailures` describes one attempt, and every later writer clones the
+/// offer forward -- so an agent that came back on its own would otherwise stay
+/// named as a failure in the prompt. When the last one goes the fields go with
+/// it, and the prompt reads as a first offer again, which is what it is.
+pub(super) fn retain_offered_restore_failures(offer: &mut Value) {
+    let Some(failures) = offer.get("restoreFailures").and_then(Value::as_array) else {
+        return;
+    };
+    let offered = array_field(offer, "sessions")
+        .iter()
+        .map(|session| string_field(session, "id"))
+        .collect::<std::collections::BTreeSet<_>>();
+    let kept = failures
+        .iter()
+        .filter(|failure| offered.contains(&string_field(failure, "sessionId")))
+        .cloned()
+        .collect::<Vec<_>>();
+    if kept.is_empty() {
+        if let Value::Object(offer) = offer {
+            offer.remove("restoreFailures");
+        }
+        return;
+    }
+    object_insert_mut(offer, "restoreFailures", Value::Array(kept));
+}
+
+/// Offer back whatever a restore could not bring up, saying what stopped it.
+///
+/// The usual reason is the host refusing on memory: restoring resumes every
+/// agent's task and those tasks run test suites, so the route asks the host
+/// between launches and stops while it can still say no. Without the reason
+/// travelling with the leftovers, the next prompt read as aimux asking the
+/// same question again.
 pub(super) fn write_agent_restore_retry_offer(
     project_state_dir: &Path,
     offer: &Value,
@@ -329,6 +470,7 @@ pub(super) fn write_agent_restore_retry_offer(
     }
     let mut retry = offer.clone();
     object_insert_mut(&mut retry, "updatedAt", Value::String(now_iso()));
+    object_insert_mut(&mut retry, "restoreFailures", Value::Array(failed.to_vec()));
     object_insert_mut(
         &mut retry,
         "sessionIds",
@@ -345,32 +487,141 @@ pub(super) fn write_agent_restore_retry_offer(
         "worktreeGroups",
         Value::Array(build_agent_restore_worktree_groups(&sessions)),
     );
-    let _ = write_json_atomic(agent_restore_offer_path(project_state_dir), &retry);
+    // After `sessions` is in place, not before: `sessions` is the failures
+    // intersected with what was offered, so a failure naming anything else has
+    // nothing to sit beside -- and filtering against the pre-trim list would
+    // have kept it.
+    retain_offered_restore_failures(&mut retry);
+    if let Err(error) = write_json_atomic(agent_restore_offer_path(project_state_dir), &retry) {
+        log_restore_state_failure(
+            "write restore retry offer",
+            project_state_dir,
+            &error.to_string(),
+        );
+    }
 }
 
-fn agent_restore_offer_has_prompt_gate(
-    context: &ProjectServiceRequestContext,
+/// The boot gate for one project, which is the only thing that authorizes
+/// showing an offer. Read in one place so the snapshot id and the boot id
+/// always come from the same gate object.
+///
+/// One global file for every project, so a corrupt one disables the prompt
+/// everywhere. It is quarantined and logged rather than read as an empty
+/// object: silently answering "no gate" for every project on the machine is
+/// how a crash goes unoffered with nothing to say why. The daemon re-seeds the
+/// file at its next boot.
+pub(super) fn read_agent_restore_prompt_gate(
     project_state_dir: &Path,
-    offer: &Value,
-) -> bool {
-    let project_id = compute_project_id(context.project_root());
-    let snapshot_id = string_field(offer, "snapshotId");
-    read_json_object(&agent_restore_prompt_gate_path(project_state_dir))
+    project_id: &str,
+) -> Option<Value> {
+    read_agent_restore_prompt_gate_file(project_state_dir)?
         .get("projects")
         .and_then(Value::as_object)
-        .and_then(|projects| projects.get(&project_id))
-        .is_some_and(|gate| string_field(gate, "snapshotId") == snapshot_id)
+        .and_then(|projects| projects.get(project_id))
+        .cloned()
 }
 
+/// The whole gate file, or nothing with a reason logged.
+fn read_agent_restore_prompt_gate_file(project_state_dir: &Path) -> Option<Value> {
+    let path = agent_restore_prompt_gate_path(project_state_dir);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            log_restore_state_failure(
+                "read restore prompt gates",
+                project_state_dir,
+                &error.to_string(),
+            );
+            return None;
+        }
+    };
+    match serde_json::from_str::<Value>(&text) {
+        Ok(state) => Some(state),
+        Err(error) => {
+            log_restore_state_failure(
+                "parse restore prompt gates",
+                project_state_dir,
+                &error.to_string(),
+            );
+            // Quarantined so it stops failing for ever; the daemon rewrites it
+            // whole at its next boot. It renames whatever is at the path now,
+            // so a file re-seeded in the meantime is moved aside too -- which
+            // costs a boot's gates and is still better than a file nothing can
+            // read.
+            quarantine_corrupt_file(&path);
+            None
+        }
+    }
+}
+
+/// Whether an offer on disk belongs to the occasion that is open right now.
+///
+/// Keying on the snapshot id alone was not enough. The snapshot is deliberately
+/// retentive, so its id changes only when the SET of agents changes -- and an
+/// unanswered offer therefore matched every later boot's re-seeded gate for
+/// ever. On this machine that left eight live offer files, the oldest written
+/// 2026-09-09, each frozen at whatever subset the last partial restore or decay
+/// had left it (one project's snapshot held twenty agents and its offer held
+/// one), re-prompting on every new dashboard process because the dashboard's
+/// dismissal is only in memory.
+///
+/// An offer with no boot stamp cannot be attributed to an occasion, so it is
+/// foreign -- the same reasoning `acknowledgement_still_applies` uses for an
+/// undatable acknowledgement. Both display surfaces ask this one question, so a
+/// read can never show an offer the derive would have deleted.
+///
+/// The boot, and only the boot. The gate also records the snapshot generation
+/// it was seeded with, and comparing that too is not extra safety -- it is a
+/// spin. The generation rolls whenever the SET of agents changes, and the
+/// derive now offers whatever generation is on disk, so an offer written after
+/// a roll would carry a generation the gate does not. This predicate would
+/// then reject the offer the derive had just written, every tick, for ever.
+/// What is live and what is still restorable are already trimmed by
+/// `decay_existing_offer` and `reconcile_agent_restore_offer`.
+pub(super) fn agent_restore_offer_is_current(
+    project_state_dir: &Path,
+    project_id: &str,
+    offer: &Value,
+) -> bool {
+    let Some(gate) = read_agent_restore_prompt_gate(project_state_dir, project_id) else {
+        return false;
+    };
+    match (
+        trimmed_string(gate.get("daemonBootId")),
+        trimmed_string(offer.get("daemonBootId")),
+    ) {
+        (Some(current), Some(offered)) => current == offered,
+        _ => false,
+    }
+}
+
+/// Record that this boot's question has been accepted for this project.
+///
+/// Reached from the restore route alone, so the field named `askedAt` means the
+/// user pressed restore. Saying no is recorded durably in the per-project ack;
+/// deferring with Esc records nothing at all, so a deferred prompt is shown
+/// again at the next look, which is what deferring means.
+///
+/// Per boot, not per snapshot generation. It used to take the offer and require
+/// the gate's generation to match it, which meant an offer accepted after an
+/// unrelated agent started was never recorded at all.
 fn mark_agent_restore_prompt_gate_asked(
     context: &ProjectServiceRequestContext,
     project_state_dir: &Path,
-    offer: &Value,
 ) {
     let path = agent_restore_prompt_gate_path(project_state_dir);
-    let mut state = read_json_object(&path);
+    // Read through the same door as everything else, so an unreadable gate file
+    // is reported rather than silently treated as having no gates at all.
+    let Some(mut state) =
+        read_agent_restore_prompt_gate_file(project_state_dir).and_then(|state| match state {
+            Value::Object(state) => Some(state),
+            _ => None,
+        })
+    else {
+        return;
+    };
     let project_id = compute_project_id(context.project_root());
-    let snapshot_id = string_field(offer, "snapshotId");
     let now = now_iso();
     let Some(Value::Object(projects)) = state.get_mut("projects") else {
         return;
@@ -378,14 +629,21 @@ fn mark_agent_restore_prompt_gate_asked(
     let Some(Value::Object(gate)) = projects.get_mut(&project_id) else {
         return;
     };
-    if gate.get("snapshotId").and_then(Value::as_str) != Some(snapshot_id.as_str())
-        || gate.get("askedAt").and_then(Value::as_str).is_some()
-    {
+    // Once per boot, whatever generation was on offer. Requiring the gate's
+    // generation to match meant an offer answered after an unrelated agent
+    // started was never recorded as asked at all.
+    if gate.get("askedAt").and_then(Value::as_str).is_some() {
         return;
     }
     gate.insert("askedAt".into(), Value::String(now.clone()));
     state.insert("updatedAt".into(), Value::String(now));
-    let _ = write_json_atomic(path, &Value::Object(state));
+    if let Err(error) = write_json_atomic(path, &Value::Object(state)) {
+        log_restore_state_failure(
+            "record restore acceptance",
+            project_state_dir,
+            &error.to_string(),
+        );
+    }
 }
 
 pub(super) fn build_agent_restore_worktree_groups(sessions: &[Value]) -> Vec<Value> {

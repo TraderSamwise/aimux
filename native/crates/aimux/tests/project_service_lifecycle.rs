@@ -6472,6 +6472,10 @@ fn write_restore_previous_offer_and_gate(aimux_home: &Path, state_dir: &Path, pr
             "id": "restore-snapshot-old",
             "snapshotId": "snapshot-old",
             "snapshotUpdatedAt": "2026-01-01T00:00:00.000Z",
+            // An offer is authorized by one boot gate and is foreign without
+            // that stamp, so the fixture writes the offer the gate below
+            // authorized rather than an unattributable one.
+            "daemonBootId": "boot-1",
             "createdAt": "2026-01-01T00:00:01.000Z",
             "updatedAt": "2026-01-01T00:00:01.000Z",
             "sessions": [

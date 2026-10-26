@@ -9,6 +9,7 @@ use crate::dashboard_model::{AgentRestoreOffer, DashboardSession, WorktreeGroup}
 use crate::dashboard_renderer::WORKTREE_CHECKOUT_MISSING_LABEL;
 use crate::tui_render::theme::{Tone, keycap, keycap_hints, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -368,16 +369,49 @@ pub fn render_agent_restore_confirm_overlay(
     rows: usize,
 ) -> String {
     let total = offer.session_ids.len();
-    let mut body = vec![format!(
-        "  {}",
-        style(
-            &format!("{total} agent session(s) from the previous run can be restored."),
-            Tone::Muted,
-        )
-    )];
+    // A retry offer is the leftovers of a restore that did not fully land, and
+    // it was rendered as if it were a fresh question -- so the reason those
+    // agents did not come back, usually the host refusing on memory, was shown
+    // once in the footer and never again. Same clause the footer used.
+    //
+    // The next look is where this lands, not the keypress: pressing restore
+    // sets `agent_restore_prompt_dismissed` for the life of that dashboard
+    // process, and the footer reports that attempt's outcome there. This is for
+    // whoever opens the dashboard afterwards, which is exactly when a retry
+    // offer otherwise reads as the same question asked again.
+    let failures = offer
+        .extra
+        .get("restoreFailures")
+        .and_then(Value::as_array)
+        .filter(|failures| !failures.is_empty());
+    let headline = match failures {
+        Some(failures) => crate::agent_restore_outcome::restore_failures_message(failures),
+        None => format!("{total} agent session(s) from the previous run can be restored."),
+    };
+    let mut body = vec![format!("  {}", style(&headline, Tone::Muted))];
     body.push(String::new());
     for session in offer.sessions.iter().take(8) {
-        body.push(format!("  {}", style(&session.id, Tone::Muted)));
+        // The reason beside the agent it belongs to, because the headline is one
+        // line in a box that truncates: on a narrow terminal the clause loses
+        // its tail, and the tail is where the later agents' reasons are.
+        let reason = failures
+            .into_iter()
+            .flatten()
+            .find(|failure| {
+                failure.get("sessionId").and_then(Value::as_str) == Some(session.id.as_str())
+            })
+            .and_then(|failure| failure.get("error"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|error| !error.is_empty());
+        body.push(match reason {
+            Some(reason) => format!(
+                "  {}  {}",
+                style(&session.id, Tone::Muted),
+                style(reason, Tone::Muted)
+            ),
+            None => format!("  {}", style(&session.id, Tone::Muted)),
+        });
     }
     if total > 8 {
         body.push(format!(
@@ -386,9 +420,18 @@ pub fn render_agent_restore_confirm_overlay(
         ));
     }
     body.push(String::new());
-    body.push(modal_hints("[Enter/y] restore  [n/Esc] not now"));
+    // Three outcomes, three words: restore them, never ask again, or ask me
+    // later. The old hint read "[n/Esc] not now" for a key that answered for
+    // good.
+    body.push(modal_hints(
+        "[Enter/y] restore  [n] don't ask again  [Esc] not now",
+    ));
     render_overlay_box(&OverlayBoxSpec {
-        title: "Restore Previous Agents",
+        title: if failures.is_some() {
+            "Restore Agents That Did Not Come Back"
+        } else {
+            "Restore Previous Agents"
+        },
         body: &body,
         cols,
         rows,
@@ -915,4 +958,91 @@ pub fn render_bulk_graveyard_report_overlay(
         variant: OverlayVariant::Red,
         icon: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dashboard_model::AgentRestoreSession;
+    use serde_json::json;
+
+    fn offer(extra: serde_json::Map<String, Value>) -> AgentRestoreOffer {
+        AgentRestoreOffer {
+            id: "restore-online-1".into(),
+            updated_at: "2026-10-25T00:00:00.000Z".into(),
+            session_ids: vec!["codex-one".into(), "claude-two".into()],
+            sessions: ["codex-one", "claude-two"]
+                .into_iter()
+                .map(|id| AgentRestoreSession {
+                    id: id.into(),
+                    team: None,
+                    overseer: None,
+                    scribe: None,
+                    project_control: None,
+                    extra: BTreeMap::new(),
+                })
+                .collect(),
+            extra: extra.into_iter().collect(),
+        }
+    }
+
+    /// A restore that stopped short writes a retry offer for the leftovers, and
+    /// that offer was rendered as if it were a fresh "restore previous agents?"
+    /// question. The reason those agents did not come back -- usually the host
+    /// refusing on memory, which is why the restore stops rather than taking
+    /// the machine off the network -- appeared once in the footer and was then
+    /// unreachable, so the prompt looked like aimux asking the same thing again.
+    #[test]
+    fn a_prompt_for_a_restore_that_stopped_short_says_what_stopped_it() {
+        let failures = json!([
+            { "sessionId": "codex-one", "error": "host is low on memory" },
+            { "sessionId": "claude-two", "error": "host is low on memory" }
+        ]);
+        let mut extra = serde_json::Map::new();
+        extra.insert("restoreFailures".into(), failures);
+
+        let rendered = render_agent_restore_confirm_overlay(&offer(extra), 100, 30);
+        assert!(
+            rendered.contains("RESTORE AGENTS THAT DID NOT COME BACK"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("2 could not be restored"), "{rendered}");
+        // Beside each agent, not only in the headline: the box truncates one
+        // line, and the headline's tail is where the later reasons are. Matched
+        // on a row that is NOT the headline, since the headline names both
+        // agents and both reasons and would satisfy a looser search.
+        // The frame positions rows with cursor moves rather than newlines, so
+        // the cells are what sits between the box's vertical rules.
+        let rows = crate::tui_render::text::strip_ansi(&rendered);
+        for session_id in ["codex-one", "claude-two"] {
+            assert!(
+                rows.split('\u{2502}').any(|row| {
+                    row.contains(session_id)
+                        && row.contains("host is low on memory")
+                        && !row.contains("could not be restored")
+                }),
+                "{session_id} has no reason on its own row: {rows}"
+            );
+        }
+    }
+
+    /// The inverse: a first offer has nothing to report, and must not be dressed
+    /// up as a failure.
+    #[test]
+    fn a_first_prompt_reports_no_failure() {
+        // Both shapes a first offer can have: no key at all, and the key
+        // present but empty, which is what a retry offer decays to once the
+        // last failure it named stopped being offered.
+        let mut empty = serde_json::Map::new();
+        empty.insert("restoreFailures".into(), json!([]));
+        for extra in [serde_json::Map::new(), empty] {
+            let rendered = render_agent_restore_confirm_overlay(&offer(extra), 100, 30);
+            assert!(rendered.contains("RESTORE PREVIOUS AGENTS"), "{rendered}");
+            assert!(
+                rendered.contains("2 agent session(s) from the previous run"),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("could not be restored"), "{rendered}");
+        }
+    }
 }

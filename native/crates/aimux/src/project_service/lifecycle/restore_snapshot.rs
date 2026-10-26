@@ -8,8 +8,10 @@
 //!    cut still leaves a snapshot at most one cadence stale.
 //! 2. An offer derived from that snapshot, but only when a *different* process
 //!    run wrote it. You are never offered agents your own live run recorded.
-//! 3. Per-project prompt gates stamped once at daemon boot, so the offer is
-//!    made once per boot instead of nagged on every refresh.
+//! 3. Per-project prompt gates stamped once at daemon boot. The gate is spent
+//!    by ACCEPTING a restore, not by being shown one: saying no is recorded in
+//!    the per-project acknowledgement, and deferring records nothing, so a
+//!    deferred prompt is shown again the next time someone looks.
 //!
 //! Clean versus unsafe exit is encoded in file existence. An empty snapshot is
 //! never written; deliberate teardown prunes the session and deletes the file
@@ -27,16 +29,20 @@ use crate::paths::{PathResolver, compute_project_id};
 use super::ids::{now_iso, pseudo_uuid_v4};
 use super::json_helpers::{array_field, object_insert_mut, string_field, trimmed_string};
 use super::restore_offer::{
-    acknowledge_agent_restore_offer, agent_restore_ack_path, agent_restore_offer_path,
-    agent_restore_prompt_gate_path, build_agent_restore_worktree_groups,
-    normalize_agent_restore_sessions, read_agent_restore_offer, remove_agent_restore_offer,
+    AgentRestoreAnswer, acknowledge_agent_restore_offer, agent_restore_ack_path,
+    agent_restore_offer_is_current, agent_restore_offer_path, build_agent_restore_worktree_groups,
+    normalize_agent_restore_sessions, read_agent_restore_offer, read_agent_restore_prompt_gate,
+    remove_agent_restore_offer, retain_offered_restore_failures,
 };
-use super::topology_helpers::read_json_object;
 
 /// A read that could not be performed is not the same answer as "nothing was
 /// there". Every caller here has to say which one it got, because treating an
 /// unreadable snapshot as an absent one would silently drop a restore offer.
 pub(crate) type RestoreStateResult<T> = Result<T, String>;
+
+/// What a snapshot written before it recorded an observing run reads as. It
+/// names no fleet, so no answer may be attributed to it -- see `named_fleet`.
+const UNATTRIBUTED_FLEET: &str = "unknown";
 
 /// Identity of this process run, stamped into every snapshot it writes.
 ///
@@ -87,7 +93,7 @@ fn normalize_last_online_snapshot(value: &Value) -> Option<Value> {
         "id": trimmed_string(value.get("id"))
             .unwrap_or_else(|| format!("online-{}", string_field(value, "updatedAt"))),
         "writerInstanceId": trimmed_string(value.get("writerInstanceId"))
-            .unwrap_or_else(|| "unknown".into()),
+            .unwrap_or_else(|| UNATTRIBUTED_FLEET.into()),
         "createdAt": trimmed_string(value.get("createdAt")).unwrap_or_else(|| now.clone()),
         "updatedAt": trimmed_string(value.get("updatedAt")).unwrap_or(now),
         "sessionIds": session_ids(&sessions),
@@ -141,27 +147,36 @@ pub(crate) fn record_last_online_agents(
     // generation id, because the prompt gate and the ack both key on it. The
     // generation id carries across runs for the same reason.
     //
-    // The WRITER id says which process run OBSERVED this set, and the offer is
-    // derived precisely when a different run wrote it. So it carries over only
-    // while this run has observed nothing online and the record is still the
-    // previous run's observation — the crash case the offer exists for. The
-    // moment this run sees an agent alive, the record becomes its own.
+    // The WRITER id says which process run OBSERVED these agents alive, and the
+    // offer is derived precisely when a different run wrote it. So it carries
+    // over while this run has observed nothing online, and is replaced the
+    // moment this run sees an agent alive.
     //
     // Carrying it over unconditionally made a live run's snapshot look foreign
     // forever: aimux offered to restore ten agents that had been running the
     // whole time, and the restore answered "nothing to restore".
+    //
+    // Carried on `observed_online` ALONE, not on whether the recorded set still
+    // matches. Tying it to the set meant that a snapshot shrinking -- one
+    // session's topology row reaching `graveyard` between two ticks, or
+    // `doctor coherence` rebuilding it -- stamped the record as this run's own
+    // with nothing alive at all, and `derive_agent_restore_offer` then refuses
+    // for the life of the run. Shrinking is not an observation of life, and the
+    // answer it produced was no prompt for agents that really died.
     let reuse = existing
         .as_ref()
         .filter(|previous| same_restore_session_ids(&array_field(previous, "sessions"), &sessions));
+    let observed_fleet = match existing.as_ref().filter(|_| !observed_online) {
+        Some(previous) => trimmed_string(previous.get("writerInstanceId"))
+            .unwrap_or_else(|| project_service_writer_id().to_owned()),
+        None => project_service_writer_id().to_owned(),
+    };
     let snapshot = json!({
         "version": 1,
         "id": reuse
             .map(|previous| string_field(previous, "id"))
             .unwrap_or_else(new_snapshot_id),
-        "writerInstanceId": match reuse.filter(|_| !observed_online) {
-            Some(previous) => string_field(previous, "writerInstanceId"),
-            None => project_service_writer_id().to_owned(),
-        },
+        "writerInstanceId": observed_fleet,
         "createdAt": reuse
             .map(|previous| string_field(previous, "createdAt"))
             .unwrap_or_else(|| now.to_owned()),
@@ -249,6 +264,12 @@ pub(crate) fn remove_last_online_agent_sessions(
 /// they were done with an agent. That is the whole difference between a clean
 /// exit and an unsafe one.
 pub(crate) fn prune_restore_eligibility(project_state_dir: &Path, session_id: &str) {
+    // The snapshot first, deliberately: removing a session from it rolls the
+    // snapshot id, so the acknowledgement the offer trim may write below can
+    // never match a later derive. That matters because two callers are not a
+    // human -- the retired-worktree reaper and the dead-agent reap -- and the
+    // ordering is what keeps an automatic prune from leaving behind an answer
+    // nobody gave.
     let removed = BTreeSet::from([session_id.to_owned()]);
     let now = now_iso();
     if let Err(error) = remove_last_online_agent_sessions(project_state_dir, &removed, &now) {
@@ -275,7 +296,10 @@ fn remove_agent_restore_offer_sessions(
         return;
     }
     if sessions.is_empty() {
-        acknowledge_agent_restore_offer(project_state_dir);
+        // The last agent the offer named is no longer restorable. Not a human
+        // saying no: `prune_restore_eligibility` is also reached from the
+        // retired-worktree reaper, which runs on its own.
+        acknowledge_agent_restore_offer(project_state_dir, AgentRestoreAnswer::Lapsed);
         return;
     }
     let mut updated = offer;
@@ -291,6 +315,7 @@ fn remove_agent_restore_offer_sessions(
         Value::Array(build_agent_restore_worktree_groups(&sessions)),
     );
     object_insert_mut(&mut updated, "sessions", Value::Array(sessions));
+    retain_offered_restore_failures(&mut updated);
     if let Err(error) = write_restore_state(&agent_restore_offer_path(project_state_dir), &updated)
     {
         log_restore_state_failure("trim restore offer", project_state_dir, &error);
@@ -312,7 +337,7 @@ pub(crate) fn derive_agent_restore_offer(
 ) -> RestoreStateResult<Option<Value>> {
     let existing = read_agent_restore_offer(project_state_dir);
     if let Some(existing) = existing {
-        if !offer_matches_prompt_gate(project_state_dir, project_id, &existing) {
+        if !agent_restore_offer_is_current(project_state_dir, project_id, &existing) {
             remove_agent_restore_offer(project_state_dir);
         } else {
             return Ok(decay_existing_offer(
@@ -326,19 +351,37 @@ pub(crate) fn derive_agent_restore_offer(
     let Some(snapshot) = read_last_online_agents_snapshot(project_state_dir)? else {
         return Ok(None);
     };
-    if string_field(&snapshot, "writerInstanceId") == project_service_writer_id() {
+    let writer_instance_id = string_field(&snapshot, "writerInstanceId");
+    if writer_instance_id == project_service_writer_id() {
         return Ok(None);
     }
     let snapshot_id = string_field(&snapshot, "id");
     let Some(gate) = read_agent_restore_prompt_gate(project_state_dir, project_id) else {
         return Ok(None);
     };
-    if string_field(&gate, "snapshotId") != snapshot_id
-        || gate.get("askedAt").and_then(Value::as_str).is_some()
-    {
+    // Whether this boot's question has been accepted, which is the gate's whole
+    // job. `askedAt` is stamped by the restore route alone, so pressing restore
+    // is what spends the gate; saying no is recorded durably in the ack beside
+    // it, and deferring with Esc records nothing, which is why a deferred
+    // prompt comes back at the next look.
+    //
+    // The gate also records the generation it was seeded with, and that used to
+    // have to match -- but the generation rolls whenever the SET of agents
+    // changes, so starting one agent after boot left the gate naming a
+    // generation that no longer existed, and the whole fleet dying an hour
+    // later produced no prompt at all.
+    if gate.get("askedAt").and_then(Value::as_str).is_some() {
         return Ok(None);
     }
-    if acknowledgement_still_applies(project_state_dir, &gate, &snapshot_id) {
+    // A gate with no boot stamp authorizes nothing. An offer written without one
+    // reads as foreign on the very next tick, is removed, and is derived again --
+    // for ever, because nothing between those two ticks records that it was
+    // asked: `askedAt` is stamped by the restore route, so it means the user
+    // ACCEPTED, and a dismissal is recorded in the per-project ack instead.
+    let Some(daemon_boot_id) = trimmed_string(gate.get("daemonBootId")) else {
+        return Ok(None);
+    };
+    if acknowledgement_still_applies(project_state_dir, &gate, &snapshot_id, &writer_instance_id) {
         remove_agent_restore_offer(project_state_dir);
         return Ok(None);
     }
@@ -355,6 +398,8 @@ pub(crate) fn derive_agent_restore_offer(
         "id": format!("restore-{snapshot_id}"),
         "snapshotId": snapshot_id,
         "snapshotUpdatedAt": string_field(&snapshot, "updatedAt"),
+        "daemonBootId": daemon_boot_id,
+        "writerInstanceId": writer_instance_id,
         "source": "last-online",
         "createdAt": now,
         "updatedAt": now,
@@ -400,6 +445,7 @@ fn decay_existing_offer(
         Value::Array(build_agent_restore_worktree_groups(&sessions)),
     );
     object_insert_mut(&mut updated, "sessions", Value::Array(sessions));
+    retain_offered_restore_failures(&mut updated);
     if let Err(error) = write_restore_state(&agent_restore_offer_path(project_state_dir), &updated)
     {
         log_restore_state_failure("decay restore offer", project_state_dir, &error);
@@ -411,9 +457,10 @@ fn decay_existing_offer(
 /// Stamp one gate per project at daemon boot, recording the snapshot generation
 /// that was on disk at that moment.
 ///
-/// This is what makes the offer a once-per-boot question: the gate is the only
-/// thing that authorizes displaying an offer, and `restore_offer.rs` marks it
-/// asked the first time the offer is shown.
+/// The gate is the only thing that authorizes displaying an offer, and
+/// `restore_offer.rs` spends it when the user ACCEPTS one -- the field is
+/// called `askedAt`, but the restore route is its only writer. A durable no is
+/// the acknowledgement beside it; deferring writes nothing at all.
 pub fn seed_agent_restore_prompt_gates_for_daemon_boot(
     resolver: &PathResolver,
     daemon_boot_id: &str,
@@ -463,19 +510,6 @@ pub fn seed_agent_restore_prompt_gates_for_daemon_boot(
     Ok(state)
 }
 
-fn read_agent_restore_prompt_gate(project_state_dir: &Path, project_id: &str) -> Option<Value> {
-    read_json_object(&agent_restore_prompt_gate_path(project_state_dir))
-        .get("projects")
-        .and_then(Value::as_object)
-        .and_then(|projects| projects.get(project_id))
-        .cloned()
-}
-
-fn offer_matches_prompt_gate(project_state_dir: &Path, project_id: &str, offer: &Value) -> bool {
-    read_agent_restore_prompt_gate(project_state_dir, project_id)
-        .is_some_and(|gate| string_field(&gate, "snapshotId") == string_field(offer, "snapshotId"))
-}
-
 /// Whether a previous acknowledgement still answers THIS offer.
 ///
 /// An ack answers one occasion, not a set of agents for ever. The snapshot id
@@ -488,15 +522,103 @@ fn offer_matches_prompt_gate(project_state_dir: &Path, project_id: &str, offer: 
 /// The prompt gate beside it is already re-seeded on each daemon boot, which
 /// is exactly the unit of "a new occasion". The ack now carries the same
 /// stamp, so one from a previous boot is spent rather than permanent.
+///
+/// A dismissal is the exception, and it is the other half of the same bug. "No"
+/// is an answer about this fleet, not about this occasion -- but scoped to a
+/// boot it did not stick, so a reinstall re-offered agents that had died six
+/// weeks earlier and had already been turned down. It therefore lasts while the
+/// fleet is unchanged, which is `writerInstanceId` and not the snapshot id: the
+/// snapshot id is reused whenever the SET is unchanged, so keying a lasting
+/// answer on it would mute a genuinely new death of the same agents.
+///
+/// `writerInstanceId` is replaced whenever a run observes an agent online, so
+/// agents that have been alive again are always asked about afresh. It can also
+/// be replaced without an observation -- the session set changing, or
+/// `aimux doctor coherence` rebuilding the snapshot -- which costs one extra
+/// prompt. That is the safe direction; the unsafe one is a fleet nobody is
+/// asked about.
 fn acknowledgement_still_applies(
     project_state_dir: &Path,
     gate: &Value,
     snapshot_id: &str,
+    writer_instance_id: &str,
 ) -> bool {
-    let ack = Value::Object(read_json_object(&agent_restore_ack_path(project_state_dir)));
+    let ack = read_agent_restore_acknowledgement(project_state_dir);
+    // A dismissal is answered about the FLEET, and deliberately not about the
+    // generation: the generation rolls whenever the SET changes, which a single
+    // prune or reap does. Requiring it here cancelled the dismissal one prune
+    // later and re-offered the other nineteen agents -- the exact bug this
+    // whole change is named for, arriving by the back door.
+    if trimmed_string(ack.get("answer")).as_deref() == Some("dismissed") {
+        let answered = trimmed_string(ack.get("writerInstanceId"));
+        let answered_fleet = named_fleet(answered.as_deref());
+        let current_fleet = named_fleet(Some(writer_instance_id));
+        return match (answered_fleet, current_fleet) {
+            (Some(answered), Some(current)) => answered == current,
+            // A dismissal that cannot name the fleet it answered falls back to
+            // the boot rule below rather than lasting for ever.
+            _ => {
+                trimmed_string(ack.get("snapshotId")).as_deref() == Some(snapshot_id)
+                    && boot_acknowledgement_still_applies(&ack, gate)
+            }
+        };
+    }
+    // Every other answer is spent by its boot, and names the generation it
+    // answered about.
     if trimmed_string(ack.get("snapshotId")).as_deref() != Some(snapshot_id) {
         return false;
     }
+    boot_acknowledgement_still_applies(&ack, gate)
+}
+
+/// The answer on disk, or an empty object with a reason logged.
+///
+/// Reading a corrupt acknowledgement as "nothing was answered" costs one extra
+/// prompt rather than a silent mute, which is the right direction -- but it is
+/// the only state file here whose failure said nothing at all, and the whole
+/// point of this corner of the code is that a question is asked for a reason
+/// somebody can find.
+fn read_agent_restore_acknowledgement(project_state_dir: &Path) -> Value {
+    let path = agent_restore_ack_path(project_state_dir);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(ack) => ack,
+            Err(error) => {
+                log_restore_state_failure(
+                    "parse restore acknowledgement",
+                    project_state_dir,
+                    &error.to_string(),
+                );
+                quarantine_corrupt_file(&path);
+                Value::Object(Map::new())
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Object(Map::new()),
+        Err(error) => {
+            log_restore_state_failure(
+                "read restore acknowledgement",
+                project_state_dir,
+                &error.to_string(),
+            );
+            Value::Object(Map::new())
+        }
+    }
+}
+
+/// A fleet this answer can be attributed to, or nothing.
+///
+/// `normalize_last_online_snapshot` fills a missing `writerInstanceId` with the
+/// literal `"unknown"`, and a dismissal is the one answer with no generation
+/// and no boot bound -- so a dismissal recorded against `"unknown"` would match
+/// every future unattributed snapshot for that project, silently and with no
+/// way back. The placeholder names no fleet.
+fn named_fleet(writer_instance_id: Option<&str>) -> Option<&str> {
+    writer_instance_id
+        .map(str::trim)
+        .filter(|writer| !writer.is_empty() && *writer != UNATTRIBUTED_FLEET)
+}
+
+fn boot_acknowledgement_still_applies(ack: &Value, gate: &Value) -> bool {
     match (
         trimmed_string(ack.get("daemonBootId")),
         trimmed_string(gate.get("daemonBootId")),
@@ -553,7 +675,7 @@ fn remove_restore_state(path: &Path) -> RestoreStateResult<()> {
     }
 }
 
-fn log_restore_state_failure(action: &str, project_state_dir: &Path, error: &str) {
+pub(super) fn log_restore_state_failure(action: &str, project_state_dir: &Path, error: &str) {
     crate::debug_logging::log_lifecycle_always(
         "agent restore state write failed",
         "agent-restore",
