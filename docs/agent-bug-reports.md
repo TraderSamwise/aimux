@@ -105,8 +105,33 @@ the other's report. A lost count would have been tolerable; a lost report is
 not. The per-fingerprint cooldown this section once specified went with that
 design -- the sighting cap above is what bounds growth now.
 
+## Filing one
+
+```bash
+aimux bug report \
+  --what "input reported success while the pane stayed empty" \
+  --surface "aimux agent input" \
+  --expected "the text appears in the agent's composer" \
+  --observed "the route answered ok and the composer was empty" \
+  --repro "aimux agent input --session codex-1 --text hello" \
+  --evidence "verified: false"
+```
+
+There is no `--context`, `--log`, `--file` or `--project`, and an unknown flag
+is refused rather than ignored. The tool the report is attributed to comes from
+the environment aimux gave the agent, not from an argument.
+
+Filing is local and needs no daemon, which matters because an agent is most
+likely to have something to report about aimux exactly when the daemon is down.
+
 ## Reading them back
 
-The store is local, one record per line, and self-contained by design: whoever
-reads it will usually not have the machine it came from, so a report that says
-"see the log" is worth nothing.
+```bash
+aimux bug list            # one line per bug, with how often it was seen
+aimux bug list --json
+```
+
+
+The store is local, one line per sighting, and self-contained by design:
+whoever reads it will usually not have the machine it came from, so a report
+that says "see the log" is worth nothing.

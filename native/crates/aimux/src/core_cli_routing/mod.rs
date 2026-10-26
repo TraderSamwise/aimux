@@ -1,5 +1,6 @@
 mod agents;
 mod args;
+mod bug_reports;
 mod collaboration;
 mod common;
 mod jobs;
@@ -17,6 +18,9 @@ pub use agents::{
     parse_core_agent_rename_args, parse_core_host_project_stop_args, parse_core_project_stop_args,
 };
 pub use args::*;
+pub use bug_reports::{
+    CoreBugListArgs, CoreBugReportArgs, parse_core_bug_list_args, parse_core_bug_report_args,
+};
 pub use collaboration::{parse_core_collaboration_args, parse_core_collaboration_args_result};
 pub use common::{
     core_command_args, has_core_global_logging_args, parse_core_projects_remove_args,
@@ -781,6 +785,11 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
     match (command, subcommand) {
         (Some("restart"), _) => parse_core_restart_args(args).is_some(),
         (Some("init"), _) => args.len() == 1,
+        // The parser is the allowlist: an unknown flag makes this not a bug
+        // command at all, so a report cannot be filed with a flag the standard
+        // does not have.
+        (Some("bug"), Some("report")) => parse_core_bug_report_args(args).is_some(),
+        (Some("bug"), Some("list")) => parse_core_bug_list_args(args).is_some(),
         (Some("list"), _) => parse_core_agent_list_args(args).is_some(),
         (Some("id"), _) => parse_core_agent_identity_args(args).is_some(),
         (Some("compact"), _) => args.len() == 1,
