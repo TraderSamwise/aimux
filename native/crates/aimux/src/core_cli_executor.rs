@@ -2130,9 +2130,14 @@ fn run_bug_report(
 fn run_bug_list(output_mode: CoreCliOutputMode) -> Result<CoreCliExecution, String> {
     let resolver = PathResolver::from_env();
     let bugs = crate::agent_bug_reports::summarize(&resolver)?;
+    // Lines the store could not account for are skipped so that one bad write
+    // cannot stop every read -- but they are said out loud here, because a
+    // listing that quietly omitted reports would be the worse failure.
+    let unreadable = crate::agent_bug_reports::read_store(&resolver)?.unreadable;
     match output_mode {
         CoreCliOutputMode::Json => Ok(CoreCliExecution::ok(vec![
             serde_json::to_string_pretty(&json!({
+                "unreadableLines": unreadable,
                 "bugs": bugs
                     .iter()
                     .map(|bug| json!({
@@ -2147,12 +2152,17 @@ fn run_bug_list(output_mode: CoreCliOutputMode) -> Result<CoreCliExecution, Stri
             .map_err(|error| error.to_string())?,
         ])),
         CoreCliOutputMode::Text => {
-            if bugs.is_empty() {
+            if bugs.is_empty() && unreadable == 0 {
                 return Ok(CoreCliExecution::ok(vec![
                     "No bug reports on this machine.".to_owned(),
                 ]));
             }
             let mut lines = vec![format!("Bug Reports ({})", bugs.len())];
+            if unreadable > 0 {
+                lines.push(format!(
+                    "  {unreadable} line(s) could not be read and were skipped"
+                ));
+            }
             for bug in &bugs {
                 lines.push(format!(
                     "  {}  seen {}x  {}",

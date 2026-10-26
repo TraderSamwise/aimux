@@ -348,9 +348,23 @@ fn append_line(path: &Path, record: &Value) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
     }
-    drop_torn_final_line(path)?;
     let mut line = serde_json::to_string(record).map_err(|error| error.to_string())?;
     line.push('\n');
+    // If the last append was interrupted the file does not end in a newline,
+    // and writing straight after it would splice this record onto that
+    // fragment. One leading newline closes the fragment off as a line of its
+    // own, which the reader then skips on its own terms.
+    //
+    // Deliberately NOT by repairing the file. Two earlier attempts removed the
+    // fragment instead and each lost a report: dropping it on the missing
+    // newline alone deleted records that were complete, and truncating it is
+    // an unlocked read-modify-write -- a second filer computes the length to
+    // keep, a first filer appends a whole record, and the truncation takes
+    // that record with it. Nothing here removes anything, so no filed report
+    // can be lost by a later filing.
+    if store_lacks_final_newline(path)? {
+        line.insert(0, '\n');
+    }
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -374,62 +388,30 @@ fn append_line(path: &Path, record: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// Throw away a final line that was never finished, before appending after it.
+/// Whether the store's last byte is something other than a newline.
 ///
-/// `read_all` tolerates a torn final line, which is what keeps one interrupted
-/// append from making the store unreadable for ever. But appending *after* one
-/// would splice the torn prefix onto the front of the new record -- turning a
-/// line the reader skips into a malformed line in the MIDDLE of the file,
-/// which it refuses. The store would then be broken permanently by the very
-/// act of using it, which is worse than the problem the tolerance was added
-/// for.
-///
-/// So the torn bytes go first. They were never a complete record: the only
-/// thing lost is a sighting that was already not written.
-fn drop_torn_final_line(path: &Path) -> Result<(), String> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(format!("read {}: {error}", path.display())),
+/// One byte from the end rather than reading the file, because this runs on
+/// every filing -- and as a byte, because a tail cut mid-character is not
+/// valid UTF-8 and must not make this fail.
+fn store_lacks_final_newline(path: &Path) -> Result<bool, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("open {}: {error}", path.display())),
     };
-    if text.is_empty() || text.ends_with('\n') {
-        return Ok(());
+    let length = file
+        .seek(SeekFrom::End(0))
+        .map_err(|error| format!("seek {}: {error}", path.display()))?;
+    if length == 0 {
+        return Ok(false);
     }
-    let keep = text.rfind('\n').map(|index| index + 1).unwrap_or(0);
-    // Dropped on the SAME condition the reader skips it: that it does not
-    // parse. A missing newline alone is not damage -- a record can be complete
-    // and valid with the newline simply not written yet, which is what the
-    // two-syscall `writeln!` this replaced actually produced. The reader keeps
-    // such a line, so dropping it here would silently delete a report that had
-    // been successfully filed. That is the one loss this whole design refuses.
-    if serde_json::from_str::<Value>(text[keep..].trim()).is_ok() {
-        // Terminate it instead, so the next append does not splice onto it.
-        let mut file = OpenOptions::new()
-            .append(true)
-            .open(path)
-            .map_err(|error| format!("open {}: {error}", path.display()))?;
-        return file
-            .write_all(b"\n")
-            .map_err(|error| format!("terminate {}: {error}", path.display()));
-    }
-    crate::debug_logging::log_lifecycle_always(
-        "dropped a torn final line from the bug report store",
-        "bug-reports",
-        Some(json!({
-            "path": path.to_string_lossy(),
-            "droppedBytes": text.len() - keep,
-        })),
-    );
-    // Truncated in place rather than rewritten through a temporary file: a
-    // rename would orphan the inode that a concurrent filer already has open
-    // for append, and that filer's record would vanish with it -- the race
-    // append-only was chosen to avoid. Shortening the file keeps the inode.
-    let file = OpenOptions::new()
-        .write(true)
-        .open(path)
-        .map_err(|error| format!("open {}: {error}", path.display()))?;
-    file.set_len(keep as u64)
-        .map_err(|error| format!("repair {}: {error}", path.display()))
+    file.seek(SeekFrom::End(-1))
+        .map_err(|error| format!("seek {}: {error}", path.display()))?;
+    let mut last = [0_u8; 1];
+    file.read_exact(&mut last)
+        .map_err(|error| format!("read {}: {error}", path.display()))?;
+    Ok(last[0] != b'\n')
 }
 
 /// One bug, however many times it was seen.
@@ -448,21 +430,22 @@ pub struct BugSummary {
 ///
 /// This is where the dedupe lives, now that the store is append-only: the
 /// lines are sightings and a bug is a group of them.
-fn path_text(resolver: &PathResolver) -> String {
-    store_path(resolver).to_string_lossy().into_owned()
-}
-
 pub fn summarize(resolver: &PathResolver) -> Result<Vec<BugSummary>, String> {
     let mut bugs: Vec<BugSummary> = Vec::new();
     for record in read_all(resolver)? {
         // A record with no fingerprint cannot be grouped, and defaulting it to
         // the empty string would merge every such line into one invented bug.
-        let fingerprint = record
+        // Skipped like any other line that cannot be accounted for: the store
+        // is never refused over one record, and `read_store`'s count is what
+        // tells anyone the file holds lines nothing could use.
+        let Some(fingerprint) = record
             .get("fingerprint")
             .and_then(Value::as_str)
             .filter(|fingerprint| !fingerprint.is_empty())
-            .ok_or_else(|| format!("{}: a record with no fingerprint", path_text(resolver)))?
-            .to_owned();
+            .map(str::to_owned)
+        else {
+            continue;
+        };
         let at = record
             .get("at")
             .and_then(Value::as_str)
@@ -473,18 +456,18 @@ pub fn summarize(resolver: &PathResolver) -> Result<Vec<BugSummary>, String> {
             bug.last_seen_at = at;
             continue;
         }
-        // Only a first sighting carries the body. One that is missing it for a
-        // fingerprint nothing has introduced is a record whose first sighting
-        // was lost, which is worth saying rather than showing as a blank bug.
-        let report = serde_json::from_value::<AgentBugReport>(
-            record.get("report").cloned().ok_or_else(|| {
-                format!(
-                    "{}: {fingerprint} has no first sighting",
-                    path_text(resolver)
-                )
-            })?,
-        )
-        .map_err(|error| format!("read bug report {fingerprint}: {error}"))?;
+        // Only a first sighting carries the body. A fingerprint whose first
+        // sighting is gone has nothing to show, so it is skipped rather than
+        // listed as a blank bug -- the store is never refused over one record,
+        // and `read_store`'s count is what tells anyone the file holds lines
+        // nothing could use.
+        let Some(report) = record
+            .get("report")
+            .cloned()
+            .and_then(|report| serde_json::from_value::<AgentBugReport>(report).ok())
+        else {
+            continue;
+        };
         bugs.push(BugSummary {
             fingerprint,
             count: 1,
@@ -500,53 +483,72 @@ pub fn summarize(resolver: &PathResolver) -> Result<Vec<BugSummary>, String> {
 ///
 /// A line it cannot read is an error rather than a line to skip: a store that
 /// quietly drops records is worse than one that says it is damaged.
-pub fn read_all(resolver: &PathResolver) -> Result<Vec<Value>, String> {
+/// What a read of the store found, including what it could not read.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StoreContents {
+    pub records: Vec<Value>,
+    /// Lines this could not account for. Skipped, logged, counted -- never
+    /// removed from the file, and never hidden from the caller.
+    pub unreadable: usize,
+}
+
+/// Every record in the store, plus how many lines were unreadable.
+///
+/// Read as BYTES and split on newlines, not through `read_to_string`. An
+/// append cut mid-character leaves invalid UTF-8, and decoding the whole file
+/// would then fail -- which, because `record` reads the store before it
+/// writes, made `bug list` and every future filing fail for ever with nothing
+/// able to repair it.
+///
+/// A line this cannot account for is skipped, logged and counted rather than
+/// refusing the store. That is not the same as hiding it: nothing is removed
+/// from the file, and the count comes back so a caller can say how many
+/// records it could not read.
+pub fn read_store(resolver: &PathResolver) -> Result<StoreContents, String> {
     let path = store_path(resolver);
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(StoreContents::default());
+        }
         Err(error) => return Err(format!("read {}: {error}", path.display())),
     };
-    let mut records = Vec::new();
-    // A file that does not end in a newline has a final line that was cut off
-    // mid-append -- a crash, a full disk. That one line is skipped, loudly,
-    // because the alternative is that one bad write makes every future filing
-    // fail: `record` reads the store before it writes. A malformed line
-    // anywhere else is corruption and still an error.
-    let complete = text.ends_with('\n');
-    let total = text.lines().count();
-    for (index, raw_line) in text.lines().enumerate() {
-        let line = raw_line.trim();
+    let mut contents = StoreContents::default();
+    for (index, raw_line) in bytes.split(|byte| *byte == b'\n').enumerate() {
+        let skip = |reason: &str, contents: &mut StoreContents| {
+            crate::debug_logging::log_lifecycle_always(
+                "skipped an unreadable line in the bug report store",
+                "bug-reports",
+                Some(json!({
+                    "path": path.to_string_lossy(),
+                    "line": index + 1,
+                    "reason": reason,
+                })),
+            );
+            contents.unreadable += 1;
+        };
+        let Ok(line) = std::str::from_utf8(raw_line) else {
+            skip("not valid utf-8", &mut contents);
+            continue;
+        };
+        let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        let torn_tail = !complete && index + 1 == total;
-        let value = match serde_json::from_str::<Value>(line) {
-            Ok(value) => value,
-            Err(error) if torn_tail => {
-                crate::debug_logging::log_lifecycle_always(
-                    "bug report store has a torn final line",
-                    "bug-reports",
-                    Some(json!({ "path": path.to_string_lossy(), "error": error.to_string() })),
-                );
-                continue;
-            }
-            Err(error) => {
-                return Err(format!(
-                    "parse {} line {}: {error}",
-                    path.display(),
-                    index + 1
-                ));
-            }
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            skip("not json", &mut contents);
+            continue;
         };
         if value.get("kind").and_then(Value::as_str) != Some(BUG_REPORT_RECORD_KIND) {
-            return Err(format!(
-                "{} line {} is not a {BUG_REPORT_RECORD_KIND}",
-                path.display(),
-                index + 1
-            ));
+            skip("not a bug report record", &mut contents);
+            continue;
         }
-        records.push(value);
+        contents.records.push(value);
     }
-    Ok(records)
+    Ok(contents)
+}
+
+/// Every record in the store.
+pub fn read_all(resolver: &PathResolver) -> Result<Vec<Value>, String> {
+    Ok(read_store(resolver)?.records)
 }

@@ -141,3 +141,10 @@ aimux bug list --json
 The store is local, one line per sighting, and self-contained by design:
 whoever reads it will usually not have the machine it came from, so a report
 that says "see the log" is worth nothing.
+
+Nothing ever removes a line. A line that cannot be read — an append cut short
+by a crash, a foreign writer — is skipped, logged, and **counted**, and
+`aimux bug list` says how many it could not read. That is the opposite of
+hiding it: refusing the whole store over one bad line would be worse, because
+filing reads the store first, so a single bad line would stop every future
+report as well as every read.

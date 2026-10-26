@@ -6,8 +6,8 @@
 
 use aimux::agent_bug_reports::{
     AgentBugReport, BUG_REPORT_RECORD_KIND, BugReportOutcome, BugReportRefusal,
-    DISTINCT_BUG_BUDGET, SIGHTINGS_PER_BUG, is_enabled, read_all, record, sanitized_tool,
-    store_path, summarize,
+    DISTINCT_BUG_BUDGET, SIGHTINGS_PER_BUG, is_enabled, read_all, read_store, record,
+    sanitized_tool, store_path, summarize,
 };
 use aimux::paths::PathResolver;
 use serde_json::{Value, json};
@@ -394,24 +394,6 @@ fn reports_accumulate_in_the_order_they_were_filed() {
     );
 }
 
-/// A line the reader cannot account for is an error, not a line to skip. A
-/// store that quietly drops records is worse than one that says it is damaged.
-#[test]
-fn an_unreadable_line_is_reported_rather_than_skipped() {
-    let machine = Machine::new("damaged");
-    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
-    file(&machine, &report()).expect("stored");
-
-    let path = store_path(&machine.resolver());
-    let mut text = fs::read_to_string(&path).expect("read");
-    text.push_str("{\"kind\":\"something-else\"}\n");
-    fs::write(&path, text).expect("write");
-
-    let error = read_all(&machine.resolver()).expect_err("a foreign line is an error");
-    assert!(error.contains("line 2"), "{error}");
-    assert!(error.contains(BUG_REPORT_RECORD_KIND), "{error}");
-}
-
 /// The same bug twice is one record with a count.
 ///
 /// An agent hitting a bug in a loop would otherwise file it every iteration,
@@ -553,137 +535,6 @@ fn a_report_whose_fields_contain_newlines_stays_one_line() {
     );
 }
 
-/// A line that is valid JSON but not a report is an error, and so is a
-/// half-written final line -- the two shapes a crash or a foreign writer
-/// leaves behind.
-#[test]
-fn a_record_missing_its_report_is_an_error_not_an_empty_bug() {
-    let machine = Machine::new("incomplete-record");
-    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
-    file(&machine, &report()).expect("stored");
-    let path = store_path(&machine.resolver());
-
-    let good = fs::read_to_string(&path).expect("read");
-    fs::write(
-        &path,
-        format!("{good}{{\"kind\":\"{BUG_REPORT_RECORD_KIND}\",\"fingerprint\":\"x\"}}\n"),
-    )
-    .expect("write");
-    let error = summarize(&machine.resolver()).expect_err("a record with no report is an error");
-    assert!(
-        error.contains("no first sighting"),
-        "a fingerprint whose first sighting is missing is named, not shown blank: {error}"
-    );
-}
-
-/// A complete final record missing only its newline must not be thrown away.
-///
-/// The repair and the reader have to agree on what counts as damage. The
-/// reader skips a final line only when it does not PARSE, so a record that is
-/// complete and valid with the newline simply not written yet is a report that
-/// was successfully filed -- and dropping it because of the missing byte would
-/// be the one loss this whole design refuses. It is terminated instead, so the
-/// next append does not splice onto it.
-#[test]
-fn a_complete_final_record_missing_only_its_newline_is_kept() {
-    let machine = Machine::new("unterminated");
-    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
-    file(&machine, &report()).expect("filed");
-    let path = store_path(&machine.resolver());
-
-    // Exactly what a two-syscall write leaves behind: a whole record, no
-    // newline.
-    let whole = fs::read_to_string(&path).expect("read");
-    fs::write(&path, whole.trim_end()).expect("write");
-    assert_eq!(
-        summarize(&machine.resolver()).expect("readable").len(),
-        1,
-        "the reader keeps a record that parses"
-    );
-
-    // And filing again must not delete it.
-    let mut next = report();
-    next.what = "something else broke".into();
-    file(&machine, &next).expect("filed");
-    let bugs = summarize(&machine.resolver()).expect("still readable");
-    assert_eq!(
-        bugs.len(),
-        2,
-        "the unterminated record survives the next filing: {bugs:?}"
-    );
-    assert!(
-        bugs.iter().any(
-            |bug| bug.report.what == "agent input reported success while the pane stayed empty"
-        ),
-        "and it is the original one, not a replacement: {bugs:?}"
-    );
-}
-
-/// A record with no fingerprint cannot be grouped, and must not be grouped
-/// with every other such record under one invented bug.
-#[test]
-fn a_record_with_no_fingerprint_is_an_error() {
-    let machine = Machine::new("no-fingerprint");
-    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
-    file(&machine, &report()).expect("filed");
-    let path = store_path(&machine.resolver());
-    let good = fs::read_to_string(&path).expect("read");
-    fs::write(
-        &path,
-        format!("{good}{{\"kind\":\"{BUG_REPORT_RECORD_KIND}\",\"at\":\"x\"}}\n"),
-    )
-    .expect("write");
-
-    let error = summarize(&machine.resolver()).expect_err("ungroupable");
-    assert!(error.contains("no fingerprint"), "{error}");
-}
-
-/// A final line cut off mid-append is survivable; a bad line in the middle is
-/// not.
-///
-/// `record` reads the store before it writes, so treating every malformed line
-/// as a hard error meant one interrupted append -- a crash, a full disk --
-/// would make `bug list` AND every future filing fail for ever. A file that
-/// does not end in a newline has exactly one suspect line, at the end, and
-/// skipping it costs a sighting that was never fully written. A malformed line
-/// anywhere else is corruption and still refuses, because then the file is not
-/// what it claims to be.
-#[test]
-fn a_torn_final_line_is_skipped_and_a_torn_middle_line_is_not() {
-    let machine = Machine::new("torn");
-    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
-    file(&machine, &report()).expect("stored");
-    let path = store_path(&machine.resolver());
-    let good = fs::read_to_string(&path).expect("read");
-
-    // Interrupted mid-append: no trailing newline, so the last line is the
-    // only one that can be half-written.
-    fs::write(&path, format!("{good}{{\"kind\":\"ag")).expect("write");
-    let bugs = summarize(&machine.resolver()).expect("a torn tail does not brick the store");
-    assert_eq!(bugs.len(), 1, "the complete records are still readable");
-
-    // And filing still works, which is the point -- including the read that
-    // comes after it. Appending onto a line with no newline would splice the
-    // torn prefix onto the new record, turning a state the reader tolerates
-    // into a malformed MIDDLE line it refuses for ever: a recoverable store
-    // made permanently unreadable by the very act of using it.
-    let mut next = report();
-    next.what = "something else broke".into();
-    file(&machine, &next).expect("a torn tail does not stop the next filing");
-    let bugs =
-        summarize(&machine.resolver()).expect("and the store is still readable after that filing");
-    assert_eq!(
-        bugs.len(),
-        2,
-        "both the surviving bug and the new one: {bugs:?}"
-    );
-
-    // The same damage in the middle of the file is corruption.
-    fs::write(&path, format!("{{\"kind\":\"ag\n{good}")).expect("write");
-    let error = summarize(&machine.resolver()).expect_err("a torn middle line is an error");
-    assert!(error.contains("line 1"), "{error}");
-}
-
 /// The tool name cannot carry a secret.
 ///
 /// It arrives from `AIMUX_TOOL`, and a shell sets the environment of its own
@@ -764,4 +615,120 @@ fn a_repeat_sighting_carries_no_second_copy_of_the_report() {
             .contains("much longer excerpt"),
         "and the text nothing would surface is not on disk"
     );
+}
+
+/// Nothing a filing does can remove a report, and nothing in the file can stop
+/// the store being read.
+///
+/// These two together are the whole contract, and getting there took three
+/// goes. Refusing the store on any bad line made one interrupted append
+/// permanent, because `record` reads before it writes -- so `bug list` and
+/// every future filing failed for ever. Repairing the file instead lost
+/// reports twice: dropping an unterminated line deleted records that were
+/// complete, and truncating it is an unlocked read-modify-write, so a second
+/// filer's truncation takes a first filer's freshly appended record with it.
+///
+/// So: a line that cannot be accounted for is skipped, logged and COUNTED, and
+/// a filing that lands after a torn fragment closes the fragment off with a
+/// newline rather than removing it.
+#[test]
+fn an_unreadable_line_is_skipped_and_counted_and_nothing_is_ever_removed() {
+    let machine = Machine::new("never-removes");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+    file(&machine, &report()).expect("filed");
+    let path = store_path(&machine.resolver());
+    let first = fs::read_to_string(&path).expect("read");
+
+    // The three shapes a crash or a foreign writer leaves: a fragment with no
+    // newline, a line of valid JSON that is not a report, and bytes that are
+    // not even UTF-8 because the append was cut mid-character.
+    let mut damaged = first.clone().into_bytes();
+    damaged.extend_from_slice(b"{\"kind\":\"something-else\"}\n");
+    damaged.extend_from_slice(&[0xf0, 0x9f, 0x92]);
+    fs::write(&path, &damaged).expect("write");
+
+    let found = read_store(&machine.resolver()).expect("a damaged store is still readable");
+    assert_eq!(found.records.len(), 1, "the good record survives");
+    assert_eq!(
+        found.unreadable, 2,
+        "and both bad lines are counted: {found:?}"
+    );
+
+    // Filing still works, the store is still readable afterwards, and the
+    // original report is still there -- which is what the two repair attempts
+    // each broke.
+    let mut next = report();
+    next.what = "something else broke".into();
+    file(&machine, &next).expect("filing works on a damaged store");
+    let bugs = summarize(&machine.resolver()).expect("still readable after the filing");
+    assert_eq!(bugs.len(), 2, "{bugs:?}");
+    assert!(
+        bugs.iter().any(
+            |bug| bug.report.what == "agent input reported success while the pane stayed empty"
+        ),
+        "the original report was not removed: {bugs:?}"
+    );
+    // Bytes, because the damaged store deliberately is not valid UTF-8.
+    let after = fs::read(&path).expect("read");
+    assert!(
+        after.starts_with(first.as_bytes()),
+        "nothing before the new record was rewritten"
+    );
+}
+
+/// A complete record whose newline was never written is a filed report, and
+/// must survive the next filing.
+///
+/// This is the case the second repair attempt deleted: the reader can read
+/// such a line, so removing it loses a report that was successfully filed.
+#[test]
+fn a_complete_final_record_missing_only_its_newline_survives_the_next_filing() {
+    let machine = Machine::new("unterminated");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+    file(&machine, &report()).expect("filed");
+    let path = store_path(&machine.resolver());
+
+    let whole = fs::read_to_string(&path).expect("read");
+    fs::write(&path, whole.trim_end()).expect("write");
+    assert_eq!(
+        read_store(&machine.resolver())
+            .expect("readable")
+            .records
+            .len(),
+        1,
+        "the reader keeps a record that parses, newline or not"
+    );
+
+    let mut next = report();
+    next.what = "something else broke".into();
+    file(&machine, &next).expect("filed");
+    let found = read_store(&machine.resolver()).expect("still readable");
+    assert_eq!(
+        found.records.len(),
+        2,
+        "the unterminated record survives: {found:?}"
+    );
+    assert_eq!(
+        found.unreadable, 0,
+        "and was not counted as damage: {found:?}"
+    );
+}
+
+/// A record that cannot be grouped is skipped and counted rather than merged
+/// into an invented bug or taken as a reason to refuse the store.
+#[test]
+fn a_record_with_no_fingerprint_is_skipped_and_counted() {
+    let machine = Machine::new("no-fingerprint");
+    machine.write_global_config(&json!({ "bugReports": { "enabled": true } }));
+    file(&machine, &report()).expect("filed");
+    let path = store_path(&machine.resolver());
+    let good = fs::read_to_string(&path).expect("read");
+    fs::write(
+        &path,
+        format!("{good}{{\"kind\":\"{BUG_REPORT_RECORD_KIND}\",\"at\":\"x\"}}\n"),
+    )
+    .expect("write");
+
+    let bugs = summarize(&machine.resolver()).expect("one ungroupable record is not fatal");
+    assert_eq!(bugs.len(), 1, "only the groupable one is a bug: {bugs:?}");
 }
