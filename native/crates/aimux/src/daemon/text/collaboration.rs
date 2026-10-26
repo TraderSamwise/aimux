@@ -342,6 +342,7 @@ pub fn thread_send_text_route(
         "deliveries",
         "deliveredTo",
         "queuedTo",
+        "undeliverableTo",
         "deliveryErrors",
         "error",
     ] {
@@ -995,7 +996,13 @@ fn message_send_response(
         "message": message,
         "deliveredTo": json.get("deliveredTo").cloned().unwrap_or(Value::Null),
     });
-    for field in ["deliveries", "queuedTo", "deliveryErrors", "error"] {
+    for field in [
+        "deliveries",
+        "queuedTo",
+        "undeliverableTo",
+        "deliveryErrors",
+        "error",
+    ] {
         if let Some(value) = json.get(field) {
             payload[field] = value.clone();
         }

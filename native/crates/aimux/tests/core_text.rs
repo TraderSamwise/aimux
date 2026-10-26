@@ -516,3 +516,43 @@ fn agent_input_says_when_nothing_is_watching_the_agent() {
         "a project service predating the field must not grow a warning line"
     );
 }
+
+/// The CLI says a recipient had no live window, rather than nothing at all.
+///
+/// `undeliverableTo` was added so that a departed participant stops failing a
+/// send the live recipients received. That only holds if the CLI still MENTIONS
+/// the departed one: before this, the recipient arrived as a `deliveryErrors`
+/// entry and printed; a new channel nothing rendered would have made the same
+/// send exit 0 and print nothing, which claims it reached everybody.
+#[test]
+fn thread_send_prints_a_recipient_with_no_live_window() {
+    assert_eq!(
+        render_core_thread_send_lines(&json!({
+            "message": { "id": "msg-1" },
+            "deliveredTo": ["codex-one"],
+            "undeliverableTo": ["codex-departed"]
+        })),
+        vec!["msg-1", "no live window for codex-departed"]
+    );
+    // A genuine error still reads as one, and both can appear together.
+    assert_eq!(
+        render_core_thread_send_lines(&json!({
+            "message": { "id": "msg-2" },
+            "undeliverableTo": ["codex-departed"],
+            "deliveryErrors": ["codex-two: tmux load-buffer failed"]
+        })),
+        vec![
+            "msg-2",
+            "no live window for codex-departed",
+            "codex-two: tmux load-buffer failed"
+        ]
+    );
+    // And a send with nobody missing gains no line.
+    assert_eq!(
+        render_core_thread_send_lines(&json!({
+            "message": { "id": "msg-3" },
+            "deliveredTo": ["codex-one"]
+        })),
+        vec!["msg-3"]
+    );
+}
