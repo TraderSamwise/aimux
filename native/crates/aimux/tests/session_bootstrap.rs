@@ -4,19 +4,30 @@ use aimux::session_bootstrap::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct Project(PathBuf);
 
 impl Project {
     fn new() -> Self {
+        // The counter is what makes this unique, not the clock. Naming the
+        // directory by pid and `as_nanos()` alone assumed nanosecond
+        // resolution: macOS is coarser, so two of these built at once got the
+        // same path, shared one directory, and failed each other's assertions
+        // -- after which the first `Drop` removed the directory out from under
+        // the second, whose `remove_dir_all` then panicked inside a destructor
+        // and aborted the whole test binary. That is why the test blamed for
+        // the failure was a different one on every run.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
-            "aimux-fork-bootstrap-{}-{}",
+            "aimux-fork-bootstrap-{}-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
         ));
         fs::create_dir_all(path.join(".git")).unwrap();
         Self(path)
@@ -49,7 +60,10 @@ impl Project {
 
 impl Drop for Project {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).unwrap();
+        // Deliberately not `unwrap`. A destructor runs while a failing test is
+        // already unwinding, and panicking there is a non-unwinding abort that
+        // destroys the report of what actually failed.
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
