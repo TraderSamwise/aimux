@@ -484,12 +484,22 @@ pub fn summarize_records(records: &[Value]) -> BugDigest {
         // listed as a blank bug -- the store is never refused over one record,
         // and `read_store`'s count is what tells anyone the file holds lines
         // nothing could use.
-        let Some(report) = record
-            .get("report")
-            .cloned()
+        let stored_report = record.get("report").cloned();
+        let Some(report) = stored_report
+            .clone()
             .and_then(|report| serde_json::from_value::<AgentBugReport>(report).ok())
         else {
-            unattributable(&mut unattributable_count, "no first sighting on file");
+            // Two different states, and the log says which: a sighting whose
+            // first is gone carries no body at all, while a body that will not
+            // deserialize is a record somebody or something else wrote.
+            unattributable(
+                &mut unattributable_count,
+                if stored_report.is_none() {
+                    "no first sighting on file"
+                } else {
+                    "a report body that could not be read"
+                },
+            );
             continue;
         };
         bugs.push(BugSummary {
