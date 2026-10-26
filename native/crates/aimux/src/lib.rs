@@ -1,3 +1,4 @@
+pub mod agent_bug_reports;
 pub mod agent_display;
 pub mod agent_enter_decision;
 pub mod agent_goal;

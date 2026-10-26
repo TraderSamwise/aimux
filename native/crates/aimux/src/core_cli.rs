@@ -4,21 +4,21 @@ use crate::core_cli_routing::{
     CoreLogsSubcommand, core_command_args, is_core_cli_command, parse_core_agent_identity_args,
     parse_core_agent_input_args, parse_core_agent_list_args, parse_core_agent_migrate_args,
     parse_core_agent_plane_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
-    parse_core_attach_args, parse_core_attachment_publish_args,
-    parse_core_collaboration_args_result, parse_core_daemon_restart_args, parse_core_doctor_args,
-    parse_core_graveyard_args, parse_core_host_agent_read_args_result,
-    parse_core_host_agent_stream_args_result, parse_core_host_project_stop_args,
-    parse_core_host_restart_args, parse_core_host_topology_args, parse_core_job_args,
-    parse_core_job_run_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
-    parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
-    parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_migration_args,
-    parse_core_notification_args, parse_core_notification_test_args, parse_core_outline_args,
-    parse_core_overseer_clear_args, parse_core_overseer_start_args, parse_core_project_ensure_args,
-    parse_core_project_stop_args, parse_core_projects_remove_args, parse_core_repair_args,
-    parse_core_restart_args, parse_core_scribe_clear_args, parse_core_scribe_start_args,
-    parse_core_service_create_args, parse_core_service_status_args, parse_core_task_args_result,
-    parse_core_team_args, parse_core_thread_args_result, parse_core_usage_args_result,
-    parse_core_worktree_args,
+    parse_core_attach_args, parse_core_attachment_publish_args, parse_core_bug_list_args,
+    parse_core_bug_report_args, parse_core_collaboration_args_result,
+    parse_core_daemon_restart_args, parse_core_doctor_args, parse_core_graveyard_args,
+    parse_core_host_agent_read_args_result, parse_core_host_agent_stream_args_result,
+    parse_core_host_project_stop_args, parse_core_host_restart_args, parse_core_host_topology_args,
+    parse_core_job_args, parse_core_job_run_args, parse_core_lifecycle_fork_args,
+    parse_core_lifecycle_spawn_args, parse_core_lifecycle_status_args, parse_core_logs_args,
+    parse_core_loop_exit_args, parse_core_loop_mutation_args, parse_core_metadata_args,
+    parse_core_migration_args, parse_core_notification_args, parse_core_notification_test_args,
+    parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
+    parse_core_project_ensure_args, parse_core_project_stop_args, parse_core_projects_remove_args,
+    parse_core_repair_args, parse_core_restart_args, parse_core_scribe_clear_args,
+    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_service_status_args,
+    parse_core_task_args_result, parse_core_team_args, parse_core_thread_args_result,
+    parse_core_usage_args_result, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use crate::native_cli_dispatch::{
@@ -156,6 +156,8 @@ pub enum CoreCliOperation {
     DoctorStability,
     DoctorInstalls,
     DoctorNotifications,
+    BugReport,
+    BugList,
     NotificationsTest,
     DashboardReload,
     RuntimeRestart,
@@ -286,6 +288,11 @@ pub enum CoreCliAction {
         keep_recent: Option<String>,
     },
     DoctorNotifications,
+    BugReport {
+        report: Box<crate::agent_bug_reports::AgentBugReport>,
+        tool: String,
+    },
+    BugList,
     NotificationTest {
         title: String,
         body: String,
@@ -969,6 +976,63 @@ where
                         "open": parsed.open,
                     }))),
                 },
+                CoreCliFallback::None,
+            )
+        }
+        ("bug", "report") => {
+            // An agent reporting that aimux itself is broken. The flags are
+            // the whole of what a report may say -- there is deliberately no
+            // way to attach a file or a log -- and the standard they have to
+            // meet is docs/agent-bug-reports.md.
+            let parsed = parse_core_bug_report_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "aimux: usage: aimux bug report --what <one line> --surface <cli verb or route> \
+                              --expected <one line> --observed <one line> --repro <aimux commands> \
+                              [--evidence <aimux output>]"
+                        .into(),
+                }
+            })?;
+            let report = crate::agent_bug_reports::AgentBugReport {
+                what: parsed.what.unwrap_or_default(),
+                surface: parsed.surface.unwrap_or_default(),
+                expected: parsed.expected.unwrap_or_default(),
+                observed: parsed.observed.unwrap_or_default(),
+                repro: parsed.repro.unwrap_or_default(),
+                evidence: parsed.evidence,
+            };
+            // Refused here rather than after the store is opened, so an
+            // incomplete report never reaches it and the agent is told which
+            // field is missing by name.
+            report
+                .normalized()
+                .map_err(|message| CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message,
+                })?;
+            (
+                CoreCliOperation::BugReport,
+                CoreCliAction::BugReport {
+                    report: Box::new(report),
+                    // The agent's own tool, from the environment aimux gave
+                    // it. A report carries what was running, never where.
+                    tool: context
+                        .loop_actor
+                        .tool
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_owned()),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("bug", "list") => {
+            parse_core_bug_list_args(&args).ok_or_else(|| CoreCliPlanError::InvalidArguments {
+                args: args.clone(),
+                message: "aimux: usage: aimux bug list [--json]".into(),
+            })?;
+            (
+                CoreCliOperation::BugList,
+                CoreCliAction::BugList,
                 CoreCliFallback::None,
             )
         }

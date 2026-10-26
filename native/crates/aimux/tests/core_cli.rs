@@ -3186,3 +3186,144 @@ fn command_response_validation_matches_error_and_mismatch_behavior() {
         "core command response mismatch: expected core.ping, got core.status"
     );
 }
+
+/// The verb an agent actually types.
+///
+/// `bug report` is local: no daemon route and no fallback, because the store
+/// is a file in the aimux home and an agent is most likely to have something
+/// to report about aimux precisely when the daemon is down.
+#[test]
+fn bug_report_is_planned_as_a_local_action_with_no_daemon_fallback() {
+    let mut inside_a_codex_agent = context(false, false);
+    inside_a_codex_agent.loop_actor = CoreLoopActorContext {
+        session_id: Some("codex-1".into()),
+        tool: Some("codex".into()),
+        ..CoreLoopActorContext::default()
+    };
+
+    let plan = classify_core_cli(
+        &[
+            "bug",
+            "report",
+            "--what",
+            "input reported success while the pane stayed empty",
+            "--surface",
+            "aimux agent input",
+            "--expected",
+            "the text appears in the composer",
+            "--observed",
+            "the route answered ok and the composer was empty",
+            "--repro",
+            "aimux agent input --session codex-1 --text hello",
+        ],
+        &inside_a_codex_agent,
+    )
+    .expect("bug report plans");
+
+    assert_eq!(plan.operation, CoreCliOperation::BugReport);
+    assert_eq!(plan.fallback, CoreCliFallback::None);
+    match &plan.action {
+        CoreCliAction::BugReport { report, tool } => {
+            assert_eq!(report.surface, "aimux agent input");
+            assert_eq!(report.evidence, None);
+            assert_eq!(
+                tool, "codex",
+                "the report carries what was running, taken from the agent's own environment"
+            );
+        }
+        other => panic!("expected a local bug report action, got {other:?}"),
+    }
+}
+
+/// A report missing a required field is refused before anything is stored, and
+/// the message names the field -- an agent cannot fix what it is not told.
+#[test]
+fn bug_report_refuses_a_missing_field_by_name() {
+    let error = classify_core_cli(
+        &[
+            "bug",
+            "report",
+            "--what",
+            "something broke",
+            "--surface",
+            "aimux ps",
+            "--expected",
+            "a list",
+            "--repro",
+            "aimux ps",
+        ],
+        &context(false, false),
+    )
+    .expect_err("an incomplete report does not plan");
+
+    match error {
+        CoreCliPlanError::InvalidArguments { message, .. } => {
+            assert!(message.contains("observed"), "{message}");
+        }
+        other => panic!("expected invalid arguments, got {other:?}"),
+    }
+}
+
+/// There is no way to attach a file, a log or a project path, and an unknown
+/// flag is refused rather than ignored: the schema is the redaction, so a flag
+/// that is not part of it must not be silently dropped.
+#[test]
+fn bug_report_refuses_a_flag_that_is_not_part_of_the_standard() {
+    for flag in ["--context", "--log", "--file", "--project"] {
+        let error = classify_core_cli(
+            &[
+                "bug",
+                "report",
+                "--what",
+                "something broke",
+                "--surface",
+                "aimux ps",
+                "--expected",
+                "a list",
+                "--observed",
+                "nothing",
+                "--repro",
+                "aimux ps",
+                flag,
+                "/Users/sam/cs/private-repo",
+            ],
+            &context(false, false),
+        )
+        .expect_err("an unknown flag does not plan");
+        assert!(
+            matches!(
+                error,
+                CoreCliPlanError::Unsupported { .. } | CoreCliPlanError::InvalidArguments { .. }
+            ),
+            "{flag} must be refused"
+        );
+    }
+}
+
+/// A flag whose value is missing is a usage error, not a report with a flag
+/// name in one of its fields.
+#[test]
+fn bug_report_refuses_a_flag_with_no_value() {
+    let error = classify_core_cli(
+        &["bug", "report", "--what", "--surface", "aimux ps"],
+        &context(false, false),
+    )
+    .expect_err("a dangling flag does not plan");
+    assert!(matches!(
+        error,
+        CoreCliPlanError::Unsupported { .. } | CoreCliPlanError::InvalidArguments { .. }
+    ));
+}
+
+#[test]
+fn bug_list_is_planned_as_a_local_action() {
+    let plan = classify_core_cli(&["bug", "list"], &context(false, false)).expect("plans");
+    assert_eq!(plan.operation, CoreCliOperation::BugList);
+    assert_eq!(plan.action, CoreCliAction::BugList);
+    assert_eq!(plan.fallback, CoreCliFallback::None);
+
+    assert!(
+        classify_core_cli(&["bug", "list", "--everything"], &context(false, false)).is_err(),
+        "an unknown flag does not plan"
+    );
+}

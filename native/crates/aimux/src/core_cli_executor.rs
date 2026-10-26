@@ -2062,6 +2062,10 @@ where
             runtime.runtime_migration_rollback(&manifest)?,
         ])),
         CoreCliAction::DoctorNotifications => run_doctor_notifications(output_mode, runtime),
+        CoreCliAction::BugReport { report, tool } => {
+            run_bug_report(output_mode, report.as_ref(), tool.as_str())
+        }
+        CoreCliAction::BugList => run_bug_list(output_mode),
         CoreCliAction::NotificationTest {
             title,
             body,
@@ -2076,6 +2080,114 @@ fn resolve_path_from(cwd: &str, path: &str) -> PathBuf {
         path
     } else {
         PathBuf::from(cwd).join(path)
+    }
+}
+
+/// File one bug report, locally.
+///
+/// No daemon: the store is a file in the aimux home, so this works when the
+/// daemon is down -- which is exactly when an agent is most likely to have
+/// something to report about it.
+fn run_bug_report(
+    output_mode: CoreCliOutputMode,
+    report: &crate::agent_bug_reports::AgentBugReport,
+    tool: &str,
+) -> Result<CoreCliExecution, String> {
+    let resolver = PathResolver::from_env();
+    // Read, not created: filing a report is not a reason to mint a machine
+    // identity for a machine that has never had one.
+    let machine_id = crate::machine_identity::read_stored(&resolver)
+        .map_err(|error| format!("read machine identity: {error}"))?
+        .map(|machine| machine.id)
+        .unwrap_or_default();
+    let outcome = crate::agent_bug_reports::record(
+        &resolver,
+        report,
+        &machine_id,
+        tool,
+        env!("CARGO_PKG_VERSION"),
+        &now_iso(),
+    );
+    match outcome {
+        Ok(outcome) => match output_mode {
+            CoreCliOutputMode::Json => Ok(CoreCliExecution::ok(vec![
+                serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "fingerprint": outcome.fingerprint(),
+                    "message": outcome.message(),
+                }))
+                .map_err(|error| error.to_string())?,
+            ])),
+            CoreCliOutputMode::Text => Ok(CoreCliExecution::ok(vec![outcome.message()])),
+        },
+        // A refusal is the answer, not a crash: the agent is told which of the
+        // three reasons it was so it can act on it.
+        Err(refusal) => Err(refusal.message()),
+    }
+}
+
+/// Every distinct bug this machine has on file.
+fn run_bug_list(output_mode: CoreCliOutputMode) -> Result<CoreCliExecution, String> {
+    let resolver = PathResolver::from_env();
+    // Read ONCE. Calling `summarize` and `read_store` separately meant a
+    // filing in between could make the two halves of this output disagree.
+    let found = crate::agent_bug_reports::read_store(&resolver)?;
+    let digest = crate::agent_bug_reports::summarize_records(&found.records);
+    let bugs = digest.bugs;
+    // Two different kinds of line this cannot show, and both are said out
+    // loud. `unreadable` is what did not parse at all; `unattributable` are
+    // records that read fine but belong to no bug -- no fingerprint, or a
+    // fingerprint whose first sighting is gone. Reporting only the first would
+    // quietly show fewer sightings than the file holds.
+    let unattributable = digest.unattributable;
+    let unreadable = found.unreadable;
+    match output_mode {
+        CoreCliOutputMode::Json => Ok(CoreCliExecution::ok(vec![
+            serde_json::to_string_pretty(&json!({
+                "unreadableLines": unreadable,
+                "unattributableRecords": unattributable,
+                "bugs": bugs
+                    .iter()
+                    .map(|bug| json!({
+                        "fingerprint": bug.fingerprint,
+                        "count": bug.count,
+                        "firstSeenAt": bug.first_seen_at,
+                        "lastSeenAt": bug.last_seen_at,
+                        "report": bug.report,
+                    }))
+                    .collect::<Vec<_>>(),
+            }))
+            .map_err(|error| error.to_string())?,
+        ])),
+        CoreCliOutputMode::Text => {
+            if bugs.is_empty() && unreadable == 0 && unattributable == 0 {
+                return Ok(CoreCliExecution::ok(vec![
+                    "No bug reports on this machine.".to_owned(),
+                ]));
+            }
+            let mut lines = vec![format!("Bug Reports ({})", bugs.len())];
+            if unreadable > 0 {
+                lines.push(format!(
+                    "  {unreadable} line(s) could not be read and were skipped"
+                ));
+            }
+            if unattributable > 0 {
+                lines.push(format!(
+                    "  {unattributable} record(s) read but not attributable to a bug"
+                ));
+            }
+            for bug in &bugs {
+                lines.push(format!(
+                    "  {}  seen {}x  {}",
+                    bug.fingerprint, bug.count, bug.report.what
+                ));
+                lines.push(format!("    surface: {}", bug.report.surface));
+                lines.push(format!("    expected: {}", bug.report.expected));
+                lines.push(format!("    observed: {}", bug.report.observed));
+                lines.push(format!("    repro: {}", bug.report.repro));
+            }
+            Ok(CoreCliExecution::ok(vec![lines.join("\n")]))
+        }
     }
 }
 
