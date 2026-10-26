@@ -61,7 +61,7 @@ fn restart_contract_reaches_production_cli_restart_sequence() {
             },
             stop_daemon_process: |_signal| {
                 calls.borrow_mut().push("stop");
-                Ok(())
+                Ok(None)
             },
             ensure_daemon_running: || {
                 calls.borrow_mut().push("ensure");
@@ -263,7 +263,7 @@ fn restart_control_plane_from_cli(input: &Value) -> Value {
                     "state": daemon_state,
                     "signal": signal,
                 }));
-                Ok(())
+                Ok(None)
             },
             ensure_daemon_running: || Ok(()),
             request_core_command:
