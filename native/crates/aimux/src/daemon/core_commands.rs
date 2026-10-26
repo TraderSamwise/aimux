@@ -288,6 +288,23 @@ fn attach_caller_daemon_replacement(
     if !caller_replaced_daemon {
         return false;
     }
+    // The claim is the caller's word about its own actions and cannot be
+    // verified -- except for the one case that contradicts itself. A caller
+    // that names the daemon answering this request as the one it replaced has
+    // told us something impossible, and the report is better left as the
+    // daemon wrote it than rewritten from a claim we know is wrong.
+    let current_pid = restart
+        .get("daemon")
+        .and_then(|daemon| daemon.get("current"))
+        .and_then(|current| current.get("pid"))
+        .and_then(Value::as_i64);
+    let previous_pid = previous_daemon
+        .as_ref()
+        .and_then(|previous| previous.get("pid"))
+        .and_then(Value::as_i64);
+    if current_pid.is_some() && current_pid == previous_pid {
+        return false;
+    }
     let Some(daemon) = restart.get_mut("daemon").and_then(Value::as_object_mut) else {
         return false;
     };
@@ -709,6 +726,28 @@ mod caller_daemon_replacement_tests {
                 .find(|line| line.trim_start().starts_with("daemon:"))
                 .map(str::trim),
             Some("daemon: started -> pid=9001")
+        );
+    }
+
+    /// A caller cannot claim it replaced the daemon that is answering it.
+    ///
+    /// The claim is the caller's word about its own actions, and the daemon
+    /// cannot check it -- except for the one shape that contradicts itself.
+    /// The payload is a field on a core command, so any caller can set it;
+    /// naming the serving daemon as the one it replaced is the one claim worth
+    /// refusing rather than rendering.
+    #[test]
+    fn a_caller_cannot_claim_it_replaced_the_daemon_answering_it() {
+        let mut restart = restart_result();
+        assert!(!attach_caller_daemon_replacement(
+            &mut restart,
+            true,
+            Some(json!({ "pid": 9001 })),
+        ));
+        assert_eq!(
+            restart["daemon"]["retained"],
+            json!(true),
+            "the daemon's own account stands when the claim is impossible: {restart}"
         );
     }
 
