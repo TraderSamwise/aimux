@@ -336,6 +336,20 @@ fn delivery_notice_lines(payload: &Value) -> Vec<String> {
                 .join(",")
         ));
     }
+    // Said out loud rather than left to the exit code. These recipients are
+    // not errors, so nothing else in this payload mentions them, and a CLI
+    // that printed nothing would be claiming the send reached everyone.
+    let undeliverable = array(payload, "undeliverableTo");
+    if !undeliverable.is_empty() {
+        lines.push(format!(
+            "no live window for {}",
+            undeliverable
+                .iter()
+                .map(|value| js_string(Some(value)))
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    }
     for error in array(payload, "deliveryErrors") {
         lines.push(js_string(Some(error)));
     }

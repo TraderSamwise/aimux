@@ -44,20 +44,21 @@ project_service_agents_liveness	tmux liveness failure/success projection boundar
 project_service_controls	project-control route mutations over runtime state
 project_service_coordination_mutations	coordination mutation state with temp stores
 project_service_coordination_worklist	coordination worklist state with temp stores
-project_service_loop_parking	parking routes with process-global isolated runtime environment
-project_service_worklist_alerts	worklist CLI routes with process-global isolated runtime environment
 project_service_desktop_state	desktop-state projection with runtime/tmux-shaped liveness
 project_service_event_streams	SSE/event-stream timing
 project_service_gui_contract	GUI route contract covers live service/runtime state
+project_service_input_delivery_receipt	receipt persistence and shared surface fixtures with isolated process environment
 project_service_interactions	interaction route mutation state
 project_service_lifecycle	session lifecycle mutation state
-project_service_multiline_prompt	private foreground tmux server, raw composer peers, process-global isolated runtime environment
+project_service_loop_parking	parking routes with process-global isolated runtime environment
 project_service_metadata	metadata route state and filesystem mutation
+project_service_multiline_prompt	private foreground tmux server, raw composer peers, process-global isolated runtime environment
 project_service_process	project-service process bootstrap and environment boundaries
 project_service_router	router auth/isolation and local socket behavior
 project_service_signal_shutdown	real project-service process, endpoint/socket cleanup, and signal handling
 project_service_statusline	statusline route with tmux/runtime-shaped state
 project_service_switchable_agents	switchable-agent projection over tmux/runtime state
+project_service_worklist_alerts	worklist CLI routes with process-global isolated runtime environment
 release_zero_node	release/shim scripts and shell subprocess portability
 root_session_launch	session launch command construction with environment/runtime edges
 runtime_health_composition	process runtime initialization and global backlog metrics registry composition
@@ -65,8 +66,8 @@ runtime_migration	mutates AIMUX_HOME process environment
 self_termination	spawns child processes of this test binary that end themselves, and binds loopback ports they probe
 service_state_snapshot	tmux runtime stop/snapshot sequencing
 stream_proxy_surface_contract	async stream/proxy characterization over live TCP sockets and timing-sensitive disconnect paths
+test_isolation_lock	deliberately poisons the process-wide env lock a shared isolation holds
 tmux	real tmux manager behavior and runtime command boundaries
 tmux_expose_signal_shutdown	real expose subprocess signal/cursor teardown
 tmux_open_hyperlink	shell script subprocess and tmux hyperlink command behavior
 tmux_runtime_manager	real tmux runtime manager and socket/session operations
-project_service_input_delivery_receipt	receipt persistence and shared surface fixtures with isolated process environment

@@ -412,6 +412,22 @@ fn renders_threads_tasks_messages_and_review_follow_up_order() {
         ),
         vec!["thread th-1", "message m-1", "delivered a,b"]
     );
+    // `aimux message send` posts to the same thread-send route, so it can
+    // receive `undeliverableTo` too, and shares `delivery_notice_lines`.
+    assert_eq!(
+        render_core_message_send_lines(&json!({
+            "thread": { "id": "th-1" },
+            "message": { "id": "m-1" },
+            "deliveredTo": ["a"],
+            "undeliverableTo": ["b"]
+        })),
+        vec![
+            "thread th-1",
+            "message m-1",
+            "delivered a",
+            "no live window for b"
+        ]
+    );
     assert_eq!(
         render_core_review_request_changes_lines(
             &json!({ "task": { "id": "t-1" }, "thread": { "id": "th-1" }, "followUpTask": { "id": "t-2" } })
@@ -514,5 +530,45 @@ fn agent_input_says_when_nothing_is_watching_the_agent() {
         render_core_agent_input_lines(&older_service),
         vec!["delivered to codex-foehav"],
         "a project service predating the field must not grow a warning line"
+    );
+}
+
+/// The CLI says a recipient had no live window, rather than nothing at all.
+///
+/// `undeliverableTo` was added so that a departed participant stops failing a
+/// send the live recipients received. That only holds if the CLI still MENTIONS
+/// the departed one: before this, the recipient arrived as a `deliveryErrors`
+/// entry and printed; a new channel nothing rendered would have made the same
+/// send exit 0 and print nothing, which claims it reached everybody.
+#[test]
+fn thread_send_prints_a_recipient_with_no_live_window() {
+    assert_eq!(
+        render_core_thread_send_lines(&json!({
+            "message": { "id": "msg-1" },
+            "deliveredTo": ["codex-one"],
+            "undeliverableTo": ["codex-departed"]
+        })),
+        vec!["msg-1", "no live window for codex-departed"]
+    );
+    // A genuine error still reads as one, and both can appear together.
+    assert_eq!(
+        render_core_thread_send_lines(&json!({
+            "message": { "id": "msg-2" },
+            "undeliverableTo": ["codex-departed"],
+            "deliveryErrors": ["codex-two: tmux load-buffer failed"]
+        })),
+        vec![
+            "msg-2",
+            "no live window for codex-departed",
+            "codex-two: tmux load-buffer failed"
+        ]
+    );
+    // And a send with nobody missing gains no line.
+    assert_eq!(
+        render_core_thread_send_lines(&json!({
+            "message": { "id": "msg-3" },
+            "deliveredTo": ["codex-one"]
+        })),
+        vec!["msg-3"]
     );
 }

@@ -26,7 +26,23 @@ pub struct TestIsolation {
 
 impl TestIsolation {
     pub fn new(label: &str) -> Self {
-        let guard = ENV_LOCK.lock().expect("test env lock");
+        // Recover a poisoned lock rather than panicking on it.
+        //
+        // This static is shared by every test in the binary, and `.expect()`
+        // here turned ONE genuine failure into a cascade: the failing test
+        // panicked holding the guard, and every later test that built an
+        // isolation died reporting "test env lock" instead of anything about
+        // itself. That is why full-suite runs named a different test each time
+        // and why targets passed in isolation -- the first real failure was
+        // buried under the storm it caused.
+        //
+        // Recovery is sound because the guard only serializes env mutation and
+        // `Drop` restores the captured env while unwinding, so a panicking
+        // test leaves the environment as it found it before the guard is
+        // released.
+        let guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let root = PathBuf::from("/tmp").join(format!(
             "amx-test-{label}-{}-{}",
             std::process::id(),

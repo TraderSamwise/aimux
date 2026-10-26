@@ -1496,6 +1496,13 @@ fn deliver_thread_send_response(
     if !delivery.queued_to.is_empty() {
         object_insert_mut(&mut response.body, "queuedTo", json!(delivery.queued_to));
     }
+    if !delivery.undeliverable.is_empty() {
+        object_insert_mut(
+            &mut response.body,
+            "undeliverableTo",
+            json!(delivery.undeliverable),
+        );
+    }
     if !delivery.receipts.is_empty() {
         object_insert_mut(&mut response.body, "deliveries", json!(delivery.receipts));
     }
@@ -1520,14 +1527,24 @@ fn deliver_thread_send_response(
             mark_message_value_delivered(response.body["message"].clone(), &delivery.delivered_to);
         object_insert_mut(&mut response.body, "message", delivered_message);
     }
-    if !delivery.failures.is_empty() {
+    // A recipient that is gone only fails the send when it is the reason the
+    // send reached nobody. If anything was delivered or queued, the absence is
+    // reported in `undeliverableTo` and the send is what it actually was: a
+    // success that could not include everyone the thread remembers.
+    let reached = !delivery.delivered_to.is_empty() || !delivery.queued_to.is_empty();
+    let mut notices = delivery.failures.clone();
+    if !reached {
+        notices.extend(
+            delivery
+                .undeliverable
+                .iter()
+                .map(|recipient| format!("{recipient}: no live tmux window in runtime topology")),
+        );
+    }
+    if !notices.is_empty() {
         response.status = 424;
         object_insert_mut(&mut response.body, "ok", Value::Bool(false));
-        object_insert_mut(
-            &mut response.body,
-            "deliveryErrors",
-            json!(delivery.failures),
-        );
+        object_insert_mut(&mut response.body, "deliveryErrors", json!(notices.clone()));
         object_insert_mut(
             &mut response.body,
             "error",
@@ -1535,7 +1552,7 @@ fn deliver_thread_send_response(
                 "message {message_id} in thread {thread_id} was recorded but delivery could not be confirmed: {failures}. Inspect the terminal before retrying.",
                 message_id = message_id.unwrap_or_else(|| "<unknown message>".into()),
                 thread_id = thread_id.unwrap_or_else(|| "<unknown thread>".into()),
-                failures = delivery.failures.join("; ")
+                failures = notices.join("; ")
             )),
         );
         return response;
@@ -1552,6 +1569,15 @@ struct DeliveryPlan {
 struct DeliveryOutcome {
     delivered_to: Vec<String>,
     queued_to: Vec<String>,
+    /// Recipients that have no live window to receive anything.
+    ///
+    /// Separate from `failures` because they are a different answer, not a
+    /// milder one: nobody asked a question that went wrong, the recipient is
+    /// simply gone. Collapsing the two made one departed participant report
+    /// every later send into that thread as unconfirmed, even though the live
+    /// recipients received it -- and `participants` accumulates monotonically
+    /// and is never pruned, so a thread only ever gains these.
+    undeliverable: Vec<String>,
     failures: Vec<String>,
     receipts: BTreeMap<String, Value>,
 }
@@ -1593,9 +1619,7 @@ fn deliver_prompt_to_recipients(
         let target = match resolve_live_session_target(context, recipient) {
             Ok(Some(target)) => target,
             Ok(None) => {
-                outcome.failures.push(format!(
-                    "{recipient}: no live tmux window in runtime topology"
-                ));
+                outcome.undeliverable.push(recipient.clone());
                 continue;
             }
             Err(error) => {

@@ -981,6 +981,87 @@ fn thread_send_reaches_live_recipient_after_targetless_state_save() {
     cleanup(project);
 }
 
+/// A participant who is gone does not fail a send that reached everyone else.
+///
+/// `participants` accumulates monotonically and is never pruned, and
+/// `resolve_recipients` defaults `to` to the whole set, so a thread only ever
+/// gains recipients that cannot receive. While "no live window" was filed as a
+/// delivery failure, one departed agent made every later send into that thread
+/// answer 424 `ok: false` -- "recorded but delivery could not be confirmed" --
+/// even though the live recipients had it. The absence is reported instead, and
+/// `thread_send_reports_child_tmux_delivery_error` holds the other direction:
+/// a real error alongside a success still fails.
+#[test]
+fn a_departed_recipient_does_not_fail_a_send_the_live_one_received() {
+    let project = temp_project("thread-delivery-departed-participant");
+    let state_dir = project.join("state");
+    // Only one of the two is in the topology at all.
+    write_delivery_topology(&state_dir, &[("codex-one", "@one")]);
+    let isolation = support::TestIsolation::new("coordination-departed-participant");
+    let context = isolation.project_context(&project, &state_dir);
+    let opened = route_project_service_request(
+        &context,
+        "POST",
+        routes::threads::OPEN,
+        Some(&json!({
+            "from": "claude-lead",
+            "title": "Coordination",
+            "participants": ["codex-one", "codex-departed"]
+        })),
+    );
+    assert_eq!(opened.status, 200);
+    let thread_id = opened.body["thread"]["id"].as_str().unwrap().to_owned();
+    let mut runtime = FakeDeliveryRuntime::default();
+
+    let sent = route_coordination_mutation_request_with_runtime(
+        &context,
+        "POST",
+        routes::threads::SEND,
+        Some(&json!({
+            "threadId": thread_id,
+            "from": "claude-lead",
+            "to": ["codex-one", "codex-departed"],
+            "kind": "request",
+            "body": "Please inspect this."
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(sent.status, 200, "body: {:?}", sent.body);
+    assert_eq!(sent.body["ok"], true);
+    assert_eq!(sent.body["deliveredTo"], json!(["codex-one"]));
+    assert_eq!(
+        sent.body["undeliverableTo"],
+        json!(["codex-departed"]),
+        "the one that is gone is named, not hidden: {:?}",
+        sent.body
+    );
+    assert!(
+        sent.body.get("deliveryErrors").is_none(),
+        "being gone is not an error: {:?}",
+        sent.body
+    );
+    assert!(
+        sent.body.get("error").is_none(),
+        "and it does not get an error message: {:?}",
+        sent.body
+    );
+    // The live one really did receive it, so this is a success, not a
+    // relabelled failure.
+    assert!(text_sent_to(&runtime, "@one").contains("Please inspect this."));
+    let exchange = read_exchange(&state_dir);
+    let message_id = sent.body["message"]["id"].as_str().unwrap();
+    let message = exchange["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["id"] == message_id)
+        .unwrap();
+    assert_eq!(message["deliveredTo"], json!(["codex-one"]));
+    cleanup(project);
+}
+
 #[test]
 fn thread_send_reports_child_tmux_delivery_error() {
     let project = temp_project("thread-delivery-child-error");
