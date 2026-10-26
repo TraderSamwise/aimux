@@ -843,8 +843,8 @@ pub fn stop_daemon_info(
 /// `scripts/install.sh` in `aimux restart --all`, the daemon is replaced, and
 /// the only tmux that path touches is a contract repair that configures
 /// sessions and the dashboard window without killing an agent's.
-/// `stop_daemon_info` below means the opposite by the same
-/// signal: an explicit `daemon stop` tears the tmux runtime down and escalates
+/// `stop_daemon_info` below means the opposite: an explicit
+/// `daemon stop` sends `SIGTERM`, tears the tmux runtime down, and escalates
 /// to SIGKILL whatever signal it was given.
 ///
 /// One constant because it was the same literal in two files, and the two are

@@ -144,9 +144,10 @@ HS256 daemon tokens it mints).
 
 ## Upgrading without stopping your agents
 
-**Reinstalling or upgrading aimux does not stop your agents.** The daemon, the
-per-project services and the dashboard are all replaced; the windows your
-agents run in are not touched.
+**Reinstalling or upgrading aimux does not stop your agents.** The daemon is
+replaced, the dashboard window is rebuilt, and the per-project services are
+replaced or reused depending on whether the installed binary moved. The windows
+your agents run in are not touched by any of it.
 
 When there is an existing install, `scripts/install.sh` ends in
 `aimux restart --all` (a first install has nothing to restart, and
@@ -157,7 +158,7 @@ not do:
 |---|---|
 | the daemon | replaced — stopped and a new one started |
 | each project service | replaced when the installed binary moved, which an upgrade does; reused in place when it did not, which reinstalling the same version does |
-| the dashboard window | reloaded — the window survives, the process in it is respawned |
+| the dashboard window | rebuilt — a replacement window is created, swapped into the old index and name, and the original killed, so the slot survives and the window id does not |
 | the tmux runtime | repaired per project when the runtime contract changed: session options re-applied, the dashboard window ensured |
 | agent windows and the processes in them | left alone |
 
@@ -168,28 +169,32 @@ binary's inode until something restarts them. `aimux doctor versions` is what
 tells you when the fleet has drifted apart like that.
 
 That tmux repair is not a rare path — an upgrade that bumps the tmux runtime
-contract makes it run for every project. It creates and configures, and it
-respawns the dashboard window's process, but it has no branch that kills an
-agent window.
+contract makes it run for every project that has a live session. It creates and
+configures, and it respawns the dashboard window's process in place, but it has
+no branch that kills an agent window. It does re-apply window options to them,
+so "left alone" above means not killed and not moved, rather than not touched
+at all.
 
 Three things keep the agents out of the rest of it, and they are independent:
 
 1. The restart stops the daemon with `SIGHUP`, and the daemon's signal
    shutdown deliberately leaves the per-project services running for exactly
-   that signal. An explicit `aimux daemon stop` means the opposite by the same
-   signal: it tears the tmux runtime down on purpose and escalates to SIGKILL.
+   that signal. An explicit `aimux daemon stop` sends `SIGTERM` instead and
+   means the opposite by it: that one tears the tmux runtime down on purpose
+   and escalates to SIGKILL.
 2. Where the restart stops a project service, it signals that service's own
    verified pid and nothing else — not a process group, and no tmux call. The
    agents are children of the tmux server rather than of the service, so a
    signal to the service cannot reach them. (The service stop inside
    `aimux daemon stop` is a different routine, and that one does stop the tmux
    runtime first.)
-3. The restart's orphan cleanup kills three kinds of thing: tmux sessions left
-   behind by the test harness, processes that are not inside a live tmux pane,
-   and *dashboard* windows in sessions whose project root it does not
-   recognize. An agent is none of those — it runs in a live pane, in a window
-   that is not a dashboard — so it is never a candidate, even in an
-   unrecognized project.
+3. The restart's orphan cleanup kills three kinds of thing: tmux sessions the
+   test harness left behind, processes whose command line marks them as test
+   harness runs or as project services for a root it does not recognize, and
+   *dashboard* windows in sessions whose project root it does not recognize. An
+   agent is none of the three — it is not a harness process, not a project
+   service, and its window is not a dashboard — so it is never a candidate,
+   even in an unrecognized project.
 
 The commands that *do* take the runtime down are `aimux daemon stop`,
 `aimux projects remove` and `aimux restart-runtime`. Those are the ones
@@ -217,11 +222,11 @@ case the pid it replaced is not something the CLI ever knew.
 ### If the agents really are gone
 
 Something took the tmux server with it — a reboot, a `tmux kill-server`, a
-crash. aimux records the agents that were online and offers them back once per
-death: press Enter to restore them, `n` to say no and not be asked again until
-those agents have been alive again, or Esc to be asked at the next look. A
-restore stops early if the host is low on memory and offers the remainder back,
-saying so.
+crash. aimux records the agents that were online and offers them back, once per
+daemon boot until you answer: press Enter to restore them, `n` to say no and
+not be asked again until those agents have been alive again, or Esc to be asked
+at the next look. A restore stops early if the host is low on memory and offers
+the remainder back, saying so.
 
 ## 5. Mobile App (iOS/Android)
 
