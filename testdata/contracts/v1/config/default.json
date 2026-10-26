@@ -10,6 +10,9 @@
     "maxBytes": 10000000,
     "maxFiles": 5
   },
+  "bugReports": {
+    "enabled": false
+  },
   "graveyard": {
     "cleanupEnabled": true,
     "retentionDays": 14,

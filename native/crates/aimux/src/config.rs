@@ -48,6 +48,9 @@ pub fn default_config() -> Value {
             "maxBytes": 10_000_000,
             "maxFiles": 5
         },
+        "bugReports": {
+            "enabled": false
+        },
         "graveyard": {
             "cleanupEnabled": true,
             "retentionDays": 14,
@@ -202,6 +205,13 @@ pub fn merge_config_layers(global: Option<&Value>, project: Option<&Value>) -> V
         if let Some(project) = project.as_object_mut() {
             project.remove("hosted");
             project.remove("installs");
+            // A repository must not be able to turn bug reporting on for
+            // whoever opens it. The flag exists because a report is written by
+            // an agent with the user's tree open, so consent has to come from
+            // the person, not from a checked-in file -- and stripping it here
+            // means no reader anywhere can see a project-supplied value,
+            // rather than every reader having to remember which loader to use.
+            project.remove("bugReports");
         }
         config = deep_merge(&config, &project);
     }
