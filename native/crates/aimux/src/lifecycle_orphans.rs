@@ -924,19 +924,23 @@ mod tests {
             self
         }
 
-        fn dashboard_window(mut self, session_name: &str, window_id: &str) -> Self {
+        fn window(mut self, session_name: &str, window_id: &str, name: &str) -> Self {
             self.tmux_windows
                 .entry(session_name.to_owned())
                 .or_default()
                 .push(TmuxWindowInfo {
                     id: window_id.to_owned(),
                     index: 0,
-                    name: "dashboard".to_owned(),
+                    name: name.to_owned(),
                     active: true,
                     activity: None,
                     pane_dead: None,
                 });
             self
+        }
+
+        fn dashboard_window(self, session_name: &str, window_id: &str) -> Self {
+            self.window(session_name, window_id, "dashboard")
         }
 
         fn read_sequence(
@@ -1580,6 +1584,76 @@ mod tests {
         );
         assert_eq!(result.tmux_windows, vec!["aimux-sam-5e9c1a8e1d4e:@1190"]);
         assert_eq!(runtime.killed_windows, vec!["aimux-sam-5e9c1a8e1d4e:@1190"]);
+        assert!(runtime.killed_sessions.is_empty());
+    }
+
+    /// Reinstalling must not take the agents down with it.
+    ///
+    /// Reinstalling over an existing install ends `scripts/install.sh` in
+    /// `aimux restart --all`, and that restart runs this cleanup. The only
+    /// windows it may kill are dashboards in sessions whose project root it
+    /// does not recognize -- which is exactly the shape a reinstall sees for a
+    /// project whose registry entry is missing or whose root has moved. The
+    /// agents in such a session must survive it.
+    ///
+    /// The sparing was only ever asserted with no project-service scope at all
+    /// (`lifecycle_cleanup_never_reaps_live_dashboard_or_agent_or_idle_session`),
+    /// which never reaches the window-killing path. This is the same fixture as
+    /// `lifecycle_cleanup_reaps_same_owner_dashboard_window_for_unrecognized_project_root`
+    /// with the window belonging to an agent instead.
+    ///
+    /// The name is checked against the rule that spares it rather than just
+    /// being a string that happens not to look like a dashboard -- otherwise
+    /// this passes for any literal, and would keep passing if the dashboard
+    /// rule ever widened to cover agent names.
+    #[test]
+    fn lifecycle_cleanup_never_reaps_an_agent_window_in_an_unrecognized_project() {
+        const AGENT_WINDOW_NAME: &str = "claude-b8bjzx";
+        assert!(
+            !is_dashboard_window_name(AGENT_WINDOW_NAME),
+            "the fixture must name a window the sparing rule actually spares"
+        );
+        let mut runtime = FakeLifecycleRuntime {
+            tmux_available: true,
+            tmux_sessions: vec!["aimux-sam-5e9c1a8e1d4e".into()],
+            ..Default::default()
+        }
+        .option(
+            "aimux-sam-5e9c1a8e1d4e",
+            "@aimux-project-root",
+            "/Users/sam",
+        )
+        .option(
+            "aimux-sam-5e9c1a8e1d4e",
+            TMUX_RUNTIME_OWNER_OPTION,
+            "owner-new",
+        )
+        .window("aimux-sam-5e9c1a8e1d4e", "@1190", AGENT_WINDOW_NAME);
+
+        let result = cleanup_lifecycle_validation_orphans(
+            &mut runtime,
+            CleanupLifecycleOrphansOptions {
+                current_pid: 999,
+                process_exit_timeout_ms: 0,
+                process_kill_grace_ms: 0,
+                project_service_scope: Some(ProjectServiceOrphanScope {
+                    aimux_home: "/Users/sam/.aimux".into(),
+                    runtime_owner: "owner-new".into(),
+                    recognized_project_roots: BTreeSet::from(["/Users/sam/cs/aimux".into()]),
+                }),
+            },
+        );
+
+        assert!(
+            result.attempted_tmux_windows.is_empty(),
+            "an agent window must not even be attempted: {:?}",
+            result.attempted_tmux_windows
+        );
+        assert!(
+            runtime.killed_windows.is_empty(),
+            "an agent window must survive a reinstall: {:?}",
+            runtime.killed_windows
+        );
         assert!(runtime.killed_sessions.is_empty());
     }
 

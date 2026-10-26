@@ -89,7 +89,7 @@ use crate::daemon_state::{
     metadata_endpoint_path, remove_metadata_endpoint, remove_metadata_endpoint_if_owned,
     save_daemon_info, save_daemon_state,
 };
-use crate::daemon_supervisor::RUNTIME_RESTART_LOCK_STALE_MS;
+use crate::daemon_supervisor::{DAEMON_RESTART_SIGNAL, RUNTIME_RESTART_LOCK_STALE_MS};
 use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::dashboard_targets::{
     DashboardResolveOptions, DashboardTargetContext, DashboardTargetRef, DashboardTargetTmux,
@@ -2604,8 +2604,14 @@ impl RealDaemonRuntime {
     }
 }
 
-fn daemon_signal_shutdown_stops_project_services(signal_name: &str) -> bool {
-    signal_name != "SIGHUP"
+/// Whether a shutdown on this signal should stop the per-project services.
+///
+/// Everything except the signal `aimux restart` sends. That exemption is what
+/// keeps a reinstall from taking the agents down with it, so it compares
+/// against the constant the CLI actually sends rather than a second copy of
+/// the name.
+pub(crate) fn daemon_signal_shutdown_stops_project_services(signal_name: &str) -> bool {
+    signal_name != DAEMON_RESTART_SIGNAL
 }
 
 fn daemon_project_read_snapshot(
@@ -7224,6 +7230,34 @@ mod tests {
         assert_eq!(other_service.status, Some(ProjectServiceStatus::Running));
         assert_eq!(verifier.batch_project_counts(), vec![1]);
         fixture.cleanup();
+    }
+
+    /// The one invariant that keeps a reinstall from taking the agents down.
+    ///
+    /// Reinstalling over an existing install ends `scripts/install.sh` in
+    /// `aimux restart --all`, which stops the daemon with
+    /// `DAEMON_RESTART_SIGNAL` -- and this shutdown skips stopping the
+    /// per-project services for exactly that signal. The restart's own tmux
+    /// work is a contract repair that configures rather than kills, so the
+    /// agents survive. Send any other signal and every reinstall stops every
+    /// project service.
+    ///
+    /// Compared against each other rather than asserted once each: the CLI's
+    /// choice of signal and this exemption used to be two copies of the same
+    /// string in two files, and a per-surface test would have passed happily
+    /// while they disagreed.
+    #[test]
+    fn the_signal_a_restart_sends_is_the_one_that_spares_project_services() {
+        assert!(
+            !daemon_signal_shutdown_stops_project_services(DAEMON_RESTART_SIGNAL),
+            "a restart must not stop the project services it is restarting around"
+        );
+        for signal in ["SIGTERM", "SIGINT", "SIGQUIT"] {
+            assert!(
+                daemon_signal_shutdown_stops_project_services(signal),
+                "{signal} is a real shutdown and must stop the project services"
+            );
+        }
     }
 
     #[test]

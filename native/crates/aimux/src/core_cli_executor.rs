@@ -33,7 +33,7 @@ use crate::daemon_state::{
     load_daemon_state,
 };
 use crate::daemon_supervisor::{
-    DAEMON_HEALTH_PROBE_TIMEOUT_MS, acquire_runtime_restart_permit,
+    DAEMON_HEALTH_PROBE_TIMEOUT_MS, DAEMON_RESTART_SIGNAL, acquire_runtime_restart_permit,
     assert_not_stopping_newer_daemon, ensure_daemon_running, is_matching_daemon_health,
     stop_daemon, stop_daemon_process_info,
 };
@@ -69,7 +69,6 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const DAEMON_RESTART_SIGNAL: &str = "SIGHUP";
 const LOOP_SELF_REPORT_SPOOL_RELATIVE_PATH: &str = "daemon/pending-loop-self-reports.jsonl";
 const LOOP_SELF_REPORT_DAEMON_TIMEOUT_MS: u64 = 10_000;
 const LOOP_MANAGEMENT_DAEMON_TIMEOUT_MS: u64 = 60_000;
@@ -643,8 +642,10 @@ fn restart_control_plane_from_cli(
                 let info = daemon_info
                     .as_ref()
                     .ok_or_else(|| "daemon info missing".to_owned())?;
+                // The daemon it stopped, so the restart report can name the pid
+                // it replaced instead of the one answering the request.
                 stop_daemon_process_info(&resolver, info, signal)
-                    .map(|_| ())
+                    .map(|stopped| serde_json::to_value(&stopped.daemon).ok())
                     .map_err(|error| error.to_string())
             },
             ensure_daemon_running: || {
@@ -697,7 +698,7 @@ pub fn restart_control_plane_from_cli_with<
 ) -> Result<RestartControlPlaneTextResult, String>
 where
     AssertNewer: FnMut() -> Result<(), String>,
-    StopDaemon: FnMut(&'static str) -> Result<(), String>,
+    StopDaemon: FnMut(&'static str) -> Result<Option<Value>, String>,
     EnsureDaemon: FnMut() -> Result<(), String>,
     RequestRestart: FnMut(
         &'static str,
@@ -730,7 +731,7 @@ pub fn restart_control_plane_from_cli_with_lock_owner<
 ) -> Result<RestartControlPlaneTextResult, String>
 where
     AssertNewer: FnMut() -> Result<(), String>,
-    StopDaemon: FnMut(&'static str) -> Result<(), String>,
+    StopDaemon: FnMut(&'static str) -> Result<Option<Value>, String>,
     EnsureDaemon: FnMut() -> Result<(), String>,
     RequestRestart: FnMut(
         &'static str,
@@ -748,12 +749,25 @@ where
         mut verify_restarted_daemon,
     } = deps;
 
+    let mut previous_daemon = None;
     if should_stop_daemon {
         assert_not_stopping_newer_daemon()?;
-        stop_daemon_process(DAEMON_RESTART_SIGNAL)?;
+        previous_daemon = stop_daemon_process(DAEMON_RESTART_SIGNAL)?;
     }
     ensure_daemon_running()?;
     let mut payload = Map::new();
+    // The answer comes from a daemon this function started -- unconditionally,
+    // because `ensure_daemon_running` above is called with
+    // `adopt_existing: Some(false)` and so starts a fresh one whether or not
+    // there was an old one to stop. That daemon cannot know it was started for
+    // this request, so it reported `retained pid=<new pid>` on every reinstall.
+    // Say what happened; the daemon fills it into the report it renders, and
+    // `previous_daemon` is what distinguishes replacing one from starting the
+    // first.
+    payload.insert("daemonStartedByCaller".into(), json!(true));
+    if let Some(previous_daemon) = previous_daemon {
+        payload.insert("previousDaemon".into(), previous_daemon);
+    }
     if let Some(project_root) = project_root {
         payload.insert("projectRoot".into(), json!(project_root));
     }
@@ -3442,7 +3456,7 @@ mod tests {
                     calls
                         .borrow_mut()
                         .push(json!({ "fn": "stop-daemon-process", "signal": signal }));
-                    Ok(())
+                    Ok(Some(json!({ "pid": 9000 })))
                 },
                 ensure_daemon_running: || {
                     calls
@@ -3493,6 +3507,10 @@ mod tests {
                     "fn": "request",
                     "command": "core.restart",
                     "payload": {
+                        // What the CLI did to the daemon, which the daemon it
+                        // just started cannot know.
+                        "daemonStartedByCaller": true,
+                        "previousDaemon": { "pid": 9000 },
                         "force": true,
                         "backendIdCapturePrechecked": true,
                         "restartLockOwnerPid": 12345,
@@ -3521,7 +3539,7 @@ mod tests {
                 },
                 stop_daemon_process: |_signal| {
                     calls.borrow_mut().push("stop");
-                    Ok(())
+                    Ok(Some(json!({ "pid": 9000 })))
                 },
                 ensure_daemon_running: || {
                     calls.borrow_mut().push("ensure");

@@ -237,13 +237,23 @@ pub fn route_core_command(
                     );
                 }
             }
+            let caller_started_daemon = bool_payload_param(payload, "daemonStartedByCaller");
+            let previous_daemon = payload
+                .and_then(|payload| payload.get("previousDaemon"))
+                .cloned();
             runtime
                 .restart_control_plane(issued_at, project_root.as_deref())
                 .map(|mut result| {
-                    if let Some(restart) = result.get_mut("restart")
-                        && attach_restart_guard_notices(restart, &restart_guard_notices)
-                    {
-                        result["text"] = Value::String(render_runtime_restart_result(restart));
+                    if let Some(restart) = result.get_mut("restart") {
+                        let notices = attach_restart_guard_notices(restart, &restart_guard_notices);
+                        let daemon = attach_caller_started_daemon(
+                            restart,
+                            caller_started_daemon,
+                            previous_daemon,
+                        );
+                        if notices || daemon {
+                            result["text"] = Value::String(render_runtime_restart_result(restart));
+                        }
                     }
                     result
                 })
@@ -255,6 +265,54 @@ pub fn route_core_command(
         Ok(result) => DaemonRouteResponse::json(200, command_ok(&id, command, issued_at, result)),
         Err(error) => DaemonRouteResponse::json(500, command_error(&id, Some(command), error)),
     }
+}
+
+/// Record that the CALLER replaced the daemon, which the daemon cannot know.
+///
+/// `restart_control_plane` hardcodes `retained: true` because, from the point
+/// of view of the process answering the request, it was not restarted. But
+/// `aimux restart` stops the old daemon and starts a new one before it sends
+/// this command, so the answer comes from the new daemon and the report read
+/// `daemon: retained pid=<new pid>` -- on every reinstall, naming a pid that
+/// had existed for a second. The caller is the only one who knows, so it says
+/// so and this fills it in.
+///
+/// `previous` absent with `retained` false is the honest shape for a restart
+/// that found no daemon to stop and started one: the renderer prints
+/// `started -> pid=<new>` rather than claiming a predecessor.
+fn attach_caller_started_daemon(
+    restart: &mut Value,
+    caller_started_daemon: bool,
+    previous_daemon: Option<Value>,
+) -> bool {
+    if !caller_started_daemon {
+        return false;
+    }
+    // The claim is the caller's word about its own actions and cannot be
+    // verified -- except for the one case that contradicts itself. A caller
+    // that names the daemon answering this request as the one it replaced has
+    // told us something impossible, and the report is better left as the
+    // daemon wrote it than rewritten from a claim we know is wrong.
+    let current_pid = restart
+        .get("daemon")
+        .and_then(|daemon| daemon.get("current"))
+        .and_then(|current| current.get("pid"))
+        .and_then(Value::as_i64);
+    // Anything that is not a daemon record names no predecessor.
+    let previous_daemon = previous_daemon.filter(Value::is_object);
+    let previous_pid = previous_daemon
+        .as_ref()
+        .and_then(|previous| previous.get("pid"))
+        .and_then(Value::as_i64);
+    if current_pid.is_some() && current_pid == previous_pid {
+        return false;
+    }
+    let Some(daemon) = restart.get_mut("daemon").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    daemon.insert("retained".into(), Value::Bool(false));
+    daemon.insert("previous".into(), previous_daemon.unwrap_or(Value::Null));
+    true
 }
 
 fn restart_lock_owner_pid(payload: Option<&Value>) -> Option<i32> {
@@ -613,4 +671,101 @@ fn path_resolve(path: &str) -> String {
             .join(path)
     };
     resolved.to_string_lossy().into_owned()
+}
+
+#[cfg(test)]
+mod caller_started_daemon_tests {
+    use super::*;
+
+    fn restart_result() -> Value {
+        json!({
+            "daemon": {
+                "previous": Value::Null,
+                "current": { "pid": 9001 },
+                "retained": true,
+            },
+            "summary": { "projects": 0 },
+        })
+    }
+
+    /// A restart that replaced the daemon must not report it as retained.
+    ///
+    /// `restart_control_plane` hardcodes `retained: true` because the process
+    /// answering the request was not itself restarted -- but `aimux restart`
+    /// stops the old daemon and starts a new one BEFORE sending the command,
+    /// so the answer comes from the new daemon. Every reinstall printed
+    /// `daemon: retained pid=<new pid>`, naming a pid a second old.
+    #[test]
+    fn a_restart_that_replaced_the_daemon_reports_the_pid_it_replaced() {
+        let mut restart = restart_result();
+        assert!(attach_caller_started_daemon(
+            &mut restart,
+            true,
+            Some(json!({ "pid": 9000 })),
+        ));
+        assert_eq!(restart["daemon"]["retained"], json!(false));
+        assert_eq!(restart["daemon"]["previous"]["pid"], json!(9000));
+        assert_eq!(
+            render_runtime_restart_result(&restart)
+                .lines()
+                .find(|line| line.trim_start().starts_with("daemon:"))
+                .map(str::trim),
+            Some("daemon: restarted pid=9000 -> pid=9001")
+        );
+    }
+
+    /// And one that found no daemon to stop started one, which is not a
+    /// predecessor to name.
+    #[test]
+    fn a_restart_that_started_a_daemon_claims_no_predecessor() {
+        let mut restart = restart_result();
+        assert!(attach_caller_started_daemon(&mut restart, true, None));
+        assert_eq!(restart["daemon"]["retained"], json!(false));
+        assert_eq!(restart["daemon"]["previous"], Value::Null);
+        assert_eq!(
+            render_runtime_restart_result(&restart)
+                .lines()
+                .find(|line| line.trim_start().starts_with("daemon:"))
+                .map(str::trim),
+            Some("daemon: started -> pid=9001")
+        );
+    }
+
+    /// A caller cannot claim it replaced the daemon that is answering it.
+    ///
+    /// The claim is the caller's word about its own actions, and the daemon
+    /// cannot check it -- except for the one shape that contradicts itself.
+    /// The payload is a field on a core command, so any caller can set it;
+    /// naming the serving daemon as the one it replaced is the one claim worth
+    /// refusing rather than rendering.
+    #[test]
+    fn a_caller_cannot_claim_it_replaced_the_daemon_answering_it() {
+        let mut restart = restart_result();
+        assert!(!attach_caller_started_daemon(
+            &mut restart,
+            true,
+            Some(json!({ "pid": 9001 })),
+        ));
+        assert_eq!(
+            restart["daemon"]["retained"],
+            json!(true),
+            "the daemon's own account stands when the claim is impossible: {restart}"
+        );
+    }
+
+    /// The inverse: a restart served by a daemon nobody replaced -- the route
+    /// called directly rather than through `aimux restart` -- still says so.
+    #[test]
+    fn a_restart_nobody_replaced_the_daemon_for_still_reports_retained() {
+        let mut restart = restart_result();
+        assert!(!attach_caller_started_daemon(&mut restart, false, None));
+        assert_eq!(restart["daemon"]["retained"], json!(true));
+        assert_eq!(
+            render_runtime_restart_result(&restart)
+                .lines()
+                .find(|line| line.trim_start().starts_with("daemon:"))
+                .map(str::trim),
+            Some("daemon: retained pid=9001")
+        );
+    }
 }
