@@ -85,6 +85,7 @@ use crate::runtime_guard_repair_history::{
     record_attempt as record_runtime_guard_repair_attempt,
 };
 use crate::tmux::{TmuxRuntimeManager, tmux_command_from_env};
+use crate::tmux_query_memo::enter_tmux_query_memo;
 use crate::tui_render::theme::{Tone, recede, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
 use crate::tui_screen_renderers::{
@@ -529,6 +530,28 @@ pub fn run_native_dashboard_with_seams(
     let mut render_requested_by_input = false;
     let mut cacheable_input = true;
     loop {
+        // One tmux memo for this frame.
+        //
+        // Every read-only tmux verb routed through `TmuxRuntimeManager` goes
+        // via `memoized_tmux_query` (`tmux.rs` `exec_owned`), and a write
+        // resets it -- but the memo is SCOPED and nothing in `src/` ever
+        // opened a scope, so in the shipped binary it was a pure passthrough
+        // and every call site re-exec'd.
+        //
+        // Be precise about what this scope does NOT fix. The reads a plain
+        // navigation frame makes -- `read_tmux_dashboard_pane_size`,
+        // `previous_window_session_id`, `read_tmux_tui_visibility` -- are raw
+        // `tmux_command_from_env` commands that never reach `exec_owned`, so
+        // they are untouched by this. The next commit routes the viewport probe
+        // through the manager, which is what makes this scope load-bearing on
+        // the keypress path. Until then this bounds the manager-routed reads a
+        // frame can make (today: the inline `exec_owned` site below, and
+        // anything a future caller adds) rather than the measured 17 spawns.
+        //
+        // Dropped before each point the loop waits, so a frame never serves a
+        // read taken before a wait. `capture-pane -p` is excluded from the memo
+        // at its source, so live pane content cannot go stale inside a frame.
+        let frame_tmux_memo = enter_tmux_query_memo();
         // Any reason to repaint that is not a keypress. A cached frame holds
         // none of it, so each one sends this iteration down the refresh path.
         let mut render_requested_by_data = false;
@@ -617,6 +640,7 @@ pub fn run_native_dashboard_with_seams(
                 &mut event_stream_down,
                 &mut event_stream_health,
             );
+            drop(frame_tmux_memo);
             thread::sleep(DASHBOARD_HIDDEN_POLL_INTERVAL);
             continue;
         }
@@ -695,6 +719,7 @@ pub fn run_native_dashboard_with_seams(
                 // Left pending: this pass asks for the snapshot the keys need,
                 // and the pass that has one dispatches them.
                 render_now = true;
+                drop(frame_tmux_memo);
                 wait_for_dashboard_keys(wait_on_stdin && !driven);
                 continue;
             };
@@ -1505,6 +1530,8 @@ pub fn run_native_dashboard_with_seams(
                 }
             }
         }
+        // Ends the frame's memo. Anything after this point reads fresh.
+        drop(frame_tmux_memo);
         wait_for_dashboard_keys(wait_on_stdin && !driven);
     }
 }
