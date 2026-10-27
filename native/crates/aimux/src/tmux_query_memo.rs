@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MemoEntry {
@@ -46,6 +47,13 @@ pub fn with_tmux_query_memo<T>(fn_once: impl FnOnce() -> T) -> T {
 pub struct TmuxQueryMemoScope {
     /// Held only so the scope closes when this value drops.
     _guard: TmuxQueryMemoGuard,
+    /// Keeps the scope on the thread that opened it.
+    ///
+    /// The memo is `thread_local!`, so a scope moved to another thread would
+    /// clear THAT thread's absent memo on drop and leave the opener's set for
+    /// ever -- stale tmux answers for the life of the process, which is worse
+    /// than the spawns this exists to avoid.
+    _not_send: PhantomData<*const ()>,
 }
 
 /// Open a memo scope that closes when the returned value drops.
@@ -54,6 +62,7 @@ pub fn enter_tmux_query_memo() -> TmuxQueryMemoScope {
     if is_in_tmux_query_memo_scope() {
         return TmuxQueryMemoScope {
             _guard: TmuxQueryMemoGuard { owner: false },
+            _not_send: PhantomData,
         };
     }
     TMUX_QUERY_MEMO.with(|memo| {
@@ -61,6 +70,7 @@ pub fn enter_tmux_query_memo() -> TmuxQueryMemoScope {
     });
     TmuxQueryMemoScope {
         _guard: TmuxQueryMemoGuard { owner: true },
+        _not_send: PhantomData,
     }
 }
 

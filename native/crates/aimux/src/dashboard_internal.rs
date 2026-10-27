@@ -339,10 +339,11 @@ impl DashboardViewportState {
         &mut self,
         size: DashboardViewport,
         asked_tmux: bool,
+        signalled: bool,
     ) -> Option<DashboardViewport> {
         if let Some(previous) = self.last_size {
             let expands = size.cols > previous.cols || size.rows > previous.rows;
-            if expands {
+            if expands && !signalled {
                 if !asked_tmux {
                     return None;
                 }
@@ -360,6 +361,7 @@ impl DashboardViewportState {
                 self.pending_expanded_size = None;
                 self.pending_expanded_count = 0;
             }
+            let _ = expands;
         }
         self.last_size = Some(size);
         self.pending_expanded_size = None;
@@ -367,7 +369,31 @@ impl DashboardViewportState {
         Some(size)
     }
 
+    /// The pane size after SIGWINCH, believed without waiting for a second
+    /// reading.
+    ///
+    /// The growth rule exists to reject a reading taken mid-layout when
+    /// NOTHING said the pane changed -- a poll that happens to catch a
+    /// transient width. SIGWINCH is not that: it is the kernel saying the size
+    /// changed, so the reading is corroborated by the signal itself.
+    ///
+    /// This is a deliberate change from what the code did before the probe was
+    /// memoized, and it is the reason this method exists. A resize frame used
+    /// to make TWO raw spawns -- the branch below and the 250ms backstop in the
+    /// same iteration -- which drove `pending_expanded_count` to 2 and adopted
+    /// the new size immediately. Memoizing the probe made the second call a
+    /// memo hit, so it stopped corroborating anything and an enlarged terminal
+    /// painted at the old size for up to 250ms. Two spawns microseconds apart
+    /// were never independent evidence; the signal is.
+    fn get_viewport_size_after_signal(&mut self, fallback: DashboardViewport) -> DashboardViewport {
+        self.read_viewport(fallback, true)
+    }
+
     fn get_viewport_size(&mut self, fallback: DashboardViewport) -> DashboardViewport {
+        self.read_viewport(fallback, false)
+    }
+
+    fn read_viewport(&mut self, fallback: DashboardViewport, signalled: bool) -> DashboardViewport {
         let target = dashboard_tmux_pane_target();
         // Which reading this is, not which call. A frame can call this three
         // times and the memo serves one spawn to all of them; the growth rule
@@ -379,7 +405,7 @@ impl DashboardViewportState {
         {
             let asked_tmux =
                 DASHBOARD_PANE_SIZE_PROBES.load(AtomicOrdering::Relaxed) != probes_before;
-            if let Some(believed) = self.admit_reading(size, asked_tmux) {
+            if let Some(believed) = self.admit_reading(size, asked_tmux, signalled) {
                 return believed;
             }
             if let Some(previous) = self.last_size {
@@ -656,7 +682,7 @@ pub fn run_native_dashboard_with_seams(
         }
         let terminal_resized = live_dashboard && consume_terminal_resize();
         if terminal_resized {
-            viewport = viewport_state.get_viewport_size(viewport);
+            viewport = viewport_state.get_viewport_size_after_signal(viewport);
             last_viewport_key = viewport.key();
             render_now = true;
             render_requested_by_data = true;
@@ -4041,13 +4067,13 @@ mod tests {
 
         // First reading, really asked: pending, not believed.
         assert_eq!(
-            state.admit_reading(grown, true),
+            state.admit_reading(grown, true, false),
             None,
             "one reading is not two"
         );
         // The same reading again from the memo: must not count as the second.
         assert_eq!(
-            state.admit_reading(grown, false),
+            state.admit_reading(grown, false, false),
             None,
             "a memo hit is the same reading, not corroboration"
         );
@@ -4058,9 +4084,46 @@ mod tests {
         );
         // A genuine second reading does confirm it.
         assert_eq!(
-            state.admit_reading(grown, true),
+            state.admit_reading(grown, true, false),
             Some(grown),
             "two real readings in a row are believed"
+        );
+    }
+
+    /// A pane the KERNEL said grew is believed at once, memo hit or not.
+    ///
+    /// Review caught this as a regression in the first version of the memo
+    /// work. A resize frame used to make two raw spawns -- the SIGWINCH branch
+    /// and the 250ms backstop in the same iteration -- which drove the growth
+    /// count to 2 and adopted the new size immediately. Memoizing the probe
+    /// made the second call a memo hit, so it corroborated nothing and an
+    /// enlarged terminal painted at the old size for up to 250ms. Two spawns
+    /// microseconds apart were never independent evidence; SIGWINCH is.
+    #[test]
+    fn a_signalled_growth_is_believed_without_a_second_reading() {
+        let mut state = DashboardViewportState {
+            last_size: Some(DashboardViewport { cols: 80, rows: 24 }),
+            ..DashboardViewportState::default()
+        };
+        let grown = DashboardViewport {
+            cols: 200,
+            rows: 50,
+        };
+        assert_eq!(
+            state.admit_reading(grown, true, true),
+            Some(grown),
+            "SIGWINCH is the corroboration, so the resize paints at once"
+        );
+        // And it holds even when the reading came from the frame memo, which is
+        // the case that regressed.
+        let mut state = DashboardViewportState {
+            last_size: Some(DashboardViewport { cols: 80, rows: 24 }),
+            ..DashboardViewportState::default()
+        };
+        assert_eq!(
+            state.admit_reading(grown, false, true),
+            Some(grown),
+            "a memo-served reading on a signalled resize is still believed"
         );
     }
 
@@ -4080,7 +4143,7 @@ mod tests {
         };
         let shrunk = DashboardViewport { cols: 80, rows: 24 };
         assert_eq!(
-            state.admit_reading(shrunk, false),
+            state.admit_reading(shrunk, false, false),
             Some(shrunk),
             "shrinking is believed immediately"
         );
