@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MemoEntry {
@@ -34,6 +35,43 @@ pub fn with_tmux_query_memo<T>(fn_once: impl FnOnce() -> T) -> T {
     });
     let _guard = TmuxQueryMemoGuard { owner: true };
     fn_once()
+}
+
+/// RAII entry to the memo scope, for a caller whose scope is a loop body.
+///
+/// `with_tmux_query_memo` takes a closure, which cannot wrap a loop body that
+/// uses `continue` or `break` -- the dashboard frame loop does both, and it is
+/// the caller that needed a scope most. Entering while a scope is already open
+/// is a no-op that leaves the outer scope's lifetime in charge, so nesting is
+/// safe.
+pub struct TmuxQueryMemoScope {
+    /// Held only so the scope closes when this value drops.
+    _guard: TmuxQueryMemoGuard,
+    /// Keeps the scope on the thread that opened it.
+    ///
+    /// The memo is `thread_local!`, so a scope moved to another thread would
+    /// clear THAT thread's absent memo on drop and leave the opener's set for
+    /// ever -- stale tmux answers for the life of the process, which is worse
+    /// than the spawns this exists to avoid.
+    _not_send: PhantomData<*const ()>,
+}
+
+/// Open a memo scope that closes when the returned value drops.
+#[must_use = "the memo scope closes as soon as this value drops"]
+pub fn enter_tmux_query_memo() -> TmuxQueryMemoScope {
+    if is_in_tmux_query_memo_scope() {
+        return TmuxQueryMemoScope {
+            _guard: TmuxQueryMemoGuard { owner: false },
+            _not_send: PhantomData,
+        };
+    }
+    TMUX_QUERY_MEMO.with(|memo| {
+        *memo.borrow_mut() = Some(HashMap::new());
+    });
+    TmuxQueryMemoScope {
+        _guard: TmuxQueryMemoGuard { owner: true },
+        _not_send: PhantomData,
+    }
 }
 
 pub fn memoized_tmux_query(

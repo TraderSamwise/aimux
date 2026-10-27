@@ -85,6 +85,7 @@ use crate::runtime_guard_repair_history::{
     record_attempt as record_runtime_guard_repair_attempt,
 };
 use crate::tmux::{TmuxRuntimeManager, tmux_command_from_env};
+use crate::tmux_query_memo::{enter_tmux_query_memo, memoized_tmux_query, tmux_query_key};
 use crate::tui_render::theme::{Tone, recede, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
 use crate::tui_screen_renderers::{
@@ -98,6 +99,7 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -115,6 +117,15 @@ const DASHBOARD_HIDDEN_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const DASHBOARD_STREAM_RETRY_INTERVAL: Duration = Duration::from_secs(2);
 const DASHBOARD_FALLBACK_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL: Duration = Duration::from_millis(250);
+/// How often the render-time pane-size backstop may ask tmux.
+///
+/// Named rather than inlined because WHICH interval this is was the bug. It
+/// used to be `DASHBOARD_KEY_POLL_INTERVAL`, so keys set the probe rate and one
+/// keypress bought one blocking `tmux display-message`.
+/// `the_render_time_viewport_probe_is_not_paced_on_the_key_rate` holds it apart
+/// from the key rate so that cannot come back silently.
+pub const DASHBOARD_RENDER_VIEWPORT_RECHECK_INTERVAL: Duration =
+    DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL;
 const DASHBOARD_RUNTIME_GUARD_INTERVAL: Duration = Duration::from_secs(5);
 /// The shortest gap between two frames a keypress asked for.
 ///
@@ -311,33 +322,95 @@ struct DashboardViewportState {
 }
 
 impl DashboardViewportState {
+    /// Whether a reading is believed, or the size already held stands.
+    ///
+    /// A pane that GREW needs two readings in a row before it is believed: a
+    /// single reading taken mid-layout reports a width the pane is about to
+    /// stop having, and painting to it leaves the frame wrong until something
+    /// else forces a repaint. A pane that shrank is believed at once, because
+    /// painting too wide is the error that corrupts the display.
+    ///
+    /// `asked_tmux` is what makes this correct now the probe is memoized.
+    /// Corroboration means a second READING, not a second call: a frame calls
+    /// `get_viewport_size` up to three times and the memo serves one spawn to
+    /// all of them, so counting calls would let one bogus reading confirm
+    /// itself. Returns `None` when the caller should keep what it had.
+    fn admit_reading(
+        &mut self,
+        size: DashboardViewport,
+        asked_tmux: bool,
+        signalled: bool,
+    ) -> Option<DashboardViewport> {
+        if let Some(previous) = self.last_size {
+            let expands = size.cols > previous.cols || size.rows > previous.rows;
+            if expands && !signalled {
+                if !asked_tmux {
+                    return None;
+                }
+                let same_pending = self.pending_expanded_size == Some(size);
+                self.pending_expanded_size = Some(size);
+                self.pending_expanded_count = if same_pending {
+                    self.pending_expanded_count + 1
+                } else {
+                    1
+                };
+                if self.pending_expanded_count < 2 {
+                    return None;
+                }
+            } else {
+                self.pending_expanded_size = None;
+                self.pending_expanded_count = 0;
+            }
+            let _ = expands;
+        }
+        self.last_size = Some(size);
+        self.pending_expanded_size = None;
+        self.pending_expanded_count = 0;
+        Some(size)
+    }
+
+    /// The pane size after SIGWINCH, believed without waiting for a second
+    /// reading.
+    ///
+    /// The growth rule exists to reject a reading taken mid-layout when
+    /// NOTHING said the pane changed -- a poll that happens to catch a
+    /// transient width. SIGWINCH is not that: it is the kernel saying the size
+    /// changed, so the reading is corroborated by the signal itself.
+    ///
+    /// This is a deliberate change from what the code did before the probe was
+    /// memoized, and it is the reason this method exists. A resize frame used
+    /// to make TWO raw spawns -- the branch below and the 250ms backstop in the
+    /// same iteration -- which drove `pending_expanded_count` to 2 and adopted
+    /// the new size immediately. Memoizing the probe made the second call a
+    /// memo hit, so it stopped corroborating anything and an enlarged terminal
+    /// painted at the old size for up to 250ms. Two spawns microseconds apart
+    /// were never independent evidence; the signal is.
+    fn get_viewport_size_after_signal(&mut self, fallback: DashboardViewport) -> DashboardViewport {
+        self.read_viewport(fallback, true)
+    }
+
     fn get_viewport_size(&mut self, fallback: DashboardViewport) -> DashboardViewport {
+        self.read_viewport(fallback, false)
+    }
+
+    fn read_viewport(&mut self, fallback: DashboardViewport, signalled: bool) -> DashboardViewport {
         let target = dashboard_tmux_pane_target();
+        // Which reading this is, not which call. A frame can call this three
+        // times and the memo serves one spawn to all of them; the growth rule
+        // below needs two readings IN A ROW, and counting calls would let a
+        // single bogus mid-layout `pane_width` satisfy it by being read twice.
+        let probes_before = DASHBOARD_PANE_SIZE_PROBES.load(AtomicOrdering::Relaxed);
         if let Some(tmux_pane) = target.as_deref()
             && let Some(size) = read_tmux_dashboard_pane_size(tmux_pane)
         {
-            if let Some(previous) = self.last_size {
-                let expands = size.cols > previous.cols || size.rows > previous.rows;
-                if expands {
-                    let same_pending = self.pending_expanded_size == Some(size);
-                    self.pending_expanded_size = Some(size);
-                    self.pending_expanded_count = if same_pending {
-                        self.pending_expanded_count + 1
-                    } else {
-                        1
-                    };
-                    if self.pending_expanded_count < 2 {
-                        return previous;
-                    }
-                } else {
-                    self.pending_expanded_size = None;
-                    self.pending_expanded_count = 0;
-                }
+            let asked_tmux =
+                DASHBOARD_PANE_SIZE_PROBES.load(AtomicOrdering::Relaxed) != probes_before;
+            if let Some(believed) = self.admit_reading(size, asked_tmux, signalled) {
+                return believed;
             }
-            self.last_size = Some(size);
-            self.pending_expanded_size = None;
-            self.pending_expanded_count = 0;
-            return size;
+            if let Some(previous) = self.last_size {
+                return previous;
+            }
         }
 
         if target.is_some()
@@ -498,7 +571,8 @@ pub fn run_native_dashboard_with_seams(
     }
     let mut last_viewport_key = viewport.key();
     let mut last_tmux_viewport_check = Instant::now() - DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL;
-    let mut last_render_viewport_check = Instant::now() - DASHBOARD_KEY_POLL_INTERVAL;
+    let mut last_render_viewport_check =
+        Instant::now() - DASHBOARD_RENDER_VIEWPORT_RECHECK_INTERVAL;
     let mut last_render = Instant::now();
     let clock_start = Instant::now();
     let mut output: Box<dyn Write> = match seam_output {
@@ -529,6 +603,28 @@ pub fn run_native_dashboard_with_seams(
     let mut render_requested_by_input = false;
     let mut cacheable_input = true;
     loop {
+        // One tmux memo for this frame.
+        //
+        // Every read-only tmux verb routed through `TmuxRuntimeManager` goes
+        // via `memoized_tmux_query` (`tmux.rs` `exec_owned`), and a write
+        // resets it -- but the memo is SCOPED and nothing in `src/` ever
+        // opened a scope, so in the shipped binary it was a pure passthrough
+        // and every call site re-exec'd.
+        //
+        // Be precise about what this scope does NOT fix. The reads a plain
+        // navigation frame makes -- `read_tmux_dashboard_pane_size`,
+        // `previous_window_session_id`, `read_tmux_tui_visibility` -- are raw
+        // `tmux_command_from_env` commands that never reach `exec_owned`, so
+        // they are untouched by this. The next commit routes the viewport probe
+        // through the manager, which is what makes this scope load-bearing on
+        // the keypress path. Until then this bounds the manager-routed reads a
+        // frame can make (today: the inline `exec_owned` site below, and
+        // anything a future caller adds) rather than the measured 17 spawns.
+        //
+        // Dropped before each point the loop waits, so a frame never serves a
+        // read taken before a wait. `capture-pane -p` is excluded from the memo
+        // at its source, so live pane content cannot go stale inside a frame.
+        let frame_tmux_memo = enter_tmux_query_memo();
         // Any reason to repaint that is not a keypress. A cached frame holds
         // none of it, so each one sends this iteration down the refresh path.
         let mut render_requested_by_data = false;
@@ -586,7 +682,7 @@ pub fn run_native_dashboard_with_seams(
         }
         let terminal_resized = live_dashboard && consume_terminal_resize();
         if terminal_resized {
-            viewport = viewport_state.get_viewport_size(viewport);
+            viewport = viewport_state.get_viewport_size_after_signal(viewport);
             last_viewport_key = viewport.key();
             render_now = true;
             render_requested_by_data = true;
@@ -617,6 +713,7 @@ pub fn run_native_dashboard_with_seams(
                 &mut event_stream_down,
                 &mut event_stream_health,
             );
+            drop(frame_tmux_memo);
             thread::sleep(DASHBOARD_HIDDEN_POLL_INTERVAL);
             continue;
         }
@@ -695,6 +792,7 @@ pub fn run_native_dashboard_with_seams(
                 // Left pending: this pass asks for the snapshot the keys need,
                 // and the pass that has one dispatches them.
                 render_now = true;
+                drop(frame_tmux_memo);
                 wait_for_dashboard_keys(wait_on_stdin && !driven);
                 continue;
             };
@@ -962,13 +1060,26 @@ pub fn run_native_dashboard_with_seams(
                 || forced_refresh
                 || last_render.elapsed() >= DASHBOARD_FALLBACK_REFRESH_INTERVAL);
         if render_due {
-            // Its own clock, not the 250ms one above: that one has already run
-            // this iteration, so sharing it would silence this measurement
-            // entirely rather than pace it -- and a grown pane needs two
-            // readings in a row before it is believed. The interval is the old
-            // ceiling of one reading per loop iteration, kept now that keys
-            // rather than a sleep decide how often the loop comes round.
-            if live_dashboard && last_render_viewport_check.elapsed() >= DASHBOARD_KEY_POLL_INTERVAL
+            // Its own clock, not the one above: that one has already run this
+            // iteration, so sharing it would silence this measurement entirely
+            // rather than pace it -- and a grown pane needs two readings in a
+            // row before it is believed. "Readings", not calls: this call is
+            // usually served from the frame memo, and `get_viewport_size`
+            // advances the growth count only when it really asked tmux.
+            //
+            // The interval was DASHBOARD_KEY_POLL_INTERVAL, 50ms, described as
+            // "the old ceiling of one reading per loop iteration, kept now that
+            // keys rather than a sleep decide how often the loop comes round".
+            // That is exactly the problem: keys decide how often the loop comes
+            // round, so one keypress meant one blocking `tmux display-message`
+            // spawn and holding a key meant twenty a second. A real resize does
+            // not depend on this poll -- SIGWINCH sets
+            // `consume_terminal_resize()` and the branch above measures at once
+            // -- so this is a backstop, and it is paced like the other backstop
+            // rather than like the key rate.
+            if live_dashboard
+                && last_render_viewport_check.elapsed()
+                    >= DASHBOARD_RENDER_VIEWPORT_RECHECK_INTERVAL
             {
                 last_render_viewport_check = Instant::now();
                 viewport = viewport_state.get_viewport_size(viewport);
@@ -1505,6 +1616,8 @@ pub fn run_native_dashboard_with_seams(
                 }
             }
         }
+        // Ends the frame's memo. Anything after this point reads fresh.
+        drop(frame_tmux_memo);
         wait_for_dashboard_keys(wait_on_stdin && !driven);
     }
 }
@@ -2170,15 +2283,48 @@ fn dashboard_tmux_pane_target() -> Option<String> {
         .or_else(current_process_tmux_pane_id)
 }
 
+/// How many times the pane-size probe actually asked tmux.
+///
+/// Counts the spawn, not the call: a read served from the frame memo does not
+/// increment it. That distinction is the whole point of the probe being
+/// memoized, so it is what the gate asserts.
+#[doc(hidden)]
+pub static DASHBOARD_PANE_SIZE_PROBES: AtomicU64 = AtomicU64::new(0);
+
+/// The dashboard pane's size, asked of tmux at most once per frame.
+///
+/// Routed through `memoized_tmux_query` rather than straight at the command,
+/// because this is the read a keypress was paying for: the frame loop calls it
+/// from two places, and before the frame scope existed each call was its own
+/// `tmux display-message` spawn. `display-message` is a read-only verb, so the
+/// key and the invalidation rules are the ones `exec_owned` already uses -- a
+/// write clears the entry, and the scope ends with the frame.
+///
+/// A failure is cached too, for the frame. That is deliberate: both periodic
+/// clocks are advanced before the failing call, so the alternative to serving
+/// one `Err` is stacking up to three 500ms timeouts inside a single frame. The
+/// cost is that a transient failure waits for the next frame rather than being
+/// re-probed in this one, and the caller falls back to `last_size` meanwhile.
 fn read_tmux_dashboard_pane_size(tmux_pane: &str) -> Option<DashboardViewport> {
-    let mut command = tmux_command_from_env();
-    command.args(["display-message", "-p", "-t", tmux_pane]);
-    command.arg("#{pane_width}x#{pane_height}");
-    let output = command_output_with_timeout(&mut command, Duration::from_millis(500)).ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let raw = String::from_utf8_lossy(&output.stdout);
+    let args = vec![
+        "display-message".to_owned(),
+        "-p".to_owned(),
+        "-t".to_owned(),
+        tmux_pane.to_owned(),
+        "#{pane_width}x#{pane_height}".to_owned(),
+    ];
+    let raw = memoized_tmux_query(tmux_query_key(&args, None), || {
+        DASHBOARD_PANE_SIZE_PROBES.fetch_add(1, AtomicOrdering::Relaxed);
+        let mut command = tmux_command_from_env();
+        command.args(&args);
+        let output = command_output_with_timeout(&mut command, Duration::from_millis(500))
+            .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err("tmux display-message reported failure".to_owned());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    })
+    .ok()?;
     let (cols, rows) = raw.split_once('x')?;
     let cols = cols.trim().parse::<usize>().ok()?;
     let rows = rows.trim().parse::<usize>().ok()?;
@@ -3868,6 +4014,179 @@ fn drain_dashboard_request_outcomes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The render-time pane-size probe is not paced on the key rate.
+    ///
+    /// This is the regression in one line. The probe was gated on
+    /// `DASHBOARD_KEY_POLL_INTERVAL`, and the comment at the call site said
+    /// why: "the old ceiling of one reading per loop iteration, kept now that
+    /// keys rather than a sleep decide how often the loop comes round". Keys
+    /// decide how often the loop comes round, so that made one keypress cost
+    /// one blocking `tmux display-message`, and holding a key twenty a second.
+    ///
+    /// A spawn budget measured around `handle_key` + `render_dashboard_frame`
+    /// cannot catch this: neither enters the frame loop, so the probe count
+    /// there is structurally zero whatever the pacing is. Nor can
+    /// `dashboard_render_loop.rs`, which drives the loop with
+    /// `live_dashboard == false` precisely to skip "the tmux visibility read,
+    /// the viewport recheck and the runtime-guard probe". So the invariant is
+    /// held where it can be: on which interval the call site reads.
+    #[test]
+    fn the_render_time_viewport_probe_is_not_paced_on_the_key_rate() {
+        assert!(
+            DASHBOARD_RENDER_VIEWPORT_RECHECK_INTERVAL > DASHBOARD_KEY_POLL_INTERVAL,
+            "{:?} is the key poll interval: pacing the probe on it means one \
+             blocking tmux spawn per keypress",
+            DASHBOARD_KEY_POLL_INTERVAL
+        );
+        assert!(
+            DASHBOARD_RENDER_VIEWPORT_RECHECK_INTERVAL >= Duration::from_millis(250),
+            "a resize is caught by SIGWINCH, so this backstop may be slow, but \
+             it must not be fast enough to ride the key rate"
+        );
+    }
+
+    /// A reading served from the frame memo does not corroborate a grown pane.
+    ///
+    /// The growth rule wants two readings IN A ROW before it believes a pane
+    /// got bigger, because one reading taken mid-layout reports a width the
+    /// pane is about to stop having. Memoizing the probe put that rule in
+    /// danger: a frame calls `get_viewport_size` up to three times, the memo
+    /// serves ONE spawn to all of them, and a rule that counted calls would let
+    /// a single bogus reading confirm itself and be believed.
+    #[test]
+    fn a_memo_served_reading_does_not_confirm_a_grown_pane() {
+        let mut state = DashboardViewportState {
+            last_size: Some(DashboardViewport { cols: 80, rows: 24 }),
+            ..DashboardViewportState::default()
+        };
+        let grown = DashboardViewport {
+            cols: 200,
+            rows: 50,
+        };
+
+        // First reading, really asked: pending, not believed.
+        assert_eq!(
+            state.admit_reading(grown, true, false),
+            None,
+            "one reading is not two"
+        );
+        // The same reading again from the memo: must not count as the second.
+        assert_eq!(
+            state.admit_reading(grown, false, false),
+            None,
+            "a memo hit is the same reading, not corroboration"
+        );
+        assert_eq!(
+            state.last_size,
+            Some(DashboardViewport { cols: 80, rows: 24 }),
+            "and the held size is untouched"
+        );
+        // A genuine second reading does confirm it.
+        assert_eq!(
+            state.admit_reading(grown, true, false),
+            Some(grown),
+            "two real readings in a row are believed"
+        );
+    }
+
+    /// A pane the KERNEL said grew is believed at once, memo hit or not.
+    ///
+    /// Review caught this as a regression in the first version of the memo
+    /// work. A resize frame used to make two raw spawns -- the SIGWINCH branch
+    /// and the 250ms backstop in the same iteration -- which drove the growth
+    /// count to 2 and adopted the new size immediately. Memoizing the probe
+    /// made the second call a memo hit, so it corroborated nothing and an
+    /// enlarged terminal painted at the old size for up to 250ms. Two spawns
+    /// microseconds apart were never independent evidence; SIGWINCH is.
+    #[test]
+    fn a_signalled_growth_is_believed_without_a_second_reading() {
+        let mut state = DashboardViewportState {
+            last_size: Some(DashboardViewport { cols: 80, rows: 24 }),
+            ..DashboardViewportState::default()
+        };
+        let grown = DashboardViewport {
+            cols: 200,
+            rows: 50,
+        };
+        assert_eq!(
+            state.admit_reading(grown, true, true),
+            Some(grown),
+            "SIGWINCH is the corroboration, so the resize paints at once"
+        );
+        // And it holds even when the reading came from the frame memo, which is
+        // the case that regressed.
+        let mut state = DashboardViewportState {
+            last_size: Some(DashboardViewport { cols: 80, rows: 24 }),
+            ..DashboardViewportState::default()
+        };
+        assert_eq!(
+            state.admit_reading(grown, false, true),
+            Some(grown),
+            "a memo-served reading on a signalled resize is still believed"
+        );
+    }
+
+    /// A pane that shrank is believed at once, memo hit or not.
+    ///
+    /// The inverse of the test above: the guard must not become "ignore
+    /// anything the memo served", because painting too wide corrupts the
+    /// display and shrinking needs no corroboration.
+    #[test]
+    fn a_shrunk_pane_is_believed_from_a_memo_served_reading() {
+        let mut state = DashboardViewportState {
+            last_size: Some(DashboardViewport {
+                cols: 200,
+                rows: 50,
+            }),
+            ..DashboardViewportState::default()
+        };
+        let shrunk = DashboardViewport { cols: 80, rows: 24 };
+        assert_eq!(
+            state.admit_reading(shrunk, false, false),
+            Some(shrunk),
+            "shrinking is believed immediately"
+        );
+    }
+
+    /// A second pane-size read inside one frame does not spawn tmux.
+    ///
+    /// The frame loop reads the pane size from two places, and before this the
+    /// probe went straight at `tmux_command_from_env`, so each call was its own
+    /// `tmux display-message`. With keys driving how often the loop comes
+    /// round, that made one keypress cost one blocking spawn.
+    ///
+    /// Seeding the memo rather than letting the first read spawn is deliberate:
+    /// `tmux_command_from_env` panics when tmux cannot be resolved, so a test
+    /// that really spawned would be a test that needs tmux installed. Seeding
+    /// proves the thing in question -- that the probe consults the memo at all
+    /// -- without that dependency.
+    #[test]
+    fn a_second_pane_size_read_in_one_frame_does_not_spawn_tmux() {
+        let _frame = enter_tmux_query_memo();
+        let args = vec![
+            "display-message".to_owned(),
+            "-p".to_owned(),
+            "-t".to_owned(),
+            "%9".to_owned(),
+            "#{pane_width}x#{pane_height}".to_owned(),
+        ];
+        let seeded = memoized_tmux_query(tmux_query_key(&args, None), || Ok("120x40".to_owned()));
+        assert_eq!(seeded.as_deref(), Ok("120x40"), "the frame has an answer");
+
+        let before = DASHBOARD_PANE_SIZE_PROBES.load(AtomicOrdering::Relaxed);
+        let size = read_tmux_dashboard_pane_size("%9").expect("the seeded size is readable");
+        assert_eq!(
+            (size.cols, size.rows),
+            (120, 40),
+            "and the probe returns it rather than its own reading"
+        );
+        assert_eq!(
+            DASHBOARD_PANE_SIZE_PROBES.load(AtomicOrdering::Relaxed),
+            before,
+            "no tmux spawn: the frame already had the answer"
+        );
+    }
 
     /// Which agents the filter must keep, from the two signals that name one.
     ///
