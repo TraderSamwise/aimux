@@ -117,6 +117,15 @@ const DASHBOARD_HIDDEN_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const DASHBOARD_STREAM_RETRY_INTERVAL: Duration = Duration::from_secs(2);
 const DASHBOARD_FALLBACK_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL: Duration = Duration::from_millis(250);
+/// How often the render-time pane-size backstop may ask tmux.
+///
+/// Named rather than inlined because WHICH interval this is was the bug. It
+/// used to be `DASHBOARD_KEY_POLL_INTERVAL`, so keys set the probe rate and one
+/// keypress bought one blocking `tmux display-message`.
+/// `the_render_time_viewport_probe_is_not_paced_on_the_key_rate` holds it apart
+/// from the key rate so that cannot come back silently.
+pub const DASHBOARD_RENDER_VIEWPORT_RECHECK_INTERVAL: Duration =
+    DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL;
 const DASHBOARD_RUNTIME_GUARD_INTERVAL: Duration = Duration::from_secs(5);
 /// The shortest gap between two frames a keypress asked for.
 ///
@@ -536,7 +545,8 @@ pub fn run_native_dashboard_with_seams(
     }
     let mut last_viewport_key = viewport.key();
     let mut last_tmux_viewport_check = Instant::now() - DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL;
-    let mut last_render_viewport_check = Instant::now() - DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL;
+    let mut last_render_viewport_check =
+        Instant::now() - DASHBOARD_RENDER_VIEWPORT_RECHECK_INTERVAL;
     let mut last_render = Instant::now();
     let clock_start = Instant::now();
     let mut output: Box<dyn Write> = match seam_output {
@@ -1042,7 +1052,8 @@ pub fn run_native_dashboard_with_seams(
             // -- so this is a backstop, and it is paced like the other backstop
             // rather than like the key rate.
             if live_dashboard
-                && last_render_viewport_check.elapsed() >= DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL
+                && last_render_viewport_check.elapsed()
+                    >= DASHBOARD_RENDER_VIEWPORT_RECHECK_INTERVAL
             {
                 last_render_viewport_check = Instant::now();
                 viewport = viewport_state.get_viewport_size(viewport);
@@ -2251,6 +2262,7 @@ fn dashboard_tmux_pane_target() -> Option<String> {
 /// Counts the spawn, not the call: a read served from the frame memo does not
 /// increment it. That distinction is the whole point of the probe being
 /// memoized, so it is what the gate asserts.
+#[doc(hidden)]
 pub static DASHBOARD_PANE_SIZE_PROBES: AtomicU64 = AtomicU64::new(0);
 
 /// The dashboard pane's size, asked of tmux at most once per frame.
@@ -3976,6 +3988,37 @@ fn drain_dashboard_request_outcomes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The render-time pane-size probe is not paced on the key rate.
+    ///
+    /// This is the regression in one line. The probe was gated on
+    /// `DASHBOARD_KEY_POLL_INTERVAL`, and the comment at the call site said
+    /// why: "the old ceiling of one reading per loop iteration, kept now that
+    /// keys rather than a sleep decide how often the loop comes round". Keys
+    /// decide how often the loop comes round, so that made one keypress cost
+    /// one blocking `tmux display-message`, and holding a key twenty a second.
+    ///
+    /// A spawn budget measured around `handle_key` + `render_dashboard_frame`
+    /// cannot catch this: neither enters the frame loop, so the probe count
+    /// there is structurally zero whatever the pacing is. Nor can
+    /// `dashboard_render_loop.rs`, which drives the loop with
+    /// `live_dashboard == false` precisely to skip "the tmux visibility read,
+    /// the viewport recheck and the runtime-guard probe". So the invariant is
+    /// held where it can be: on which interval the call site reads.
+    #[test]
+    fn the_render_time_viewport_probe_is_not_paced_on_the_key_rate() {
+        assert!(
+            DASHBOARD_RENDER_VIEWPORT_RECHECK_INTERVAL > DASHBOARD_KEY_POLL_INTERVAL,
+            "{:?} is the key poll interval: pacing the probe on it means one \
+             blocking tmux spawn per keypress",
+            DASHBOARD_KEY_POLL_INTERVAL
+        );
+        assert!(
+            DASHBOARD_RENDER_VIEWPORT_RECHECK_INTERVAL >= Duration::from_millis(250),
+            "a resize is caught by SIGWINCH, so this backstop may be slow, but \
+             it must not be fast enough to ride the key rate"
+        );
+    }
 
     /// A reading served from the frame memo does not corroborate a grown pane.
     ///

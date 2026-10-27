@@ -20,6 +20,7 @@ use aimux::atomic_write::{WRITE_COUNTERS, write_counts_since};
 use aimux::dashboard_controller::{
     DashboardController, DashboardControllerEffect, DashboardKey, DashboardScreen,
 };
+use aimux::dashboard_internal::DASHBOARD_PANE_SIZE_PROBES;
 use aimux::dashboard_model::{DashboardService, DesktopStateSnapshot};
 use aimux::dashboard_navigation::{
     DashboardNavigationState, NAVIGATION_GROUP_BUILDS, NAVIGATION_ORDER_BUILDS,
@@ -30,6 +31,7 @@ use aimux::dashboard_ui_state::DashboardUiStatePersistence;
 use aimux::project_service::desktop_state::{
     CANONICALIZE_CALLS, DesktopStateInput, build_desktop_state,
 };
+use aimux::tmux_exec_metrics::{get_tmux_exec_metrics, reset_tmux_exec_metrics};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
@@ -920,5 +922,98 @@ fn an_ordering_is_not_reused_when_the_main_checkout_moved() {
         "once that path IS the main checkout its agents belong to the main \
          group; {after} rows still on it means the main checkout path is not \
          in the fingerprint"
+    );
+}
+
+/// What one keypress costs in SUBPROCESSES, which nothing here could see.
+///
+/// `what_one_repaint_costs_the_operating_system` counts `fs::canonicalize` and
+/// file writes, and it held -- the ordering fix it was written for is still in
+/// place. Meanwhile key-to-paint reached 2.6 seconds on a 55-row dashboard for
+/// a reason no counter in this file could reach: the frame was spawning `tmux`,
+/// about 17 processes a keypress. A spawn is not a syscall and not a write, so
+/// it needs its own budget.
+///
+/// `tmux_exec_metrics` catches anything through `TmuxRuntimeManager`, sync and
+/// async both, and `DASHBOARD_PANE_SIZE_PROBES` catches the pane-size probe,
+/// which owns its own `Command`. `tmux_exec_metrics` is thread-local, so a
+/// concurrent test cannot pollute it -- and a spawn made on another thread is
+/// invisible to it.
+///
+/// BE CLEAR ABOUT THE SCOPE. This measures the controller and the renderer, not
+/// a real frame. Neither `handle_key` nor `render_dashboard_frame` enters the
+/// loop, so what a live frame also does -- `get_viewport_size`,
+/// `previous_window_session_id`, `read_tmux_tui_visibility`,
+/// `persist_controller_state` -- is outside the window. In particular this test
+/// CANNOT catch the regression it was written alongside: re-pacing the viewport
+/// probe to the key rate leaves the probe delta here at zero, because the loop
+/// never runs. That invariant is held by
+/// `the_render_time_viewport_probe_is_not_paced_on_the_key_rate` instead.
+///
+/// What it is worth: the budget is ZERO, so any tmux spawn newly introduced
+/// into the controller or the renderer fails it. A keypress repaints a snapshot
+/// already in hand -- `dashboard_render_loop.rs` proves it does not refetch --
+/// so neither of them needs to ask tmux anything.
+#[test]
+fn what_one_keypress_costs_in_subprocesses() {
+    let _counters = counters();
+    let base = snapshot("spawn-budget", 100, 200);
+    let mut controller = DashboardController::new(&base);
+    let _warm = dashboard_navigation_groups(&base);
+
+    reset_tmux_exec_metrics();
+    let probes_before = DASHBOARD_PANE_SIZE_PROBES.load(Ordering::Relaxed);
+
+    let effect = controller.handle_key(&base, DashboardKey::Down);
+    let frame = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &base,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 40,
+        nav_level: controller.navigation.level,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: controller.navigation.focused_worktree_path(&base),
+        focused_group_index: None,
+        runtime_label: Some("native"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        details_sidebar_visible: controller.details_sidebar_visible,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+
+    let metrics = get_tmux_exec_metrics();
+    // Async as well as sync: `capture_target_async` records
+    // `TmuxExecMode::Async`, so a preview spawn added to this path would
+    // otherwise pass while `sync.count` stayed at zero.
+    let spawns = metrics.sync.count + metrics.async_totals.count;
+    let probes = DASHBOARD_PANE_SIZE_PROBES.load(Ordering::Relaxed) - probes_before;
+    println!("one keypress: {spawns} tmux execs, {probes} pane-size probes");
+
+    assert!(
+        matches!(effect, DashboardControllerEffect::Render),
+        "a Down key is a repaint, not a dispatch -- otherwise this measures \
+         the wrong thing"
+    );
+    assert!(
+        !frame.frame.is_empty(),
+        "and it really rendered, so the counts are of work that happened"
+    );
+    assert_eq!(
+        spawns, 0,
+        "a keypress repaints a snapshot it already has; a tmux exec here is a \
+         spawn on the keypress path, which is what took key-to-paint to 2.6s"
+    );
+    assert_eq!(
+        probes, 0,
+        "and the pane-size probe owns its own Command, so it is counted \
+         separately rather than trusted to appear above"
     );
 }
