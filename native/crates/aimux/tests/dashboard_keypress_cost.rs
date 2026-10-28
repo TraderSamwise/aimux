@@ -21,7 +21,10 @@ use aimux::dashboard_controller::{
     DashboardController, DashboardControllerEffect, DashboardKey, DashboardScreen,
 };
 use aimux::dashboard_internal::DASHBOARD_PANE_SIZE_PROBES;
-use aimux::dashboard_model::{DashboardService, DesktopStateSnapshot};
+use aimux::dashboard_model::{
+    DASHBOARD_CLASSIFIER_PROBES, DashboardKept, DashboardService, DesktopStateSnapshot,
+    SessionTeamMetadata, filter_dashboard_visible_model,
+};
 use aimux::dashboard_navigation::{
     DashboardNavigationState, NAVIGATION_GROUP_BUILDS, NAVIGATION_ORDER_BUILDS,
     dashboard_navigation_groups,
@@ -1016,4 +1019,205 @@ fn what_one_keypress_costs_in_subprocesses() {
         "and the pane-size probe owns its own Command, so it is counted \
          separately rather than trusted to appear above"
     );
+}
+
+/// What a keypress costs does not move with the NUMBER OF ROWS.
+///
+/// This is the dimension the dashboard was actually slow in and the one no
+/// gate here watched. Every budget in this file is measured at a single
+/// fixture size, so a cost paid once per agent is invisible to all of them:
+/// the number is whatever it is, the assertion is about its shape, and a
+/// fixture that never changes size cannot show a shape.
+///
+/// What that hid: the dashboard asked whether each session was a control agent
+/// about eight times a frame, and answered by serialising the typed row into a
+/// `serde_json::Map` -- the whole `team` object included -- then letting
+/// `agent_lane` build a second `json!`. Two allocations per session per ask.
+/// At 200 rows that is thousands of JSON values for one repaint, and nothing
+/// in this file could see one of them.
+///
+/// So this measures the same keypress at two row counts an order of magnitude
+/// apart and requires the same answer from both: zero. Not "nearly the same"
+/// -- a marginal of zero is the only bound that cannot slacken as the fixture
+/// grows, and a repaint of a snapshot already on screen genuinely has nothing
+/// to work out.
+#[test]
+fn what_a_keypress_costs_does_not_move_with_row_count() {
+    let _counters = counters();
+    let mut probes_by_leg = Vec::new();
+    for (label, worktrees, agents) in [("rows-few", 9, 20), ("rows-many", 9, 200)] {
+        let mut snap = snapshot(label, worktrees, agents);
+        // A SELECTED session with teammates, because without one the frame
+        // never reaches `selected_teammates` -- it returns early on
+        // `selected_session` being None -- and that is the path
+        // `sort_sessions_by_canonical_order` sits on, which still builds a
+        // JSON probe per row it sorts. A review caught the first version of
+        // this gate reading zero partly because it never went there.
+        let selected = snap.sessions.first().map(|session| session.id.clone());
+        if let Some(parent) = selected.clone() {
+            let teammates = snap
+                .sessions
+                .iter()
+                .take(4)
+                .enumerate()
+                .map(|(index, session)| {
+                    let mut teammate = session.clone();
+                    teammate.id = format!("{}-mate{index}", session.id);
+                    teammate.team = Some(SessionTeamMetadata {
+                        team_id: "team".to_owned(),
+                        parent_session_id: parent.clone(),
+                        role: None,
+                        label: Some(format!("mate{index}")),
+                        extra: BTreeMap::new(),
+                    });
+                    teammate
+                })
+                .collect::<Vec<_>>();
+            snap.teammates = teammates;
+            // Mutated in place after the memos could have been read.
+            snap.forget_derived();
+        }
+        let mut controller = DashboardController::new(&snap);
+        let state_root =
+            std::env::temp_dir().join(format!("aimux-rowcount-{}-{label}", std::process::id()));
+        std::fs::create_dir_all(&state_root).expect("state directory");
+        let mut persistence = DashboardUiStatePersistence::new(&state_root, "rowcount")
+            .expect("ui state persistence");
+
+        // The first pass is allowed to work the ordering out; this gate is
+        // about the SECOND keypress, on a snapshot already on screen.
+        let _ = controller.handle_key(&snap, DashboardKey::Down);
+        let _ = render_dashboard_frame(&row_count_input(&snap, &controller, selected.as_deref()));
+
+        reset_tmux_exec_metrics();
+        let calls_before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
+        let orders_before = NAVIGATION_ORDER_BUILDS.load(Ordering::Relaxed);
+        let probes_before = DASHBOARD_CLASSIFIER_PROBES.load(Ordering::Relaxed);
+        let pane_before = DASHBOARD_PANE_SIZE_PROBES.load(Ordering::Relaxed);
+        let builds_before = NAVIGATION_GROUP_BUILDS.load(Ordering::Relaxed);
+
+        let effect = controller.handle_key(&snap, DashboardKey::Down);
+        let frame =
+            render_dashboard_frame(&row_count_input(&snap, &controller, selected.as_deref()));
+        let _ = persistence.persist_controller_state(
+            DashboardScreen::Dashboard,
+            "output",
+            false,
+            &snap,
+            &controller.navigation,
+        );
+        // Inside the window, because this is where the per-row classification
+        // that nothing covered actually lives.
+        //
+        // `filter_dashboard_visible_model` runs on the FETCH path rather than
+        // the key path, and with hiding off it returns a clone before asking
+        // anything -- so a gate that only presses a key never reaches
+        // `dashboard_session_survives_hidden_offline`, which classifies every
+        // row. An adversarial review found the hole by writing the mutation
+        // that passes without this line: put the JSON probe back inside that
+        // predicate and the keypress legs stay at zero while the cost this
+        // change removed comes straight back.
+        //
+        // `true` rather than the flag the frame uses, because the branch that
+        // costs is the one hiding takes.
+        let _ = filter_dashboard_visible_model(&snap, true, &DashboardKept::default());
+
+        let calls = CANONICALIZE_CALLS.load(Ordering::Relaxed) - calls_before;
+        let orders = NAVIGATION_ORDER_BUILDS.load(Ordering::Relaxed) - orders_before;
+        let probes = DASHBOARD_CLASSIFIER_PROBES.load(Ordering::Relaxed) - probes_before;
+        let panes = DASHBOARD_PANE_SIZE_PROBES.load(Ordering::Relaxed) - pane_before;
+        let builds = NAVIGATION_GROUP_BUILDS.load(Ordering::Relaxed) - builds_before;
+        let spawns = get_tmux_exec_metrics().sync.count;
+        let _ = std::fs::remove_dir_all(&state_root);
+        remove_snapshot_tree(label);
+
+        assert!(
+            matches!(effect, DashboardControllerEffect::Render),
+            "{label}: a Down arrow has to be the frame-producing case"
+        );
+        assert!(
+            !frame.frame.is_empty(),
+            "{label}: and it has to paint something"
+        );
+
+        println!(
+            "{label} ({agents} agents): {calls} canonicalize, {orders} orderings, \
+             {probes} json probes, {builds} groupings, {spawns} tmux execs, {panes} pane probes"
+        );
+
+        probes_by_leg.push((label, probes));
+        assert_eq!(
+            calls, 0,
+            "{label}: {calls} filesystem lookups for a repaint that changes no path"
+        );
+        assert_eq!(
+            orders, 0,
+            "{label}: {orders} orderings worked out for a snapshot already on screen"
+        );
+        assert_eq!(
+            spawns, 0,
+            "{label}: {spawns} tmux processes spawned by a keypress"
+        );
+        assert_eq!(
+            panes, 0,
+            "{label}: {panes} pane-size probes on the key path"
+        );
+    }
+
+    // The MARGINAL, not the absolute, and this is the one assertion in this
+    // test that is about row count rather than about zero.
+    //
+    // Some JSON probes remain on a repaint and they are not this change's:
+    // `selected_teammates` sorts through `sort_sessions_by_canonical_order`,
+    // which builds one per row it sorts, and the teammate count decides that,
+    // not the session count. Asserting zero there would be asserting something
+    // the code does not do -- the first version of this gate did, and passed
+    // only because its fixture had no teammates to sort.
+    //
+    // What must hold is that the number does not MOVE with the rows. The cost
+    // this change removed was per session per filter, so restoring any of it
+    // shows up here as a tenfold difference between the legs while the
+    // teammate cost stays flat.
+    let (few_label, few) = probes_by_leg[0];
+    let (many_label, many) = probes_by_leg[1];
+    println!("json probes: {few_label}={few}, {many_label}={many}");
+    assert_eq!(
+        few, many,
+        "{few_label} serialised {few} rows and {many_label} serialised {many}: \
+         a repaint's JSON probes moved with the number of agents, so a \
+         classification is being asked per row again -- see \
+         dashboard_session_control_facts"
+    );
+}
+
+/// The render input this gate uses, so the two row counts differ in nothing
+/// but the snapshot.
+fn row_count_input<'a>(
+    snapshot: &'a DesktopStateSnapshot,
+    controller: &'a DashboardController,
+    selected_session_id: Option<&'a str>,
+) -> DashboardRenderInput<'a> {
+    DashboardRenderInput {
+        snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 40,
+        nav_level: controller.navigation.level,
+        selected_session_id,
+        selected_service_id: None,
+        focused_worktree_path: controller.navigation.focused_worktree_path(snapshot),
+        focused_group_index: None,
+        runtime_label: Some("native"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        details_sidebar_visible: controller.details_sidebar_visible,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    }
 }

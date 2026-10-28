@@ -6,6 +6,7 @@
 additional_overseer_surfaces
 agent_bug_reports
 agent_canonical_order
+agent_control_facts_agreement
 agent_goal
 agent_name_across_surfaces
 agent_order_across_surfaces
