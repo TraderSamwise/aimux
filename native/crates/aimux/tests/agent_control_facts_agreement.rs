@@ -216,6 +216,11 @@ fn asking_the_row_does_not_serialise_the_row() {
 /// contract is ever meant to CHANGE, this is the function to change first and
 /// on purpose; a diff that edits it is a diff that is changing who counts as a
 /// control agent.
+/// The record as the dashboard holds it.
+fn typed_row(session: &Value) -> DashboardSession {
+    serde_json::from_value(session.clone()).expect("the record deserialises into a row")
+}
+
 fn trimmed(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
@@ -297,6 +302,28 @@ fn the_control_predicates_still_mean_what_they_meant() {
                                 original_is_overseer(&session),
                             ),
                             ("scribe", is_scribe(&facts), original_is_scribe(&session)),
+                            // The typed row's own answers, not just the
+                            // record's. `is_project_control` is `is_overseer ||
+                            // is_scribe`, so swapping the `overseer:` and
+                            // `scribe:` fields in
+                            // `dashboard_session_control_facts` would leave the
+                            // composite identical and flip both public helpers.
+                            // Two reviewers found the matrix could not tell
+                            // them apart.
+                            (
+                                "row-overseer",
+                                aimux::dashboard_model::is_dashboard_overseer_session(&typed_row(
+                                    &session,
+                                )),
+                                original_is_overseer(&session),
+                            ),
+                            (
+                                "row-scribe",
+                                aimux::dashboard_model::is_dashboard_scribe_session(&typed_row(
+                                    &session,
+                                )),
+                                original_is_scribe(&session),
+                            ),
                         ] {
                             assert_eq!(
                                 after, before,

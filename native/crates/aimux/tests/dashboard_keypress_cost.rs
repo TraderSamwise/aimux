@@ -21,7 +21,10 @@ use aimux::dashboard_controller::{
     DashboardController, DashboardControllerEffect, DashboardKey, DashboardScreen,
 };
 use aimux::dashboard_internal::DASHBOARD_PANE_SIZE_PROBES;
-use aimux::dashboard_model::{DASHBOARD_CLASSIFIER_PROBES, DashboardService, DesktopStateSnapshot};
+use aimux::dashboard_model::{
+    DASHBOARD_CLASSIFIER_PROBES, DashboardKept, DashboardService, DesktopStateSnapshot,
+    filter_dashboard_visible_model,
+};
 use aimux::dashboard_navigation::{
     DashboardNavigationState, NAVIGATION_GROUP_BUILDS, NAVIGATION_ORDER_BUILDS,
     dashboard_navigation_groups,
@@ -1071,6 +1074,21 @@ fn what_a_keypress_costs_does_not_move_with_row_count() {
             &snap,
             &controller.navigation,
         );
+        // Inside the window, because this is where the per-row classification
+        // that nothing covered actually lives.
+        //
+        // `filter_dashboard_visible_model` runs on the FETCH path rather than
+        // the key path, and with hiding off it returns a clone before asking
+        // anything -- so a gate that only presses a key never reaches
+        // `dashboard_session_survives_hidden_offline`, which classifies every
+        // row. An adversarial review found the hole by writing the mutation
+        // that passes without this line: put the JSON probe back inside that
+        // predicate and the keypress legs stay at zero while the cost this
+        // change removed comes straight back.
+        //
+        // `true` rather than the flag the frame uses, because the branch that
+        // costs is the one hiding takes.
+        let _ = filter_dashboard_visible_model(&snap, true, &DashboardKept::default());
 
         let calls = CANONICALIZE_CALLS.load(Ordering::Relaxed) - calls_before;
         let orders = NAVIGATION_ORDER_BUILDS.load(Ordering::Relaxed) - orders_before;

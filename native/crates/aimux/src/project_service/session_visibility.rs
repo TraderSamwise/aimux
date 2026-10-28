@@ -121,6 +121,18 @@ fn switchable_roles_allow(policy: &SwitchableRolePolicy, input: &AgentVisibility
 /// chips and `prefix n`/`p`. It keys on the PLANE, because the plane is
 /// membership: an ordinary agent moved into the supervisor plane belongs
 /// there, and an overseer moved out does not.
+/// The dashboard no longer comes through here.
+///
+/// It holds typed rows and this takes a `&Value`, so reaching it meant
+/// serialising every row to ask about it -- once per session per filter, about
+/// eight filters a frame. `team_contract::is_in_supervisor_plane` answers the
+/// same question from borrowed fields, and the dashboard calls that instead.
+///
+/// So this is no longer the only way the question gets asked, and the thing
+/// keeping the two honest is `tests/agent_control_facts_agreement.rs`, which
+/// holds them against each other over every shape of lane, flag and role. If
+/// you change the rule, change it in `team_contract` and let that test tell
+/// you which callers moved.
 pub fn session_is_in_supervisor_plane(session: &Value) -> bool {
     agent_lane(Some(session))
         .get("kind")

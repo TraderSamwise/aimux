@@ -438,9 +438,6 @@ pub fn is_dashboard_scribe_session(session: &DashboardSession) -> bool {
     crate::team_contract::is_scribe(&dashboard_session_control_facts(session))
 }
 
-/// The five fields every classification of an agent's authority reads, lifted
-/// off a typed row. Shared so the navigation order keys on the same JSON the
-/// overseer and scribe checks do, rather than a second copy of the field list.
 /// How many times a typed row has been serialised to ask a classification
 /// question.
 ///
@@ -452,6 +449,14 @@ pub fn is_dashboard_scribe_session(session: &DashboardSession) -> bool {
 #[doc(hidden)]
 pub static DASHBOARD_CLASSIFIER_PROBES: AtomicU64 = AtomicU64::new(0);
 
+/// The fields a classification reads, lifted off a typed row as JSON.
+///
+/// Only `navigation_order_probe` still needs this: it keys the ordering on the
+/// same shape `agent_class` and `compare_agent_canonical_order` read, and those
+/// take a `&Value`. The overseer, scribe and supervisor-plane checks used to
+/// come through here and no longer do -- they read the six fields directly via
+/// `dashboard_session_control_facts`, which is why `DASHBOARD_CLASSIFIER_PROBES`
+/// exists to catch one of them being routed back through this.
 pub(crate) fn dashboard_session_classifier_probe(session: &DashboardSession) -> Value {
     DASHBOARD_CLASSIFIER_PROBES.fetch_add(1, Ordering::Relaxed);
     let mut probe = Map::new();
