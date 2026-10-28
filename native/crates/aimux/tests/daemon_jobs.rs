@@ -818,7 +818,29 @@ fn fifo_callback_without_reader_does_not_block_daemon() {
     let started = Instant::now();
     let report =
         aimux::daemon::jobs::drain_due_job_callbacks(&store, u128::MAX).expect("fifo drain");
-    assert!(started.elapsed() < Duration::from_millis(500));
+    // `report.failed == 1` is the contract; the clock is a backstop, and it is
+    // worth being honest about which.
+    //
+    // What must hold is that the open does not BLOCK on a FIFO nobody is
+    // reading. `open_fifo_notification_writer` passes `O_NONBLOCK`
+    // (`daemon/jobs.rs`), so a readerless FIFO fails immediately with ENXIO --
+    // which is the `failed` below. Lose that flag and the open does not get
+    // slow, it never returns at all: the regression presents as a HANG, and no
+    // elapsed-time assertion can catch a hang.
+    //
+    // So this bound exists only to turn a hypothetical slow-but-finite stall
+    // into a failure, and it was 500ms, which is a latency budget rather than a
+    // liveness one. On a developer machine under real load -- 2026-10-27, load
+    // average 47 -- 500ms of scheduling delay is ordinary, and this failed for
+    // that and nothing else. Five seconds cannot be reached by scheduling noise
+    // and is still nowhere near a block.
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the drain took {:?}; it should return as soon as the non-blocking open \
+         fails, so this is either a blocking open that somehow returned or a \
+         machine in trouble",
+        started.elapsed()
+    );
     assert_eq!(report.failed, 1);
 }
 

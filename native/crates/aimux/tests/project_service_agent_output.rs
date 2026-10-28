@@ -3768,10 +3768,27 @@ fn watcher_delivery_queues_recent_active_client_without_waiting_for_hold_budget(
 
     assert_eq!(result, WatcherDeliveryResult::Queued);
     assert!(result.consumes_cooldown());
-    assert!(
-        started.elapsed() < Duration::from_secs(1),
-        "watcher delivery should hand off to the queue instead of waiting for the hold budget"
-    );
+    // No clock here, deliberately, and this is the second attempt at that.
+    //
+    // The assertion used to be `elapsed() < 1s` with the message "should hand
+    // off to the queue instead of waiting for the hold budget", and it failed
+    // on 2026-10-27 on a machine at load average 47 without the invariant
+    // being broken. The obvious repair was to bound it by the budget it names,
+    // `MAX_AGENT_INPUT_HOLD_MS`. That repair is VACUOUS and a review caught it:
+    // the hold budget is never a wall-clock wait. It is queue-capacity
+    // arithmetic and a stored `maxDeliverAtMs` that a later 500ms scheduler
+    // tick reads. Nor is any other timeout reachable from here --
+    // `DELIVERY_TIMEOUT`, `DELIVERY_ACTIVITY_TIMEOUT` and
+    // `DELIVERY_SUBMIT_TIMEOUT` all live behind the runtime, and this test
+    // injects `FakeActivityRuntime`. A 15s bound could not be hit by any code
+    // path, broken or whole, which makes it worse than the flaky one it
+    // replaced: it reads as rigour and asserts nothing.
+    //
+    // What actually pins the behaviour is underneath and does not involve
+    // time at all: the result is `Queued`, the runtime was asked to do
+    // nothing, and the queue file exists. Break the hand-off and all three
+    // fail.
+    let _ = started;
     assert!(runtime.inner.actions.is_empty());
     assert!(agent_input_delivery_queue_path(&state_dir).exists());
 

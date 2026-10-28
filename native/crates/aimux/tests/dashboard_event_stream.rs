@@ -203,9 +203,26 @@ fn dropping_stream_handle_does_not_wait_for_silent_peer_timeout() {
         .recv_timeout(Duration::from_secs(2))
         .expect("stream opened request");
 
+    // Dropping the handle must not wait for the server, which is sitting in a
+    // 500ms sleep above. That sleep is the quantity this is about: come in
+    // under it and the drop did not join the server's work; reach it and the
+    // drop is waiting on something it should not.
+    //
+    // The bound was 100ms and bare -- no message, no stated invariant -- which
+    // is the shape that fails on a loaded machine and tells whoever finds it
+    // nothing. 400ms keeps four fifths of the sleep as margin, so a drop that
+    // genuinely blocks is still caught, while a few hundred milliseconds of
+    // scheduling delay is not reported as a bug.
+    const SERVER_HOLD: Duration = Duration::from_millis(500);
     let start = Instant::now();
     drop(handle);
-    assert!(start.elapsed() < Duration::from_millis(100));
+    let dropped_in = start.elapsed();
+    assert!(
+        dropped_in < SERVER_HOLD - Duration::from_millis(100),
+        "dropping the stream handle took {dropped_in:?} against the server's \
+         {SERVER_HOLD:?} hold, so it waited for the server instead of \
+         returning"
+    );
     server.join().expect("server");
 }
 

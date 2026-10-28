@@ -110,13 +110,35 @@ fn project_event_bus_wait_wakes_on_publish() {
         }));
     });
 
+    // The invariant is that the wait returns when the event ARRIVES rather
+    // than waiting out its own timeout, so the test has to be able to tell
+    // those apart -- and the only thing that tells them apart is the margin
+    // between the timeout and the bound.
+    //
+    // That margin used to be 200ms: a 500ms timeout against a 300ms bound. Two
+    // hundred milliseconds of scheduling delay is ordinary on a loaded
+    // machine, so the test could fail with the invariant perfectly intact, and
+    // on 2026-10-27 at load average 47 its neighbours did exactly that.
+    //
+    // Widening the TIMEOUT rather than the bound is what fixes it, and costs
+    // nothing: on success the wait returns as soon as the publisher fires, so
+    // the five seconds are never spent. A wait that really times out now takes
+    // 5s and blows a 2s bound by a wide margin, where before it took 500ms and
+    // missed a 300ms bound by 200.
+    const WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+    const RETURNED_EARLY: Duration = Duration::from_secs(2);
     let started = Instant::now();
     assert!(
         context
             .project_events
-            .wait_for_events_since(0, None, Duration::from_millis(500))
+            .wait_for_events_since(0, None, WAIT_TIMEOUT)
     );
-    assert!(started.elapsed() < Duration::from_millis(300));
+    let waited = started.elapsed();
+    assert!(
+        waited < RETURNED_EARLY,
+        "the wait took {waited:?} of a {WAIT_TIMEOUT:?} timeout, so it waited \
+         the timeout out instead of returning when the event arrived"
+    );
     cleanup(project);
 }
 
