@@ -27,7 +27,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const JOBS_ROUTE_CONTRACT: &str =
@@ -853,10 +853,21 @@ fn fifo_callback_without_reader_does_not_block_daemon() {
     // seconds sits ABOVE that stall and so asserts nothing but that the process
     // is alive.
     //
-    // `ACQUIRE_TIMEOUT` minus half a second: under the one stall that can
-    // happen, and three times the 500ms of scheduling delay that made the
-    // original bound flake on 2026-10-27 at load average 47.
-    let budget = aimux::state_update_lock::ACQUIRE_TIMEOUT - Duration::from_millis(500);
+    // Three quarters of `ACQUIRE_TIMEOUT`: under the one stall that can happen
+    // here, and well above the scheduling delay that made the original 500ms
+    // bound flake on 2026-10-27 at load average 47.
+    //
+    // A fraction rather than a subtraction, because a subtraction of a literal
+    // PANICS on overflow if anyone lowers `ACQUIRE_TIMEOUT` beneath it -- a
+    // `Duration` cannot go negative -- and a test that panics on an unrelated
+    // edit tells the next person nothing.
+    //
+    // Being honest about the margin: the 2026-10-27 run established that the
+    // delay exceeded 500ms, not that it stays under 1.5s, so the false-fail
+    // side is a judgement rather than a measurement. The detection side is
+    // 500ms -- the gap between this bound and the 2s stall -- which is the
+    // narrower of the two and the one to watch.
+    let budget = aimux::state_update_lock::ACQUIRE_TIMEOUT.mul_f32(0.75);
     let drained_in = started.elapsed();
     assert!(
         drained_in < budget,

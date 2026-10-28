@@ -634,15 +634,23 @@ fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
     // 300 requests above. A daemon that deadlocks, answers wrongly, or stays
     // silent for thirty seconds still fails here.
     //
-    // Said plainly, because a review pointed out the paragraph above implied
-    // otherwise: after this change NOTHING in the suite puts a wall-clock
-    // bound on `/health` or `/projects`. A regression that serialised the
-    // fleet behind a mutex into twenty seconds would pass. This was the only
-    // post-load responsiveness gate in the repo and it is now a liveness gate
-    // instead -- a deliberate trade, since the alternative was a number that
-    // fails on a busy machine for no reason, but not a free one. A real
-    // latency budget belongs on a machine kept for load tests, where the
-    // number would mean something.
+    // Said plainly, because the paragraph above implied otherwise: no LATENCY
+    // gate remains on `/health` or `/projects` anywhere in the suite -- only
+    // liveness ones, this 30s read timeout included. A regression that
+    // serialised the fleet behind a mutex into twenty seconds would pass here.
+    //
+    // Narrowed from a first draft that said "nothing in the suite puts a
+    // wall-clock bound on these routes", which a review refuted:
+    // `daemon_supervisor.rs` asks `/health` with a 400ms client budget and
+    // bounds the call at 5s. That gates the CLIENT giving up on a daemon that
+    // never answers, not the daemon's latency, which is the distinction the
+    // first draft lost.
+    //
+    // This was the only post-load responsiveness gate in the repo and it is a
+    // liveness gate now -- a deliberate trade, since the alternative is a
+    // number that fails on a busy machine for no reason, but not a free one. A
+    // real latency budget belongs on a machine kept for load tests, where it
+    // would mean something.
     let health = request_http(address, "/health", Duration::from_secs(30))
         .expect("health response after load");
     assert!(health.starts_with("HTTP/1.1 200 OK\r\n"));

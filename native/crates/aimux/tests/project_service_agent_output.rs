@@ -3762,7 +3762,6 @@ fn watcher_delivery_queues_recent_active_client_without_waiting_for_hold_budget(
         ..Default::default()
     };
 
-    let started = std::time::Instant::now();
     let result =
         deliver_agent_input_with_runtime(&context, "codex-1", "queued loop check", &mut runtime);
 
@@ -3800,7 +3799,6 @@ fn watcher_delivery_queues_recent_active_client_without_waiting_for_hold_budget(
     // the queue file catches one that classified itself as held without
     // enqueueing anything. Different breaks, different assertions; none of
     // them is a clock.
-    let _ = started;
     assert!(runtime.inner.actions.is_empty());
     assert!(agent_input_delivery_queue_path(&state_dir).exists());
 

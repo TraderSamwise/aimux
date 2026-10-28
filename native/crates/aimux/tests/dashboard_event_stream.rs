@@ -84,8 +84,9 @@ fn event_stream_reader_is_registered_as_async_task() {
         // socket closes -- so a sleep makes the window in which the task is
         // observable exactly that long, and a main thread starved for 250ms
         // finds the task already gone and reports "async task registered"
-        // without a hint that load was the cause. Same shape as the drop test
-        // below and half the budget, which is why it is fixed here too.
+        // without a hint that load was the cause. It HAD the same shape as the
+        // drop test below, and half its budget, which is why it is fixed here
+        // too; both are now capped rather than slept.
         let _ = release_rx.recv_timeout(Duration::from_secs(5));
     });
 
@@ -209,7 +210,25 @@ fn dropping_stream_handle_does_not_wait_for_silent_peer_timeout() {
     // blocks on the server waits for a release that only comes after the drop,
     // so it waits the whole hold however busy the machine is. It also costs
     // nothing on success, where the release arrives immediately.
-    const SERVER_HOLD: Duration = Duration::from_secs(3);
+    // Two different jobs, two different numbers, because collapsing them into
+    // one leaves a silent false PASS.
+    //
+    // `SERVER_HOLD` is only a safety cap so a wedged test cannot hang a CI
+    // worker; nothing legitimate waits on it. `BLOCKING_DROP` is the
+    // assertion. When the bound was `SERVER_HOLD / 2` the two were the same
+    // constant, and a main thread starved for longer than the hold let the
+    // server time out on its own: the socket closes, the task completes, and a
+    // genuinely blocking `Drop` then returns instantly and PASSES. That is a
+    // load-dependent false pass where the shape before it was a
+    // load-dependent false failure -- rarer and silent, which is worse.
+    //
+    // And `BLOCKING_DROP` is not "the quantity it must not have waited for",
+    // unlike the bound in `daemon_jobs`. `join.abort()` is an atomic store and
+    // a wake, so a healthy drop is microseconds and a blocking one is the whole
+    // hold; anything between is a round number, and this one is chosen for a
+    // wide margin on both sides rather than derived.
+    const SERVER_HOLD: Duration = Duration::from_secs(60);
+    const BLOCKING_DROP: Duration = Duration::from_millis(1_500);
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("accept");
         let _ = read_request_text(&mut stream);
@@ -247,10 +266,11 @@ fn dropping_stream_handle_does_not_wait_for_silent_peer_timeout() {
     // sitting out its whole hold.
     let _ = release_tx.send(());
     assert!(
-        dropped_in < SERVER_HOLD / 2,
-        "dropping the stream handle took {dropped_in:?}; the server holds for \
-         {SERVER_HOLD:?} and is released only after this drop, so anything near \
-         that means the drop waited for the server instead of aborting"
+        dropped_in < BLOCKING_DROP,
+        "dropping the stream handle took {dropped_in:?} against a \
+         {BLOCKING_DROP:?} bound. `join.abort()` is microseconds, and the \
+         server is released only after this drop, so anything on this scale \
+         means the drop waited for the server instead of aborting"
     );
     server.join().expect("server");
 }
