@@ -21,7 +21,7 @@ use aimux::dashboard_controller::{
     DashboardController, DashboardControllerEffect, DashboardKey, DashboardScreen,
 };
 use aimux::dashboard_internal::DASHBOARD_PANE_SIZE_PROBES;
-use aimux::dashboard_model::{DashboardService, DesktopStateSnapshot};
+use aimux::dashboard_model::{DASHBOARD_CLASSIFIER_PROBES, DashboardService, DesktopStateSnapshot};
 use aimux::dashboard_navigation::{
     DashboardNavigationState, NAVIGATION_GROUP_BUILDS, NAVIGATION_ORDER_BUILDS,
     dashboard_navigation_groups,
@@ -1016,4 +1016,137 @@ fn what_one_keypress_costs_in_subprocesses() {
         "and the pane-size probe owns its own Command, so it is counted \
          separately rather than trusted to appear above"
     );
+}
+
+/// What a keypress costs does not move with the NUMBER OF ROWS.
+///
+/// This is the dimension the dashboard was actually slow in and the one no
+/// gate here watched. Every budget in this file is measured at a single
+/// fixture size, so a cost paid once per agent is invisible to all of them:
+/// the number is whatever it is, the assertion is about its shape, and a
+/// fixture that never changes size cannot show a shape.
+///
+/// What that hid: the dashboard asked whether each session was a control agent
+/// about eight times a frame, and answered by serialising the typed row into a
+/// `serde_json::Map` -- the whole `team` object included -- then letting
+/// `agent_lane` build a second `json!`. Two allocations per session per ask.
+/// At 200 rows that is thousands of JSON values for one repaint, and nothing
+/// in this file could see one of them.
+///
+/// So this measures the same keypress at two row counts an order of magnitude
+/// apart and requires the same answer from both: zero. Not "nearly the same"
+/// -- a marginal of zero is the only bound that cannot slacken as the fixture
+/// grows, and a repaint of a snapshot already on screen genuinely has nothing
+/// to work out.
+#[test]
+fn what_a_keypress_costs_does_not_move_with_row_count() {
+    let _counters = counters();
+    for (label, worktrees, agents) in [("rows-few", 9, 20), ("rows-many", 9, 200)] {
+        let snap = snapshot(label, worktrees, agents);
+        let mut controller = DashboardController::new(&snap);
+        let state_root =
+            std::env::temp_dir().join(format!("aimux-rowcount-{}-{label}", std::process::id()));
+        std::fs::create_dir_all(&state_root).expect("state directory");
+        let mut persistence = DashboardUiStatePersistence::new(&state_root, "rowcount")
+            .expect("ui state persistence");
+
+        // The first pass is allowed to work the ordering out; this gate is
+        // about the SECOND keypress, on a snapshot already on screen.
+        let _ = controller.handle_key(&snap, DashboardKey::Down);
+        let _ = render_dashboard_frame(&row_count_input(&snap, &controller));
+
+        reset_tmux_exec_metrics();
+        let calls_before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
+        let orders_before = NAVIGATION_ORDER_BUILDS.load(Ordering::Relaxed);
+        let probes_before = DASHBOARD_CLASSIFIER_PROBES.load(Ordering::Relaxed);
+        let pane_before = DASHBOARD_PANE_SIZE_PROBES.load(Ordering::Relaxed);
+        let builds_before = NAVIGATION_GROUP_BUILDS.load(Ordering::Relaxed);
+
+        let effect = controller.handle_key(&snap, DashboardKey::Down);
+        let frame = render_dashboard_frame(&row_count_input(&snap, &controller));
+        let _ = persistence.persist_controller_state(
+            DashboardScreen::Dashboard,
+            "output",
+            false,
+            &snap,
+            &controller.navigation,
+        );
+
+        let calls = CANONICALIZE_CALLS.load(Ordering::Relaxed) - calls_before;
+        let orders = NAVIGATION_ORDER_BUILDS.load(Ordering::Relaxed) - orders_before;
+        let probes = DASHBOARD_CLASSIFIER_PROBES.load(Ordering::Relaxed) - probes_before;
+        let panes = DASHBOARD_PANE_SIZE_PROBES.load(Ordering::Relaxed) - pane_before;
+        let builds = NAVIGATION_GROUP_BUILDS.load(Ordering::Relaxed) - builds_before;
+        let spawns = get_tmux_exec_metrics().sync.count;
+        let _ = std::fs::remove_dir_all(&state_root);
+        remove_snapshot_tree(label);
+
+        assert!(
+            matches!(effect, DashboardControllerEffect::Render),
+            "{label}: a Down arrow has to be the frame-producing case"
+        );
+        assert!(
+            !frame.frame.is_empty(),
+            "{label}: and it has to paint something"
+        );
+
+        println!(
+            "{label} ({agents} agents): {calls} canonicalize, {orders} orderings, \
+             {probes} json probes, {builds} groupings, {spawns} tmux execs, {panes} pane probes"
+        );
+
+        assert_eq!(
+            probes, 0,
+            "{label}: {probes} rows were serialised to JSON to repaint a snapshot \
+             already on screen. The classification reads six fields that are \
+             already on the row -- see dashboard_session_control_facts"
+        );
+        assert_eq!(
+            calls, 0,
+            "{label}: {calls} filesystem lookups for a repaint that changes no path"
+        );
+        assert_eq!(
+            orders, 0,
+            "{label}: {orders} orderings worked out for a snapshot already on screen"
+        );
+        assert_eq!(
+            spawns, 0,
+            "{label}: {spawns} tmux processes spawned by a keypress"
+        );
+        assert_eq!(
+            panes, 0,
+            "{label}: {panes} pane-size probes on the key path"
+        );
+    }
+}
+
+/// The render input this gate uses, so the two row counts differ in nothing
+/// but the snapshot.
+fn row_count_input<'a>(
+    snapshot: &'a DesktopStateSnapshot,
+    controller: &'a DashboardController,
+) -> DashboardRenderInput<'a> {
+    DashboardRenderInput {
+        snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 40,
+        nav_level: controller.navigation.level,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: controller.navigation.focused_worktree_path(snapshot),
+        focused_group_index: None,
+        runtime_label: Some("native"),
+        version: Some("local"),
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_progress: None,
+        footer_note: None,
+        footer_alerts: &[],
+        details_sidebar_visible: controller.details_sidebar_visible,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    }
 }

@@ -65,16 +65,115 @@ pub fn select_orphan_teammate_ids(sessions: &[Value], known_parent_ids: &[String
         .collect()
 }
 
-pub fn is_project_control_session(session: Option<&Value>) -> bool {
-    let Some(session) = session else {
+/// The six fields every classification of an agent's authority reads, lifted
+/// off either a JSON record or a typed row.
+///
+/// ONE rule, two input shapes -- not two rules. The dashboard holds typed rows
+/// and used to serialise each one into a `serde_json::Map`, including the whole
+/// `team` object, purely to ask whether it was a control agent. That ran once
+/// per session per filter with about eight filters a frame, and again per group
+/// across the nine grouping builds a repaint makes. The rule never needed the
+/// serialisation; it needs these fields.
+///
+/// Borrowed throughout, so building one allocates nothing.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct AgentControlFacts<'a> {
+    pub lane_kind: Option<&'a str>,
+    pub lane_worktree_path: Option<&'a str>,
+    pub project_control: Option<bool>,
+    pub overseer: Option<bool>,
+    pub scribe: Option<bool>,
+    pub role: Option<&'a str>,
+}
+
+/// `string_field`'s rule, reusable where the value did not come from a record.
+///
+/// Kept identical on purpose: a role of `"  "` is absent to the JSON path, and
+/// a typed path that called it present would disagree about the same agent.
+pub(crate) fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+impl<'a> AgentControlFacts<'a> {
+    /// Read the facts off a session record.
+    ///
+    /// `lane` is read as an object and `kind` only trimmed, never emptied,
+    /// because `stored_agent_lane` matches the trimmed spelling and treats
+    /// anything it does not recognise as no stored lane at all.
+    pub fn from_record(session: &'a Value) -> Self {
+        let lane = session.get("lane").and_then(Value::as_object);
+        Self {
+            lane_kind: lane
+                .and_then(|lane| lane.get("kind"))
+                .and_then(Value::as_str)
+                .map(str::trim),
+            lane_worktree_path: non_empty(
+                lane.and_then(|lane| lane.get("worktreePath"))
+                    .and_then(Value::as_str),
+            ),
+            project_control: bool_field(session, "projectControl"),
+            overseer: bool_field(session, "overseer"),
+            scribe: bool_field(session, "scribe"),
+            role: legacy_role(session),
+        }
+    }
+}
+
+pub fn is_overseer(facts: &AgentControlFacts<'_>) -> bool {
+    if let Some(value) = facts.overseer {
+        return value;
+    }
+    if facts.project_control == Some(false) {
         return false;
-    };
-    match bool_field(session, "projectControl") {
+    }
+    facts.role == Some("overseer")
+}
+
+pub fn is_scribe(facts: &AgentControlFacts<'_>) -> bool {
+    if let Some(value) = facts.scribe {
+        return value;
+    }
+    if facts.project_control == Some(false) {
+        return false;
+    }
+    facts.role == Some("scribe")
+}
+
+pub fn is_project_control(facts: &AgentControlFacts<'_>) -> bool {
+    match facts.project_control {
         Some(true) => return true,
         Some(false) => return false,
         None => {}
     }
-    is_overseer_session(Some(session)) || is_scribe_session(Some(session))
+    is_overseer(facts) || is_scribe(facts)
+}
+
+/// Whether the agent sits in the supervisor plane, without building its lane.
+///
+/// This is `agent_lane(..).kind == "supervisor"` reduced to the question it
+/// actually asks. A stored supervisor lane settles it; a stored WORKTREE lane
+/// settles it the other way, but only when it names a path, because the
+/// demotion path writes a pathless worktree lane when it has no worktree to
+/// hand and `stored_agent_lane` declines to honour a plane with no identity.
+/// Anything else -- no lane, a lane that is not an object, an unrecognised
+/// kind -- leaves the control question to decide, exactly as `agent_lane` does.
+///
+/// The agreement test holds this against `agent_lane` over every shape of
+/// input, so it cannot drift into a second rule.
+pub fn is_in_supervisor_plane(facts: &AgentControlFacts<'_>) -> bool {
+    match facts.lane_kind {
+        Some("supervisor") => return true,
+        Some("worktree") if facts.lane_worktree_path.is_some() => return false,
+        _ => {}
+    }
+    is_project_control(facts)
+}
+
+pub fn is_project_control_session(session: Option<&Value>) -> bool {
+    let Some(session) = session else {
+        return false;
+    };
+    is_project_control(&AgentControlFacts::from_record(session))
 }
 
 pub fn session_with_stored_control_flags(session: &Value, stored_session: Option<&Value>) -> Value {
@@ -133,26 +232,14 @@ pub fn is_overseer_session(session: Option<&Value>) -> bool {
     let Some(session) = session else {
         return false;
     };
-    if let Some(value) = bool_field(session, "overseer") {
-        return value;
-    }
-    if bool_field(session, "projectControl") == Some(false) {
-        return false;
-    }
-    legacy_role(session) == Some("overseer")
+    is_overseer(&AgentControlFacts::from_record(session))
 }
 
 pub fn is_scribe_session(session: Option<&Value>) -> bool {
     let Some(session) = session else {
         return false;
     };
-    if let Some(value) = bool_field(session, "scribe") {
-        return value;
-    }
-    if bool_field(session, "projectControl") == Some(false) {
-        return false;
-    }
-    legacy_role(session) == Some("scribe")
+    is_scribe(&AgentControlFacts::from_record(session))
 }
 
 pub fn project_control_display_role(session: Option<&Value>) -> Option<&str> {

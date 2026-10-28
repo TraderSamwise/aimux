@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -283,9 +284,42 @@ pub struct DashboardSession {
 /// Keyed on the project-control role flag, an agent moved into the plane still
 /// rendered in its worktree group, and an overseer moved out of it vanished.
 pub fn is_dashboard_supervisor_plane_session(session: &DashboardSession) -> bool {
-    crate::project_service::session_visibility::session_is_in_supervisor_plane(
-        &dashboard_session_classifier_probe(session),
-    )
+    crate::team_contract::is_in_supervisor_plane(&dashboard_session_control_facts(session))
+}
+
+/// The classifier's inputs, borrowed straight off the typed row.
+///
+/// This is the hot one. The dashboard asks whether a session is a control
+/// agent about eight times a frame per session, and again per group across the
+/// nine grouping builds a repaint makes -- and it used to answer by building a
+/// `serde_json::Map`, serialising the whole `team` object into it, and cloning
+/// `role` and `lane`, then having `agent_lane` build a second `json!`. Two
+/// allocations per session per ask, for six fields that were already there.
+///
+/// The rule itself did not move: `team_contract` owns it and this only chooses
+/// the cheaper way to hand it its inputs. The trim comes from `team_contract`
+/// too rather than being restated here -- a role of `"  "` has to be absent to
+/// both paths or they would disagree about the same agent.
+pub(crate) fn dashboard_session_control_facts(
+    session: &DashboardSession,
+) -> crate::team_contract::AgentControlFacts<'_> {
+    use crate::team_contract::non_empty;
+    let lane = session.lane.as_ref().and_then(Value::as_object);
+    crate::team_contract::AgentControlFacts {
+        lane_kind: lane
+            .and_then(|lane| lane.get("kind"))
+            .and_then(Value::as_str)
+            .map(str::trim),
+        lane_worktree_path: non_empty(
+            lane.and_then(|lane| lane.get("worktreePath"))
+                .and_then(Value::as_str),
+        ),
+        project_control: session.project_control,
+        overseer: session.overseer,
+        scribe: session.scribe,
+        role: non_empty(session.role.as_deref())
+            .or_else(|| non_empty(session.team.as_ref().and_then(|team| team.role.as_deref()))),
+    }
 }
 
 /// The one rule for what an agent is called, shared with the app and the
@@ -397,17 +431,29 @@ pub fn dashboard_overseer_session_refs(snapshot: &DesktopStateSnapshot) -> Vec<&
 }
 
 pub fn is_dashboard_overseer_session(session: &DashboardSession) -> bool {
-    crate::team_contract::is_overseer_session(Some(&dashboard_session_classifier_probe(session)))
+    crate::team_contract::is_overseer(&dashboard_session_control_facts(session))
 }
 
 pub fn is_dashboard_scribe_session(session: &DashboardSession) -> bool {
-    crate::team_contract::is_scribe_session(Some(&dashboard_session_classifier_probe(session)))
+    crate::team_contract::is_scribe(&dashboard_session_control_facts(session))
 }
 
 /// The five fields every classification of an agent's authority reads, lifted
 /// off a typed row. Shared so the navigation order keys on the same JSON the
 /// overseer and scribe checks do, rather than a second copy of the field list.
+/// How many times a typed row has been serialised to ask a classification
+/// question.
+///
+/// Counted because this cost was invisible: it is a `serde_json` allocation on
+/// a per-row, per-filter path, and no gate in this repo could see it while
+/// `dashboard_keypress_cost.rs` watched `canonicalize` and process spawns.
+/// A gate reads the delta so a caller added back on the hot path shows up as a
+/// number rather than as a slow dashboard somebody has to profile.
+#[doc(hidden)]
+pub static DASHBOARD_CLASSIFIER_PROBES: AtomicU64 = AtomicU64::new(0);
+
 pub(crate) fn dashboard_session_classifier_probe(session: &DashboardSession) -> Value {
+    DASHBOARD_CLASSIFIER_PROBES.fetch_add(1, Ordering::Relaxed);
     let mut probe = Map::new();
     if let Some(role) = session
         .role
