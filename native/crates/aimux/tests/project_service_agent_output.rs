@@ -3777,17 +3777,29 @@ fn watcher_delivery_queues_recent_active_client_without_waiting_for_hold_budget(
     // `MAX_AGENT_INPUT_HOLD_MS`. That repair is VACUOUS and a review caught it:
     // the hold budget is never a wall-clock wait. It is queue-capacity
     // arithmetic and a stored `maxDeliverAtMs` that a later 500ms scheduler
-    // tick reads. Nor is any other timeout reachable from here --
-    // `DELIVERY_TIMEOUT`, `DELIVERY_ACTIVITY_TIMEOUT` and
-    // `DELIVERY_SUBMIT_TIMEOUT` all live behind the runtime, and this test
-    // injects `FakeActivityRuntime`. A 15s bound could not be hit by any code
-    // path, broken or whole, which makes it worse than the flaky one it
-    // replaced: it reads as rigour and asserts nothing.
+    // tick reads. Nor is any other timeout reachable from here, and the three
+    // are unreachable for two different reasons -- I first wrote that all
+    // three sat "behind the runtime", which is true of only one.
+    // `DELIVERY_TIMEOUT` does: it becomes a `BoundedAgentOutputCaptureRuntime`
+    // deadline, and this test substitutes the runtime.
+    // `DELIVERY_ACTIVITY_TIMEOUT` and `DELIVERY_SUBMIT_TIMEOUT` are handed to
+    // real async tmux calls in `run_pending_agent_input_deliveries_async`;
+    // they are unreachable because this test takes the SYNC path, which asks
+    // `runtime.agent_input_window_activity` with no timeout argument at all.
+    // So a 15s bound could not be hit by any code path, broken or whole, which
+    // makes it worse than the flaky one it replaced: it reads as rigour and
+    // asserts nothing.
     //
     // What actually pins the behaviour is underneath and does not involve
-    // time at all: the result is `Queued`, the runtime was asked to do
-    // nothing, and the queue file exists. Break the hand-off and all three
-    // fail.
+    // time at all, and it is worth being exact about which part catches what
+    // rather than waving at all three. `Queued` catches a hand-off that
+    // happened but was classified as a delivery -- mutating the `Some("held")`
+    // arm of `deliver_agent_input_with_runtime` to `Delivered` fails on that
+    // line and no other, because the assertion aborts there. The empty
+    // `actions` catches a hand-off that submitted to the runtime anyway, and
+    // the queue file catches one that classified itself as held without
+    // enqueueing anything. Different breaks, different assertions; none of
+    // them is a clock.
     let _ = started;
     assert!(runtime.inner.actions.is_empty());
     assert!(agent_input_delivery_queue_path(&state_dir).exists());

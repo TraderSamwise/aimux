@@ -125,6 +125,13 @@ fn project_event_bus_wait_wakes_on_publish() {
     // the five seconds are never spent. A wait that really times out now takes
     // 5s and blows a 2s bound by a wide margin, where before it took 500ms and
     // missed a 300ms bound by 200.
+    //
+    // What that gives up: a wake that is late but not a timeout. A regression
+    // that woke off the 500ms delivery tick instead of off the publish would
+    // have failed the old 300ms bound and passes this one. The publisher here
+    // fires at 20ms, so the gap is real; it is the price of a bound that does
+    // not fail on a loaded machine, and worth knowing before anyone tightens
+    // this again.
     const WAIT_TIMEOUT: Duration = Duration::from_secs(5);
     const RETURNED_EARLY: Duration = Duration::from_secs(2);
     let started = Instant::now();

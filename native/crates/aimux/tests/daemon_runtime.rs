@@ -633,6 +633,16 @@ fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
     // `ok:true`, `serviceAlive:true`, and the same three for every one of the
     // 300 requests above. A daemon that deadlocks, answers wrongly, or stays
     // silent for thirty seconds still fails here.
+    //
+    // Said plainly, because a review pointed out the paragraph above implied
+    // otherwise: after this change NOTHING in the suite puts a wall-clock
+    // bound on `/health` or `/projects`. A regression that serialised the
+    // fleet behind a mutex into twenty seconds would pass. This was the only
+    // post-load responsiveness gate in the repo and it is now a liveness gate
+    // instead -- a deliberate trade, since the alternative was a number that
+    // fails on a busy machine for no reason, but not a free one. A real
+    // latency budget belongs on a machine kept for load tests, where the
+    // number would mean something.
     let health = request_http(address, "/health", Duration::from_secs(30))
         .expect("health response after load");
     assert!(health.starts_with("HTTP/1.1 200 OK\r\n"));
