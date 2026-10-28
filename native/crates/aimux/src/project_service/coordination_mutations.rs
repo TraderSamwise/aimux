@@ -28,6 +28,34 @@ mod indexes;
 pub(crate) use indexes::derive_runtime_exchange_indexes;
 
 static ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+/// Who a message is from when the request does not say.
+///
+/// Named rather than spelled at each site that defaults it -- and deliberately
+/// without a count, because I have put the wrong number here twice: "nine"
+/// when it was sixteen, then "sixteen" when `dashboard_controller` had a
+/// seventeenth. Asserting a tally nobody re-checks is how the doc goes stale;
+/// what matters is the rule, which is that no `from` default spells this
+/// literally.
+///
+/// It exists because this identity is the one holder that looks DEPARTED to anything
+/// asking a topology -- no row will ever carry it -- while meaning the
+/// opposite. Anything deciding whether a holder is gone has to know that, and
+/// a literal at each site is one edit away from a sweep that deletes the
+/// record of what a human was never told. See
+/// `tests/departed_session_unread_hazard.rs`.
+///
+/// It does NOT centralise every use of the string, and two kinds of site are
+/// deliberately left alone. `resolve_recipients` and
+/// `deliver_prompt_to_recipients` below test for `"user"` to mean "not a
+/// deliverable session", which is a different question from "who sent this".
+/// And `dashboard_controller` sends `"from": "user"` outright in three places,
+/// which is an assertion that the human is the sender rather than a default
+/// standing in for an absent one. Collapsing those meanings into one constant
+/// named DEFAULT is how the next confusion starts -- so the drift this guards
+/// against is still possible in those five places, and saying so is the point
+/// of this paragraph.
+pub const DEFAULT_MESSAGE_SENDER: &str = "user";
+
 const RECIPIENT_PLACEHOLDER: &str = "__AIMUX_RECIPIENT__";
 
 pub fn route_coordination_mutation_request(
@@ -84,7 +112,7 @@ pub fn route_coordination_mutation_request_with_runtime(
 }
 
 fn route_threads_open(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let mut participants = vec![Some(from.clone())];
     participants.extend(
         string_array_field(body, "participants")
@@ -107,7 +135,7 @@ fn route_threads_open(project_state_dir: &Path, body: &Value) -> ProjectServiceD
 }
 
 fn route_threads_send(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let recipients = route_recipients(body);
     let kind = trimmed_string(body.get("kind"));
     let message_body = string_field(body, "body");
@@ -213,7 +241,7 @@ fn route_threads_status(project_state_dir: &Path, body: &Value) -> ProjectServic
 }
 
 fn route_handoff_send(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let recipients = route_recipients(body);
     let message_body = string_field(body, "body");
     let title = trimmed_string(body.get("title"));
@@ -298,7 +326,7 @@ fn route_handoff_complete(
 }
 
 fn route_task_assign(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let to = optional_string_or_first(body.get("to"));
     let assignee = trimmed_string(body.get("assignee"));
     let tool = trimmed_string(body.get("tool"));
@@ -805,7 +833,7 @@ fn route_review_request_changes(
 
 fn route_task_reopen(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
     let task_id = string_field(body, "taskId");
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let input_body = trimmed_string(body.get("body"));
     mutate(project_state_dir, |exchange| {
         let task = find_by_id(&exchange, "tasks", &task_id)
@@ -883,7 +911,7 @@ fn handoff_lifecycle(
     transform: fn(Value, String, Vec<String>) -> Value,
 ) -> ProjectServiceDispatchResponse {
     let thread_id = string_field(body, "threadId");
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let message_body = trimmed_string(body.get("body")).unwrap_or_else(|| default_body.into());
     mutate(project_state_dir, |exchange| {
         let thread = find_by_id(&exchange, "threads", &thread_id)
@@ -949,7 +977,7 @@ fn task_lifecycle(
     thread_update: TaskThreadUpdate,
 ) -> ProjectServiceDispatchResponse {
     let task_id = string_field(body, "taskId");
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let input_body = trimmed_string(body.get("body"));
     mutate(project_state_dir, |exchange| {
         let task = find_by_id(&exchange, "tasks", &task_id)
@@ -1002,7 +1030,7 @@ fn review_lifecycle(
     transform: ThreadTransform,
 ) -> ProjectServiceDispatchResponse {
     let task_id = string_field(body, "taskId");
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let input_body = trimmed_string(body.get("body"));
     mutate(project_state_dir, |exchange| {
         let task = find_by_id(&exchange, "tasks", &task_id)
@@ -1102,7 +1130,7 @@ fn send_direct_message(
     input: SendDirectMessageInput,
 ) -> Result<MutationResult, String> {
     let from = if input.from.trim().is_empty() {
-        "user".to_owned()
+        DEFAULT_MESSAGE_SENDER.to_owned()
     } else {
         input.from
     };
@@ -1483,7 +1511,7 @@ fn deliver_thread_send_response(
         &response.body,
         string_array_field(request_body, "to"),
         route_recipients(request_body),
-        &string_field_with_default(request_body, "from", "user"),
+        &string_field_with_default(request_body, "from", DEFAULT_MESSAGE_SENDER),
     ) else {
         return response;
     };

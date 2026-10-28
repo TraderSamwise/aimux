@@ -17,6 +17,7 @@ use crate::daemon::text::params::{
 use crate::daemon::text::worktrees::CLI_PROJECT_MUTATION_TIMEOUT_MS;
 use crate::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE;
 use crate::project_api_contract::routes as project_routes;
+use crate::project_service::coordination_mutations::DEFAULT_MESSAGE_SENDER;
 use serde_json::{Map, Value, json};
 
 pub const CLI_MESSAGE_SEND_TIMEOUT_MS: u64 = 15_000;
@@ -478,7 +479,10 @@ pub fn message_send_text_route(
     insert_string_if_some(&mut payload, "threadId", thread_id);
     payload.insert(
         "from".into(),
-        Value::String(optional_string(route_url, body, "from").unwrap_or_else(|| "user".into())),
+        Value::String(
+            optional_string(route_url, body, "from")
+                .unwrap_or_else(|| DEFAULT_MESSAGE_SENDER.into()),
+        ),
     );
     insert_array_if_some(&mut payload, "to", to);
     insert_string_if_some(&mut payload, "assignee", assignee);
@@ -541,7 +545,10 @@ pub fn handoff_send_text_route(
     let mut payload = Map::new();
     payload.insert(
         "from".into(),
-        Value::String(optional_string(route_url, body, "from").unwrap_or_else(|| "user".into())),
+        Value::String(
+            optional_string(route_url, body, "from")
+                .unwrap_or_else(|| DEFAULT_MESSAGE_SENDER.into()),
+        ),
     );
     insert_array_if_some(&mut payload, "to", to);
     insert_string_if_some(&mut payload, "assignee", assignee);
@@ -593,7 +600,10 @@ pub fn handoff_mutation_text_route(
     payload.insert("threadId".into(), Value::String(thread_id));
     payload.insert(
         "from".into(),
-        Value::String(optional_string(route_url, body, "from").unwrap_or_else(|| "user".into())),
+        Value::String(
+            optional_string(route_url, body, "from")
+                .unwrap_or_else(|| DEFAULT_MESSAGE_SENDER.into()),
+        ),
     );
     insert_string_if_some(
         &mut payload,
@@ -746,7 +756,10 @@ pub fn task_assign_text_route(
     let mut payload = Map::new();
     payload.insert(
         "from".into(),
-        Value::String(optional_string(route_url, body, "from").unwrap_or_else(|| "user".into())),
+        Value::String(
+            optional_string(route_url, body, "from")
+                .unwrap_or_else(|| DEFAULT_MESSAGE_SENDER.into()),
+        ),
     );
     insert_string_if_some(&mut payload, "to", optional_string(route_url, body, "to"));
     insert_string_if_some(
@@ -823,7 +836,10 @@ pub fn task_mutation_text_route(
     payload.insert("taskId".into(), Value::String(task_id));
     payload.insert(
         "from".into(),
-        Value::String(optional_string(route_url, body, "from").unwrap_or_else(|| "user".into())),
+        Value::String(
+            optional_string(route_url, body, "from")
+                .unwrap_or_else(|| DEFAULT_MESSAGE_SENDER.into()),
+        ),
     );
     insert_string_if_some(&mut payload, "body", body_text);
     let result = runtime.post_project_service_json(
@@ -861,7 +877,10 @@ pub fn review_request_changes_text_route(
     payload.insert("taskId".into(), Value::String(task_id));
     payload.insert(
         "from".into(),
-        Value::String(optional_string(route_url, body, "from").unwrap_or_else(|| "user".into())),
+        Value::String(
+            optional_string(route_url, body, "from")
+                .unwrap_or_else(|| DEFAULT_MESSAGE_SENDER.into()),
+        ),
     );
     insert_string_if_some(
         &mut payload,

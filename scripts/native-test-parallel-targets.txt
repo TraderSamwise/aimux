@@ -78,6 +78,7 @@ dashboard_terminal
 dashboard_tool_picker
 dashboard_tui_visibility_contract
 dashboard_ui_state
+departed_session_unread_hazard
 desktop_state_scale
 diagnostics_ptrace
 expose_socket

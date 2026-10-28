@@ -642,6 +642,25 @@ fn is_notification_thread(thread: &Value) -> bool {
 /// session id from `unreadBy` when that session is viewed, and no session is
 /// ever named `project`. So a thread whose only holder is `project` is not
 /// pending, it is stranded, and treating it as pending kept it for ever.
+///
+/// `project` is not the only stranded holder, and the others are NOT handled
+/// here on purpose. A holder whose session has departed will never read its
+/// thread either -- measured at 87 of 2524 holder entries across 21 local
+/// projects on 2026-10-28, and 379 entries for one departed session on
+/// sam-mbp2. Adding an "is this session still around?" test to this function
+/// is the obvious next move and it is a trap:
+///
+/// - this is a pure function on the write path, and the inventory it would
+///   need is a file read -- `update_runtime_exchange` has no inventory in
+///   scope and threading one in would put that read on every exchange write;
+/// - a missing topology reads as `Ok` with no sessions, so absence condemns
+///   every holder including `project` and `user`;
+/// - and removing a holder is not local: retention runs on the mutator's own
+///   output in the same write, so the thread, its message and its record can
+///   go with it, taking a number a user reads.
+///
+/// `tests/departed_session_unread_hazard.rs` holds the measurements, the four
+/// reasons and the gate. Read it before trying this.
 fn notification_thread_awaits_a_reader(thread: &Value) -> bool {
     [
         string_array(thread, "waitingOn"),
