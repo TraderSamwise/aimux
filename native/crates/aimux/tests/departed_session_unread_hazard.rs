@@ -22,6 +22,13 @@
 //! | a session absent from it    |    87 | clears it -- the whole prize    |
 //! | a foreign shape             |    11 | clears it                       |
 //!
+//! Every one of those shapes came out of a real
+//! `~/.aimux/projects/*/runtime-exchange.yaml`: `project`, `user`,
+//! `claude-76xi5s`, `codex-ppfmvy`, `019f6ede-fc05-73a1-9312-7f6475ab380a` (a
+//! backend session id, a different namespace) and `manual-test` (whatever
+//! somebody typed once). The namespace is mixed, which is why an id-SHAPE test
+//! is no substitute for knowing who a notification was actually for.
+//!
 //! Under 4% of the entries, against a force-retained set already bounded at
 //! 1000. The one case that motivates it is a tail: a single long-lived
 //! `claude-s75354` on sam-mbp2 held 379 entries by itself.
@@ -56,30 +63,11 @@
 //! per-run cap, and a deliberate decision that `/notifications` may legitimately
 //! report a smaller unread count afterwards.
 
+use aimux::project_service::exchange_retention::{
+    RUNTIME_EXCHANGE_RETENTION, compact_runtime_exchange,
+};
 use aimux::runtime_topology::{list_topology_session_states, read_runtime_topology};
-use std::collections::HashSet;
-
-/// Every holder shape the live stores actually contain, with what it is.
-///
-/// Not invented: each of these was read out of a real
-/// `~/.aimux/projects/*/runtime-exchange.yaml` on 2026-10-28.
-const HOLDERS: &[(&str, &str)] = &[
-    (
-        "project",
-        "the participant a notification with no session gets",
-    ),
-    (
-        "user",
-        "the default `from` when a request omits one -- a person",
-    ),
-    ("claude-76xi5s", "a managed session"),
-    ("codex-ppfmvy", "a managed session"),
-    (
-        "019f6ede-fc05-73a1-9312-7f6475ab380a",
-        "a backend session id, a different namespace",
-    ),
-    ("manual-test", "whatever somebody typed once"),
-];
+use serde_json::{Value, json};
 
 fn absent_topology_path() -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
@@ -123,45 +111,110 @@ fn a_missing_topology_reads_as_a_complete_topology_with_no_sessions() {
     );
 }
 
-/// And so an absence test calls EVERY holder departed, including the two that
-/// cannot be.
+/// Stripping the last holder takes the thread, its message and its record.
 ///
-/// This is the whole finding in one assertion. The task I did not ship asked
-/// "is this holder in the topology?" and stripped it when the answer was no.
-/// With the topology absent the answer is no for all of them -- so it would
-/// have cleared `project`, which nothing is allowed to clear, and `user`, which
-/// means a person was never told.
+/// THE REASON THAT MATTERS, and the one I had asserted from a reviewer's word
+/// without testing -- on a branch that already had the helpers to test it.
+///
+/// Retention keeps a notification thread if it is among the newest
+/// `unread_notification_threads` that still await a reader, OR among the newest
+/// `notification_threads` overall. Take the last holder off an old thread and
+/// it leaves the first set, is too old for the second, and goes -- and
+/// `subject_exists` then drops its inbox entry because the subject is gone,
+/// while `select_retained_messages` drops its message.
+///
+/// So the sweep's prize and its hazard are THE SAME EVENT. Below the plain cap
+/// the thread is retained either way and nothing is reclaimed; above it, the
+/// reclaim IS the record leaving `/notifications`, because a record's `unread`
+/// is the state of that inbox entry and `unreadCount` counts those records.
+/// There is no version of the task that frees the bytes without changing the
+/// number, which is why this is a product decision and not a cleanup.
 #[test]
-fn an_absence_test_calls_every_holder_departed_when_the_topology_is_gone() {
-    let absent = absent_topology_path();
-    let topology = read_runtime_topology(&absent).expect("missing topology is Ok");
-    let known: HashSet<String> = list_topology_session_states(&topology, None)
-        .into_iter()
-        .filter_map(|session| {
-            session
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
+fn removing_the_last_holder_takes_the_thread_its_message_and_its_record() {
+    const OLD: &str = "2026-01-01T00:00:00.000Z";
+    const NEW: &str = "2026-05-25T00:00:00.000Z";
+
+    fn thread(index: usize, holders: &[&str], updated_at: &str) -> Value {
+        json!({
+            "id": format!("notification-{index}"),
+            "title": format!("Notification {index}"),
+            "kind": "notification",
+            "status": "open",
+            "createdAt": updated_at,
+            "updatedAt": updated_at,
+            "createdBy": "aimux",
+            "participants": holders,
+            "waitingOn": [],
+            "unreadBy": holders,
+            "tags": ["notification"],
+            "lastMessageId": format!("message-{index}"),
         })
-        .collect();
+    }
 
-    let departed: Vec<&str> = HOLDERS
-        .iter()
-        .map(|(holder, _)| *holder)
-        .filter(|holder| !known.contains(*holder))
-        .collect();
+    // Filled past the plain cap, so only the unread force-retain can keep the
+    // old thread -- which is the regime every busy store is already in: three
+    // of eighteen local projects carry more than this many notification
+    // threads, at 770, 693 and 528.
+    fn store(holders: &[&str]) -> Value {
+        let mut threads = (0..RUNTIME_EXCHANGE_RETENTION.notification_threads)
+            .map(|index| thread(1000 + index, &["codex-filler"], NEW))
+            .collect::<Vec<_>>();
+        threads.push(thread(1, holders, OLD));
+        json!({
+            "version": 1,
+            "generatedAt": NEW,
+            "threads": threads,
+            "messages": [{
+                "id": "message-1",
+                "threadId": "notification-1",
+                "from": "aimux",
+                "body": "something happened",
+                "createdAt": OLD,
+            }],
+            "inbox": [{
+                "id": "inbox-1",
+                "subjectKind": "thread",
+                "subjectId": "notification-1",
+                "state": "pending",
+                "createdAt": OLD,
+            }],
+            "tasks": [], "handoffs": [], "reviews": [], "waits": []
+        })
+    }
 
+    fn survivors(exchange: &Value) -> (bool, bool, bool) {
+        let retained = compact_runtime_exchange(exchange);
+        let has = |collection: &str, id: &str| {
+            retained["retained"][collection]
+                .as_array()
+                .is_some_and(|rows| {
+                    rows.iter()
+                        .any(|row| row.get("id").and_then(Value::as_str) == Some(id))
+                })
+        };
+        (
+            has("threads", "notification-1"),
+            has("messages", "message-1"),
+            has("inbox", "inbox-1"),
+        )
+    }
+
+    // Held by a session: the force-retain keeps all three.
+    let held = survivors(&store(&["codex-gone"]));
     assert_eq!(
-        departed.len(),
-        HOLDERS.len(),
-        "the point of this test is that absence condemns all of them; \
-         if some holder is now known, the fixture has drifted"
+        held,
+        (true, true, true),
+        "a thread a session still holds should keep its message and record; \
+         if this is false the fixture is wrong, not the finding"
     );
-    // Named rather than counted, so the failure reads as the hazard rather
-    // than as arithmetic.
-    assert!(
-        departed.contains(&"project") && departed.contains(&"user"),
-        "an absence test must be shown to condemn `project` and `user`, which \
-         are the two holders no topology will ever list: {departed:?}"
+
+    // The sweep's edit, and nothing else: one holder removed.
+    let stripped = survivors(&store(&[]));
+    assert_eq!(
+        stripped,
+        (false, false, false),
+        "removing the last holder should take the thread, its message and its \
+         inbox record together -- that cascade is the whole reason this task \
+         was not shipped, and if it no longer happens the finding needs redoing"
     );
 }
