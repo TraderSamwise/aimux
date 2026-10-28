@@ -90,7 +90,11 @@ pub struct AgentControlFacts<'a> {
 ///
 /// Kept identical on purpose: a role of `"  "` is absent to the JSON path, and
 /// a typed path that called it present would disagree about the same agent.
-pub(crate) fn non_empty(value: Option<&str>) -> Option<&str> {
+///
+/// `pub` because `AgentControlFacts`' fields are: a caller outside this crate
+/// that sets `role` or `lane_worktree_path` by hand needs the same trim, and
+/// without this it would have to guess at it.
+pub fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 

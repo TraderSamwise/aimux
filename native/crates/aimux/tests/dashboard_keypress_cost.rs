@@ -23,7 +23,7 @@ use aimux::dashboard_controller::{
 use aimux::dashboard_internal::DASHBOARD_PANE_SIZE_PROBES;
 use aimux::dashboard_model::{
     DASHBOARD_CLASSIFIER_PROBES, DashboardKept, DashboardService, DesktopStateSnapshot,
-    filter_dashboard_visible_model,
+    SessionTeamMetadata, filter_dashboard_visible_model,
 };
 use aimux::dashboard_navigation::{
     DashboardNavigationState, NAVIGATION_GROUP_BUILDS, NAVIGATION_ORDER_BUILDS,
@@ -1044,8 +1044,39 @@ fn what_one_keypress_costs_in_subprocesses() {
 #[test]
 fn what_a_keypress_costs_does_not_move_with_row_count() {
     let _counters = counters();
+    let mut probes_by_leg = Vec::new();
     for (label, worktrees, agents) in [("rows-few", 9, 20), ("rows-many", 9, 200)] {
-        let snap = snapshot(label, worktrees, agents);
+        let mut snap = snapshot(label, worktrees, agents);
+        // A SELECTED session with teammates, because without one the frame
+        // never reaches `selected_teammates` -- it returns early on
+        // `selected_session` being None -- and that is the path
+        // `sort_sessions_by_canonical_order` sits on, which still builds a
+        // JSON probe per row it sorts. A review caught the first version of
+        // this gate reading zero partly because it never went there.
+        let selected = snap.sessions.first().map(|session| session.id.clone());
+        if let Some(parent) = selected.clone() {
+            let teammates = snap
+                .sessions
+                .iter()
+                .take(4)
+                .enumerate()
+                .map(|(index, session)| {
+                    let mut teammate = session.clone();
+                    teammate.id = format!("{}-mate{index}", session.id);
+                    teammate.team = Some(SessionTeamMetadata {
+                        team_id: "team".to_owned(),
+                        parent_session_id: parent.clone(),
+                        role: None,
+                        label: Some(format!("mate{index}")),
+                        extra: BTreeMap::new(),
+                    });
+                    teammate
+                })
+                .collect::<Vec<_>>();
+            snap.teammates = teammates;
+            // Mutated in place after the memos could have been read.
+            snap.forget_derived();
+        }
         let mut controller = DashboardController::new(&snap);
         let state_root =
             std::env::temp_dir().join(format!("aimux-rowcount-{}-{label}", std::process::id()));
@@ -1056,7 +1087,7 @@ fn what_a_keypress_costs_does_not_move_with_row_count() {
         // The first pass is allowed to work the ordering out; this gate is
         // about the SECOND keypress, on a snapshot already on screen.
         let _ = controller.handle_key(&snap, DashboardKey::Down);
-        let _ = render_dashboard_frame(&row_count_input(&snap, &controller));
+        let _ = render_dashboard_frame(&row_count_input(&snap, &controller, selected.as_deref()));
 
         reset_tmux_exec_metrics();
         let calls_before = CANONICALIZE_CALLS.load(Ordering::Relaxed);
@@ -1066,7 +1097,8 @@ fn what_a_keypress_costs_does_not_move_with_row_count() {
         let builds_before = NAVIGATION_GROUP_BUILDS.load(Ordering::Relaxed);
 
         let effect = controller.handle_key(&snap, DashboardKey::Down);
-        let frame = render_dashboard_frame(&row_count_input(&snap, &controller));
+        let frame =
+            render_dashboard_frame(&row_count_input(&snap, &controller, selected.as_deref()));
         let _ = persistence.persist_controller_state(
             DashboardScreen::Dashboard,
             "output",
@@ -1113,12 +1145,7 @@ fn what_a_keypress_costs_does_not_move_with_row_count() {
              {probes} json probes, {builds} groupings, {spawns} tmux execs, {panes} pane probes"
         );
 
-        assert_eq!(
-            probes, 0,
-            "{label}: {probes} rows were serialised to JSON to repaint a snapshot \
-             already on screen. The classification reads six fields that are \
-             already on the row -- see dashboard_session_control_facts"
-        );
+        probes_by_leg.push((label, probes));
         assert_eq!(
             calls, 0,
             "{label}: {calls} filesystem lookups for a repaint that changes no path"
@@ -1136,6 +1163,31 @@ fn what_a_keypress_costs_does_not_move_with_row_count() {
             "{label}: {panes} pane-size probes on the key path"
         );
     }
+
+    // The MARGINAL, not the absolute, and this is the one assertion in this
+    // test that is about row count rather than about zero.
+    //
+    // Some JSON probes remain on a repaint and they are not this change's:
+    // `selected_teammates` sorts through `sort_sessions_by_canonical_order`,
+    // which builds one per row it sorts, and the teammate count decides that,
+    // not the session count. Asserting zero there would be asserting something
+    // the code does not do -- the first version of this gate did, and passed
+    // only because its fixture had no teammates to sort.
+    //
+    // What must hold is that the number does not MOVE with the rows. The cost
+    // this change removed was per session per filter, so restoring any of it
+    // shows up here as a tenfold difference between the legs while the
+    // teammate cost stays flat.
+    let (few_label, few) = probes_by_leg[0];
+    let (many_label, many) = probes_by_leg[1];
+    println!("json probes: {few_label}={few}, {many_label}={many}");
+    assert_eq!(
+        few, many,
+        "{few_label} serialised {few} rows and {many_label} serialised {many}: \
+         a repaint's JSON probes moved with the number of agents, so a \
+         classification is being asked per row again -- see \
+         dashboard_session_control_facts"
+    );
 }
 
 /// The render input this gate uses, so the two row counts differ in nothing
@@ -1143,6 +1195,7 @@ fn what_a_keypress_costs_does_not_move_with_row_count() {
 fn row_count_input<'a>(
     snapshot: &'a DesktopStateSnapshot,
     controller: &'a DashboardController,
+    selected_session_id: Option<&'a str>,
 ) -> DashboardRenderInput<'a> {
     DashboardRenderInput {
         snapshot,
@@ -1151,7 +1204,7 @@ fn row_count_input<'a>(
         cols: 140,
         rows: 40,
         nav_level: controller.navigation.level,
-        selected_session_id: None,
+        selected_session_id,
         selected_service_id: None,
         focused_worktree_path: controller.navigation.focused_worktree_path(snapshot),
         focused_group_index: None,

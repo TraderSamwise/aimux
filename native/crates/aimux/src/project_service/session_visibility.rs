@@ -114,25 +114,25 @@ fn switchable_roles_allow(policy: &SwitchableRolePolicy, input: &AgentVisibility
     policy.scope_all_worktrees || input_worktree_matches_scope(input, &policy.scoped_worktree_path)
 }
 
-/// Whether an agent is shown in the supervisor plane.
+/// Whether an agent is shown in the supervisor plane, asked of a JSON record.
 ///
-/// This is the one rule, shared by every surface that hides supervisor-plane
-/// agents from a worktree scope -- the dashboard, the switcher, the footer
-/// chips and `prefix n`/`p`. It keys on the PLANE, because the plane is
-/// membership: an ordinary agent moved into the supervisor plane belongs
-/// there, and an overseer moved out does not.
-/// The dashboard no longer comes through here.
+/// The rule is one rule and lives in `team_contract::is_in_supervisor_plane`.
+/// This is the way in for a caller holding a `Value` -- the switcher, the
+/// footer chips, the statusline and `prefix n`/`p`. The dashboard holds typed
+/// rows and takes the other way in, because reaching this one meant
+/// serialising every row to ask about it, once per session per filter, about
+/// eight filters a frame.
 ///
-/// It holds typed rows and this takes a `&Value`, so reaching it meant
-/// serialising every row to ask about it -- once per session per filter, about
-/// eight filters a frame. `team_contract::is_in_supervisor_plane` answers the
-/// same question from borrowed fields, and the dashboard calls that instead.
+/// It keys on the PLANE, because the plane is membership: an ordinary agent
+/// moved into the supervisor plane belongs there, and an overseer moved out
+/// does not.
 ///
-/// So this is no longer the only way the question gets asked, and the thing
-/// keeping the two honest is `tests/agent_control_facts_agreement.rs`, which
-/// holds them against each other over every shape of lane, flag and role. If
-/// you change the rule, change it in `team_contract` and let that test tell
-/// you which callers moved.
+/// This spelling still derives the answer from `agent_lane` rather than
+/// delegating, deliberately: it is the only independent witness
+/// `tests/agent_control_facts_agreement.rs` has for the lane half, and that
+/// test holds the two against each other over every shape of lane, flag and
+/// role. Change the rule in `team_contract` and let the test say which
+/// callers moved.
 pub fn session_is_in_supervisor_plane(session: &Value) -> bool {
     agent_lane(Some(session))
         .get("kind")

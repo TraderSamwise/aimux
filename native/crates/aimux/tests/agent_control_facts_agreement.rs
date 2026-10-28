@@ -202,25 +202,12 @@ fn asking_the_row_does_not_serialise_the_row() {
     );
 }
 
-/// The control predicate as it read BEFORE this change, transcribed.
-///
-/// Why this exists: the agreement test above compares against `agent_lane`,
-/// which is untouched -- but `agent_lane` asks `is_project_control_session`,
-/// and that now delegates to the new code. So that comparison is independent
-/// for the LANE logic and shared for the control predicate, and on its own it
-/// could not see a change in meaning inside `is_project_control`.
-///
-/// This closes that half. It is a literal transcription of the three functions
-/// as they were, kept deliberately dumb -- nested ifs, no helpers, no reuse of
-/// anything under test -- so that agreeing with it means something. If the
-/// contract is ever meant to CHANGE, this is the function to change first and
-/// on purpose; a diff that edits it is a diff that is changing who counts as a
-/// control agent.
 /// The record as the dashboard holds it.
 fn typed_row(session: &Value) -> DashboardSession {
     serde_json::from_value(session.clone()).expect("the record deserialises into a row")
 }
 
+/// `string_field`'s rule, for the transcriptions below.
 fn trimmed(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
@@ -260,6 +247,21 @@ fn original_is_scribe(session: &Value) -> bool {
     original_legacy_role(session) == Some("scribe")
 }
 
+/// The control predicate as it read BEFORE this change, transcribed.
+///
+/// Why this exists: the agreement test above compares against `agent_lane`,
+/// which is untouched -- but `agent_lane` asks `is_project_control_session`,
+/// and that now delegates to the new code. So that comparison is independent
+/// for the LANE logic and shared for the control predicate, and on its own it
+/// could not see a change in meaning inside `is_project_control`.
+///
+/// This closes that half. Together with `original_is_overseer` and
+/// `original_is_scribe` above it is a literal transcription of the three
+/// functions as they were, kept deliberately dumb -- nested ifs, no helpers,
+/// no reuse of anything under test -- so that agreeing with it means
+/// something. If the contract is ever meant to CHANGE, these three are what to
+/// change first and on purpose; a diff that edits them is a diff that is
+/// changing who counts as a control agent.
 fn original_is_project_control(session: &Value) -> bool {
     match original_flag(session, "projectControl") {
         Some(true) => return true,
