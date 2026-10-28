@@ -28,6 +28,16 @@ mod indexes;
 pub(crate) use indexes::derive_runtime_exchange_indexes;
 
 static ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+/// Who a message is from when the request does not say.
+///
+/// Named rather than spelled at each of the nine call sites, because
+/// `departed_unread` has to know that this identity is a PERSON and not a
+/// session: it is the one holder that looks departed -- no topology row will
+/// ever carry it -- while meaning the opposite of departed. A literal here and
+/// a literal there is one edit away from a task that deletes the record of
+/// what a human was never told.
+pub const DEFAULT_MESSAGE_SENDER: &str = "user";
+
 const RECIPIENT_PLACEHOLDER: &str = "__AIMUX_RECIPIENT__";
 
 pub fn route_coordination_mutation_request(
@@ -84,7 +94,7 @@ pub fn route_coordination_mutation_request_with_runtime(
 }
 
 fn route_threads_open(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let mut participants = vec![Some(from.clone())];
     participants.extend(
         string_array_field(body, "participants")
@@ -107,7 +117,7 @@ fn route_threads_open(project_state_dir: &Path, body: &Value) -> ProjectServiceD
 }
 
 fn route_threads_send(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let recipients = route_recipients(body);
     let kind = trimmed_string(body.get("kind"));
     let message_body = string_field(body, "body");
@@ -213,7 +223,7 @@ fn route_threads_status(project_state_dir: &Path, body: &Value) -> ProjectServic
 }
 
 fn route_handoff_send(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let recipients = route_recipients(body);
     let message_body = string_field(body, "body");
     let title = trimmed_string(body.get("title"));
@@ -298,7 +308,7 @@ fn route_handoff_complete(
 }
 
 fn route_task_assign(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let to = optional_string_or_first(body.get("to"));
     let assignee = trimmed_string(body.get("assignee"));
     let tool = trimmed_string(body.get("tool"));
@@ -805,7 +815,7 @@ fn route_review_request_changes(
 
 fn route_task_reopen(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
     let task_id = string_field(body, "taskId");
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let input_body = trimmed_string(body.get("body"));
     mutate(project_state_dir, |exchange| {
         let task = find_by_id(&exchange, "tasks", &task_id)
@@ -883,7 +893,7 @@ fn handoff_lifecycle(
     transform: fn(Value, String, Vec<String>) -> Value,
 ) -> ProjectServiceDispatchResponse {
     let thread_id = string_field(body, "threadId");
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let message_body = trimmed_string(body.get("body")).unwrap_or_else(|| default_body.into());
     mutate(project_state_dir, |exchange| {
         let thread = find_by_id(&exchange, "threads", &thread_id)
@@ -949,7 +959,7 @@ fn task_lifecycle(
     thread_update: TaskThreadUpdate,
 ) -> ProjectServiceDispatchResponse {
     let task_id = string_field(body, "taskId");
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let input_body = trimmed_string(body.get("body"));
     mutate(project_state_dir, |exchange| {
         let task = find_by_id(&exchange, "tasks", &task_id)
@@ -1002,7 +1012,7 @@ fn review_lifecycle(
     transform: ThreadTransform,
 ) -> ProjectServiceDispatchResponse {
     let task_id = string_field(body, "taskId");
-    let from = string_field_with_default(body, "from", "user");
+    let from = string_field_with_default(body, "from", DEFAULT_MESSAGE_SENDER);
     let input_body = trimmed_string(body.get("body"));
     mutate(project_state_dir, |exchange| {
         let task = find_by_id(&exchange, "tasks", &task_id)
@@ -1483,7 +1493,7 @@ fn deliver_thread_send_response(
         &response.body,
         string_array_field(request_body, "to"),
         route_recipients(request_body),
-        &string_field_with_default(request_body, "from", "user"),
+        &string_field_with_default(request_body, "from", DEFAULT_MESSAGE_SENDER),
     ) else {
         return response;
     };
