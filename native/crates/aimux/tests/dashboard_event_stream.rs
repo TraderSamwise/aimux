@@ -71,6 +71,7 @@ fn event_stream_reader_is_registered_as_async_task() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
     let port = listener.local_addr().expect("local addr").port();
     let (ready_tx, ready_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("accept");
         let _ = read_request_text(&mut stream);
@@ -78,7 +79,15 @@ fn event_stream_reader_is_registered_as_async_task() {
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
             .expect("write headers");
         ready_tx.send(()).expect("ready");
-        thread::sleep(Duration::from_millis(250));
+        // Held until released, not for a fixed sleep. The registration guard is
+        // dropped when the future completes, and the future completes when this
+        // socket closes -- so a sleep makes the window in which the task is
+        // observable exactly that long, and a main thread starved for 250ms
+        // finds the task already gone and reports "async task registered"
+        // without a hint that load was the cause. It HAD the same shape as the
+        // drop test below, and half its budget, which is why it is fixed here
+        // too; both are now capped rather than slept.
+        let _ = release_rx.recv_timeout(Duration::from_secs(5));
     });
 
     let endpoint = ProjectServiceEndpoint {
@@ -90,6 +99,7 @@ fn event_stream_reader_is_registered_as_async_task() {
         .recv_timeout(Duration::from_secs(2))
         .expect("stream opened");
     let task = wait_for_dashboard_event_stream_task(port).expect("async task registered");
+    let _ = release_tx.send(());
     assert_eq!(task.kind, AsyncTaskKind::Async);
     drop(handle);
     server.join().expect("server");
@@ -189,11 +199,41 @@ fn dropping_stream_handle_does_not_wait_for_silent_peer_timeout() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
     let port = listener.local_addr().expect("local addr").port();
     let (ready_tx, ready_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    // The server holds the connection until the test RELEASES it, rather than
+    // for a fixed sleep.
+    //
+    // With a sleep, what the test measures is `SERVER_HOLD - epsilon`, where
+    // epsilon is however long the test took to wake up after the server's
+    // ready signal -- so the margin erodes with exactly the load the bound was
+    // widened for. Holding until released takes epsilon out of it: a drop that
+    // blocks on the server waits for a release that only comes after the drop,
+    // so it waits the whole hold however busy the machine is. It also costs
+    // nothing on success, where the release arrives immediately.
+    // Two different jobs, two different numbers, because collapsing them into
+    // one leaves a silent false PASS.
+    //
+    // `SERVER_HOLD` is only a safety cap so a wedged test cannot hang a CI
+    // worker; nothing legitimate waits on it. `BLOCKING_DROP` is the
+    // assertion. When the bound was `SERVER_HOLD / 2` the two were the same
+    // constant, and a main thread starved for longer than the hold let the
+    // server time out on its own: the socket closes, the task completes, and a
+    // genuinely blocking `Drop` then returns instantly and PASSES. That is a
+    // load-dependent false pass where the shape before it was a
+    // load-dependent false failure -- rarer and silent, which is worse.
+    //
+    // And `BLOCKING_DROP` is not "the quantity it must not have waited for",
+    // unlike the bound in `daemon_jobs`. `join.abort()` is an atomic store and
+    // a wake, so a healthy drop is microseconds and a blocking one is the whole
+    // hold; anything between is a round number, and this one is chosen for a
+    // wide margin on both sides rather than derived.
+    const SERVER_HOLD: Duration = Duration::from_secs(60);
+    const BLOCKING_DROP: Duration = Duration::from_millis(1_500);
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("accept");
         let _ = read_request_text(&mut stream);
         ready_tx.send(()).expect("ready");
-        thread::sleep(Duration::from_millis(500));
+        let _ = release_rx.recv_timeout(SERVER_HOLD);
     });
     let handle = spawn_dashboard_project_event_stream(ProjectServiceEndpoint {
         host: "127.0.0.1".into(),
@@ -203,9 +243,35 @@ fn dropping_stream_handle_does_not_wait_for_silent_peer_timeout() {
         .recv_timeout(Duration::from_secs(2))
         .expect("stream opened request");
 
+    // Dropping the handle must not wait for the server. `Drop` is
+    // `join.abort()`; the regression is making it block on the task, and the
+    // task ends when the server's socket closes.
+    //
+    // The bound was 100ms and bare -- no message, no stated invariant -- the
+    // shape that fails on a loaded machine and tells whoever finds it nothing.
+    // My first repair made it 400ms against a 500ms sleep, which a review
+    // showed was worse: a blocking drop measures `500ms - epsilon`, so the
+    // assertion only fired while the test woke within 100ms of the server, and
+    // at the 200ms of delay the same commit called ordinary a fully blocking
+    // drop measured 300ms and PASSED. It detected the regression only in the
+    // regime where the old bound was already fine. The prove-failure hid it,
+    // because a `Drop` that sleeps 500ms is stronger than the real regression
+    // and independent of epsilon.
+    //
+    // The release above removes epsilon, so half the hold is a real margin.
     let start = Instant::now();
     drop(handle);
-    assert!(start.elapsed() < Duration::from_millis(100));
+    let dropped_in = start.elapsed();
+    // Before the assertion, so a failure does not also leave the server
+    // sitting out its whole hold.
+    let _ = release_tx.send(());
+    assert!(
+        dropped_in < BLOCKING_DROP,
+        "dropping the stream handle took {dropped_in:?} against a \
+         {BLOCKING_DROP:?} bound. `join.abort()` is microseconds, and the \
+         server is released only after this drop, so anything on this scale \
+         means the drop waited for the server instead of aborting"
+    );
     server.join().expect("server");
 }
 

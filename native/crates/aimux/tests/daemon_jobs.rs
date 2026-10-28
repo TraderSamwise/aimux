@@ -27,7 +27,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const JOBS_ROUTE_CONTRACT: &str =
@@ -818,7 +818,64 @@ fn fifo_callback_without_reader_does_not_block_daemon() {
     let started = Instant::now();
     let report =
         aimux::daemon::jobs::drain_due_job_callbacks(&store, u128::MAX).expect("fifo drain");
-    assert!(started.elapsed() < Duration::from_millis(500));
+    // `report.failed == 1` is the contract; the clock is a backstop, and it is
+    // worth being honest about which.
+    //
+    // What must hold is that the open does not BLOCK on a FIFO nobody is
+    // reading. `open_fifo_notification_writer` passes `O_NONBLOCK`
+    // (`daemon/jobs.rs`), so a readerless FIFO fails immediately with ENXIO,
+    // and that failure is what the `failed` below counts. One direction only:
+    // any open or write failure lands in the same counter and this test never
+    // reads the error string, so `failed == 1` says the drain recorded a
+    // failure, not which one.
+    //
+    // Lose that flag and the open does not get slow, it never returns: POSIX
+    // has a write-only open on a FIFO block until a reader appears, and
+    // nothing here ever opens it for reading. So the regression presents as a
+    // HANG, no elapsed-time assertion can catch a hang, and there is no
+    // per-test kill in `scripts/native-test-runner.py` to convert it into one.
+    //
+    // There IS one finite stall reachable here, and it decides the bound.
+    //
+    // I first wrote that no slow-but-finite path existed and set this to five
+    // seconds. A review found the path, one line further on: the ENXIO failure
+    // is recorded by `store.record_callback_failed`, which takes
+    // `acquire_state_update_lock` on `callbacks.json`, and that gives up after
+    // `ACQUIRE_TIMEOUT`. In production that is the jobs-reconcile task holding
+    // the file while the callbacks task drains -- which is this test's name,
+    // "does not block daemon", exactly.
+    //
+    // And `failed == 1` cannot see it: when the acquire times out,
+    // `record_callback_failed` returns `Err` and the drain's `Err` arm counts
+    // the same single failure as the happy ENXIO path. So the clock is the only
+    // thing that distinguishes "returned the moment the non-blocking open
+    // failed" from "sat on a lock for two seconds inside the daemon". Five
+    // seconds sits ABOVE that stall and so asserts nothing but that the process
+    // is alive.
+    //
+    // Three quarters of `ACQUIRE_TIMEOUT`: under the one stall that can happen
+    // here, and well above the scheduling delay that made the original 500ms
+    // bound flake on 2026-10-27 at load average 47.
+    //
+    // A fraction rather than a subtraction, because a subtraction of a literal
+    // PANICS on overflow if anyone lowers `ACQUIRE_TIMEOUT` beneath it -- a
+    // `Duration` cannot go negative -- and a test that panics on an unrelated
+    // edit tells the next person nothing.
+    //
+    // Being honest about the margin: the 2026-10-27 run established that the
+    // delay exceeded 500ms, not that it stays under 1.5s, so the false-fail
+    // side is a judgement rather than a measurement. The detection side is
+    // 500ms -- the gap between this bound and the 2s stall -- which is the
+    // narrower of the two and the one to watch.
+    let budget = aimux::state_update_lock::ACQUIRE_TIMEOUT.mul_f32(0.75);
+    let drained_in = started.elapsed();
+    assert!(
+        drained_in < budget,
+        "the drain took {drained_in:?} against a {budget:?} budget. The \
+         non-blocking open fails at once, so this is the state-update lock on \
+         callbacks.json being held -- which `failed == 1` cannot tell you, \
+         because a lock timeout is counted as the same single failure"
+    );
     assert_eq!(report.failed, 1);
 }
 
