@@ -31,6 +31,7 @@
 
 use aimux::dashboard_model::{DASHBOARD_CLASSIFIER_PROBES, DashboardSession};
 use aimux::project_service::session_visibility::session_is_in_supervisor_plane;
+use aimux::team_contract::{AgentControlFacts, is_overseer, is_project_control, is_scribe};
 use serde_json::{Value, json};
 use std::sync::atomic::Ordering;
 
@@ -198,5 +199,126 @@ fn asking_the_row_does_not_serialise_the_row() {
         probes, 0,
         "a thousand classifications built {probes} JSON probes; the dashboard is \
          serialising rows again, which is the cost this change removed"
+    );
+}
+
+/// The control predicate as it read BEFORE this change, transcribed.
+///
+/// Why this exists: the agreement test above compares against `agent_lane`,
+/// which is untouched -- but `agent_lane` asks `is_project_control_session`,
+/// and that now delegates to the new code. So that comparison is independent
+/// for the LANE logic and shared for the control predicate, and on its own it
+/// could not see a change in meaning inside `is_project_control`.
+///
+/// This closes that half. It is a literal transcription of the three functions
+/// as they were, kept deliberately dumb -- nested ifs, no helpers, no reuse of
+/// anything under test -- so that agreeing with it means something. If the
+/// contract is ever meant to CHANGE, this is the function to change first and
+/// on purpose; a diff that edits it is a diff that is changing who counts as a
+/// control agent.
+fn trimmed(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn original_legacy_role(session: &Value) -> Option<&str> {
+    trimmed(session.get("role").and_then(Value::as_str)).or_else(|| {
+        trimmed(
+            session
+                .get("team")
+                .and_then(|team| team.get("role"))
+                .and_then(Value::as_str),
+        )
+    })
+}
+
+fn original_flag(session: &Value, key: &str) -> Option<bool> {
+    session.get(key).and_then(Value::as_bool)
+}
+
+fn original_is_overseer(session: &Value) -> bool {
+    if let Some(value) = original_flag(session, "overseer") {
+        return value;
+    }
+    if original_flag(session, "projectControl") == Some(false) {
+        return false;
+    }
+    original_legacy_role(session) == Some("overseer")
+}
+
+fn original_is_scribe(session: &Value) -> bool {
+    if let Some(value) = original_flag(session, "scribe") {
+        return value;
+    }
+    if original_flag(session, "projectControl") == Some(false) {
+        return false;
+    }
+    original_legacy_role(session) == Some("scribe")
+}
+
+fn original_is_project_control(session: &Value) -> bool {
+    match original_flag(session, "projectControl") {
+        Some(true) => return true,
+        Some(false) => return false,
+        None => {}
+    }
+    original_is_overseer(session) || original_is_scribe(session)
+}
+
+/// None of the three control predicates changed meaning when they moved
+/// behind `AgentControlFacts`.
+#[test]
+fn the_control_predicates_still_mean_what_they_meant() {
+    let mut cases = 0usize;
+    let mut control = 0usize;
+    for (lane_name, lane) in lanes() {
+        for (control_name, control_flag) in flags() {
+            for (overseer_name, overseer) in flags() {
+                for (scribe_name, scribe) in flags() {
+                    for (role_name, role, team_role) in roles() {
+                        let session =
+                            record(&lane, control_flag, overseer, scribe, role, team_role);
+                        let facts = AgentControlFacts::from_record(&session);
+                        // All THREE, not just the composite. `is_project_control`
+                        // returns on `projectControl: false` before it ever asks
+                        // the other two, so comparing only the composite leaves
+                        // the short-circuit INSIDE each of them unreachable --
+                        // and `is_overseer_session` / `is_scribe_session` are
+                        // called directly elsewhere, where it is live. Deleting
+                        // that line passed an earlier version of this test.
+                        for (name, after, before) in [
+                            (
+                                "project_control",
+                                is_project_control(&facts),
+                                original_is_project_control(&session),
+                            ),
+                            (
+                                "overseer",
+                                is_overseer(&facts),
+                                original_is_overseer(&session),
+                            ),
+                            ("scribe", is_scribe(&facts), original_is_scribe(&session)),
+                        ] {
+                            assert_eq!(
+                                after, before,
+                                "{name}: lane={lane_name} control={control_name} \
+                                 overseer={overseer_name} scribe={scribe_name} \
+                                 role={role_name}: facts say {after}, the original \
+                                 said {before}"
+                            );
+                        }
+                        cases += 1;
+                        if original_is_project_control(&session) {
+                            control += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    println!("{cases} inputs compared, {control} of them control agents");
+    assert!(cases >= 2_187, "the matrix shrank to {cases} cases");
+    assert!(
+        control > 0 && control < cases,
+        "{control}/{cases} control: this matrix proves nothing"
     );
 }
