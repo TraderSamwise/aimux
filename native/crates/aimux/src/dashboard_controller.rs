@@ -28,6 +28,7 @@ use crate::dashboard_tool_picker::{
     DashboardToolPickerState,
 };
 use crate::project_api_contract::routes;
+use crate::project_service::coordination_mutations::DEFAULT_MESSAGE_SENDER;
 
 fn restart_options_for_session(session: &DashboardSession) -> Result<DashboardToolEntry, String> {
     if session.pending {
@@ -359,7 +360,7 @@ impl DashboardOrchestrationInputState {
                 self.target
                     .source_session_id
                     .clone()
-                    .unwrap_or_else(|| "user".into()),
+                    .unwrap_or_else(|| DEFAULT_MESSAGE_SENDER.into()),
             ),
         );
         if let Some(session_id) = self.target.session_id.as_ref() {

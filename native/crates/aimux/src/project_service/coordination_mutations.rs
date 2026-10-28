@@ -30,21 +30,30 @@ pub(crate) use indexes::derive_runtime_exchange_indexes;
 static ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 /// Who a message is from when the request does not say.
 ///
-/// Named rather than spelled at each of the sixteen call sites that default it,
-/// because this identity is the one holder that looks DEPARTED to anything
+/// Named rather than spelled at each site that defaults it -- and deliberately
+/// without a count, because I have put the wrong number here twice: "nine"
+/// when it was sixteen, then "sixteen" when `dashboard_controller` had a
+/// seventeenth. Asserting a tally nobody re-checks is how the doc goes stale;
+/// what matters is the rule, which is that no `from` default spells this
+/// literally.
+///
+/// It exists because this identity is the one holder that looks DEPARTED to anything
 /// asking a topology -- no row will ever carry it -- while meaning the
 /// opposite. Anything deciding whether a holder is gone has to know that, and
 /// a literal at each site is one edit away from a sweep that deletes the
 /// record of what a human was never told. See
 /// `tests/departed_session_unread_hazard.rs`.
 ///
-/// It does NOT centralise every use of the string. `resolve_recipients` and
+/// It does NOT centralise every use of the string, and two kinds of site are
+/// deliberately left alone. `resolve_recipients` and
 /// `deliver_prompt_to_recipients` below test for `"user"` to mean "not a
-/// deliverable session", which is a different question from "who sent this",
-/// so they are deliberately left alone -- and that means the drift above is
-/// still possible in those two places. Naming them here rather than renaming
-/// them, because collapsing two meanings into one constant is how the next
-/// confusion starts.
+/// deliverable session", which is a different question from "who sent this".
+/// And `dashboard_controller` sends `"from": "user"` outright in three places,
+/// which is an assertion that the human is the sender rather than a default
+/// standing in for an absent one. Collapsing those meanings into one constant
+/// named DEFAULT is how the next confusion starts -- so the drift this guards
+/// against is still possible in those five places, and saying so is the point
+/// of this paragraph.
 pub const DEFAULT_MESSAGE_SENDER: &str = "user";
 
 const RECIPIENT_PLACEHOLDER: &str = "__AIMUX_RECIPIENT__";

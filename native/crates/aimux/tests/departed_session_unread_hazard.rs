@@ -90,10 +90,19 @@ fn absent_topology_path() -> std::path::PathBuf {
 /// error to key off.
 ///
 /// If this test ever fails because the read started returning `Err` for a
-/// missing file, that is good news -- and the thing to check is every caller
-/// that was relying on the `Ok`, starting with `queued_session_disposition`,
-/// which deliberately answers `Gone` on an unreadable topology because it is
-/// classifying one queued entry whose caller just read the file successfully.
+/// missing file, that is good news, and the thing to check is every caller
+/// that reads "no sessions" as a fact about the world rather than a fact about
+/// the file.
+///
+/// NOT `queued_session_disposition`, which an earlier version of this comment
+/// named as the caller relying on the `Ok`. It is indifferent: it answers
+/// `Gone` on `Err` through its `let Ok(..) else`, and on a MISSING file it gets
+/// `Ok(empty)` and reaches the same `Gone` by absence, so flipping this
+/// contract would not change its answer at all. Left in rather than quietly
+/// deleted, because "who depends on this?" is a question to check and I had
+/// asserted it -- and then said in a commit message that I had fixed this
+/// paragraph while the script that would have fixed it had aborted two edits
+/// earlier.
 #[test]
 fn a_missing_topology_reads_as_a_complete_topology_with_no_sessions() {
     let absent = absent_topology_path();
@@ -123,12 +132,20 @@ fn a_missing_topology_reads_as_a_complete_topology_with_no_sessions() {
 /// `subject_exists` then drops its inbox entry because the subject is gone,
 /// while `select_retained_messages` drops its message.
 ///
-/// So the sweep's prize and its hazard are THE SAME EVENT. Below the plain cap
-/// the thread is retained either way and nothing is reclaimed; above it, the
-/// reclaim IS the record leaving `/notifications`, because a record's `unread`
-/// is the state of that inbox entry and `unreadCount` counts those records.
-/// There is no version of the task that frees the bytes without changing the
-/// number, which is why this is a product decision and not a cleanup.
+/// So there is no version of the task that frees the bytes without changing
+/// the number: above the plain cap the reclaim IS the record leaving
+/// `/notifications`, because a record's `unread` is the state of that inbox
+/// entry and `unreadCount` counts those records.
+///
+/// Not a biconditional, though -- the hazard is strictly LARGER than the
+/// prize, which a review had to point out. Below the cap the thread is retained
+/// and no bytes come back, but the record can still go:
+/// `derive_runtime_exchange_indexes` rebuilds `inbox` wholesale from each
+/// thread's `unreadBy` union `waitingOn`, and `preserve_acknowledged_inbox`
+/// maps over the NEW entries only, so an entry with no match is dropped. On the
+/// next mutation that re-derives, a swept thread under the cap loses its record
+/// for nothing at all. That makes the case against the sweep stronger, not
+/// weaker, which is why the sentence is worth getting right.
 #[test]
 fn removing_the_last_holder_takes_the_thread_its_message_and_its_record() {
     const OLD: &str = "2026-01-01T00:00:00.000Z";
@@ -200,6 +217,13 @@ fn removing_the_last_holder_takes_the_thread_its_message_and_its_record() {
     }
 
     // Held by a session: the force-retain keeps all three.
+    //
+    // This arm is also what stops the other one being vacuous. `has` reads a
+    // missing collection as "not retained", so if `compact_runtime_exchange`
+    // ever renamed or stopped emitting `messages` or `inbox`, the STRIPPED
+    // assertion would still pass -- and this one would fail first. Verified by
+    // misspelling the collection: `(true, false, true)` here, before the
+    // stripped arm runs.
     let held = survivors(&store(&["codex-gone"]));
     assert_eq!(
         held,
