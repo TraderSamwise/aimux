@@ -1750,7 +1750,7 @@
     },
     {
       "id": "remote-access-017",
-      "name": "shared guest rejects other sessions and owner write routes",
+      "name": "shared guest rejects other sessions and project administration, and interrupts its own agent",
       "source": "src/full/remote-access.test.ts",
       "api": "remote-access",
       "input": {
@@ -1849,7 +1849,7 @@
         { "ok": false, "status": 403, "error": "shared guest cannot access another session" },
         { "ok": false, "status": 403, "error": "conflicting session ids in request body and query" },
         { "ok": false, "status": 403, "error": "shared guests can only write to their shared session" },
-        { "ok": false, "status": 403, "error": "shared guests can only write to their shared session" },
+        { "ok": true },
         { "ok": false, "status": 403, "error": "shared guests can only write to their shared session" },
         { "ok": false, "status": 403, "error": "remote actor role is not allowed" }
       ],
