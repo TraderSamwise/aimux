@@ -594,7 +594,13 @@ export default function ChatScreen() {
   const isSharedSessionView = Boolean(activeShareForRoute);
   const isSharedConversation =
     isCanonicalSharedRoute || isSharedSessionView || isMultiplexedShare(shareSummary);
-  const canUseOwnerControls = !isCanonicalSharedRoute && !isSharedSessionView;
+  /// Sharing is full trust: a participant is an owner of the session they were
+  /// given, and the only thing reserved is deciding who else gets in. This was
+  /// one `canUseOwnerControls` flag hiding the output modes, the stop control,
+  /// the lifecycle actions and the plan -- none of which is administering the
+  /// share. The server scopes every one of them to the shared session on its
+  /// own, so the client has nothing left to withhold.
+  const canManageSharing = !isCanonicalSharedRoute && !isSharedSessionView;
   const userEmail =
     user?.primaryEmailAddress?.emailAddress?.trim() ||
     user?.emailAddresses?.[0]?.emailAddress?.trim() ||
@@ -721,10 +727,7 @@ export default function ChatScreen() {
     sessionId && desktopState && !session && !activeShareForRoute,
   );
   const canManageTeammates =
-    canUseOwnerControls &&
-    session !== null &&
-    session.status !== "offline" &&
-    session.status !== "exited";
+    session !== null && session.status !== "offline" && session.status !== "exited";
   const canUseSplitView = canUseChatSplitView(chatSplitWidth);
   const {
     chatViewVisible,
@@ -732,7 +735,10 @@ export default function ChatScreen() {
     terminalViewVisible,
   } = chatOutputPaneVisibility({
     mode: agentOutputViewMode,
-    rawOutputAllowed: canUseOwnerControls,
+    // The pane the share's own grant already covers: `/live-pane/output` is on
+    // the guest read allowlist, so this was the client refusing what the server
+    // serves.
+    rawOutputAllowed: true,
     width: chatSplitWidth,
   });
   const agentOutputFeedMode = agentOutputModeForVisiblePane({ terminalViewVisible });
@@ -1299,7 +1305,7 @@ export default function ChatScreen() {
     heldNotice: heldDeliveryNotice,
     warningNotice: sendWarning,
     mode: agentOutputViewMode,
-    rawOutputAllowed: canUseOwnerControls,
+    rawOutputAllowed: true,
     sending: sendBusy,
     width: chatSplitWidth,
   });
@@ -1748,9 +1754,9 @@ export default function ChatScreen() {
 
   useEffect(() => {
     nativeChatInterruptRef.current = () => {
-      if (canUseOwnerControls) void handleInterrupt();
+      void handleInterrupt();
     };
-  }, [canUseOwnerControls, handleInterrupt]);
+  }, [handleInterrupt]);
 
   // The sidebar owes this keyboard back when the drawer closes, a round trip
   // on THIS screen where no focus effect runs. Scoped to focus because the
@@ -1826,7 +1832,7 @@ export default function ChatScreen() {
       };
       if (keyEvent.key === "Escape") {
         event.preventDefault?.();
-        if (canUseOwnerControls) void handleInterrupt();
+        void handleInterrupt();
         return;
       }
       if (shouldSubmitComposerKey(keyEvent, hasHardwareKeyboard)) {
@@ -1834,7 +1840,7 @@ export default function ChatScreen() {
         void handleSendMessage({ preserveFocus: true });
       }
     },
-    [canUseOwnerControls, handleInterrupt, handleSendMessage, hasHardwareKeyboard],
+    [handleInterrupt, handleSendMessage, hasHardwareKeyboard],
   );
 
   const handleComposerDraftChange = useCallback(
@@ -2268,7 +2274,7 @@ export default function ChatScreen() {
   }, [chatBottomContentReserve, composerFooterContent, effectiveChatChromeVisible]);
   const modeControls = useMemo(
     () =>
-      session && canUseOwnerControls ? (
+      session ? (
         <AgentOutputModeControl
           canUseSplitView={canUseSplitView}
           mode={agentOutputViewMode}
@@ -2279,7 +2285,6 @@ export default function ChatScreen() {
     [
       agentOutputViewMode,
       canUseSplitView,
-      canUseOwnerControls,
       effectiveAgentOutputViewMode,
       session,
       setAgentOutputViewMode,
@@ -2365,7 +2370,7 @@ export default function ChatScreen() {
                         </View>
                       </View>
                       {modeControls ? <View className="mr-2">{modeControls}</View> : null}
-                      {session && canUseOwnerControls ? (
+                      {session ? (
                         <>
                           <View className="mr-2">
                             <AgentActions
@@ -2378,13 +2383,15 @@ export default function ChatScreen() {
                               onKilled={goBack}
                             />
                           </View>
-                          <Pressable
-                            onPress={toggleSharePanel}
-                            accessibilityLabel="Invite collaborator"
-                            className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
-                          >
-                            <UserPlus size={15} color="#a1a1aa" />
-                          </Pressable>
+                          {canManageSharing ? (
+                            <Pressable
+                              onPress={toggleSharePanel}
+                              accessibilityLabel="Invite collaborator"
+                              className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
+                            >
+                              <UserPlus size={15} color="#a1a1aa" />
+                            </Pressable>
+                          ) : null}
                           <Pressable
                             onPress={toggleManagePanel}
                             accessibilityLabel="Manage agent"
@@ -2402,7 +2409,7 @@ export default function ChatScreen() {
                           </Pressable>
                         </>
                       ) : null}
-                      {session && canUseOwnerControls ? (
+                      {session ? (
                         <Pressable
                           onPress={() => {
                             blurWebActiveElement();
@@ -2479,61 +2486,57 @@ export default function ChatScreen() {
                         contentContainerStyle={{ alignItems: "center" }}
                       >
                         <View className="flex-row items-center">
-                          {canUseOwnerControls ? (
-                            <>
-                              <View className="mr-2">
-                                <AgentActions
-                                  session={session}
-                                  projectStateKey={stateProjectKey}
-                                  endpoint={serviceEndpoint}
-                                  token={token}
-                                  compact
-                                  mainCheckoutPath={desktopState?.mainCheckoutPath}
-                                  onKilled={goBack}
-                                />
-                              </View>
-                              <Pressable
-                                onPress={toggleSharePanel}
-                                accessibilityLabel="Invite collaborator"
-                                className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
-                              >
-                                <UserPlus size={15} color="#a1a1aa" />
-                              </Pressable>
-                              <Pressable
-                                onPress={toggleManagePanel}
-                                accessibilityLabel="Manage agent"
-                                accessibilityState={{ expanded: managePanelOpen }}
-                                className={cn(
-                                  "h-8 flex-row items-center gap-1.5 rounded-md border mr-2 px-2.5",
-                                  managePanelOpen ? "border-primary bg-accent" : "border-border",
-                                )}
-                              >
-                                <SlidersHorizontal
-                                  size={14}
-                                  color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"}
-                                />
-                                <Text className="text-xs text-foreground">Manage</Text>
-                              </Pressable>
-                            </>
-                          ) : null}
-                          {canUseOwnerControls ? (
+                          <View className="mr-2">
+                            <AgentActions
+                              session={session}
+                              projectStateKey={stateProjectKey}
+                              endpoint={serviceEndpoint}
+                              token={token}
+                              compact
+                              mainCheckoutPath={desktopState?.mainCheckoutPath}
+                              onKilled={goBack}
+                            />
+                          </View>
+                          {canManageSharing ? (
                             <Pressable
-                              onPress={() => {
-                                blurWebActiveElement();
-                                router.push({
-                                  pathname: "/plans/[sessionId]",
-                                  params: {
-                                    sessionId: session.id,
-                                    ...(projectPath ? { project: projectPath } : {}),
-                                    ...(machineId ? { machine: machineId } : {}),
-                                  },
-                                });
-                              }}
-                              className="h-8 justify-center px-1"
+                              onPress={toggleSharePanel}
+                              accessibilityLabel="Invite collaborator"
+                              className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
                             >
-                              <Text className="text-sm text-primary">Plan</Text>
+                              <UserPlus size={15} color="#a1a1aa" />
                             </Pressable>
                           ) : null}
+                          <Pressable
+                            onPress={toggleManagePanel}
+                            accessibilityLabel="Manage agent"
+                            accessibilityState={{ expanded: managePanelOpen }}
+                            className={cn(
+                              "h-8 flex-row items-center gap-1.5 rounded-md border mr-2 px-2.5",
+                              managePanelOpen ? "border-primary bg-accent" : "border-border",
+                            )}
+                          >
+                            <SlidersHorizontal
+                              size={14}
+                              color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"}
+                            />
+                            <Text className="text-xs text-foreground">Manage</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => {
+                              blurWebActiveElement();
+                              router.push({
+                                pathname: "/plans/[sessionId]",
+                                params: {
+                                  sessionId: session.id,
+                                  ...(projectPath ? { project: projectPath } : {}),
+                                  ...(machineId ? { machine: machineId } : {}),
+                                },
+                              });
+                            }}
+                            className="h-8 justify-center px-1"
+                          >
+                            <Text className="text-sm text-primary">Plan</Text>
+                          </Pressable>
                         </View>
                       </ScrollView>
                     ) : null}
@@ -2546,7 +2549,7 @@ export default function ChatScreen() {
             conversation cost the chat ~250px on every screen for controls with
             no recorded use.
           */}
-            {session && managePanelOpen && canUseOwnerControls ? (
+            {session && managePanelOpen ? (
               <View
                 style={{
                   left: 0,

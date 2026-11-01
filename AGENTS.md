@@ -234,6 +234,25 @@ Do not mix shared receiver navigation with the receiver's project navigation.
 The shared receiver surface should not expose owner project administration
 views such as Expose, topology, worktrees, graveyard, services, or library.
 
+**Sharing is full trust over the session that was shared.** A participant is an
+owner of that one agent: they read it, write to it, see its raw output, stop,
+resume, fork and kill it, and read its plan. The only thing reserved is
+administering the share — inviting and revoking — which is the owner's and has
+no guest route at all. That is a narrower rule than the paragraph above, and
+the two do not conflict: the receiver still gets no view of the owner's other
+projects, because the limit is the session, never the verb.
+
+So a control is withheld from a participant only when it administers the
+share. This was once a single `canUseOwnerControls` flag in the chat screen
+that also hid the output-mode switcher, the stop control, the lifecycle
+actions and the plan — none of which is share administration, and all of which
+were refused by the relay and daemon allowlists underneath. When widening what
+a guest may do, widen both allowlists (`relay/src/sharing.ts` and
+`shared_guest_*_route` in `native/crates/aimux/src/request_actor.rs`) and keep
+every route scoped to the guest's own share session; a route list that grows
+without a test asserting the second direction is a guest reaching another
+agent in the owner's project.
+
 GUI shared-chat messages are attributed before they enter the agent input
 stream, for example `[sam@example.com] Help us make a document.` Local TUI and
 non-GUI input should not be rewritten with shared user prefixes.

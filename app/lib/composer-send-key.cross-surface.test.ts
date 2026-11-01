@@ -105,7 +105,6 @@ function screenKeyboardHandler(hasHardwareKeyboard: boolean) {
     "useMemo",
     "shouldSubmitComposerKey",
     "hasHardwareKeyboard",
-    "canUseOwnerControls",
     "handleInterrupt",
     "handleSendMessage",
     `${screenCallback}\nreturn composerKeyboardProps.onKeyDown;`,
@@ -115,7 +114,6 @@ function screenKeyboardHandler(hasHardwareKeyboard: boolean) {
     (factory: () => unknown) => factory(),
     shouldSubmitComposerKey,
     hasHardwareKeyboard,
-    true,
     vi.fn(),
     send,
   ) as (event: ScreenKeyEvent) => void;

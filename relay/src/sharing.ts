@@ -341,16 +341,53 @@ export function isSharedRelayRequestAllowed(
   const path = normalizePath(input.path);
   const sessionId = input.sessionId?.trim();
 
+  // `/plans/<sessionId>` names its session in the path, where
+  // `sessionIdFromRequest` -- which reads the query and the body -- cannot see
+  // it. Compared against the share here rather than falling through to a
+  // check that would never find it.
+  if (method === "GET") {
+    const planSession = planRouteSession(path);
+    if (planSession) return planSession === share.sessionId;
+  }
+
   if (!sessionId || sessionId !== share.sessionId) return false;
   if (method === "GET" && /^\/attachments\/[A-Za-z0-9_-]{1,128}\/content$/.test(path)) return true;
   if (
     method === "GET" &&
-    (path === "/agents/history" || path === "/agents/output" || path === "/live-pane/output" || path === "/events")
+    (path === "/agents/history" ||
+      path === "/agents/output" ||
+      // Without the stream a guest's transcript only moves when it re-asks,
+      // and the composer's confirmation deadline assumes a stream that pushes.
+      path === "/agents/output/stream" ||
+      path === "/live-pane/output" ||
+      path === "/events")
   ) {
     return true;
   }
-  if (method === "POST" && (path === "/live-pane/input" || path === "/attachments")) return true;
+  // Sharing is full trust over the shared session: a guest owns the agent they
+  // were given, including stopping and killing it. Inviting and revoking are
+  // the owner's alone and have no route here. The session check above still
+  // holds for every one of these, so this is wider authority over one session,
+  // never over the project.
+  if (
+    method === "POST" &&
+    (path === "/live-pane/input" ||
+      path === "/attachments" ||
+      path === "/live-pane/interrupt" ||
+      path === "/agents/interrupt" ||
+      path === "/agents/stop" ||
+      path === "/agents/resume" ||
+      path === "/agents/kill" ||
+      path === "/agents/fork")
+  ) {
+    return true;
+  }
   return false;
+}
+
+function planRouteSession(path: string): string | undefined {
+  const match = /^\/plans\/([A-Za-z0-9_-]{1,128})$/.exec(path);
+  return match?.[1];
 }
 
 export function sharedRelayRequestAccess(
