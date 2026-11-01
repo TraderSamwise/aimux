@@ -2194,17 +2194,21 @@ export default function ChatScreen() {
                   gating it on that guess only makes it unavailable exactly when
                   the guess is wrong.
                 */}
-                    {!isSharedSessionView ? (
-                      <ComposerControl
-                        wide={wideControls}
-                        label="Stop"
-                        accessibilityLabel="Interrupt the agent"
-                        // Filled, because a stop is a stop and an outline reads as
-                        // a checkbox at this size.
-                        icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
-                        onPress={handleInterrupt}
-                      />
-                    ) : null}
+                    <ComposerControl
+                      wide={wideControls}
+                      label="Stop"
+                      accessibilityLabel="Interrupt the agent"
+                      // Filled, because a stop is a stop and an outline reads as
+                      // a checkbox at this size.
+                      icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
+                      onPress={handleInterrupt}
+                    />
+                    {/*
+                      Shown to a shared participant too. This was the last gate
+                      keyed on `isSharedSessionView` rather than on share
+                      administration, and it hid the one control the comment
+                      above argues must always be offered.
+                    */}
                     <ComposerSendControl
                       draftKey={composerDraftKey ?? ""}
                       wide={wideControls}
@@ -2233,7 +2237,6 @@ export default function ChatScreen() {
       handleInterrupt,
       handleSendPress,
       hasPendingAttachments,
-      isSharedSessionView,
       pendingAttachments,
       removePendingAttachment,
       sendBusy,
