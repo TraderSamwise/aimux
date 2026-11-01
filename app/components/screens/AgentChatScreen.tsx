@@ -699,6 +699,11 @@ export default function ChatScreen() {
     shareSummaryCheckedKey !== shareSummaryRequestKey,
   );
   const sendBusyRef = useRef(false);
+  /// Set when a send that should keep the caret finishes, and consumed by the
+  /// effect below. A send disables the composer, which blurs it, and the
+  /// re-enable is a React commit -- so the focus has to wait for that commit
+  /// rather than for the next animation frame.
+  const refocusComposerAfterSendRef = useRef(false);
   const composerInputRef = useRef<TextInput | null>(null);
   const chatViewportRef = useRef<ChatSessionViewportHandle | null>(null);
   const terminalViewportRef = useRef<ChatSessionViewportHandle | null>(null);
@@ -1579,8 +1584,12 @@ export default function ChatScreen() {
         if (sendOperationIdRef.current === sendOperationId) {
           sendBusyRef.current = false;
         }
+        // Recorded, not performed. `sendBusy` is derived from the atom cleared
+        // a few lines up, so the composer is still `editable={false}` for one
+        // more commit -- and focusing a disabled input is a silent no-op, which
+        // is what made the caret vanish on every send.
         if (preserveFocus) {
-          requestAnimationFrame(() => composerInputRef.current?.focus());
+          refocusComposerAfterSendRef.current = true;
         }
       }
     },
@@ -1611,6 +1620,14 @@ export default function ChatScreen() {
   const handleSendPress = useCallback(() => {
     void handleSendMessage({ preserveFocus: true });
   }, [handleSendMessage]);
+
+  // The commit that re-enables the composer is the first moment focusing it
+  // can land, so the caret comes back here rather than in the send's `finally`.
+  useEffect(() => {
+    if (sendBusy || !refocusComposerAfterSendRef.current) return;
+    refocusComposerAfterSendRef.current = false;
+    composerInputRef.current?.focus();
+  }, [sendBusy]);
 
   const appendPendingAttachments = useCallback(
     (attachments: PickedAttachment[]) => {
