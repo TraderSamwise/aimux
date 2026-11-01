@@ -222,8 +222,12 @@ describe("sharing state", () => {
     expect(isSharedRelayRequestAllowed({ method: "GET", path: "/attachments-private/file.png" }, share)).toBe(false);
     expect(isSharedRelayRequestAllowed({ method: "GET", path: "/attachments/../agents/input" }, share)).toBe(false);
     expect(isSharedRelayRequestAllowed({ method: "GET", path: "/attachments/%2e%2e/agents/input" }, share)).toBe(false);
+    // Sharing is full trust over the shared session, so killing it is a
+    // guest's to do. This assertion used to read `false`, and it was changed
+    // deliberately rather than relaxed by accident: the limit is the session,
+    // not the verb.
     expect(isSharedRelayRequestAllowed({ method: "POST", path: "/agents/kill", sessionId: "claude-abc" }, share)).toBe(
-      false,
+      true,
     );
     expect(isSharedRelayRequestAllowed({ method: "POST", path: "/live-pane/input", sessionId: "other" }, share)).toBe(
       false,
@@ -231,6 +235,53 @@ describe("sharing state", () => {
     expect(isSharedRelayRequestAllowed({ method: "POST", path: "/agents/input", sessionId: "other" }, share)).toBe(
       false,
     );
+  });
+
+  it("gives a guest the session, and only ever that session", async () => {
+    // The point of widening the verbs: every one of them still has to name
+    // the shared session. A route list that grew without this test would be a
+    // guest able to kill any agent in the owner's project.
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/Users/sam/cs/example",
+      sessionId: "claude-abc",
+      email: "alex@example.com",
+    });
+    const share = Object.values(created.state.shares)[0];
+
+    const writes = [
+      "/live-pane/interrupt",
+      "/agents/interrupt",
+      "/agents/stop",
+      "/agents/resume",
+      "/agents/kill",
+      "/agents/fork",
+    ];
+    for (const path of writes) {
+      expect(isSharedRelayRequestAllowed({ method: "POST", path, sessionId: "claude-abc" }, share), path).toBe(true);
+      expect(isSharedRelayRequestAllowed({ method: "POST", path, sessionId: "claude-other" }, share), path).toBe(false);
+      // No session named at all is the case a body-less POST produces, and it
+      // must not inherit the share's session by default.
+      expect(isSharedRelayRequestAllowed({ method: "POST", path }, share), path).toBe(false);
+    }
+
+    // Administering the share stays the owner's, and has no guest route.
+    for (const path of ["/agents/spawn", "/agents/rename", "/worktrees/create", "/services/stop"]) {
+      expect(isSharedRelayRequestAllowed({ method: "POST", path, sessionId: "claude-abc" }, share), path).toBe(false);
+    }
+
+    // The plan names its session in the path, so it is checked there.
+    expect(isSharedRelayRequestAllowed({ method: "GET", path: "/plans/claude-abc" }, share)).toBe(true);
+    expect(isSharedRelayRequestAllowed({ method: "GET", path: "/plans/claude-other" }, share)).toBe(false);
+    expect(isSharedRelayRequestAllowed({ method: "GET", path: "/plans" }, share)).toBe(false);
+    expect(isSharedRelayRequestAllowed({ method: "GET", path: "/plans/claude-abc/extra" }, share)).toBe(false);
+
+    expect(
+      isSharedRelayRequestAllowed({ method: "GET", path: "/agents/output/stream", sessionId: "claude-abc" }, share),
+    ).toBe(true);
+    expect(
+      isSharedRelayRequestAllowed({ method: "GET", path: "/agents/output/stream", sessionId: "other" }, share),
+    ).toBe(false);
   });
 
   it("unwraps proxied project routes before shared-route authorization", async () => {

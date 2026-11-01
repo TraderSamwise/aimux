@@ -226,6 +226,11 @@ fn assert_guest_allowed(
     {
         return assert_shared_guest_session(actor, "GET", route_url, context);
     }
+    if method_name == "GET"
+        && let Some(plan_session) = plan_route_session(&sub_path)
+    {
+        return assert_shared_guest_named_session(actor, plan_session);
+    }
     if method_name == "POST" && shared_guest_write_route(&sub_path) {
         let session = assert_shared_guest_session(actor, "POST", route_url, context);
         if !session.ok {
@@ -326,6 +331,26 @@ fn assert_shared_guest_session(
     RemoteAccessDecision::allow()
 }
 
+/// The same check for a route that names its session in the path rather than
+/// in the query or the body.
+fn assert_shared_guest_named_session(actor: &RemoteActor, session: &str) -> RemoteAccessDecision {
+    let Some(share_session_id) = actor
+        .share_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return RemoteAccessDecision::deny(
+            403,
+            "shared guest route requires an authorized share session",
+        );
+    };
+    if session.trim() != share_session_id {
+        return RemoteAccessDecision::deny(403, "shared guest cannot access another session");
+    }
+    RemoteAccessDecision::allow()
+}
+
 fn authorized_session_id(
     method: &str,
     route_url: &DaemonRouteUrl,
@@ -388,10 +413,22 @@ fn operator_allowed_method(sub_path: &str) -> Option<&'static str> {
     }
 }
 
+/// Sharing is full trust over the session that was shared.
+///
+/// A guest is an owner of that one session: they read it, write to it, stop
+/// it, resume it and kill it. What they are not is an administrator of the
+/// share itself -- inviting and revoking stay with the owner, and neither has
+/// a route here. Every route below is still checked against the guest's own
+/// share session afterwards, so widening this list widens what a guest may do
+/// to THEIR session and nothing else.
 fn shared_guest_read_route(sub_path: &str) -> bool {
     matches!(
         sub_path,
         project_routes::agents::OUTPUT
+            // Without the stream the transcript arrives only as fast as the
+            // guest re-asks, and the composer's ten-second confirmation
+            // deadline is written against a stream that pushes.
+            | project_routes::agents::OUTPUT_STREAM
             | project_routes::agents::HISTORY
             | project_routes::live_pane::OUTPUT
             | project_routes::EVENTS
@@ -401,8 +438,30 @@ fn shared_guest_read_route(sub_path: &str) -> bool {
 fn shared_guest_write_route(sub_path: &str) -> bool {
     matches!(
         sub_path,
-        project_routes::live_pane::INPUT | project_routes::ATTACHMENTS
+        project_routes::live_pane::INPUT
+            | project_routes::ATTACHMENTS
+            // Both spellings of interrupt: the GUI sends the live-pane one and
+            // the gate is about the capability, not about which client asked.
+            | project_routes::live_pane::INTERRUPT
+            | project_routes::agents::INTERRUPT
+            | project_routes::agents::STOP
+            | project_routes::agents::RESUME
+            | project_routes::agents::KILL
+            | project_routes::agents::FORK
     )
+}
+
+/// `/plans/<sessionId>` carries its session in the path, where the query and
+/// body check that scopes every other guest route cannot see it. Returned so
+/// the caller compares it to the share rather than trusting the match.
+fn plan_route_session(sub_path: &str) -> Option<&str> {
+    let rest = sub_path
+        .strip_prefix(project_routes::PLANS)?
+        .strip_prefix('/')?;
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
+    Some(rest)
 }
 
 fn attachment_content_route(path: &str) -> bool {

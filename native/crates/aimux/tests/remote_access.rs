@@ -444,6 +444,133 @@ fn shared_guest_is_scoped_to_shared_session_reads_input_and_attachments() {
 }
 
 #[test]
+fn shared_guest_owns_the_shared_session_and_no_other() {
+    // Sharing is full trust over the session that was shared: the guest may
+    // stop, resume, kill and fork the agent they were given. The limit is the
+    // session, not the verb -- so every widened route is asserted in both
+    // directions, because a route list that grew without the second direction
+    // would be a guest able to kill any agent in the owner's project.
+    let actor = guest(SESSION);
+    let writes = [
+        project_routes::live_pane::INTERRUPT,
+        project_routes::agents::INTERRUPT,
+        project_routes::agents::STOP,
+        project_routes::agents::RESUME,
+        project_routes::agents::KILL,
+        project_routes::agents::FORK,
+    ];
+    for path in writes {
+        assert!(
+            allow(
+                Some(&actor),
+                "POST",
+                &port_path(path),
+                "",
+                Some(&json!({ "sessionId": SESSION })),
+                None,
+            )
+            .ok,
+            "{path} should be the guest's to call on their own session"
+        );
+        assert!(
+            !allow(
+                Some(&actor),
+                "POST",
+                &port_path(path),
+                "",
+                Some(&json!({ "sessionId": "other" })),
+                None,
+            )
+            .ok,
+            "{path} must not reach another session"
+        );
+        assert!(
+            !allow(Some(&actor), "POST", &port_path(path), "", None, None).ok,
+            "{path} with no session named must not inherit the share's"
+        );
+    }
+
+    // Administering the project, and the share itself, stays the owner's.
+    for path in [
+        project_routes::agents::SPAWN,
+        project_routes::agents::RENAME,
+        project_routes::worktree_actions::CREATE,
+    ] {
+        assert!(
+            !allow(
+                Some(&actor),
+                "POST",
+                &port_path(path),
+                "",
+                Some(&json!({ "sessionId": SESSION })),
+                None,
+            )
+            .ok,
+            "{path} is not a guest route"
+        );
+    }
+
+    // The plan names its session in the path, where the query-and-body check
+    // cannot see it, so it is compared there instead.
+    assert!(
+        allow(
+            Some(&actor),
+            "GET",
+            &port_path(&format!("{}/{SESSION}", project_routes::PLANS)),
+            "",
+            None,
+            None,
+        )
+        .ok
+    );
+    assert!(
+        !allow(
+            Some(&actor),
+            "GET",
+            &port_path(&format!("{}/other", project_routes::PLANS)),
+            "",
+            None,
+            None,
+        )
+        .ok
+    );
+    assert!(
+        !allow(
+            Some(&actor),
+            "GET",
+            &port_path(&format!("{}/{SESSION}/extra", project_routes::PLANS)),
+            "",
+            None,
+            None,
+        )
+        .ok
+    );
+
+    assert!(
+        allow(
+            Some(&actor),
+            "GET",
+            &port_path(project_routes::agents::OUTPUT_STREAM),
+            &format!("?sessionId={SESSION}"),
+            None,
+            None,
+        )
+        .ok
+    );
+    assert!(
+        !allow(
+            Some(&actor),
+            "GET",
+            &port_path(project_routes::agents::OUTPUT_STREAM),
+            "?sessionId=other",
+            None,
+            None,
+        )
+        .ok
+    );
+}
+
+#[test]
 fn operator_stream_gate_is_separate_from_buffered_proxy_gate() {
     let actor = operator(vec![grant(PROJECT_ROOT, SESSION)]);
     let stream_path = port_path(project_routes::agents::OUTPUT_STREAM);
