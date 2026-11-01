@@ -285,6 +285,24 @@ describe("AgentChatScreen mounted web composer footer", () => {
     expect(boundary.sendLivePaneInput.mock.calls[1]?.[2]).toBe("Send from the remounted composer");
   });
 
+  it("keeps the focused draft selection across a composer remount", async () => {
+    const first = await mountChat("terminal", { draft: "Explain shared chat refreshes" });
+    const input = first.input as HTMLTextAreaElement;
+    const caret = "Explain ".length;
+    fireEvent.focus(input);
+    input.setSelectionRange(caret, caret);
+    fireEvent.select(input, { target: { selectionStart: caret, selectionEnd: caret } });
+
+    first.unmount();
+    const remounted = await mountChat("terminal", { store: first.store, draft: null });
+    const remountedInput = remounted.input as HTMLTextAreaElement;
+
+    expect(remountedInput.value).toBe("Explain shared chat refreshes");
+    await waitFor(() => expect(document.activeElement).toBe(remountedInput));
+    expect(remountedInput.selectionStart).toBe(caret);
+    expect(remountedInput.selectionEnd).toBe(caret);
+  });
+
   it("renders an accepted send awaiting its echo in terminal mode", async () => {
     await sendMessage();
     expect(screen.getByText("terminal fixture output")).toBeTruthy();
