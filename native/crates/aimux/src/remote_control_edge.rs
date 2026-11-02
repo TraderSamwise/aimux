@@ -467,9 +467,12 @@ mod enabled_state {
                     self.relay.status()
                 }
                 Ok(None) => json!({ "status": "off" }),
-                Err(error) => {
-                    json!({ "status": "auth_failed", "lastError": error.to_string() })
+                Err(error) => crate::remote::relay_client::RelayStatusSnapshot {
+                    status: Some(crate::remote::relay_client::RelayStatus::AuthFailed),
+                    last_error: Some(error.to_string()),
+                    ..Default::default()
                 }
+                .to_json(),
             }
         }
 

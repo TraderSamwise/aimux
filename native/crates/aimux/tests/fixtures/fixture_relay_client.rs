@@ -95,8 +95,9 @@ fn auth_close_case(input: &Value) -> Value {
     let status = runner.handle().status();
     // The snapshot's OWN serialisation, not a hand-built lookalike. Rebuilt
     // by hand, this fixture could not notice a field being added, removed or
-    // renamed -- which is the one thing a contract file is for, and it sat
-    // next to the only contract that pins this shape.
+    // renamed -- which is the one thing a contract file is for. The
+    // characterization record in phase3-surfaces.json pins the same shape and
+    // had the same fault.
     json!({
         "status": with_stable_timestamps(status.to_json()),
         "notifications": recorder.notifications(),
