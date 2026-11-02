@@ -48,6 +48,21 @@ describe("the chat history pager is not re-decided in the screen", () => {
     }
     expect(screenSource).toContain("chatHistoryPagerScrolled(");
     expect(screenSource).toContain("chatHistoryPagerResolved(");
+    // The second trigger, pinned the same way. A transcript that does not
+    // overflow emits no scroll event, so this is the only path that can ask.
+    expect(screenSource).toContain("chatHistoryPagerContentSized(");
+  });
+
+  it("asks from the content-size path, not only from a scroll", () => {
+    // Naming the rule is not the same as reaching it: the rule stays
+    // referenced inside `requestChatHistoryPage` even if nothing ever calls
+    // that with "content", which is how a short transcript lost its only way
+    // to page in the first place.
+    const handler = screenSource.slice(screenSource.indexOf("const handleChatContentSizeChange"));
+    const body = handler.slice(0, handler.indexOf("[executeChatScrollCommand"));
+    expect(body, "the content-size handler must ask the pager").toContain(
+      'onRequestHistoryPage(chatScrollMetricsRef.current, "content")',
+    );
   });
 
   it("hands the pager what it was served, not what it asked for", () => {

@@ -197,6 +197,7 @@ import { chatHistoryAtFloor, chatHistoryFloorNotice } from "@/lib/chat-history-f
 import {
   type ChatHistoryPagerResolution,
   chatHistoryPagerResolved,
+  chatHistoryPagerContentSized,
   chatHistoryPagerScrolled,
   chatHistoryPagerState,
 } from "@/lib/chat-history-pager";
@@ -1187,13 +1188,20 @@ export default function ChatScreen() {
   }, [appVisible, applyChatHistoryPageOutcome, refreshOutputSnapshot]);
 
   const requestChatHistoryPage = useCallback(
-    (metrics: ChatScrollMetrics) => {
-      const scrolled = chatHistoryPagerScrolled(chatHistoryPagerRef.current, {
+    (metrics: ChatScrollMetrics, reason: "scroll" | "content" = "scroll") => {
+      const ask = {
         metrics,
         ready: chatViewVisible && heartbeatReady && !routeSessionMissing,
         pendingStartLine:
           pendingChatOutputHistoryStartLineRef.current ?? pendingChatOutputHistoryStartLine,
-      });
+      };
+      // Named at both call sites rather than picked into a variable: a source
+      // gate pins these by name, because grepping for a call is the only way
+      // this screen can be checked -- no renderer in the app executes it.
+      const scrolled =
+        reason === "content"
+          ? chatHistoryPagerContentSized(chatHistoryPagerRef.current, ask)
+          : chatHistoryPagerScrolled(chatHistoryPagerRef.current, ask);
       chatHistoryPagerRef.current = scrolled.state;
       const nextStartLine = scrolled.request;
       if (nextStartLine === null) {
@@ -3541,7 +3549,7 @@ type AgentChatSessionViewportProps = {
   dividerWidth: number;
   newMessageBadgeBottomOffset: number;
   onChromeVisibleChange: (visible: boolean) => void;
-  onRequestHistoryPage: (metrics: ChatScrollMetrics) => void;
+  onRequestHistoryPage: (metrics: ChatScrollMetrics, reason?: "scroll" | "content") => void;
   onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
   placeholderState: ChatTranscriptPlaceholderState;
   serviceEndpoint: ServiceEndpoint;
@@ -3779,8 +3787,14 @@ const AgentChatSessionViewport = React.memo(
             chatCommandForContentChange(chatScrollPolicyRef.current),
             "content",
           );
+          // The other half of paging. `onRequestHistoryPage` is otherwise
+          // reachable only from the scroll handler, and a transcript that does
+          // not overflow its viewport emits no scroll event -- so a reader
+          // holding three long answers had no gesture that could ask for a
+          // fourth. The pager allows exactly one page here and says why.
+          onRequestHistoryPage(chatScrollMetricsRef.current, "content");
         },
-        [executeChatScrollCommand],
+        [executeChatScrollCommand, onRequestHistoryPage],
       );
 
       // Android does not report the keyboard-driven inset in the scroll event, so
