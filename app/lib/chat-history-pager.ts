@@ -28,6 +28,11 @@ export type ChatHistoryPagerState = {
   floorReached: boolean;
   /** Whether a page has actually arrived for this mount. */
   pagedAtLeastOnce: boolean;
+  /**
+   * Whether the one page a non-scrollable transcript is allowed has been
+   * asked for. See `chatHistoryPagerContentSized` for why it is exactly one.
+   */
+  filledFromContent: boolean;
 };
 
 export function chatHistoryPagerState(storedStartLine?: number): ChatHistoryPagerState {
@@ -36,6 +41,7 @@ export function chatHistoryPagerState(storedStartLine?: number): ChatHistoryPage
     failures: 0,
     floorReached: false,
     pagedAtLeastOnce: false,
+    filledFromContent: false,
   };
 }
 
@@ -90,7 +96,13 @@ export function chatHistoryPagerResolved(
   resolution: ChatHistoryPagerResolution,
 ): ChatHistoryPagerState {
   if (!resolution.arrived) {
-    return { ...state, failures: state.failures + 1 };
+    // The content-sized latch is released too. It is spent when a page
+    // ARRIVES, not when one is asked for: a request that nothing answered --
+    // a share route still connecting, an endpoint hiccup on open -- would
+    // otherwise burn the only ask a non-scrollable transcript gets, and there
+    // is no gesture left to retry with, because the retry brake needs a
+    // scroll this view cannot offer.
+    return { ...state, failures: state.failures + 1, filledFromContent: false };
   }
   const outcome = chatHistoryPageOutcome({
     currentStartLine: state.startLine,
@@ -109,3 +121,62 @@ export function chatHistoryPagerResolved(
 
 export const CHAT_HISTORY_PAGER_FAILURE_LIMIT = CHAT_HISTORY_PAGE_FAILURE_LIMIT;
 export const CHAT_HISTORY_PAGER_INITIAL_START_LINE = CHAT_OUTPUT_CAPTURE_START_LINE;
+
+export type ChatHistoryPagerContent = {
+  metrics: ChatOutputHistoryScrollMetrics;
+  /** The surface is visible, the service is reachable, the session exists. */
+  ready: boolean;
+  /** A request already in flight, if any. */
+  pendingStartLine: number | null;
+};
+
+/**
+ * What a transcript too short to scroll should do.
+ *
+ * A scroll handler is the only thing that pages, and a scroll node whose
+ * content does not overflow emits no scroll event -- so a reader whose chat
+ * holds three long answers had no gesture that could ask for a fourth. The
+ * floor rule already knew this shape (`chatHistoryAtFloor` treats a
+ * non-overflowing view as its own case); nothing acted on it.
+ *
+ * Exactly one page, latched, and that bound is the point. The service echoes
+ * back whatever window it was asked for, clamped only at its own capture
+ * limit, so every page reports as progress whether or not any output lies
+ * behind it. Paging on each content-size change would therefore walk a
+ * two-message chat to the deepest window in six requests and then tell the
+ * reader they had hit the service ceiling. One page answers "there was no way
+ * to ask"; the scroll handler takes over once there is something to scroll.
+ *
+ * The latch also stands in for the retry brake, which cannot help here:
+ * `chatHistoryPagingRetryable` clears failures only after scrolling well away
+ * from the top, and a view that cannot scroll never offers that gesture. What
+ * does bound a failing service is the failure count itself -- three asks and
+ * then silence.
+ *
+ * "One page" is this path's own bound, not a guarantee across every path. On
+ * iOS a rubber-band drag on a non-scrollable transcript still emits scroll
+ * events, and those go to the scroll rule with its own allowance. That is
+ * older than this function and is not made worse by it.
+ */
+export function chatHistoryPagerContentSized(
+  state: ChatHistoryPagerState,
+  content: ChatHistoryPagerContent,
+): { state: ChatHistoryPagerState; request: number | null } {
+  // Unmeasured is not the same as short. Both arrive as zero, and the two
+  // callbacks that fill them -- layout and content size -- can land in either
+  // order, so a view measured on only one axis would read as "overflows" and
+  // never ask, or as "short" and latch on nothing. Neither is an answer, so
+  // wait for both.
+  const measured = content.metrics.contentHeight > 0 && content.metrics.viewportHeight > 0;
+  const overflows = content.metrics.contentHeight > content.metrics.viewportHeight;
+  if (!measured || state.filledFromContent || overflows) return { state, request: null };
+
+  const request = chatOutputHistoryStartLineForScroll({
+    currentStartLine: state.startLine,
+    enabled: content.ready && !state.floorReached && chatHistoryPagingAllowed(state.failures),
+    metrics: content.metrics,
+    pendingStartLine: content.pendingStartLine,
+  });
+  if (request === null) return { state, request: null };
+  return { state: { ...state, filledFromContent: true }, request };
+}

@@ -8,6 +8,7 @@ import {
 } from "@/lib/chat-output-constants";
 import {
   type ChatHistoryPagerState,
+  chatHistoryPagerContentSized,
   chatHistoryPagerResolved,
   chatHistoryPagerScrolled,
   chatHistoryPagerState,
@@ -145,5 +146,156 @@ describe("re-entering a chat whose history was already read", () => {
     // nothing and said nothing.
     const state = chatHistoryPagerState(CHAT_OUTPUT_MAX_CAPTURE_START_LINE);
     expect(scrollToTop(state, SERVES_WHAT_WAS_ASKED).requested).not.toBeNull();
+  });
+});
+
+describe("a transcript too short to scroll", () => {
+  const short = { contentHeight: 300, offsetY: 0, viewportHeight: 800 };
+  const tall = { contentHeight: 2400, offsetY: 0, viewportHeight: 800 };
+  const ask = { ready: true, pendingStartLine: null };
+
+  it("asks once, because nothing else can ask at all", () => {
+    // The scroll handler is the only other pager, and a node whose content
+    // does not overflow emits no scroll event -- so without this the reader
+    // has no gesture that reaches history.
+    const first = chatHistoryPagerContentSized(chatHistoryPagerState(), { ...ask, metrics: short });
+    expect(first.request).toBe(nextChatOutputCaptureStartLine(CHAT_OUTPUT_CAPTURE_START_LINE));
+    expect(first.state.filledFromContent).toBe(true);
+
+    // Every content-size change would otherwise ask again. The service echoes
+    // back whatever window it was given, so each page reports as progress
+    // whether or not any output lies behind it -- a two-message chat would
+    // walk to the deepest window and then claim the service ceiling.
+    const second = chatHistoryPagerContentSized(first.state, { ...ask, metrics: short });
+    expect(second.request).toBeNull();
+    expect(second.state).toBe(first.state);
+  });
+
+  it("waits until both heights are measured, and does not latch on a zero", () => {
+    // `onLayout` and `onContentSizeChange` fill one each and can land in
+    // either order. A view measured on one axis only would read as
+    // overflowing (and never ask) or as short (and spend its one page on
+    // nothing). Asking again after the second measurement is the point.
+    const unlaidOut = chatHistoryPagerContentSized(chatHistoryPagerState(), {
+      ...ask,
+      metrics: { contentHeight: 300, offsetY: 0, viewportHeight: 0 },
+    });
+    expect(unlaidOut.request).toBeNull();
+    expect(unlaidOut.state.filledFromContent).toBe(false);
+
+    const empty = chatHistoryPagerContentSized(chatHistoryPagerState(), {
+      ...ask,
+      metrics: { contentHeight: 0, offsetY: 0, viewportHeight: 800 },
+    });
+    expect(empty.request).toBeNull();
+    expect(empty.state.filledFromContent).toBe(false);
+
+    expect(
+      chatHistoryPagerContentSized(unlaidOut.state, { ...ask, metrics: short }).request,
+    ).not.toBeNull();
+  });
+
+  it("does not ask when there is something to scroll", () => {
+    const overflowing = chatHistoryPagerContentSized(chatHistoryPagerState(), {
+      ...ask,
+      metrics: tall,
+    });
+    expect(overflowing.request).toBeNull();
+    // Not `overflowing.state.filledFromContent`: that is the object passed in,
+    // so reading a field off it proves nothing. What matters is that the one
+    // page is still there to spend when the view turns out to be short.
+    expect(
+      chatHistoryPagerContentSized(overflowing.state, { ...ask, metrics: short }).request,
+    ).not.toBeNull();
+  });
+
+  it("gives the page back when nothing answered", () => {
+    // Spent on an ARRIVED page, not on a request. A chat opened while the
+    // route is still connecting asks, gets nothing, and must still be able to
+    // ask once the transcript lands -- there is no scroll gesture to retry
+    // with, and the failure brake needs one.
+    const asked = chatHistoryPagerContentSized(chatHistoryPagerState(), {
+      ...ask,
+      metrics: short,
+    });
+    expect(asked.request).not.toBeNull();
+
+    const unanswered = chatHistoryPagerResolved(asked.state, {
+      requestedStartLine: asked.request as number,
+      arrived: false,
+    });
+    expect(unanswered.filledFromContent).toBe(false);
+    expect(
+      chatHistoryPagerContentSized(unanswered, { ...ask, metrics: short }).request,
+    ).not.toBeNull();
+  });
+
+  it("stops asking after three unanswered tries, with no gesture to retry", () => {
+    // Releasing the latch on a failure could have been a loop: this view
+    // cannot scroll, so `chatHistoryPagingRetryable` -- which needs the reader
+    // to move well away from the top -- can never clear the failure count.
+    // The count is what bounds it instead, and this pins the bound.
+    let state = chatHistoryPagerState();
+    let asks = 0;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const next = chatHistoryPagerContentSized(state, { ...ask, metrics: short });
+      if (next.request === null) {
+        state = next.state;
+        continue;
+      }
+      asks += 1;
+      state = chatHistoryPagerResolved(next.state, {
+        requestedStartLine: next.request,
+        arrived: false,
+      });
+    }
+    expect(asks).toBe(CHAT_HISTORY_PAGE_FAILURE_LIMIT);
+  });
+
+  it("keeps the page spent once one actually arrived", () => {
+    const asked = chatHistoryPagerContentSized(chatHistoryPagerState(), {
+      ...ask,
+      metrics: short,
+    });
+    const served = chatHistoryPagerResolved(asked.state, {
+      requestedStartLine: asked.request as number,
+      arrived: true,
+      appliedStartLine: asked.request as number,
+    });
+    expect(served.filledFromContent).toBe(true);
+    expect(chatHistoryPagerContentSized(served, { ...ask, metrics: short }).request).toBeNull();
+  });
+
+  it("holds its tongue while a page is in flight, and when the view is not ready", () => {
+    expect(
+      chatHistoryPagerContentSized(chatHistoryPagerState(), {
+        ...ask,
+        metrics: short,
+        pendingStartLine: -640,
+      }).request,
+    ).toBeNull();
+    expect(
+      chatHistoryPagerContentSized(chatHistoryPagerState(), {
+        ...ask,
+        ready: false,
+        metrics: short,
+      }).request,
+    ).toBeNull();
+  });
+
+  it("stays quiet once the floor is known", () => {
+    const atFloor = { ...chatHistoryPagerState(), floorReached: true };
+    expect(chatHistoryPagerContentSized(atFloor, { ...ask, metrics: short }).request).toBeNull();
+  });
+
+  it("leaves the scroll pager free to keep going", () => {
+    // The latch is for this trigger only: once there IS something to scroll,
+    // the gesture path has its own rules and its own retry brake.
+    const filled = chatHistoryPagerContentSized(chatHistoryPagerState(), {
+      ...ask,
+      metrics: short,
+    }).state;
+    const scrolled = chatHistoryPagerScrolled(filled, { ...ask, metrics: { ...tall, offsetY: 0 } });
+    expect(scrolled.request).not.toBeNull();
   });
 });
