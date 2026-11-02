@@ -81,6 +81,52 @@ describe("the chat history pager is not re-decided in the screen", () => {
     expect(askAt, "asking after the initial-layout return never runs").toBeLessThan(returnAt);
   });
 
+  it("lets terminal-only output mode page history too", () => {
+    // The terminal pane is a separate scroll surface. When output mode hid the
+    // chat transcript, no mounted handler called the pager, so scrollback was
+    // whatever the live feed had initially fetched.
+    // Matched by pattern: these are two of the longest expressions in the
+    // screen, and pinning prettier's line breaks would fail a paging gate for
+    // a reformat that changes nothing about paging.
+    expect(screenSource).toMatch(
+      /const historyPagerVisible\s*=\s*chatViewVisible\s*\|\|\s*terminalViewVisible;/,
+    );
+    expect(screenSource).toMatch(/ready:\s*historyPagerVisible\s*&&\s*heartbeatReady/);
+
+    // Bounded at the pane's own end. Sliced to end-of-file it also covered the
+    // CHAT viewport, which is declared after it and makes the same call -- so
+    // the terminal pane's scroll ask could be deleted outright and this still
+    // passed, on the chat pane's line.
+    const terminalPane = screenSource.slice(
+      screenSource.indexOf("const AgentTerminalOutputPane"),
+      screenSource.indexOf('AgentTerminalOutputPane.displayName = "AgentTerminalOutputPane"'),
+    );
+    const scroll = terminalPane.slice(terminalPane.indexOf("const handleTerminalScroll"));
+    const scrollBody = scroll.slice(0, scroll.indexOf("[cancelPendingTerminalScroll"));
+    expect(scrollBody, "the terminal scroll handler must ask the pager").toContain(
+      "onRequestHistoryPage(metrics);",
+    );
+
+    // The same ordering rule the chat pane gets above, for the same reason and
+    // anchored the same way -- on the branch, not on a statement inside it.
+    // The terminal pane's initial-layout branch returns too, so an ask written
+    // after it never runs on the cold mount this path exists for.
+    const layout = terminalPane.slice(terminalPane.indexOf("const handleTerminalLayout"));
+    const layoutBody = layout.slice(0, layout.indexOf("[executeTerminalScrollCommand"));
+    const askAt = layoutBody.indexOf(
+      'onRequestHistoryPage(terminalGeometryRef.current, "content")',
+    );
+    const returnAt = layoutBody.indexOf("if (terminalInitialLayoutKeyRef.current !== agentKey)");
+    expect(askAt, "the terminal layout handler must ask the pager").toBeGreaterThanOrEqual(0);
+    expect(askAt, "asking after the initial-layout return never runs").toBeLessThan(returnAt);
+
+    const sized = terminalPane.slice(terminalPane.indexOf("const handleTerminalContentSizeChange"));
+    const sizedBody = sized.slice(0, sized.indexOf("[executeTerminalScrollCommand"));
+    expect(sizedBody, "the terminal content-size handler must ask the pager").toContain(
+      'onRequestHistoryPage(terminalGeometryRef.current, "content")',
+    );
+  });
+
   it("hands the pager what it was served, not what it asked for", () => {
     // The served line is what the pager compares against, and it can only come
     // from the feed as the snapshot is applied: the store's copy survives only
