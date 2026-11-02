@@ -48,6 +48,37 @@ describe("the chat history pager is not re-decided in the screen", () => {
     }
     expect(screenSource).toContain("chatHistoryPagerScrolled(");
     expect(screenSource).toContain("chatHistoryPagerResolved(");
+    // The second trigger, pinned the same way. A transcript that does not
+    // overflow emits no scroll event, so this is the only path that can ask.
+    expect(screenSource).toContain("chatHistoryPagerContentSized(");
+  });
+
+  it("asks from the content-size path, not only from a scroll", () => {
+    // Naming the rule is not the same as reaching it: the rule stays
+    // referenced inside `requestChatHistoryPage` even if nothing ever calls
+    // that with "content", which is how a short transcript lost its only way
+    // to page in the first place.
+    const handler = screenSource.slice(screenSource.indexOf("const handleChatContentSizeChange"));
+    const body = handler.slice(0, handler.indexOf("[executeChatScrollCommand"));
+    expect(body, "the content-size handler must ask the pager").toContain(
+      'onRequestHistoryPage(chatScrollMetricsRef.current, "content")',
+    );
+
+    // And layout, which is the half that supplies the viewport height. It has
+    // to ask BEFORE the initial-layout branch, because that branch returns --
+    // on a cold mount, the one case this path exists for, anything after it
+    // never runs.
+    const layout = screenSource.slice(screenSource.indexOf("const handleChatLayout"));
+    const layoutBody = layout.slice(0, layout.indexOf("[executeChatScrollCommand"));
+    const askAt = layoutBody.indexOf(
+      'onRequestHistoryPage(chatScrollMetricsRef.current, "content")',
+    );
+    // The branch itself, not a statement inside it: anchoring on the body
+    // let the ask be moved INSIDE the branch and still pass, where it would
+    // run on the cold mount only and never again.
+    const returnAt = layoutBody.indexOf("if (chatInitialLayoutKeyRef.current !== agentKey)");
+    expect(askAt, "the layout handler must ask the pager").toBeGreaterThanOrEqual(0);
+    expect(askAt, "asking after the initial-layout return never runs").toBeLessThan(returnAt);
   });
 
   it("hands the pager what it was served, not what it asked for", () => {

@@ -285,6 +285,46 @@ describe("AgentChatScreen mounted web composer footer", () => {
     expect(boundary.sendLivePaneInput.mock.calls[1]?.[2]).toBe("Send from the remounted composer");
   });
 
+  it("keeps the focused draft selection across a composer remount", async () => {
+    const first = await mountChat("terminal", { draft: "Explain shared chat refreshes" });
+    const input = first.input as HTMLTextAreaElement;
+    const caret = "Explain ".length;
+    fireEvent.focus(input);
+    input.setSelectionRange(caret, caret);
+    fireEvent.select(input, { target: { selectionStart: caret, selectionEnd: caret } });
+
+    first.unmount();
+    const remounted = await mountChat("terminal", { store: first.store, draft: null });
+    const remountedInput = remounted.input as HTMLTextAreaElement;
+
+    expect(remountedInput.value).toBe("Explain shared chat refreshes");
+    await waitFor(() => expect(document.activeElement).toBe(remountedInput));
+    expect(remountedInput.selectionStart).toBe(caret);
+    expect(remountedInput.selectionEnd).toBe(caret);
+  });
+
+  // THERE IS NO BEHAVIOURAL CARET TEST HERE, AND THAT IS DELIBERATE.
+  //
+  // The defect it would cover is one keystroke wide: react-dom reports a
+  // selection on keydown and keyup for the FOCUSED node, so the remembered
+  // caret is only stale between the keydown and the insert, and a re-apply is
+  // only visible if output lands inside that window. Measured in jsdom:
+  // keydown unfocused fires nothing, keydown focused fires once, keyup again.
+  //
+  // Two attempts at this test passed for the wrong reason. The first drove
+  // typing with `fireEvent.change`, which fires no key events at all, so the
+  // remembered caret froze where a browser keeps it current -- it failed
+  // against the old implementation for a condition no browser has. The second
+  // focused the input so the events were real, and then it stopped
+  // distinguishing the implementations at all, because jsdom's synchronous
+  // event model does not let the render land inside the window.
+  //
+  // A test that passes for reasons its author cannot name is worse than no
+  // test, so what holds this line is the source contract in
+  // `AgentChatScreen.composer-render.test.ts`: the selection must be passed as
+  // a ref and the restore must be keyed on the parent's token. That one is
+  // exact, and it fails when the value prop comes back.
+
   it("renders an accepted send awaiting its echo in terminal mode", async () => {
     await sendMessage();
     expect(screen.getByText("terminal fixture output")).toBeTruthy();
