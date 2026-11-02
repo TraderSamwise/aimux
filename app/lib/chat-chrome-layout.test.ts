@@ -6,6 +6,7 @@ import {
   CHAT_SESSION_HEADER_HEIGHT,
   CHAT_SHARE_PANEL_COLLAPSED_RESERVE,
   CHAT_TOP_BAR_BASE_HEIGHT,
+  chatChromeRowHeight,
   chatControlPanelReserveHeight,
   chatOverlayPanelReserveHeight,
   chatTopBarReserveHeight,
@@ -32,6 +33,23 @@ describe("chat chrome layout", () => {
     ).toBe(
       CHAT_TOP_BAR_BASE_HEIGHT + 54 + CHAT_PAIRING_BANNER_HEIGHT + 200 + CHAT_SESSION_HEADER_HEIGHT,
     );
+  });
+
+  it("prefers a measured chrome row to the constant guess", () => {
+    // The constants are guesses at rendered height and the panels below are
+    // positioned by adding them up, so a guess that is too tall IS the gap.
+    expect(chatChromeRowHeight(66, CHAT_SESSION_HEADER_HEIGHT)).toBe(66);
+    expect(chatChromeRowHeight(53, CHAT_RECONNECTING_PANEL_RESERVE)).toBe(53);
+  });
+
+  it("falls back until a measurement exists, and never to a zero", () => {
+    // Zero is what an unmeasured layout reports, and taking it would put the
+    // panels on top of the header for a frame -- worse than the hairline a
+    // slightly tall guess leaves.
+    expect(chatChromeRowHeight(undefined, CHAT_SESSION_HEADER_HEIGHT)).toBe(
+      CHAT_SESSION_HEADER_HEIGHT,
+    );
+    expect(chatChromeRowHeight(0, CHAT_SESSION_HEADER_HEIGHT)).toBe(CHAT_SESSION_HEADER_HEIGHT);
   });
 
   it("reserves reconnect plus the largest active control panel", () => {

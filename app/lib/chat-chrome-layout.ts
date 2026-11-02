@@ -6,6 +6,24 @@ export const CHAT_SHARE_PANEL_COLLAPSED_RESERVE = 68;
 export const CHAT_SHARE_PANEL_EXPANDED_HEIGHT_RATIO = 0.48;
 export const CHAT_MANAGE_PANEL_HEIGHT_RATIO = 0.6;
 
+/**
+ * A chrome row's height: what it measured, or the constant until it has.
+ *
+ * The constants here are guesses at rendered height, and the panels below
+ * each row are positioned by adding them up -- so every pixel a guess is over
+ * by becomes a visible gap. `CHAT_SESSION_HEADER_HEIGHT` was tuned for the
+ * NATIVE header, which carries a tone rule and comes out around 73; the web
+ * header has no tone rule and lands nearer 66. That difference is the gap.
+ *
+ * The constant stays as the pre-measurement answer rather than a tighter
+ * guess, because it is the larger of the real values: for the one frame
+ * before layout runs, a row reserved slightly too tall leaves a hairline,
+ * while one reserved too short puts a panel over the header.
+ */
+export function chatChromeRowHeight(measured: number | undefined, fallback: number): number {
+  return measured !== undefined && measured > 0 ? measured : fallback;
+}
+
 export function chatTopBarReserveHeight({
   pairingBannerVisible,
   topInset,
