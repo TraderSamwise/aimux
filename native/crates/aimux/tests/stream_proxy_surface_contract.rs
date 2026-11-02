@@ -316,7 +316,12 @@ fn relay_project_events_subscription_case() -> CharacterizationCase {
 
     // aimux-async-seam: test - characterization test drives async stream helper
     aimux::async_runtime::block_on_named("phase3-characterization:relay-subscription", async {
-        runner.run_with_sleep(&mut connector, &mut sleep).await;
+        // Fixed, so a characterization record cannot depend on how fast
+        // the machine that produced it happened to be.
+        let mut elapsed_ms = |_: std::time::Instant| 0_u64;
+        runner
+            .run_with_sleep(&mut connector, &mut sleep, &mut elapsed_ms)
+            .await;
     });
     let status = runner.handle().status();
 

@@ -186,6 +186,7 @@ struct Harness {
     attempts: Arc<Mutex<usize>>,
     connector: FakeConnector,
     slept: Vec<Duration>,
+    held_ms: u64,
 }
 
 fn harness(
@@ -219,6 +220,7 @@ fn harness_with_options(
         recorder,
         attempts,
         slept: Vec::new(),
+        held_ms: 0,
     }
 }
 
@@ -226,21 +228,36 @@ impl Harness {
     /// Runs the loop, ending it from inside the injected sleep after
     /// `max_sleeps` backoffs. Stopping the handle up front would exit before
     /// the first connect and prove nothing.
+    /// Treat every socket as having held this long before it closed.
+    fn holding_for(mut self, held_ms: u64) -> Self {
+        self.held_ms = held_ms;
+        self
+    }
+
     fn run_until(&mut self, max_sleeps: usize) {
         let runner = Arc::clone(&self.runner);
         let handle = runner.handle();
         let slept = &mut self.slept;
+        let held_ms = self.held_ms;
         aimux::async_runtime::init_process_runtime().expect("runtime initialized");
         // aimux-async-seam: test - relay runner test drives async subscription polling
         aimux::async_runtime::block_on_named("test:relay-runner", async {
             runner
-                .run_with_sleep(&mut self.connector, &mut |delay| {
-                    slept.push(delay);
-                    if slept.len() >= max_sleeps {
-                        handle.stop();
-                    }
-                    Box::pin(async {})
-                })
+                .run_with_sleep(
+                    &mut self.connector,
+                    &mut |delay| {
+                        slept.push(delay);
+                        if slept.len() >= max_sleeps {
+                            handle.stop();
+                        }
+                        Box::pin(async {})
+                    },
+                    // How long each socket is treated as having held. The
+                    // default is 0 -- every socket in this harness dies at
+                    // once -- and a case that wants a socket that HELD sets
+                    // it, which is the distinction the backoff now turns on.
+                    &mut |_: std::time::Instant| held_ms,
+                )
                 .await;
         });
     }
@@ -334,10 +351,45 @@ fn a_rejected_credential_stops_the_loop_and_tells_the_human_once() {
 }
 
 #[test]
-fn a_socket_that_connects_and_drops_resets_the_backoff() {
-    // Node reset retryMs on "open". A relay that accepts us and then drops is
-    // healthy-but-busy, not failing, so it must not be punished with a growing
-    // delay — otherwise one flaky hour leaves us waiting 30s to reconnect.
+fn a_socket_that_connects_and_holds_resets_the_backoff() {
+    // Node reset retryMs on "open", and the reason still stands: a relay that
+    // accepts us, serves, and then drops is healthy-but-busy, not failing, and
+    // must not be punished with a growing delay -- otherwise one flaky hour
+    // leaves us waiting 30s to reconnect.
+    //
+    // What changed is where the line sits. "Opened" is not evidence of health;
+    // "held" is. A socket that lasts two seconds still resets to 1s here, so
+    // the original concern is covered. The case below is the one this no
+    // longer protects, deliberately.
+    let mut harness = harness(
+        vec![
+            Ok(vec![closed(1011)]),
+            Ok(vec![closed(1011)]),
+            Ok(vec![closed(1011)]),
+        ],
+        None,
+    )
+    .holding_for(5_000);
+    harness.run_until(3);
+
+    assert_eq!(
+        harness.slept,
+        vec![
+            Duration::from_millis(1_000),
+            Duration::from_millis(1_000),
+            Duration::from_millis(1_000),
+        ],
+        "a connection that held must reset the backoff"
+    );
+}
+
+#[test]
+fn a_socket_that_dies_the_instant_it_opens_escalates_the_backoff() {
+    // The measured failure on sam-mini: every dial succeeded, every socket
+    // died about a second later, and because the ladder reset on "open" the
+    // daemon dialled the relay every few seconds for as long as it ran. A
+    // connection that did not outlive the threshold did no work and is a
+    // failed attempt, whatever the handshake said.
     let mut harness = harness(
         vec![
             Ok(vec![closed(1011)]),
@@ -352,10 +404,10 @@ fn a_socket_that_connects_and_drops_resets_the_backoff() {
         harness.slept,
         vec![
             Duration::from_millis(1_000),
-            Duration::from_millis(1_000),
-            Duration::from_millis(1_000),
+            Duration::from_millis(2_000),
+            Duration::from_millis(4_000),
         ],
-        "a successful connect must reset the backoff"
+        "instant deaths must back off instead of hammering the relay"
     );
 }
 

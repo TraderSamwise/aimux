@@ -19,7 +19,14 @@ export function Page({
     <ScrollView
       className={cn("flex-1 bg-background", className)}
       contentContainerClassName={cn("px-4 py-5 md:px-8", contentClassName)}
-      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+      // Never "on-drag" on web: react-native-web's ScrollView calls
+      // `dismissKeyboard()` -- which is only `blurTextInput()` -- from every
+      // scroll event, with no drag detection, so any field inside a scrolled
+      // Page loses focus. Thirteen screens render through here, and the loops
+      // screen has a text input in one. Same bug the chat composer had.
+      keyboardDismissMode={
+        Platform.OS === "web" ? undefined : Platform.OS === "ios" ? "interactive" : "on-drag"
+      }
       keyboardShouldPersistTaps="handled"
     >
       <View className="w-full" style={contentStyle}>

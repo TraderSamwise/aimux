@@ -7,7 +7,7 @@
 
 use aimux::machine_identity::MachineIdentity;
 use aimux::remote::daemon_relay::resolve_project_event_stream;
-use aimux::remote::relay_client::{RelayStatus, project_event_frame, project_events_error_frame};
+use aimux::remote::relay_client::{project_event_frame, project_events_error_frame};
 use aimux::remote::relay_runner::{
     DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem, RelayRunner,
 };
@@ -93,13 +93,12 @@ fn auth_close_case(input: &Value) -> Value {
     run_relay(&runner, &mut connector, |_| Box::pin(async {}));
 
     let status = runner.handle().status();
+    // The snapshot's OWN serialisation, not a hand-built lookalike. Rebuilt
+    // by hand, this fixture could not notice a field being added, removed or
+    // renamed -- which is the one thing a contract file is for, and it sat
+    // next to the only contract that pins this shape.
     json!({
-        "status": {
-            "status": status.status.unwrap_or(RelayStatus::Disconnected).as_str(),
-            "relayUrl": RELAY_URL,
-            "lastConnectedAt": Value::Null,
-            "lastError": status.last_error,
-        },
+        "status": with_stable_timestamps(status.to_json()),
         "notifications": recorder.notifications(),
     })
 }
@@ -328,6 +327,22 @@ fn closed(code: u16) -> WebSocketEvent {
     }
 }
 
+/// Wall-clock stamps, flattened so the contract can hold them.
+///
+/// The two timestamp fields are the only non-deterministic part of the
+/// snapshot. The previous version of this fixture solved that by hand-writing
+/// the whole object with `lastConnectedAt` hardcoded to null -- which also
+/// recorded a falsehood, since the runner in these cases HAS connected, and
+/// meant the contract could not notice a field being added or renamed.
+fn with_stable_timestamps(mut status: Value) -> Value {
+    for key in ["lastConnectedAt", "lastDisconnectedAt"] {
+        if status.get(key).is_some_and(|value| value.is_string()) {
+            status[key] = Value::String("<timestamp>".to_owned());
+        }
+    }
+    status
+}
+
 fn run_relay(
     runner: &Arc<RelayRunner>,
     connector: &mut dyn WebSocketConnector,
@@ -336,7 +351,12 @@ fn run_relay(
     aimux::async_runtime::init_process_runtime().expect("runtime initialized");
     // aimux-async-seam: fixture - sync fixture executable wraps async relay client
     aimux::async_runtime::block_on_named("fixture:relay-client", async {
-        runner.run_with_sleep(connector, &mut sleep).await;
+        // Fixed, not wall-clock: a contract fixture whose output depended on
+        // how fast the machine ran it would be a flaky contract.
+        let mut elapsed_ms = |_: std::time::Instant| 0_u64;
+        runner
+            .run_with_sleep(connector, &mut sleep, &mut elapsed_ms)
+            .await;
     });
 }
 

@@ -254,12 +254,14 @@ pub fn run_remote_cli_action(
                     .request_core_command(&request)
                     .map(|response| response.result["relay"].clone())
                     .unwrap_or_else(|error| {
-                        json!({
-                            "status": "disconnected",
-                            "relayUrl": "",
-                            "lastConnectedAt": Value::Null,
-                            "lastError": error,
-                        })
+                        // One spelling of the snapshot, so a renderer never
+                        // has to cope with two shapes of the same object.
+                        crate::remote::relay_client::RelayStatusSnapshot {
+                            status: Some(crate::remote::relay_client::RelayStatus::Disconnected),
+                            last_error: Some(error.to_string()),
+                            ..Default::default()
+                        }
+                        .to_json()
                     }),
                 None => json!({ "status": "off" }),
             };

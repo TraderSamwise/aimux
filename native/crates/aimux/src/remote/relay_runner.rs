@@ -242,15 +242,25 @@ impl RelayRunner {
     /// Run until stopped or the relay refuses our credentials.
     pub async fn run(self: &Arc<Self>, connector: &mut dyn WebSocketConnector) {
         let mut sleep = |delay| Box::pin(tokio::time::sleep(delay)) as BoxFuture<'static, ()>;
-        self.run_with_sleep(connector, &mut sleep).await;
+        let mut elapsed_ms = |since: Instant| since.elapsed().as_millis() as u64;
+        self.run_with_sleep(connector, &mut sleep, &mut elapsed_ms)
+            .await;
     }
 
-    /// Run with an injected sleeper so tests can traverse the reconnect ladder
-    /// without actually waiting thirty seconds.
+    /// Run with an injected sleeper, and an injected way to measure how long a
+    /// connection held.
+    ///
+    /// Both are test seams for the same reason: a reconnect ladder and a
+    /// held-connection threshold that can only be exercised by waiting real
+    /// seconds are not exercised. The clock matters as much as the sleeper --
+    /// with real time, every fake socket dies in microseconds, so a test can
+    /// only ever reach the "died at once" branch and the threshold itself is
+    /// pinned by nothing.
     pub async fn run_with_sleep(
         self: &Arc<Self>,
         connector: &mut dyn WebSocketConnector,
         sleep: &mut (dyn FnMut(Duration) -> BoxFuture<'static, ()> + Send),
+        elapsed_ms: &mut (dyn FnMut(Instant) -> u64 + Send),
     ) {
         let mut retry_ms = INITIAL_RETRY_MS;
         let url = daemon_connect_url(&self.relay_url, &self.machine);
@@ -287,14 +297,18 @@ impl RelayRunner {
                     // second later reset it too, so the backoff never engaged
                     // and the daemon dialled every few seconds for as long as
                     // it ran.
-                    let held = connected_at.elapsed();
-                    if held >= Duration::from_millis(MIN_HELD_CONNECTION_MS) {
-                        retry_ms = INITIAL_RETRY_MS;
-                        self.note_connection_held();
-                    } else {
-                        self.note_short_connection();
-                    }
+                    let held_ms = elapsed_ms(connected_at);
+                    // Behind the stop guard with the recording. An orderly
+                    // shutdown ends the socket too, and counting it as a
+                    // failed attempt would have every clean stop leave the
+                    // streak one higher than the truth.
                     if !self.handle.is_stopped() {
+                        if held_ms >= MIN_HELD_CONNECTION_MS {
+                            retry_ms = INITIAL_RETRY_MS;
+                            self.note_connection_held();
+                        } else {
+                            self.note_short_connection();
+                        }
                         self.record_close(close.code, close.reason.clone());
                     }
                     match decide_close(
@@ -319,6 +333,15 @@ impl RelayRunner {
                     }
                 }
                 Err(error) => {
+                    // Stamped BEFORE the terminal decisions, not after them.
+                    // It used to sit below this match, so a refused or
+                    // auth-failed handshake -- the endings most worth reading
+                    // -- returned with the close fields still null, which is
+                    // the hole these fields exist to close. A stop is not an
+                    // ending worth recording, so it stays guarded.
+                    if !self.handle.is_stopped() {
+                        self.record_close(None, Some(error.message().into_owned()));
+                    }
                     match decide_connect_error(&error, self.handle.is_stopped()) {
                         CloseDecision::AuthFailed(message) => {
                             self.fail_auth(&message).await;
@@ -334,10 +357,6 @@ impl RelayRunner {
                         }
                         CloseDecision::Reconnect => {}
                     }
-                    // A handshake that never became a socket is still an
-                    // ending, and stamping it is what tells a reader whether
-                    // the link is failing before or after the upgrade.
-                    self.record_close(None, Some(error.message().into_owned()));
                     self.set_status(
                         RelayStatus::Reconnecting,
                         Some(error.message().into_owned()),
@@ -873,11 +892,13 @@ impl CloseInfo {
 #[cfg(test)]
 mod tests {
     use super::{
-        DaemonRelayBridge, DaemonRouteResponse, MAX_RELAY_OUTBOX_FRAMES, ProjectEventStream,
-        ProjectEventStreamItem, RelayRunner, RelayStatus, RelaySubscriptions, daemon_connect_url,
-        push_front_outbox_frame, push_outbox_frame,
+        DaemonRelayBridge, DaemonRouteResponse, MAX_RELAY_OUTBOX_FRAMES, MIN_HELD_CONNECTION_MS,
+        ProjectEventStream, ProjectEventStreamItem, RelayRunner, RelayStatus, RelayStatusSnapshot,
+        RelaySubscriptions, daemon_connect_url, push_front_outbox_frame, push_outbox_frame,
     };
     use crate::machine_identity::MachineIdentity;
+    use crate::remote::websocket::INITIAL_RETRY_MS;
+    use std::time::Instant;
 
     fn test_machine() -> MachineIdentity {
         MachineIdentity {
@@ -1086,7 +1107,10 @@ mod tests {
         // aimux-async-seam: test - drives the dial loop with no real sleeping
         crate::async_runtime::block_on_named("relay:test-dial-url", async {
             let mut sleep = |_: Duration| Box::pin(async {}) as BoxFuture<'static, ()>;
-            runner.run_with_sleep(&mut connector, &mut sleep).await;
+            let mut elapsed_ms = |since: Instant| since.elapsed().as_millis() as u64;
+            runner
+                .run_with_sleep(&mut connector, &mut sleep, &mut elapsed_ms)
+                .await;
         });
 
         assert_eq!(
@@ -1156,7 +1180,10 @@ mod tests {
         // aimux-async-seam: test - drives the reconnect ladder with no sleeping
         crate::async_runtime::block_on_named("relay:test-close-survives", async {
             let mut sleep = |_: Duration| Box::pin(async {}) as BoxFuture<'static, ()>;
-            runner.run_with_sleep(&mut connector, &mut sleep).await;
+            let mut elapsed_ms = |since: Instant| since.elapsed().as_millis() as u64;
+            runner
+                .run_with_sleep(&mut connector, &mut sleep, &mut elapsed_ms)
+                .await;
         });
 
         let snapshot = runner.handle().status();
@@ -1240,7 +1267,10 @@ mod tests {
                 recorded.lock().unwrap().push(delay.as_millis() as u64);
                 Box::pin(async {}) as BoxFuture<'static, ()>
             };
-            runner.run_with_sleep(&mut connector, &mut sleep).await;
+            let mut elapsed_ms = |since: Instant| since.elapsed().as_millis() as u64;
+            runner
+                .run_with_sleep(&mut connector, &mut sleep, &mut elapsed_ms)
+                .await;
         });
 
         let delays = delays.lock().unwrap().clone();
@@ -1263,6 +1293,218 @@ mod tests {
             snapshot.to_json()["flapping"],
             serde_json::Value::Bool(true),
             "a link whose sockets keep dying at once reports as flapping, not merely connected"
+        );
+    }
+
+    /// Every dial fails the handshake, then stops.
+    struct RefusedHandshakeConnector {
+        handle: super::RelayHandle,
+        dials: usize,
+    }
+
+    impl crate::remote::websocket::WebSocketConnector for RefusedHandshakeConnector {
+        fn connect<'a>(
+            &'a mut self,
+            _url: &'a str,
+            _subprotocols: &'a [String],
+        ) -> BoxFuture<'a, Result<WebSocketConnectionParts, WebSocketError>> {
+            self.dials += 1;
+            if self.dials >= 2 {
+                self.handle.stop();
+            }
+            Box::pin(async { Err(WebSocketError::handshake_refused(503, "no room")) })
+        }
+    }
+
+    /// A handshake that never became a socket is the ending most worth
+    /// reading, and it used to be the one left blank: `record_close` sat
+    /// BELOW the terminal match in the error arm, so a refusal returned with
+    /// the close fields still null -- the exact hole these fields exist to
+    /// close. A review found it; no test did.
+    #[test]
+    fn a_refused_handshake_stamps_why_it_was_refused() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let runner = RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        );
+        let mut connector = RefusedHandshakeConnector {
+            handle: runner.handle(),
+            dials: 0,
+        };
+
+        // aimux-async-seam: test - no real waiting
+        crate::async_runtime::block_on_named("relay:test-refused", async {
+            let mut sleep = |_: Duration| Box::pin(async {}) as BoxFuture<'static, ()>;
+            let mut elapsed_ms = |since: Instant| since.elapsed().as_millis() as u64;
+            runner
+                .run_with_sleep(&mut connector, &mut sleep, &mut elapsed_ms)
+                .await;
+        });
+
+        let snapshot = runner.handle().status();
+        assert!(
+            snapshot.last_disconnected_at.is_some(),
+            "a refused handshake is an ending and must be stamped"
+        );
+        assert!(
+            snapshot
+                .last_close_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("503") || reason.contains("no room")),
+            "the refusal must say what it was, got {:?}",
+            snapshot.last_close_reason
+        );
+        assert_eq!(
+            snapshot.last_close_code, None,
+            "a handshake that never upgraded has no close code, and saying so places the failure"
+        );
+    }
+
+    /// A connection that holds clears the streak and resets the ladder.
+    ///
+    /// Without this, deleting the whole held branch left every test green:
+    /// the streak would then never clear, so one blip would report the link
+    /// as flapping for ever. It also pins the threshold itself -- with real
+    /// time every fake socket dies in microseconds, so the 2s bound was
+    /// pinned by nothing but a JSON literal.
+    #[test]
+    fn a_connection_that_holds_clears_the_streak_and_the_backoff() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let runner = RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        );
+        let mut connector = AlwaysDiesConnector {
+            handle: runner.handle(),
+            dials: 0,
+            stop_after: 4,
+        };
+        let delays = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&delays);
+        // Just over the threshold, so this test fails if the bound moves up
+        // and fails if the held branch is removed.
+        let held_ms = MIN_HELD_CONNECTION_MS + 1;
+
+        // aimux-async-seam: test - virtual time, so a socket can actually hold
+        crate::async_runtime::block_on_named("relay:test-held", async {
+            let mut sleep = move |delay: Duration| {
+                recorded.lock().unwrap().push(delay.as_millis() as u64);
+                Box::pin(async {}) as BoxFuture<'static, ()>
+            };
+            let mut elapsed_ms = move |_: Instant| held_ms;
+            runner
+                .run_with_sleep(&mut connector, &mut sleep, &mut elapsed_ms)
+                .await;
+        });
+
+        let delays = delays.lock().unwrap().clone();
+        assert!(
+            delays.iter().all(|delay| *delay == INITIAL_RETRY_MS),
+            "a connection that held must put the ladder back to the bottom, got {delays:?}"
+        );
+        let snapshot = runner.handle().status();
+        assert_eq!(
+            snapshot.short_connection_streak, 0,
+            "a connection that held is not a short one"
+        );
+        assert_eq!(
+            snapshot.to_json()["flapping"],
+            serde_json::Value::Bool(false)
+        );
+    }
+
+    /// The number the status line quotes is the number the loop compares
+    /// against. Two copies of a threshold is how two surfaces come to
+    /// disagree about one fact.
+    #[test]
+    fn the_threshold_the_payload_advertises_is_the_one_the_loop_uses() {
+        let advertised = RelayStatusSnapshot::default().to_json()["shortConnectionThresholdMs"]
+            .as_u64()
+            .expect("the payload carries the threshold");
+        assert_eq!(advertised, MIN_HELD_CONNECTION_MS);
+    }
+
+    /// Hands out one prepared connection, then refuses.
+    struct SingleConnectionConnector {
+        connection: Option<WebSocketConnectionParts>,
+    }
+
+    impl crate::remote::websocket::WebSocketConnector for SingleConnectionConnector {
+        fn connect<'a>(
+            &'a mut self,
+            _url: &'a str,
+            _subprotocols: &'a [String],
+        ) -> BoxFuture<'a, Result<WebSocketConnectionParts, WebSocketError>> {
+            let connection = self.connection.take();
+            Box::pin(async move {
+                connection.ok_or_else(|| WebSocketError::handshake_refused(503, "spent"))
+            })
+        }
+    }
+
+    /// A stop that lands while the socket is open is not a failed attempt.
+    ///
+    /// The streak counter sat OUTSIDE the stop guard, so every orderly
+    /// shutdown left the link looking one failure worse than it was, and a
+    /// daemon stopped three times would have reported itself as flapping on
+    /// the next read. Found by review, not by a test, which is why this one
+    /// exists.
+    #[test]
+    fn an_orderly_stop_is_not_counted_as_a_short_connection() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let bridge = Arc::new(StopAfterRouteBridge {
+            handle: Mutex::new(None),
+        });
+        let runner = RelayRunner::new("wss://relay.example", "tok", test_machine(), bridge.clone());
+        *bridge.handle.lock().unwrap() = Some(runner.handle());
+        // One request frame: the bridge stops the runner while the pump is
+        // still inside this connection, which is the only way a stop lands
+        // mid-socket.
+        let connection = WebSocketConnectionParts {
+            reader: Box::new(ScriptedWebSocketReader {
+                events: VecDeque::from([WebSocketEvent::Text(
+                    json!({
+                        "id": "req-1",
+                        "type": "request",
+                        "method": "GET",
+                        "path": "/health",
+                        "body": {},
+                        "headers": {},
+                    })
+                    .to_string(),
+                )]),
+            }),
+            writer: Box::new(RecordingWebSocketWriter {
+                sent: Arc::new(Mutex::new(Vec::new())),
+            }),
+        };
+        let mut connector = SingleConnectionConnector {
+            connection: Some(connection),
+        };
+
+        // aimux-async-seam: test - no real waiting
+        crate::async_runtime::block_on_named("relay:test-orderly-stop", async {
+            let mut sleep = |_: Duration| Box::pin(async {}) as BoxFuture<'static, ()>;
+            let mut elapsed_ms = |_: Instant| 0_u64;
+            runner
+                .run_with_sleep(&mut connector, &mut sleep, &mut elapsed_ms)
+                .await;
+        });
+
+        let snapshot = runner.handle().status();
+        assert_eq!(
+            snapshot.short_connection_streak, 0,
+            "a shutdown is not a failed connection attempt"
+        );
+        assert!(
+            snapshot.last_close_reason.is_none() && snapshot.last_disconnected_at.is_none(),
+            "a shutdown is not an ending worth stamping, got {:?}",
+            snapshot.last_close_reason
         );
     }
 

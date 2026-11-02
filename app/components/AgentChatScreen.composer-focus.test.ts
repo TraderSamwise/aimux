@@ -1,55 +1,87 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const screenSource = readFileSync(join(__dirname, "screens", "AgentChatScreen.tsx"), "utf8");
+const APP_ROOT = join(__dirname, "..");
+const SKIP = new Set(["node_modules", ".expo", "dist", "ios", "android", ".git"]);
 
-const occurrences = (needle: string) => screenSource.split(needle).length - 1;
+function sourceFiles(dir: string): string[] {
+  const found: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    if (SKIP.has(entry)) continue;
+    const path = join(dir, entry);
+    if (statSync(path).isDirectory()) {
+      found.push(...sourceFiles(path));
+    } else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) {
+      found.push(path);
+    }
+  }
+  return found;
+}
+
+/** Every `keyboardDismissMode=...` in the app, with the file it came from. */
+function dismissModeUses(): { file: string; expression: string }[] {
+  const uses: { file: string; expression: string }[] = [];
+  for (const file of sourceFiles(APP_ROOT)) {
+    const source = readFileSync(file, "utf8");
+    let cursor = 0;
+    for (;;) {
+      const at = source.indexOf("keyboardDismissMode", cursor);
+      if (at === -1) break;
+      // Enough to carry a ternary across the line breaks prettier adds.
+      uses.push({
+        file: file.slice(APP_ROOT.length + 1),
+        expression: source.slice(at, at + 220),
+      });
+      cursor = at + 1;
+    }
+  }
+  return uses;
+}
 
 /**
- * The measured bug, pinned on the one prop value that caused it.
+ * The measured bug, and the one the first version of this gate missed.
  *
  * react-native-web's ScrollView calls `dismissKeyboard()` from `_handleScroll`
  * whenever `keyboardDismissMode === "on-drag"` -- on EVERY scroll event, with
- * no drag detection at all (node_modules/react-native-web/dist/exports/
- * ScrollView/index.js, `_handleScroll`). On web `dismissKeyboard()` is just
- * `blurTextInput()`. Both chat panes scroll themselves to the end on every
- * agent output tick, so every tick blurred the composer under whoever was
- * typing into it. Captured in a real browser as
+ * no drag detection (node_modules/react-native-web/dist/exports/ScrollView/
+ * index.js `_handleScroll`, and `ScrollViewBase` calls the handler
+ * unconditionally on the first scroll event, bypassing scrollEventThrottle).
+ * On web `dismissKeyboard()` is only `blurTextInput()`. Captured in a real
+ * browser as
  *
  *   blur <- blurTextInput <- dismissKeyboard <- ScrollView._handleScroll
  *
- * with the textarea STILL MOUNTED and `document.activeElement` falling to
- * BODY -- which is also what ruled out the remount this was twice blamed on,
- * and why two shipped fixes aimed at remounting changed nothing.
+ * with the textarea STILL MOUNTED and activeElement falling to BODY, which is
+ * what ruled out the remount this was twice blamed on.
  *
- * "on-drag" was only ever set on the two web panes and "interactive" only on
- * the two native ones, so counting the two spellings says exactly what
- * matters and nothing else. The file holds seven ScrollViews, so parsing
- * elements instead reads the wrong pane's props -- an earlier version of this
- * gate did precisely that and failed on a clean tree.
+ * The first version of this gate counted string literals in the chat screen
+ * alone. A review found a live second instance it could not see --
+ * `PageLayout.tsx`, whose `Platform.OS === "ios" ? ... : "on-drag"` resolves
+ * to "on-drag" on web, under thirteen screens including one with a text
+ * input. So the rule is now app-wide and about reachability, not spelling:
+ * wherever the prop is set, web must be excluded.
  */
-describe("the web chat panes do not dismiss the keyboard on scroll", () => {
-  it("never dismisses on scroll, which on web only means blurring the composer", () => {
-    expect(
-      occurrences('keyboardDismissMode="on-drag"'),
-      'a pane set keyboardDismissMode="on-drag": react-native-web blurs the focused composer on every scroll event, which is the focus-theft bug',
-    ).toBe(0);
+describe("no scroll surface dismisses the keyboard on web", () => {
+  it("finds the uses it is meant to be checking", () => {
+    // If the prop vanished entirely the rule below would pass vacuously.
+    expect(dismissModeUses().length).toBeGreaterThanOrEqual(4);
   });
 
-  it("keeps the native panes dismissing, where a keyboard exists", () => {
+  it("never lets a web render reach on-drag", () => {
+    for (const { file, expression } of dismissModeUses()) {
+      if (!expression.includes("on-drag")) continue;
+      expect(
+        expression.includes('Platform.OS === "web"'),
+        `${file} can resolve keyboardDismissMode to "on-drag" on web, where react-native-web blurs the focused field on every scroll event`,
+      ).toBe(true);
+    }
+  });
+
+  it("keeps the native chat panes dismissing, where a keyboard exists", () => {
     // The inverse, so the fix cannot be "achieved" by deleting keyboard
     // handling everywhere: dismissing as you drag is correct on a phone.
-    expect(
-      occurrences('keyboardDismissMode="interactive"'),
-      "both native panes still dismiss the keyboard",
-    ).toBe(2);
-  });
-
-  it("still has the two web panes this is about", () => {
-    // Guards the gate itself: if the web branches were deleted or renamed,
-    // the assertion above would pass for the wrong reason.
-    expect(occurrences("<KeyboardChatScrollView")).toBe(2);
-    expect(occurrences('Platform.OS !== "web"')).toBeGreaterThanOrEqual(2);
+    const screen = readFileSync(join(APP_ROOT, "components/screens/AgentChatScreen.tsx"), "utf8");
+    expect(screen.split('keyboardDismissMode="interactive"').length - 1).toBe(2);
   });
 });
