@@ -29,21 +29,32 @@ describe("chat chrome geometry", () => {
 
   it("measures every row it positions from", () => {
     const source = screenSource();
-    // A reserve built from state nothing ever sets is the same bug wearing a
-    // different name: it would sit on the fallback for ever.
-    expect(source).toContain(
-      "setSessionHeaderHeight((current) => (current === next ? current : next))",
-    );
-    expect(source).toContain(
-      "setReconnectingPanelHeight((current) => (current === next ? current : next))",
-    );
+    // Inside an `onLayout`, not merely present. A reserve built from state
+    // nothing ever sets is the same bug wearing a different name -- it would
+    // sit on its fallback for ever -- and a setter moved into a callback
+    // nothing calls leaves the string right here, passing.
+    for (const setter of ["setSessionHeaderHeight", "setReconnectingPanelHeight"]) {
+      const at = source.indexOf(`${setter}((current)`);
+      expect(at, `${setter} must exist`).toBeGreaterThanOrEqual(0);
+      expect(
+        source.slice(Math.max(0, at - 220), at),
+        `${setter} must be wired to an onLayout`,
+      ).toContain("onLayout={");
+    }
   });
 
   it("gives the transcript the same header height as the panels", () => {
     // The miss this catches is mine: the panel offsets took the measurement
     // and the transcript's own top padding kept the constant, so the two
     // disagreed by exactly the pixels this change is about.
-    expect(screenSource()).toContain("sessionHeaderHeight,\n    topInset: resolvedTopInset,");
+    // Matched without pinning prettier's indentation: a reformat, or one more
+    // argument, should not fail a geometry gate.
+    expect(screenSource()).toMatch(
+      /chatTranscriptTopReserveHeight\(\{[^}]*\bsessionHeaderHeight\b[^}]*\}\)/s,
+    );
+    expect(screenSource()).toMatch(
+      /chatOverlayPanelReserveHeight\(\{[^}]*\breconnectingPanelHeight\b[^}]*\}\)/s,
+    );
   });
 
   it("does not add a bare constant back into the offsets", () => {

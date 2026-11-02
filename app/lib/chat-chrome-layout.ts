@@ -16,9 +16,12 @@ export const CHAT_MANAGE_PANEL_HEIGHT_RATIO = 0.6;
  * header has no tone rule and lands nearer 66. That difference is the gap.
  *
  * The constant stays as the pre-measurement answer rather than a tighter
- * guess, because it is the larger of the real values: for the one frame
- * before layout runs, a row reserved slightly too tall leaves a hairline,
- * while one reserved too short puts a panel over the header.
+ * guess, because it is close to the largest real value and a guess that is
+ * too SHORT is the worse failure: for the one frame before layout runs, a row
+ * reserved slightly too tall leaves a hairline, while one reserved too short
+ * puts a panel over the header. It is not an upper bound -- the native header
+ * with a tone rule comes out a pixel or so above it, which costs that one
+ * frame and nothing after it.
  */
 export function chatChromeRowHeight(measured: number | undefined, fallback: number): number {
   return measured !== undefined && measured > 0 ? measured : fallback;
@@ -38,19 +41,25 @@ export function chatTopBarReserveHeight({
 
 export function chatOverlayPanelReserveHeight({
   manageOpen,
+  reconnectingPanelHeight,
   serviceDisconnected,
   shareDetailsExpanded,
   shareOpen,
   windowHeight,
 }: {
   manageOpen: boolean;
+  /** Measured, when it has been. Must be the same answer the panel offsets
+   * use, or the transcript reserves a different height than they occupy. */
+  reconnectingPanelHeight?: number;
   serviceDisconnected: boolean;
   shareDetailsExpanded: boolean;
   shareOpen: boolean;
   windowHeight: number;
 }): number {
   return (
-    (serviceDisconnected ? CHAT_RECONNECTING_PANEL_RESERVE : 0) +
+    (serviceDisconnected
+      ? chatChromeRowHeight(reconnectingPanelHeight, CHAT_RECONNECTING_PANEL_RESERVE)
+      : 0) +
     chatControlPanelReserveHeight({
       manageOpen,
       shareDetailsExpanded,

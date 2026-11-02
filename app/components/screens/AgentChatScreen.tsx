@@ -1031,6 +1031,7 @@ export default function ChatScreen() {
     topBarHeight + chatChromeRowHeight(sessionHeaderHeight, CHAT_SESSION_HEADER_HEIGHT);
   const chatOverlayPanelReserve = chatOverlayPanelReserveHeight({
     manageOpen: managePanelOpen,
+    reconnectingPanelHeight,
     serviceDisconnected,
     shareDetailsExpanded: shareDetailsExpanded || !activeShare,
     shareOpen: sharePanelOpen,
