@@ -149,7 +149,14 @@ export type ChatHistoryPagerContent = {
  *
  * The latch also stands in for the retry brake, which cannot help here:
  * `chatHistoryPagingRetryable` clears failures only after scrolling well away
- * from the top, and a view that cannot scroll never offers that gesture.
+ * from the top, and a view that cannot scroll never offers that gesture. What
+ * does bound a failing service is the failure count itself -- three asks and
+ * then silence.
+ *
+ * "One page" is this path's own bound, not a guarantee across every path. On
+ * iOS a rubber-band drag on a non-scrollable transcript still emits scroll
+ * events, and those go to the scroll rule with its own allowance. That is
+ * older than this function and is not made worse by it.
  */
 export function chatHistoryPagerContentSized(
   state: ChatHistoryPagerState,

@@ -73,7 +73,10 @@ describe("the chat history pager is not re-decided in the screen", () => {
     const askAt = layoutBody.indexOf(
       'onRequestHistoryPage(chatScrollMetricsRef.current, "content")',
     );
-    const returnAt = layoutBody.indexOf("chatInitialLayoutKeyRef.current = agentKey");
+    // The branch itself, not a statement inside it: anchoring on the body
+    // let the ask be moved INSIDE the branch and still pass, where it would
+    // run on the cold mount only and never again.
+    const returnAt = layoutBody.indexOf("if (chatInitialLayoutKeyRef.current !== agentKey)");
     expect(askAt, "the layout handler must ask the pager").toBeGreaterThanOrEqual(0);
     expect(askAt, "asking after the initial-layout return never runs").toBeLessThan(returnAt);
   });

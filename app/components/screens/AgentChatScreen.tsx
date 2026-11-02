@@ -806,7 +806,8 @@ export default function ChatScreen() {
   useEffect(() => {
     // Seeded from the transcript the store already holds for THIS agent, not
     // from the shallow window. Re-entering a session that had been paged to
-    // the floor used to restart the cursor at -160 while the store still held
+    // the floor used to restart the cursor at the first window while the
+    // store still held
     // the deep transcript, so the next several scroll-ups asked for windows
     // already on screen and changed nothing.
     // Only when a transcript is actually stored for this agent. The start line
