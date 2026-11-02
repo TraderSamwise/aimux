@@ -17,8 +17,14 @@
         "status": {
           "status": "auth_failed",
           "relayUrl": "wss://relay.aimux.app",
-          "lastConnectedAt": null,
-          "lastError": "Relay rejected credentials (code 1008) \u2014 run `aimux login` again"
+          "lastConnectedAt": "<timestamp>",
+          "lastError": "Relay rejected credentials (code 1008) \u2014 run `aimux login` again",
+          "lastDisconnectedAt": "<timestamp>",
+          "lastCloseCode": 1008,
+          "lastCloseReason": "",
+          "consecutiveShortConnections": 1,
+          "flapping": false,
+          "shortConnectionThresholdMs": 2000
         },
         "notifications": {
           "authLost": [
@@ -217,5 +223,8 @@
       },
       "inputSha256": "e018fbea537edee5071dacab95a097d70a917c93c7b54bd309fec8e249fffea8"
     }
+  ],
+  "rustDivergences": [
+    "Rust deliberately diverges from Node in the relay status snapshot: it carries lastDisconnectedAt / lastCloseCode / lastCloseReason / consecutiveShortConnections / flapping / shortConnectionThresholdMs, which the Node client never had. Node cleared its only error field on every reconnect, so a link reconnecting once a second reported as healthy on every surface."
   ]
 }

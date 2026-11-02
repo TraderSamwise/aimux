@@ -1,6 +1,175 @@
 use aimux::core_text::*;
 use serde_json::json;
 
+/// `aimux daemon status` used to print the status word and nothing else, so
+/// a link reconnecting every second read as plainly "connected" -- the status
+/// is a reading of one instant, and on a flapping link the instant is a lie.
+/// What the last socket died of is the fact that tells them apart, so it has
+/// to reach this surface.
+#[test]
+fn daemon_status_reports_what_the_last_relay_socket_died_of() {
+    assert_eq!(
+        render_core_daemon_status_lines(&json!({
+            "daemon": { "pid": 12, "port": 49152 },
+            "projects": [],
+            "relay": {
+                "status": "connected",
+                "relayUrl": "wss://relay.example",
+                "lastCloseCode": 1006,
+                "lastCloseReason": "Replaced",
+                "lastDisconnectedAt": "2026-11-02T07:27:58Z"
+            }
+        })),
+        vec![
+            "Daemon pid=12 port=49152",
+            "Known projects: 0",
+            "Live project services: 0",
+            "Relay: connected (wss://relay.example)",
+            "Last close: 1006 Replaced (at 2026-11-02T07:27:58Z)",
+        ]
+    );
+
+    // A handshake that never became a socket has no code, and saying so is
+    // different from saying nothing: it places the failure before the upgrade.
+    assert_eq!(
+        render_core_daemon_status_lines(&json!({
+            "daemon": { "pid": 12, "port": 49152 },
+            "projects": [],
+            "relay": {
+                "status": "reconnecting",
+                "relayUrl": "wss://relay.example",
+                "lastCloseReason": "connection reset by peer",
+                "lastDisconnectedAt": "2026-11-02T07:27:58Z"
+            }
+        }))
+        .last()
+        .map(String::as_str),
+        Some("Last close: (no code) connection reset by peer (at 2026-11-02T07:27:58Z)")
+    );
+
+    // Connected and flapping is the state the old surface could not express.
+    assert_eq!(
+        render_core_daemon_status_lines(&json!({
+            "daemon": { "pid": 12, "port": 49152 },
+            "projects": [],
+            "relay": {
+                "status": "connected",
+                "relayUrl": "wss://relay.example",
+                "flapping": true,
+                "consecutiveShortConnections": 7,
+                "shortConnectionThresholdMs": 2000,
+                "lastCloseCode": 1006,
+                "lastCloseReason": "died",
+                "lastDisconnectedAt": "2026-11-02T07:27:58Z"
+            }
+        })),
+        vec![
+            "Daemon pid=12 port=49152",
+            "Known projects: 0",
+            "Live project services: 0",
+            "Relay: connected (wss://relay.example)",
+            "Relay is FLAPPING: 7 connections in a row died within 2s",
+            "Last close: 1006 died (at 2026-11-02T07:27:58Z)",
+        ]
+    );
+
+    // A link that has never dropped says nothing, rather than an empty row.
+    assert_eq!(
+        render_core_daemon_status_lines(&json!({
+            "daemon": { "pid": 12, "port": 49152 },
+            "projects": [],
+            "relay": { "status": "connected", "relayUrl": "wss://relay.example" }
+        }))
+        .last()
+        .map(String::as_str),
+        Some("Relay: connected (wss://relay.example)")
+    );
+}
+
+/// `aimux remote status` answers the same question as `aimux daemon status`
+/// and must not answer it differently. It reported only the status word and
+/// `lastError`, so it read perfectly clean right through a link that was
+/// collapsing once a second.
+#[test]
+fn remote_status_reports_the_same_relay_health_as_daemon_status() {
+    let payload = json!({
+        "credentials": { "remoteEnabled": true, "relayUrl": "wss://relay.example" },
+        "relay": {
+            "status": "connected",
+            "flapping": true,
+            "consecutiveShortConnections": 5,
+            "shortConnectionThresholdMs": 2000,
+            "lastCloseCode": 1006,
+            "lastCloseReason": "died",
+            "lastDisconnectedAt": "2026-11-02T07:27:58Z"
+        }
+    });
+    let lines = render_core_remote_status_lines(&payload);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("FLAPPING") && line.contains('5')),
+        "remote status must say the link is flapping, got {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("Last close: 1006")),
+        "remote status must say what the last socket died of, got {lines:?}"
+    );
+}
+
+/// An older daemon sends no threshold. Absent is not zero, and "died within
+/// 0s" would be a sentence this surface invented out of a missing field.
+#[test]
+fn a_flapping_link_without_a_threshold_does_not_invent_zero_seconds() {
+    let lines = render_core_daemon_status_lines(&json!({
+        "daemon": { "pid": 1, "port": 2 },
+        "projects": [],
+        "relay": { "status": "connected", "flapping": true, "consecutiveShortConnections": 4 }
+    }));
+    let flapping = lines
+        .iter()
+        .find(|line| line.contains("FLAPPING"))
+        .expect("a flapping line");
+    assert!(!flapping.contains("0s"), "invented a zero: {flapping}");
+    assert!(flapping.contains("immediately"), "got {flapping}");
+
+    // And an explicit zero, which is the case a missing-key test cannot
+    // reach: `and_then` already yields None for an absent key, so only a
+    // present 0 exercises the guard against printing "within 0s".
+    let explicit_zero = render_core_daemon_status_lines(&json!({
+        "daemon": { "pid": 1, "port": 2 },
+        "projects": [],
+        "relay": {
+            "status": "connected",
+            "flapping": true,
+            "consecutiveShortConnections": 4,
+            "shortConnectionThresholdMs": 0
+        }
+    }));
+    let line = explicit_zero
+        .iter()
+        .find(|line| line.contains("FLAPPING"))
+        .expect("a flapping line");
+    assert!(!line.contains("0s"), "invented a zero: {line}");
+}
+
+/// `aimux remote enable` read the status at the instant it returned, which is
+/// before the daemon could have dialled, so a healthy machine printed
+/// "(connection: disconnected)" and looked broken. Sam hit exactly this.
+#[test]
+fn remote_enable_does_not_report_a_race_as_a_failure() {
+    assert_eq!(
+        render_core_remote_enable_lines(&json!({ "status": "disconnected" })),
+        vec!["✓ Remote access enabled. Connecting to the relay…"]
+    );
+    assert_eq!(
+        render_core_remote_enable_lines(&json!({ "status": "connected" })),
+        vec!["✓ Remote access enabled (connected)"]
+    );
+}
+
 #[test]
 fn renders_daemon_and_host_status_with_typescript_fallbacks() {
     assert_eq!(

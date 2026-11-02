@@ -141,10 +141,73 @@ pub fn render_core_daemon_status_lines(payload: &Value) -> Vec<String> {
             status.unwrap(),
             relay_url.map(|url| format!(" ({url})")).unwrap_or_default()
         ));
+        // The status word alone said "connected" all through a link that was
+        // reconnecting every second, because it is a reading of one instant.
+        // What the last socket died of is the fact that distinguishes a live
+        // link from a collapsing one, and this surface used to drop it.
+        lines.extend(relay_flapping_line(relay));
+        lines.extend(relay_last_close_line(relay));
     } else {
         lines.push("Relay: off".into());
     }
     lines
+}
+
+/// Says the link is collapsing, which "connected" does not.
+///
+/// The status word is a reading of one instant. On the mini it read
+/// "connected" for an hour while the socket was being replaced every second,
+/// so the word was true at every sample and wrong about the link.
+fn relay_flapping_line(relay: Option<&serde_json::Map<String, Value>>) -> Option<String> {
+    let relay = relay?;
+    if relay.get("flapping").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let streak = relay
+        .get("consecutiveShortConnections")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    // An older daemon does not send the threshold. Absent is not zero, and
+    // "died within 0s" would be a sentence this surface invented.
+    match relay
+        .get("shortConnectionThresholdMs")
+        .and_then(Value::as_u64)
+        .filter(|threshold| *threshold > 0)
+    {
+        Some(threshold_ms) => Some(format!(
+            "Relay is FLAPPING: {streak} connections in a row died within {}s",
+            threshold_ms / 1000
+        )),
+        None => Some(format!(
+            "Relay is FLAPPING: {streak} connections in a row died immediately"
+        )),
+    }
+}
+
+/// "Last close: 1006 Replaced (at 2026-11-02T07:27:58Z)", when there was one.
+fn relay_last_close_line(relay: Option<&serde_json::Map<String, Value>>) -> Option<String> {
+    let relay = relay?;
+    let code = relay.get("lastCloseCode").and_then(Value::as_u64);
+    let reason = relay
+        .get("lastCloseReason")
+        .and_then(Value::as_str)
+        .filter(|reason| !reason.is_empty());
+    let at = relay.get("lastDisconnectedAt").and_then(Value::as_str);
+    if code.is_none() && reason.is_none() && at.is_none() {
+        return None;
+    }
+    let mut line = "Last close:".to_owned();
+    match code {
+        Some(code) => line.push_str(&format!(" {code}")),
+        None => line.push_str(" (no code)"),
+    }
+    if let Some(reason) = reason {
+        line.push_str(&format!(" {reason}"));
+    }
+    if let Some(at) = at {
+        line.push_str(&format!(" (at {at})"));
+    }
+    Some(line)
 }
 
 pub fn render_core_host_status_lines(payload: &Value, known_project: bool) -> Vec<String> {
@@ -353,14 +416,25 @@ pub fn render_core_remote_status_lines(payload: &Value) -> Vec<String> {
     if let Some(error) = relay_last_error(relay) {
         lines.push(format!("Last error: {error}"));
     }
+    // The same two facts `aimux daemon status` reports. Two surfaces that
+    // answer "is the relay healthy" and answer it differently is the drift
+    // AGENTS.md "One Answer, Many Surfaces" exists to stop -- and this one
+    // would still have read clean right through the flap.
+    lines.extend(relay_flapping_line(relay));
+    lines.extend(relay_last_close_line(relay));
     lines
 }
 
 pub fn render_core_remote_enable_lines(relay: &Value) -> Vec<String> {
-    vec![format!(
-        "✓ Remote access enabled (connection: {})",
-        coalesce_string(field(relay, "status"), "unknown")
-    )]
+    // Reads the status at the instant the enable returns, which is BEFORE the
+    // daemon could have dialled -- so a healthy machine prints
+    // "(connection: disconnected)" and looks broken. Say what is actually
+    // known instead of sampling a race.
+    let status = coalesce_string(field(relay, "status"), "unknown");
+    if status == "connected" {
+        return vec!["✓ Remote access enabled (connected)".into()];
+    }
+    vec!["✓ Remote access enabled. Connecting to the relay…".into()]
 }
 pub fn render_core_remote_disable_lines(daemon_disconnected: bool) -> Vec<String> {
     vec![if daemon_disconnected {

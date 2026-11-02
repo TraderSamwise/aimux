@@ -23,6 +23,19 @@ pub const TOKEN_PROTOCOL_PREFIX: &str = "aimux-token.";
 /// Reconnect backoff, doubling from one second to thirty.
 pub const INITIAL_RETRY_MS: u64 = 1_000;
 pub const MAX_RETRY_MS: u64 = 30_000;
+/// How long a connection must hold before it counts as a success.
+///
+/// The ladder used to reset the moment `connect` returned Ok, so a socket
+/// that died a second later reset it too, and a daemon whose connection kept
+/// collapsing dialled the relay every few seconds for as long as it was
+/// running -- measured on sam-mini as one dial every 3-4s, continuously, with
+/// the backoff never once engaging. A connection that does not outlive this
+/// did no work and is a failed attempt, whatever the handshake said.
+pub const MIN_HELD_CONNECTION_MS: u64 = 2_000;
+/// Consecutive sub-threshold connections before the link is called flapping.
+/// One is a blip; three in a row is a pattern no reader should have to spot
+/// by watching a status line.
+pub const FLAPPING_CONNECTION_STREAK: u32 = 3;
 /// After this many refused handshakes the token is treated as bad and the
 /// client stops, rather than hammering the relay forever.
 pub const MAX_HANDSHAKE_FAILURES: u32 = 5;

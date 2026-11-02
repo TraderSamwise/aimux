@@ -467,9 +467,12 @@ mod enabled_state {
                     self.relay.status()
                 }
                 Ok(None) => json!({ "status": "off" }),
-                Err(error) => {
-                    json!({ "status": "auth_failed", "lastError": error.to_string() })
+                Err(error) => crate::remote::relay_client::RelayStatusSnapshot {
+                    status: Some(crate::remote::relay_client::RelayStatus::AuthFailed),
+                    last_error: Some(error.to_string()),
+                    ..Default::default()
                 }
+                .to_json(),
             }
         }
 
@@ -499,11 +502,17 @@ mod enabled_state {
                 return json!({ "status": "off" });
             };
             if credentials.remote_enabled {
-                json!({
-                    "status": "disconnected",
-                    "relayUrl": credentials.relay_url,
-                    "lastConnectedAt": Value::Null,
-                })
+                // The full snapshot shape, not a three-field lookalike.
+                // `RelayStatusSnapshot` in src/relay-contract.ts declares
+                // these required, and a second hand-built spelling of the
+                // same object is how a consumer comes to read `undefined`
+                // from one source and a value from another.
+                crate::remote::relay_client::RelayStatusSnapshot {
+                    status: Some(crate::remote::relay_client::RelayStatus::Disconnected),
+                    relay_url: credentials.relay_url,
+                    ..Default::default()
+                }
+                .to_json()
             } else {
                 json!({ "status": "off" })
             }

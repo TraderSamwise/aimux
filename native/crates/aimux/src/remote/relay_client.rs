@@ -6,7 +6,9 @@
 
 use serde_json::{Value, json};
 
-use crate::remote::websocket::WebSocketError;
+use crate::remote::websocket::{
+    FLAPPING_CONNECTION_STREAK, MIN_HELD_CONNECTION_MS, WebSocketError,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RelayStatus {
@@ -35,6 +37,25 @@ pub struct RelayStatusSnapshot {
     pub relay_url: String,
     pub last_connected_at: Option<String>,
     pub last_error: Option<String>,
+    /// When the last socket went away, and why it went away.
+    ///
+    /// Separate from `last_error`, which answers "why are we not connected
+    /// RIGHT NOW" and is therefore cleared by the next connect. These three
+    /// answer "what happened to the last socket", and nothing clears them.
+    /// A link that reconnects every second cleared `last_error` every second,
+    /// so `aimux daemon status` reported `connected` with no error while the
+    /// connection was collapsing continuously -- the one fact that would have
+    /// named the cause was erased a second after it was recorded.
+    pub last_disconnected_at: Option<String>,
+    pub last_close_code: Option<u16>,
+    pub last_close_reason: Option<String>,
+    /// Connections in a row that did not outlive `MIN_HELD_CONNECTION_MS`.
+    ///
+    /// `status` is a reading of one instant, and on a link that reconnects
+    /// every second the instant is true and useless -- it said "connected"
+    /// throughout. This is the shape of the failure rather than a sample of
+    /// it, so a caller can tell a live link from a collapsing one.
+    pub short_connection_streak: u32,
 }
 
 impl RelayStatusSnapshot {
@@ -44,6 +65,16 @@ impl RelayStatusSnapshot {
             "relayUrl": self.relay_url,
             "lastConnectedAt": self.last_connected_at,
             "lastError": self.last_error,
+            "lastDisconnectedAt": self.last_disconnected_at,
+            "lastCloseCode": self.last_close_code,
+            "lastCloseReason": self.last_close_reason,
+            "consecutiveShortConnections": self.short_connection_streak,
+            "flapping": self.short_connection_streak >= FLAPPING_CONNECTION_STREAK,
+            // Carried rather than re-stated by the renderer: `core_text` is
+            // built without the `remote-control` feature, so it cannot reach
+            // this constant, and a second copy of a threshold is how two
+            // surfaces come to disagree about the same number.
+            "shortConnectionThresholdMs": MIN_HELD_CONNECTION_MS,
         })
     }
 }
