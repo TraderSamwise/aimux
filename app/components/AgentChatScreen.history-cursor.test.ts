@@ -63,6 +63,19 @@ describe("the chat history pager is not re-decided in the screen", () => {
     expect(body, "the content-size handler must ask the pager").toContain(
       'onRequestHistoryPage(chatScrollMetricsRef.current, "content")',
     );
+
+    // And layout, which is the half that supplies the viewport height. It has
+    // to ask BEFORE the initial-layout branch, because that branch returns --
+    // on a cold mount, the one case this path exists for, anything after it
+    // never runs.
+    const layout = screenSource.slice(screenSource.indexOf("const handleChatLayout"));
+    const layoutBody = layout.slice(0, layout.indexOf("[executeChatScrollCommand"));
+    const askAt = layoutBody.indexOf(
+      'onRequestHistoryPage(chatScrollMetricsRef.current, "content")',
+    );
+    const returnAt = layoutBody.indexOf("chatInitialLayoutKeyRef.current = agentKey");
+    expect(askAt, "the layout handler must ask the pager").toBeGreaterThanOrEqual(0);
+    expect(askAt, "asking after the initial-layout return never runs").toBeLessThan(returnAt);
   });
 
   it("hands the pager what it was served, not what it asked for", () => {

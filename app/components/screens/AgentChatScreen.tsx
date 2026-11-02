@@ -3764,6 +3764,12 @@ const AgentChatSessionViewport = React.memo(
             ...chatScrollMetricsRef.current,
             viewportHeight: event.nativeEvent.layout.height,
           };
+          // Before the initial-layout branch, which returns. Layout supplies
+          // the viewport height, and the pager needs that and the content
+          // height before it can tell "short" from "unmeasured" -- so the ask
+          // has to happen on the cold mount too, which is the only case this
+          // path exists for. The pager's latch keeps it to one page.
+          onRequestHistoryPage(chatScrollMetricsRef.current, "content");
           if (chatInitialLayoutKeyRef.current !== agentKey) {
             chatInitialLayoutKeyRef.current = agentKey;
             executeChatScrollCommand(chatCommandForInitialLayout());
@@ -3773,11 +3779,6 @@ const AgentChatSessionViewport = React.memo(
             chatCommandForContentChange(chatScrollPolicyRef.current),
             "content",
           );
-          // Layout supplies the viewport height, and the pager needs both it
-          // and the content height before it can tell "short" from
-          // "unmeasured". Whichever callback completes the pair asks; the
-          // pager's latch keeps that to one page between them.
-          onRequestHistoryPage(chatScrollMetricsRef.current, "content");
         },
         [executeChatScrollCommand, agentKey, onRequestHistoryPage],
       );

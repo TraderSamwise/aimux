@@ -201,7 +201,47 @@ describe("a transcript too short to scroll", () => {
       metrics: tall,
     });
     expect(overflowing.request).toBeNull();
-    expect(overflowing.state.filledFromContent).toBe(false);
+    // Not `overflowing.state.filledFromContent`: that is the object passed in,
+    // so reading a field off it proves nothing. What matters is that the one
+    // page is still there to spend when the view turns out to be short.
+    expect(
+      chatHistoryPagerContentSized(overflowing.state, { ...ask, metrics: short }).request,
+    ).not.toBeNull();
+  });
+
+  it("gives the page back when nothing answered", () => {
+    // Spent on an ARRIVED page, not on a request. A chat opened while the
+    // route is still connecting asks, gets nothing, and must still be able to
+    // ask once the transcript lands -- there is no scroll gesture to retry
+    // with, and the failure brake needs one.
+    const asked = chatHistoryPagerContentSized(chatHistoryPagerState(), {
+      ...ask,
+      metrics: short,
+    });
+    expect(asked.request).not.toBeNull();
+
+    const unanswered = chatHistoryPagerResolved(asked.state, {
+      requestedStartLine: asked.request as number,
+      arrived: false,
+    });
+    expect(unanswered.filledFromContent).toBe(false);
+    expect(
+      chatHistoryPagerContentSized(unanswered, { ...ask, metrics: short }).request,
+    ).not.toBeNull();
+  });
+
+  it("keeps the page spent once one actually arrived", () => {
+    const asked = chatHistoryPagerContentSized(chatHistoryPagerState(), {
+      ...ask,
+      metrics: short,
+    });
+    const served = chatHistoryPagerResolved(asked.state, {
+      requestedStartLine: asked.request as number,
+      arrived: true,
+      appliedStartLine: asked.request as number,
+    });
+    expect(served.filledFromContent).toBe(true);
+    expect(chatHistoryPagerContentSized(served, { ...ask, metrics: short }).request).toBeNull();
   });
 
   it("holds its tongue while a page is in flight, and when the view is not ready", () => {

@@ -96,7 +96,13 @@ export function chatHistoryPagerResolved(
   resolution: ChatHistoryPagerResolution,
 ): ChatHistoryPagerState {
   if (!resolution.arrived) {
-    return { ...state, failures: state.failures + 1 };
+    // The content-sized latch is released too. It is spent when a page
+    // ARRIVES, not when one is asked for: a request that nothing answered --
+    // a share route still connecting, an endpoint hiccup on open -- would
+    // otherwise burn the only ask a non-scrollable transcript gets, and there
+    // is no gesture left to retry with, because the retry brake needs a
+    // scroll this view cannot offer.
+    return { ...state, failures: state.failures + 1, filledFromContent: false };
   }
   const outcome = chatHistoryPageOutcome({
     currentStartLine: state.startLine,
