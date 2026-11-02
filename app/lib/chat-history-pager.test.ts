@@ -171,6 +171,30 @@ describe("a transcript too short to scroll", () => {
     expect(second.state).toBe(first.state);
   });
 
+  it("waits until both heights are measured, and does not latch on a zero", () => {
+    // `onLayout` and `onContentSizeChange` fill one each and can land in
+    // either order. A view measured on one axis only would read as
+    // overflowing (and never ask) or as short (and spend its one page on
+    // nothing). Asking again after the second measurement is the point.
+    const unlaidOut = chatHistoryPagerContentSized(chatHistoryPagerState(), {
+      ...ask,
+      metrics: { contentHeight: 300, offsetY: 0, viewportHeight: 0 },
+    });
+    expect(unlaidOut.request).toBeNull();
+    expect(unlaidOut.state.filledFromContent).toBe(false);
+
+    const empty = chatHistoryPagerContentSized(chatHistoryPagerState(), {
+      ...ask,
+      metrics: { contentHeight: 0, offsetY: 0, viewportHeight: 800 },
+    });
+    expect(empty.request).toBeNull();
+    expect(empty.state.filledFromContent).toBe(false);
+
+    expect(
+      chatHistoryPagerContentSized(unlaidOut.state, { ...ask, metrics: short }).request,
+    ).not.toBeNull();
+  });
+
   it("does not ask when there is something to scroll", () => {
     const overflowing = chatHistoryPagerContentSized(chatHistoryPagerState(), {
       ...ask,

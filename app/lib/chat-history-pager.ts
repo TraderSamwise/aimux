@@ -149,8 +149,14 @@ export function chatHistoryPagerContentSized(
   state: ChatHistoryPagerState,
   content: ChatHistoryPagerContent,
 ): { state: ChatHistoryPagerState; request: number | null } {
+  // Unmeasured is not the same as short. Both arrive as zero, and the two
+  // callbacks that fill them -- layout and content size -- can land in either
+  // order, so a view measured on only one axis would read as "overflows" and
+  // never ask, or as "short" and latch on nothing. Neither is an answer, so
+  // wait for both.
+  const measured = content.metrics.contentHeight > 0 && content.metrics.viewportHeight > 0;
   const overflows = content.metrics.contentHeight > content.metrics.viewportHeight;
-  if (state.filledFromContent || overflows) return { state, request: null };
+  if (!measured || state.filledFromContent || overflows) return { state, request: null };
 
   const request = chatOutputHistoryStartLineForScroll({
     currentStartLine: state.startLine,

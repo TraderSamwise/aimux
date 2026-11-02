@@ -3773,8 +3773,13 @@ const AgentChatSessionViewport = React.memo(
             chatCommandForContentChange(chatScrollPolicyRef.current),
             "content",
           );
+          // Layout supplies the viewport height, and the pager needs both it
+          // and the content height before it can tell "short" from
+          // "unmeasured". Whichever callback completes the pair asks; the
+          // pager's latch keeps that to one page between them.
+          onRequestHistoryPage(chatScrollMetricsRef.current, "content");
         },
-        [executeChatScrollCommand, agentKey],
+        [executeChatScrollCommand, agentKey, onRequestHistoryPage],
       );
 
       const handleChatContentSizeChange = useCallback(
