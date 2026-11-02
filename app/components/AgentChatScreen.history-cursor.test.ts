@@ -81,6 +81,20 @@ describe("the chat history pager is not re-decided in the screen", () => {
     expect(askAt, "asking after the initial-layout return never runs").toBeLessThan(returnAt);
   });
 
+  it("lets terminal-only output mode page history too", () => {
+    // The terminal pane is a separate scroll surface. When output mode hid the
+    // chat transcript, no mounted handler called the pager, so scrollback was
+    // whatever the live feed had initially fetched.
+    expect(screenSource).toContain(
+      "const historyPagerVisible = chatViewVisible || terminalViewVisible;",
+    );
+    expect(screenSource).toContain("ready: historyPagerVisible && heartbeatReady");
+
+    const terminalPane = screenSource.slice(screenSource.indexOf("const AgentTerminalOutputPane"));
+    expect(terminalPane).toContain('onRequestHistoryPage(terminalGeometryRef.current, "content")');
+    expect(terminalPane).toContain("onRequestHistoryPage(metrics);");
+  });
+
   it("hands the pager what it was served, not what it asked for", () => {
     // The served line is what the pager compares against, and it can only come
     // from the feed as the snapshot is applied: the store's copy survives only

@@ -34,6 +34,12 @@ export function terminalVisibleOutputForLiveChange<TLine>(
   },
 ): TerminalVisibleOutput<TLine> {
   if (current.sessionKey !== liveOutput.sessionKey || intent === "pinned") return liveOutput;
+  if (
+    liveOutput.outputText !== current.outputText &&
+    liveOutput.outputText.endsWith(current.outputText)
+  ) {
+    return liveOutput;
+  }
   return current;
 }
 

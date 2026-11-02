@@ -46,6 +46,25 @@ describe("terminal visible output", () => {
     );
   });
 
+  it("accepts prepended history while reading", () => {
+    const current = terminalVisibleOutputForPinned({
+      lines: ["newer"],
+      outputAvailable: true,
+      outputText: "newer",
+      sessionKey: "session-1",
+    });
+    const liveOutput = terminalVisibleOutputForPinned({
+      lines: ["older", "newer"],
+      outputAvailable: true,
+      outputText: "older\nnewer",
+      sessionKey: "session-1",
+    });
+
+    expect(terminalVisibleOutputForLiveChange(current, { intent: "reading", liveOutput })).toBe(
+      liveOutput,
+    );
+  });
+
   it("resets to live output when the session changes", () => {
     const current = terminalVisibleOutputForPinned({
       lines: ["old"],

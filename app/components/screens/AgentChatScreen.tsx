@@ -174,7 +174,7 @@ import {
   chatTranscriptPlaceholderState,
   type ChatTranscriptPlaceholderState,
 } from "@/lib/chat-loading";
-import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
+import { formatTerminalOutputForDisplay, terminalOutputTail } from "@/lib/terminal-output";
 import {
   terminalScrollStateAfterUserScroll,
   terminalVisibleOutputForLiveChange,
@@ -775,6 +775,7 @@ export default function ChatScreen() {
     rawOutputAllowed: true,
     width: chatSplitWidth,
   });
+  const historyPagerVisible = chatViewVisible || terminalViewVisible;
   const agentOutputFeedMode = agentOutputModeForVisiblePane({ terminalViewVisible });
   const [chatHistoryFloorReached, setChatHistoryFloorReached] = useState(false);
   // The pager's whole state in one ref: the cursor, the failure count within
@@ -1205,7 +1206,7 @@ export default function ChatScreen() {
     (metrics: ChatScrollMetrics, reason: "scroll" | "content" = "scroll") => {
       const ask = {
         metrics,
-        ready: chatViewVisible && heartbeatReady && !routeSessionMissing,
+        ready: historyPagerVisible && heartbeatReady && !routeSessionMissing,
         pendingStartLine:
           pendingChatOutputHistoryStartLineRef.current ?? pendingChatOutputHistoryStartLine,
       };
@@ -1267,8 +1268,8 @@ export default function ChatScreen() {
     },
     [
       applyChatHistoryPageOutcome,
-      chatViewVisible,
       heartbeatReady,
+      historyPagerVisible,
       pendingChatOutputHistoryStartLine,
       refreshOutputSnapshot,
       routeSessionMissing,
@@ -3005,6 +3006,7 @@ export default function ChatScreen() {
                       dividerWidth={chatDividerWidth}
                       keyboardVisible={keyboardVisible}
                       onChromeVisibleChange={handleChatChromeVisibleChange}
+                      onRequestHistoryPage={requestChatHistoryPage}
                       agentKey={agentKey}
                       topContentInset={chatTopContentReserve}
                     />
@@ -3246,13 +3248,13 @@ const TERMINAL_OUTPUT_LINE_STYLE: TextStyle = {
   fontSize: 12,
   lineHeight: 17,
 };
-const TERMINAL_OUTPUT_MAX_LINES = 500;
 
 type AgentTerminalOutputPaneProps = {
   bottomContentInset: number;
   dividerWidth: number;
   keyboardVisible: boolean;
   onChromeVisibleChange: (visible: boolean) => void;
+  onRequestHistoryPage: (metrics: ChatScrollMetrics, reason?: "scroll" | "content") => void;
   agentKey: AgentStateKey;
   topContentInset: number;
 };
@@ -3265,6 +3267,7 @@ const AgentTerminalOutputPane = React.memo(
         dividerWidth,
         keyboardVisible,
         onChromeVisibleChange,
+        onRequestHistoryPage,
         agentKey,
         topContentInset,
       },
@@ -3275,10 +3278,7 @@ const AgentTerminalOutputPane = React.memo(
       const outputAvailable = useAtomValue(outputAvailableFamily(agentKey));
       const scrollRef = useRef<ChatScrollHandle | null>(null);
       const output = outputAnsi || outputPlain;
-      const outputTail = useMemo(
-        () => output.replace(/\r/g, "").split("\n").slice(-TERMINAL_OUTPUT_MAX_LINES).join("\n"),
-        [output],
-      );
+      const outputTail = useMemo(() => terminalOutputTail(output), [output]);
       const liveLines = useMemo(
         () =>
           formatTerminalOutputForDisplay(outputTail, {
@@ -3414,6 +3414,7 @@ const AgentTerminalOutputPane = React.memo(
             ...terminalGeometryRef.current,
             viewportHeight: event.nativeEvent.layout.height,
           };
+          onRequestHistoryPage(terminalGeometryRef.current, "content");
           if (terminalInitialLayoutKeyRef.current !== agentKey) {
             terminalInitialLayoutKeyRef.current = agentKey;
             executeTerminalScrollCommand(chatCommandForInitialLayout());
@@ -3423,7 +3424,7 @@ const AgentTerminalOutputPane = React.memo(
             chatCommandForContentChange(terminalScrollPolicyRef.current),
           );
         },
-        [executeTerminalScrollCommand, agentKey],
+        [executeTerminalScrollCommand, agentKey, onRequestHistoryPage],
       );
 
       const handleTerminalContentSizeChange = useCallback(
@@ -3432,8 +3433,9 @@ const AgentTerminalOutputPane = React.memo(
           executeTerminalScrollCommand(
             chatCommandForContentChange(terminalScrollPolicyRef.current),
           );
+          onRequestHistoryPage(terminalGeometryRef.current, "content");
         },
-        [executeTerminalScrollCommand],
+        [executeTerminalScrollCommand, onRequestHistoryPage],
       );
 
       // Android does not report the keyboard-driven inset in the scroll event, so
@@ -3482,8 +3484,9 @@ const AgentTerminalOutputPane = React.memo(
           if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
             setVisibleOutput(liveOutput);
           }
+          onRequestHistoryPage(metrics);
         },
-        [cancelPendingTerminalScroll, liveOutput, onChromeVisibleChange],
+        [cancelPendingTerminalScroll, liveOutput, onChromeVisibleChange, onRequestHistoryPage],
       );
 
       const contentContainerStyle = {

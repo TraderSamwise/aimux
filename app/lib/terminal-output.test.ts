@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ansiLineText } from "./ansi";
+import { CHAT_OUTPUT_CAPTURE_LINE_LIMIT } from "./chat-output-constants";
 import {
   formatPlainTextForDisplay,
   formatRichTextSpansForDisplay,
   formatTerminalOutputForDisplay,
+  terminalOutputTail,
 } from "./terminal-output";
 
 const plain = (output: string, dividerWidth?: number) =>
@@ -12,6 +14,22 @@ const plain = (output: string, dividerWidth?: number) =>
   );
 
 describe("formatTerminalOutputForDisplay", () => {
+  it("keeps the whole output capture window for scrollback", () => {
+    const output = Array.from({ length: CHAT_OUTPUT_CAPTURE_LINE_LIMIT }, (_, index) =>
+      String(index + 1),
+    ).join("\n");
+
+    expect(terminalOutputTail(output)).toBe(output);
+  });
+
+  it("trims only beyond the output capture window", () => {
+    const output = Array.from({ length: CHAT_OUTPUT_CAPTURE_LINE_LIMIT + 1 }, (_, index) =>
+      String(index + 1),
+    ).join("\n");
+
+    expect(terminalOutputTail(output).split("\n")[0]).toBe("2");
+  });
+
   it("collapses wrapped divider runs into one capped divider", () => {
     const divider = "────────────────────────────────────────────────────────────────";
     const output = ["before", divider, divider, "❯ write me a poem"].join("\n");
