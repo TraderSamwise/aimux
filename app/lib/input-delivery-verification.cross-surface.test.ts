@@ -128,6 +128,14 @@ function chatBindings(delivery: LivePaneInputDelivery) {
     setAcceptedComposerMessages: vi.fn(),
     isTransientRequestError: () => false,
     formatComposerSendFailure: String,
+    // The send clears the remembered caret alongside the draft. Declared here
+    // because this harness runs `handleSendMessage`'s real source against an
+    // explicit binding set: a name it reaches for and does not find throws
+    // mid-function, and the failure surfaces as a clearing call that never
+    // happened rather than as a missing binding.
+    composerSelectionRef: { current: { start: 0, end: 0 } },
+    composerFocusedRef: { current: false },
+    EMPTY_COMPOSER_SELECTION: { start: 0, end: 0 },
   };
 }
 
@@ -158,6 +166,10 @@ describe("submission receipts stay consistent across app surfaces", () => {
 
     for (const mode of AGENT_OUTPUT_VIEW_MODES) {
       const footer = evaluate(variable(chat, "composerFooterStateValue"), chat, {
+        // The screen memoises this value, so the extracted expression is a
+        // `useMemo` call. Run the factory straight through: this harness is
+        // asserting what the footer SAYS, not when React recomputes it.
+        useMemo: (factory: () => unknown) => factory(),
         composerFooterState,
         activityLabel: "Ready",
         activityLabelShimmer: false,

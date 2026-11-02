@@ -20,6 +20,7 @@ import {
   View,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
+  type TextInputSelectionChangeEventData,
   type TextStyle,
   type ViewStyle,
 } from "react-native";
@@ -373,9 +374,16 @@ type PendingAttachment = PickedAttachment & {
   uploadedAttachmentId?: string;
 };
 
+type ComposerTextSelection = {
+  end: number;
+  start: number;
+};
+
 type ComposerDraftSnapshot = {
   draft: string;
+  focused: boolean;
   pendingAttachments: PendingAttachment[];
+  selection: ComposerTextSelection;
 };
 
 type PendingComposerAck = {
@@ -391,6 +399,8 @@ type AcceptedComposerMessage = AcceptedComposerEcho;
 const composerDraftsByKey = new Map<string, ComposerDraftSnapshot>();
 type JotaiStore = ReturnType<typeof useStore>;
 
+const EMPTY_COMPOSER_SELECTION: ComposerTextSelection = { start: 0, end: 0 };
+
 function hasComposerDraftContent(text: string): boolean {
   return /\S/.test(text);
 }
@@ -404,6 +414,17 @@ function writeComposerDraft(store: JotaiStore, key: string | null, draft: string
   store.set(chatComposerDraftFamily(key), draft);
 }
 
+function clampComposerSelection(
+  selection: ComposerTextSelection | undefined,
+  text: string,
+): ComposerTextSelection {
+  if (!selection) return EMPTY_COMPOSER_SELECTION;
+  const max = text.length;
+  const start = Math.max(0, Math.min(selection.start, max));
+  const end = Math.max(0, Math.min(selection.end, max));
+  return { start, end };
+}
+
 function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapshot) {
   if (!key) return;
   if (snapshot.draft.length === 0 && snapshot.pendingAttachments.length === 0) {
@@ -413,6 +434,7 @@ function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapsh
   composerDraftsByKey.set(key, {
     ...snapshot,
     pendingAttachments: [...snapshot.pendingAttachments],
+    selection: clampComposerSelection(snapshot.selection, snapshot.draft),
   });
 }
 
@@ -719,11 +741,16 @@ export default function ChatScreen() {
   const interruptInFlightRef = useRef(false);
   const composerDraftSnapshotRef = useRef<ComposerDraftSnapshot>({
     draft: "",
+    focused: false,
     pendingAttachments: [],
+    selection: EMPTY_COMPOSER_SELECTION,
   });
   const composerDraftTextRef = useRef("");
+  const composerSelectionRef = useRef<ComposerTextSelection>(EMPTY_COMPOSER_SELECTION);
+  const [selectionRestoreToken, setSelectionRestoreToken] = useState(0);
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
   const sendErrorRef = useRef<string | null>(null);
+  const shouldRestoreComposerFocusRef = useRef(false);
   const session = sessionId
     ? (desktopState?.sessions.find((s) => s.id === sessionId) ??
       (activeShareForRoute ? sessionFromActiveShare(activeShareForRoute) : null))
@@ -800,7 +827,9 @@ export default function ChatScreen() {
     pendingAttachmentsRef.current = pendingAttachments;
     composerDraftSnapshotRef.current = {
       draft: composerDraftTextRef.current,
+      focused: composerFocusedRef.current,
       pendingAttachments,
+      selection: composerSelectionRef.current,
     };
   }, [pendingAttachments]);
 
@@ -813,7 +842,9 @@ export default function ChatScreen() {
     if (previousKey && previousKey !== composerDraftKey) {
       rememberComposerDraft(previousKey, {
         draft: readComposerDraft(jotaiStore, previousKey),
+        focused: composerFocusedRef.current,
         pendingAttachments: pendingAttachmentsRef.current,
+        selection: composerSelectionRef.current,
       });
     }
 
@@ -822,8 +853,18 @@ export default function ChatScreen() {
     const nextDraft = saved?.draft ?? "";
     writeComposerDraft(jotaiStore, composerDraftKey, nextDraft);
     composerDraftTextRef.current = nextDraft;
+    composerSelectionRef.current = clampComposerSelection(saved?.selection, nextDraft);
+    shouldRestoreComposerFocusRef.current = Boolean(saved?.focused);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the composer is re-seeded from the draft store when the conversation changes
     setPendingAttachments(saved?.pendingAttachments ? [...saved.pendingAttachments] : []);
+    // The composer restores its caret when this number changes, and only then.
+    // A child effect cannot simply read the ref above, because child effects
+    // run before parent ones -- the ref is still empty at that point. Bumping
+    // a counter here is the parent saying "a saved caret is ready now", which
+    // typing can never say by accident. Only when there IS one: bumping it for
+    // a conversation with nothing remembered would hand the child an empty
+    // selection and pin the caret to position 0 for a frame.
+    if (saved) setSelectionRestoreToken((token) => token + 1);
     setPendingComposerAck(null);
     setAcceptedComposerMessages([]);
     sendBusyRef.current = false;
@@ -839,7 +880,9 @@ export default function ChatScreen() {
       const activeKey = activeComposerDraftKeyRef.current;
       rememberComposerDraft(activeKey, {
         draft: readComposerDraft(jotaiStore, activeKey),
+        focused: composerFocusedRef.current,
         pendingAttachments: pendingAttachmentsRef.current,
+        selection: composerSelectionRef.current,
       });
     };
   }, [jotaiStore]);
@@ -1302,18 +1345,36 @@ export default function ChatScreen() {
   // boolean handed in could be hardwired, and in the first cut of this change
   // it was. Same bindings, same render, same pure helper, so the two calls
   // cannot disagree.
-  const composerFooterStateValue = composerFooterState({
-    activityLabel,
-    activityLabelShimmer,
-    awaitingEcho: composerSendPendingEcho,
-    error: sendError,
-    heldNotice: heldDeliveryNotice,
-    warningNotice: sendWarning,
-    mode: agentOutputViewMode,
-    rawOutputAllowed: true,
-    sending: sendBusy,
-    width: chatSplitWidth,
-  });
+  // Memoised because an object literal here is a new identity on every render,
+  // and it is a dependency of the `composerFooterContent` memo -- so without
+  // this that memo never hit, and every agent chunk re-rendered the whole
+  // composer subtree including the text input the user was typing into.
+  const composerFooterStateValue = useMemo(
+    () =>
+      composerFooterState({
+        activityLabel,
+        activityLabelShimmer,
+        awaitingEcho: composerSendPendingEcho,
+        error: sendError,
+        heldNotice: heldDeliveryNotice,
+        warningNotice: sendWarning,
+        mode: agentOutputViewMode,
+        rawOutputAllowed: true,
+        sending: sendBusy,
+        width: chatSplitWidth,
+      }),
+    [
+      activityLabel,
+      activityLabelShimmer,
+      agentOutputViewMode,
+      chatSplitWidth,
+      composerSendPendingEcho,
+      heldDeliveryNotice,
+      sendBusy,
+      sendError,
+      sendWarning,
+    ],
+  );
 
   useEffect(() => {
     if (!heldDelivery) return;
@@ -1522,6 +1583,7 @@ export default function ChatScreen() {
           } else {
             setSendError(deliveryState.text);
           }
+          composerSelectionRef.current = EMPTY_COMPOSER_SELECTION;
           if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
           // A refresh failure must not replace the queued-input explanation,
           // which is the one thing the user needs here.
@@ -1542,6 +1604,7 @@ export default function ChatScreen() {
         );
         writeComposerDraft(jotaiStore, sendComposerDraftKey, "");
         composerDraftTextRef.current = "";
+        composerSelectionRef.current = EMPTY_COMPOSER_SELECTION;
         setPendingAttachments([]);
         setPendingComposerAck(null);
         if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
@@ -1553,7 +1616,9 @@ export default function ChatScreen() {
           if (sendComposerDraftKey) {
             rememberComposerDraft(sendComposerDraftKey, {
               draft: text,
+              focused: composerFocusedRef.current,
               pendingAttachments: attachments,
+              selection: composerSelectionRef.current,
             });
           } else {
             releasePendingAttachmentPreviews(attachments);
@@ -1782,6 +1847,20 @@ export default function ChatScreen() {
     useCallback(() => registerChatComposerFocus(() => composerInputRef.current?.focus()), []),
   );
 
+  // Web only. Returning focus costs nothing there, but on a phone `focus()`
+  // raises the soft keyboard, and whether that is wanted is a question this
+  // repo answers in `chat-keyboard-intent.ts` -- a TTL, a programmatic-blur
+  // window and a hardware-keyboard check. Restoring focus from a remembered
+  // snapshot walks around all of it, so a conversation left focused and
+  // reopened would throw the keyboard up unasked. The caret is remembered on
+  // every platform; only the focus is web's.
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (!shouldRestoreComposerFocusRef.current || !showComposerFooter) return;
+    shouldRestoreComposerFocusRef.current = false;
+    requestAnimationFrame(() => composerInputRef.current?.focus());
+  }, [composerDraftKey, showComposerFooter]);
+
   useFocusEffect(
     useCallback(() => {
       screenFocusedRef.current = true;
@@ -1863,14 +1942,28 @@ export default function ChatScreen() {
   const handleComposerDraftChange = useCallback(
     (text: string) => {
       composerDraftTextRef.current = text;
+      composerSelectionRef.current = clampComposerSelection(composerSelectionRef.current, text);
       composerDraftSnapshotRef.current = {
         draft: text,
+        focused: composerFocusedRef.current,
         pendingAttachments: pendingAttachmentsRef.current,
+        selection: composerSelectionRef.current,
       };
       if (sendErrorRef.current) setSendError(null);
     },
     [setSendError],
   );
+
+  const handleComposerSelectionChange = useCallback((selection: ComposerTextSelection) => {
+    const nextSelection = clampComposerSelection(selection, composerDraftTextRef.current);
+    composerSelectionRef.current = nextSelection;
+    composerDraftSnapshotRef.current = {
+      draft: composerDraftTextRef.current,
+      focused: composerFocusedRef.current,
+      pendingAttachments: pendingAttachmentsRef.current,
+      selection: nextSelection,
+    };
+  }, []);
 
   const composerPasteProps = useMemo(
     () =>
@@ -1913,6 +2006,12 @@ export default function ChatScreen() {
   const setComposerNativeFocus = useCallback(
     (focused: boolean, updateFocusShell: () => void) => {
       composerFocusedRef.current = focused;
+      composerDraftSnapshotRef.current = {
+        draft: composerDraftTextRef.current,
+        focused,
+        pendingAttachments: pendingAttachmentsRef.current,
+        selection: composerSelectionRef.current,
+      };
       recordComposerFocusIntent(focused, {
         appVisible: isAppVisible(),
         hasHardwareKeyboard,
@@ -2189,9 +2288,12 @@ export default function ChatScreen() {
                     composerKeyboardProps={composerKeyboardProps}
                     composerPasteProps={composerPasteProps}
                     disabled={sendBusy}
+                    initialSelectionRef={composerSelectionRef}
+                    selectionRestoreToken={selectionRestoreToken}
                     onFocus={() => setComposerNativeFocus(true, onFocus)}
                     onBlur={() => setComposerNativeFocus(false, onBlur)}
                     onDraftChange={handleComposerDraftChange}
+                    onSelectionChange={handleComposerSelectionChange}
                   />
                   <View className="flex-row items-center gap-2">
                     <ComposerControl
@@ -2246,10 +2348,12 @@ export default function ChatScreen() {
       composerFooterStateValue,
       composerDraftKey,
       composerFooterBottomPadding,
+      selectionRestoreToken,
       composerKeyboardProps,
       composerPasteProps,
       handleAttachAttachment,
       handleComposerDraftChange,
+      handleComposerSelectionChange,
       handleDropAttachments,
       handleInterrupt,
       handleSendPress,
@@ -2889,9 +2993,22 @@ type ComposerDraftTextInputProps = {
   composerPasteProps?: Record<string, unknown>;
   disabled: boolean;
   draftKey: string;
+  /// The ref itself, not its value. Passing the value made this prop a new
+  /// identity on every keystroke, which re-ran the restore effect and pushed
+  /// `selection` back into react-native-web mid-typing.
+  ///
+  /// The window that made that visible is one keystroke wide. react-dom fires
+  /// `onSelect` on keydown AND keyup, so the remembered caret is current again
+  /// by keyup -- but between them it still holds the position from before the
+  /// character was inserted. Output landing inside that window re-applied it,
+  /// one character backwards, over and over while the agent streamed.
+  initialSelectionRef: React.RefObject<ComposerTextSelection>;
+  /// Bumped by the parent when a saved caret is ready to restore.
+  selectionRestoreToken: number;
   onBlur: () => void;
   onDraftChange: (text: string) => void;
   onFocus: () => void;
+  onSelectionChange: (selection: ComposerTextSelection) => void;
 };
 
 const ComposerDraftTextInput = React.memo(
@@ -2901,19 +3018,52 @@ const ComposerDraftTextInput = React.memo(
       composerPasteProps,
       disabled,
       draftKey,
+      initialSelectionRef,
       onBlur,
       onDraftChange,
       onFocus,
+      onSelectionChange,
+      selectionRestoreToken,
     },
     ref,
   ) {
     const [draft, setDraft] = useAtom(chatComposerDraftFamily(draftKey));
+    const [restoreSelection, setRestoreSelection] = useState<ComposerTextSelection | undefined>(
+      undefined,
+    );
+
+    // Keyed on the token alone: the parent bumps it when it has loaded a saved
+    // caret, and nothing else can. Typing cannot reach this.
+    //
+    // The clear on the next frame is belt-and-braces, not load-bearing:
+    // react-native-web's layout effect keys on `selection` by identity and
+    // applies it once, and `isSelectionStale` skips the call when the numbers
+    // already match. A value left in place would not peg the caret. It is
+    // cleared anyway so the prop cannot be mistaken for controlled state.
+    //
+    // Restoring on this component's own mount is deliberate: if the footer is
+    // hidden and shown again the caret belongs where the reader left it, which
+    // is the whole point of remembering it.
+    useEffect(() => {
+      if (selectionRestoreToken === 0) return;
+      setRestoreSelection(initialSelectionRef.current);
+      const frame = requestAnimationFrame(() => setRestoreSelection(undefined));
+      return () => cancelAnimationFrame(frame);
+    }, [initialSelectionRef, selectionRestoreToken]);
+
     const handleDraftChange = useCallback(
       (text: string) => {
         setDraft(text);
         onDraftChange(text);
       },
       [onDraftChange, setDraft],
+    );
+    const handleSelectionChange = useCallback(
+      (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
+        const nextSelection = clampComposerSelection(event.nativeEvent.selection, draft);
+        onSelectionChange(nextSelection);
+      },
+      [draft, onSelectionChange],
     );
 
     return (
@@ -2930,6 +3080,8 @@ const ComposerDraftTextInput = React.memo(
         onBlur={onBlur}
         value={draft}
         onChangeText={handleDraftChange}
+        selection={restoreSelection}
+        onSelectionChange={handleSelectionChange}
         {...composerKeyboardProps}
         {...COMPOSER_WEB_INPUT_PROPS}
         {...composerPasteProps}

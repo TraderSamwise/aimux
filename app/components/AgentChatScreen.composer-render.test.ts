@@ -155,4 +155,23 @@ describe("attachments are checked before anything is uploaded", () => {
   it("says which file and how large, not just that it failed", () => {
     expect(agentChatScreenSource()).toContain("attachmentTooLargeMessage({");
   });
+
+  it("restores the caret from a token the parent owns, not from a value that churns as you type", () => {
+    const source = agentChatScreenSource();
+
+    // The ref, not its contents. `composerSelectionRef.current` is reassigned
+    // a fresh object on every keystroke, so passing the VALUE re-ran the
+    // restore effect per character. react-dom reports a selection on keydown
+    // and keyup, so the remembered caret is one keystroke stale in between --
+    // and output landing in that window replayed it, a character backwards.
+    expect(source).toContain("initialSelectionRef={composerSelectionRef}");
+    expect(
+      source.includes("initialSelection={composerSelectionRef.current}"),
+      "passing the selection by value replays a stale caret on every render",
+    ).toBe(false);
+
+    // And the restore fires on the parent's token alone.
+    const input = componentSource(source, "ComposerDraftTextInput");
+    expect(input).toContain("}, [initialSelectionRef, selectionRestoreToken]);");
+  });
 });

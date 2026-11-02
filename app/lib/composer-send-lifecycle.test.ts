@@ -137,6 +137,16 @@ function harness(
     activeComposerDraftKeyRef: { current: key as string | null },
     composerDraftTextRef: { current: store.get(draftAtom) },
     pendingAttachmentsRef: { current: state.attachments },
+    // The send clears the remembered caret and records whether the composer
+    // held focus. This harness runs `handleSendMessage`'s real source against
+    // an explicit binding set, so a name it reaches for and does not find
+    // throws mid-send -- which surfaced as a draft that was never cleared.
+    composerSelectionRef: { current: { start: 0, end: 0 } },
+    composerFocusedRef: { current: false },
+    // Read by the draft-key effect this harness also extracts, not by
+    // `handleSendMessage` -- a review called it dead and removing it broke
+    // two tests, so it is declared with the reason it is needed.
+    shouldRestoreComposerFocusRef: { current: false },
   };
   const clearLocalInterruptHold = vi.fn();
   const base = {
@@ -152,11 +162,16 @@ function harness(
     firstOversizedAttachment,
     isTransientRequestError,
     releasePickedAttachment,
+    EMPTY_COMPOSER_SELECTION: { start: 0, end: 0 },
+    setSelectionRestoreToken: vi.fn(),
   };
   const helperNames = [
     "readComposerDraft",
     "writeComposerDraft",
     "rememberComposerDraft",
+    // Extracted from the screen rather than restated here, so the caret
+    // clamping this harness runs is the same code the app runs.
+    "clampComposerSelection",
     "releasePendingAttachmentPreviews",
     "attachmentHistoryPartsFromUploads",
     "buildAcceptedComposerMessage",
