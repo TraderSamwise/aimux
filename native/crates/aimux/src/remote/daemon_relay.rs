@@ -23,6 +23,7 @@ use tokio::time::Instant;
 
 use crate::async_runtime::{spawn_blocking_named, task_name};
 use crate::daemon::routing::DaemonRouteUrl;
+use crate::debug_logging::{LogLevel, log_always_at};
 use crate::desktop_notifier::{DesktopNotificationPayload, send_desktop_notification_and_wait};
 use crate::launcher_env::DEFAULT_DAEMON_PORT;
 use crate::machine_identity::MachineIdentity;
@@ -504,6 +505,28 @@ impl RelaySupervisor {
                 if !force && !finished {
                     return;
                 }
+                // A replacement leaves no other trace, and that is how it
+                // hid. The new runner gets a fresh status snapshot -- no
+                // close code, no reason, streak zero -- so from every surface
+                // it looks like a link that has only ever been connected.
+                // The close recording cannot catch it either: this stops the
+                // runner first, and an orderly stop is deliberately not an
+                // ending worth stamping.
+                //
+                // Measured on sam-mini: `lastConnectedAt` moved while NOT a
+                // single "relay connection closed" was logged, which is only
+                // possible if the socket never closed and the runner was
+                // swapped underneath it.
+                log_always_at(
+                    LogLevel::Warn,
+                    "relay runner replaced",
+                    "relay",
+                    Some(json!({
+                        "previousStatus": status.map(|status| status.as_str()),
+                        "forced": force,
+                        "relayUrl": relay_url,
+                    })),
+                );
                 handle.stop();
             }
         }
@@ -705,6 +728,40 @@ mod tests {
     use tokio::io::AsyncReadExt;
     use tokio::sync::Notify;
     use tokio::time::Instant;
+
+    /// A replacement must say so, because nothing else can.
+    ///
+    /// `RelaySupervisor::connect` stops the live runner and builds a new one
+    /// with a fresh status snapshot -- no close code, no reason, streak zero
+    /// -- so every surface then reports a link that has only ever been
+    /// connected. The close recording cannot see it either: the stop comes
+    /// first, and an orderly stop is deliberately not an ending worth
+    /// stamping. Measured on sam-mini, `lastConnectedAt` moved while not one
+    /// "relay connection closed" line was written, which is only possible if
+    /// the socket never closed and the runner was swapped underneath it.
+    ///
+    /// `connect` dials for real, so it cannot be driven here; the log is
+    /// pinned at the source instead, bounded to the branch that does the
+    /// replacing so a line anywhere else in the function cannot satisfy it.
+    #[test]
+    fn replacing_the_relay_runner_is_logged_where_it_happens() {
+        let source = include_str!("daemon_relay.rs");
+        let guard = source
+            .find("if !force && !finished {")
+            .expect("the keep-the-existing-runner guard is still here");
+        let stop = source[guard..]
+            .find("handle.stop();")
+            .expect("the replacement still stops the old runner");
+        let branch = &source[guard..guard + stop];
+        assert!(
+            branch.contains("\"relay runner replaced\""),
+            "a replacement must be logged between the guard and the stop, or it leaves no trace at all"
+        );
+        assert!(
+            branch.contains("previousStatus"),
+            "the log must say what it replaced, or it cannot be told from a reconnect"
+        );
+    }
 
     #[test]
     fn relay_daemon_response_over_the_cap_is_an_error() {
