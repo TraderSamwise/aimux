@@ -747,6 +747,7 @@ export default function ChatScreen() {
   });
   const composerDraftTextRef = useRef("");
   const composerSelectionRef = useRef<ComposerTextSelection>(EMPTY_COMPOSER_SELECTION);
+  const [selectionRestoreToken, setSelectionRestoreToken] = useState(0);
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
   const sendErrorRef = useRef<string | null>(null);
   const shouldRestoreComposerFocusRef = useRef(false);
@@ -856,6 +857,14 @@ export default function ChatScreen() {
     shouldRestoreComposerFocusRef.current = Boolean(saved?.focused);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the composer is re-seeded from the draft store when the conversation changes
     setPendingAttachments(saved?.pendingAttachments ? [...saved.pendingAttachments] : []);
+    // The composer restores its caret when this number changes, and only then.
+    // A child effect cannot simply read the ref above, because child effects
+    // run before parent ones -- the ref is still empty at that point. Bumping
+    // a counter here is the parent saying "a saved caret is ready now", which
+    // typing can never say by accident. Only when there IS one: bumping it for
+    // a conversation with nothing remembered would hand the child an empty
+    // selection and pin the caret to position 0 for a frame.
+    if (saved) setSelectionRestoreToken((token) => token + 1);
     setPendingComposerAck(null);
     setAcceptedComposerMessages([]);
     sendBusyRef.current = false;
@@ -1336,18 +1345,36 @@ export default function ChatScreen() {
   // boolean handed in could be hardwired, and in the first cut of this change
   // it was. Same bindings, same render, same pure helper, so the two calls
   // cannot disagree.
-  const composerFooterStateValue = composerFooterState({
-    activityLabel,
-    activityLabelShimmer,
-    awaitingEcho: composerSendPendingEcho,
-    error: sendError,
-    heldNotice: heldDeliveryNotice,
-    warningNotice: sendWarning,
-    mode: agentOutputViewMode,
-    rawOutputAllowed: true,
-    sending: sendBusy,
-    width: chatSplitWidth,
-  });
+  // Memoised because an object literal here is a new identity on every render,
+  // and it is a dependency of the `composerFooterContent` memo -- so without
+  // this that memo never hit, and every agent chunk re-rendered the whole
+  // composer subtree including the text input the user was typing into.
+  const composerFooterStateValue = useMemo(
+    () =>
+      composerFooterState({
+        activityLabel,
+        activityLabelShimmer,
+        awaitingEcho: composerSendPendingEcho,
+        error: sendError,
+        heldNotice: heldDeliveryNotice,
+        warningNotice: sendWarning,
+        mode: agentOutputViewMode,
+        rawOutputAllowed: true,
+        sending: sendBusy,
+        width: chatSplitWidth,
+      }),
+    [
+      activityLabel,
+      activityLabelShimmer,
+      agentOutputViewMode,
+      chatSplitWidth,
+      composerSendPendingEcho,
+      heldDeliveryNotice,
+      sendBusy,
+      sendError,
+      sendWarning,
+    ],
+  );
 
   useEffect(() => {
     if (!heldDelivery) return;
@@ -1919,19 +1946,16 @@ export default function ChatScreen() {
     [setSendError],
   );
 
-  const handleComposerSelectionChange = useCallback(
-    (selection: ComposerTextSelection) => {
-      const nextSelection = clampComposerSelection(selection, composerDraftTextRef.current);
-      composerSelectionRef.current = nextSelection;
-      composerDraftSnapshotRef.current = {
-        draft: composerDraftTextRef.current,
-        focused: composerFocusedRef.current,
-        pendingAttachments: pendingAttachmentsRef.current,
-        selection: nextSelection,
-      };
-    },
-    [],
-  );
+  const handleComposerSelectionChange = useCallback((selection: ComposerTextSelection) => {
+    const nextSelection = clampComposerSelection(selection, composerDraftTextRef.current);
+    composerSelectionRef.current = nextSelection;
+    composerDraftSnapshotRef.current = {
+      draft: composerDraftTextRef.current,
+      focused: composerFocusedRef.current,
+      pendingAttachments: pendingAttachmentsRef.current,
+      selection: nextSelection,
+    };
+  }, []);
 
   const composerPasteProps = useMemo(
     () =>
@@ -2256,7 +2280,8 @@ export default function ChatScreen() {
                     composerKeyboardProps={composerKeyboardProps}
                     composerPasteProps={composerPasteProps}
                     disabled={sendBusy}
-                    initialSelection={composerSelectionRef.current}
+                    initialSelectionRef={composerSelectionRef}
+                    selectionRestoreToken={selectionRestoreToken}
                     onFocus={() => setComposerNativeFocus(true, onFocus)}
                     onBlur={() => setComposerNativeFocus(false, onBlur)}
                     onDraftChange={handleComposerDraftChange}
@@ -2315,6 +2340,7 @@ export default function ChatScreen() {
       composerFooterStateValue,
       composerDraftKey,
       composerFooterBottomPadding,
+      selectionRestoreToken,
       composerKeyboardProps,
       composerPasteProps,
       handleAttachAttachment,
@@ -2959,7 +2985,14 @@ type ComposerDraftTextInputProps = {
   composerPasteProps?: Record<string, unknown>;
   disabled: boolean;
   draftKey: string;
-  initialSelection: ComposerTextSelection;
+  /// The ref itself, not its value. Passing the value made this prop a new
+  /// identity on every keystroke, which re-ran the restore effect and pushed
+  /// `selection` back into react-native-web mid-typing -- and because web only
+  /// reports a selection on the DOM `select` event, never on typing, the value
+  /// it restored was stale. The caret jumped backwards on every agent chunk.
+  initialSelectionRef: React.RefObject<ComposerTextSelection>;
+  /// Bumped by the parent when a saved caret is ready to restore.
+  selectionRestoreToken: number;
   onBlur: () => void;
   onDraftChange: (text: string) => void;
   onFocus: () => void;
@@ -2973,24 +3006,33 @@ const ComposerDraftTextInput = React.memo(
       composerPasteProps,
       disabled,
       draftKey,
-      initialSelection,
+      initialSelectionRef,
       onBlur,
       onDraftChange,
       onFocus,
       onSelectionChange,
+      selectionRestoreToken,
     },
     ref,
   ) {
     const [draft, setDraft] = useAtom(chatComposerDraftFamily(draftKey));
     const [restoreSelection, setRestoreSelection] = useState<ComposerTextSelection | undefined>(
-      () => clampComposerSelection(initialSelection, draft),
+      undefined,
     );
 
+    // Controlled for exactly one frame. `selection` is the only lever
+    // react-native-web gives for placing a caret, and leaving it set would peg
+    // the caret there on every later render -- so it is handed over and
+    // immediately taken back. Keyed on the token alone: the parent bumps that
+    // when it has loaded a saved caret, and nothing else can.
     useEffect(() => {
-      setRestoreSelection(clampComposerSelection(initialSelection, draft));
+      if (selectionRestoreToken === 0) return;
+      const saved = initialSelectionRef.current;
+      if (!saved) return;
+      setRestoreSelection(saved);
       const frame = requestAnimationFrame(() => setRestoreSelection(undefined));
       return () => cancelAnimationFrame(frame);
-    }, [draftKey, initialSelection]);
+    }, [initialSelectionRef, selectionRestoreToken]);
 
     const handleDraftChange = useCallback(
       (text: string) => {

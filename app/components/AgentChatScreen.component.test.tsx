@@ -131,7 +131,12 @@ import { COMPOSER_SEND_AWAITING_ECHO_NOTICE } from "@/lib/composer-footer";
 import { agentStateKey, projectStateKey } from "@/lib/project-key";
 import { ResponsiveViewportProvider } from "@/lib/responsive-viewport";
 import { createResponsiveViewportValue } from "@/lib/responsive-viewport-core";
-import { outputAvailableFamily, outputBufferFamily } from "@/stores/chat";
+import {
+  activityFamily,
+  activityTextFamily,
+  outputAvailableFamily,
+  outputBufferFamily,
+} from "@/stores/chat";
 import { desktopStateFamily } from "@/stores/desktopState";
 import {
   agentOutputViewModeAtom,
@@ -301,6 +306,46 @@ describe("AgentChatScreen mounted web composer footer", () => {
     await waitFor(() => expect(document.activeElement).toBe(remountedInput));
     expect(remountedInput.selectionStart).toBe(caret);
     expect(remountedInput.selectionEnd).toBe(caret);
+  });
+
+  it("leaves the caret alone while the agent is talking", async () => {
+    // daxx: "when im typing, any agent activity pulls my editbox focus,
+    // interrupting whatever i'm writing. during fast actions it happens over
+    // and over."
+    //
+    // The shape that matters is a STALE stored caret. Web reports a selection
+    // only on the DOM `select` event, which typing does not fire -- so after
+    // the user types, the remembered position is wherever they last clicked,
+    // and anything that replays it drags the caret backwards.
+    const mounted = await mountChat("chat", { draft: "Explain shared chat" });
+    const input = mounted.input as HTMLTextAreaElement;
+
+    // Click into the middle: this is the last position web will report.
+    const clicked = "Explain ".length;
+    fireEvent.focus(input);
+    input.setSelectionRange(clicked, clicked);
+    fireEvent.select(input, { target: { selectionStart: clicked, selectionEnd: clicked } });
+
+    // Now type on, with no `select` event, exactly as a browser behaves.
+    const typed = "Explain shared chat refreshes";
+    fireEvent.change(input, { target: { value: typed } });
+    input.setSelectionRange(typed.length, typed.length);
+
+    const agent = agentStateKey(projectStateKey({ path: "/repo" }), sessionId);
+    for (const label of ["Leavening… (1s)", "Leavening… (2s · ↓ 31 tokens)", "Brewed for 3s"]) {
+      await act(async () => {
+        mounted.store.set(activityFamily(agent), "running");
+        mounted.store.set(activityTextFamily(agent), label);
+        mounted.store.set(outputBufferFamily(agent), `terminal fixture output ${label}`);
+      });
+    }
+    await act(async () => {
+      await new Promise((settle) => requestAnimationFrame(() => settle(null)));
+    });
+
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(typed.length);
+    expect(input.selectionEnd).toBe(typed.length);
   });
 
   it("renders an accepted send awaiting its echo in terminal mode", async () => {
