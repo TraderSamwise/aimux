@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("react-native", () => ({ View: "View" }));
@@ -30,6 +33,11 @@ vi.mock("@/stores/projectViews", () => ({ kickProjectApiViewRefreshAtom: {} }));
 
 import type { DesktopSession } from "@/lib/desktop-state";
 import { overseerActionForSession, planeActionForSession } from "@/components/agent-actions";
+
+const source = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "agent-actions.tsx"),
+  "utf8",
+);
 
 function session(input: Partial<DesktopSession> = {}): DesktopSession {
   return { id: "agent-1", status: "running", ...input };
@@ -86,5 +94,13 @@ describe("overseer row actions", () => {
     expect(overseerActionForSession(session({ team: { role: "overseer" } }))).toBe("promote");
     expect(overseerActionForSession(session({ projectControl: true, role: "qa" }))).toBeNull();
     expect(overseerActionForSession(session({ scribe: true, projectControl: true }))).toBeNull();
+  });
+});
+
+describe("agent action hover labels", () => {
+  it("uses the action label for both accessibility and the web hover label", () => {
+    expect(source).toContain("onHoverIn");
+    expect(source).toContain("accessibilityLabel={label}");
+    expect(source).toMatch(/<Text[\s\S]*>\s*\{label\}\s*<\/Text>/);
   });
 });

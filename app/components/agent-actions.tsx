@@ -1,6 +1,6 @@
 import React from "react";
 import type { ProjectStateKey } from "@/lib/project-key";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, Platform, View } from "react-native";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
   GitFork,
@@ -372,21 +372,38 @@ function ActionButton({
   loading?: boolean;
   label: string;
 }) {
+  const [hovered, setHovered] = React.useState(false);
+  const showTooltip = Platform.OS === "web" && hovered;
+
   return (
-    <Button
-      variant="outline"
-      size="icon"
-      onPress={onPress}
-      disabled={disabled}
-      accessibilityLabel={label}
-      accessibilityState={{ busy: Boolean(loading), disabled: Boolean(disabled) }}
-      className={cn("p-0", sizeClass)}
-    >
-      {loading ? (
-        <ActivityIndicator size="small" color="#a1a1aa" />
-      ) : (
-        <Icon size={iconSize} color="#a1a1aa" />
-      )}
-    </Button>
+    <View className={cn("relative shrink-0", sizeClass)}>
+      <Button
+        variant="outline"
+        size="icon"
+        onPress={onPress}
+        onHoverIn={Platform.OS === "web" ? () => setHovered(true) : undefined}
+        onHoverOut={Platform.OS === "web" ? () => setHovered(false) : undefined}
+        disabled={disabled}
+        accessibilityLabel={label}
+        accessibilityState={{ busy: Boolean(loading), disabled: Boolean(disabled) }}
+        className={cn("p-0", sizeClass)}
+      >
+        {loading ? (
+          <ActivityIndicator size="small" color="#a1a1aa" />
+        ) : (
+          <Icon size={iconSize} color="#a1a1aa" />
+        )}
+      </Button>
+      {showTooltip ? (
+        <View
+          pointerEvents="none"
+          className="absolute left-0 top-full z-50 mt-1 max-w-64 rounded-md border border-border bg-popover px-2 py-1 shadow-lg"
+        >
+          <Text className="text-[11px] text-popover-foreground" numberOfLines={1}>
+            {label}
+          </Text>
+        </View>
+      ) : null}
+    </View>
   );
 }
