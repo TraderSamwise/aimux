@@ -34,11 +34,18 @@ export function terminalVisibleOutputForLiveChange<TLine>(
   },
 ): TerminalVisibleOutput<TLine> {
   if (current.sessionKey !== liveOutput.sessionKey || intent === "pinned") return liveOutput;
-  if (
-    liveOutput.outputText !== current.outputText &&
-    liveOutput.outputText.endsWith(current.outputText)
-  ) {
-    return liveOutput;
+  if (current.outputText.length === 0) return liveOutput;
+  // A history page deepens the window, and the snapshot it arrives in is the
+  // whole window as of the fetch -- so a working agent's page is deeper at the
+  // top and longer at the bottom at once. Finding the frozen tail at a
+  // non-zero offset is what says "something was prepended", and it holds
+  // whether or not the bottom grew too; a suffix test only recognised the
+  // idle case, which is not a case anyone scrolls back through. Offset zero is
+  // ordinary live growth and stays frozen, which is the freeze this whole
+  // function exists for.
+  if (liveOutput.outputText.length > current.outputText.length) {
+    const frozenTailAt = liveOutput.outputText.indexOf(current.outputText);
+    if (frozenTailAt > 0) return liveOutput;
   }
   return current;
 }

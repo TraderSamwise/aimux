@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ansiLineText } from "./ansi";
-import { CHAT_OUTPUT_CAPTURE_LINE_LIMIT } from "./chat-output-constants";
+import { CHAT_OUTPUT_MAX_CAPTURE_LINES } from "./chat-output-constants";
 import {
   formatPlainTextForDisplay,
   formatRichTextSpansForDisplay,
@@ -15,7 +15,7 @@ const plain = (output: string, dividerWidth?: number) =>
 
 describe("formatTerminalOutputForDisplay", () => {
   it("keeps the whole output capture window for scrollback", () => {
-    const output = Array.from({ length: CHAT_OUTPUT_CAPTURE_LINE_LIMIT }, (_, index) =>
+    const output = Array.from({ length: CHAT_OUTPUT_MAX_CAPTURE_LINES }, (_, index) =>
       String(index + 1),
     ).join("\n");
 
@@ -23,7 +23,7 @@ describe("formatTerminalOutputForDisplay", () => {
   });
 
   it("trims only beyond the output capture window", () => {
-    const output = Array.from({ length: CHAT_OUTPUT_CAPTURE_LINE_LIMIT + 1 }, (_, index) =>
+    const output = Array.from({ length: CHAT_OUTPUT_MAX_CAPTURE_LINES + 1 }, (_, index) =>
       String(index + 1),
     ).join("\n");
 

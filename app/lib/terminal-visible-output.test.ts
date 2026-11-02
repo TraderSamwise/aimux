@@ -65,6 +65,52 @@ describe("terminal visible output", () => {
     );
   });
 
+  it("accepts prepended history while the agent is still emitting", () => {
+    // The snapshot a history page arrives in is the WHOLE window as of the
+    // fetch, so for a working agent it is deeper at the top and longer at the
+    // bottom in the same update. A suffix test sees that as neither, and the
+    // scrollback the reader asked for never renders -- which is every case
+    // that matters, because an idle agent is not one anybody scrolls back
+    // through.
+    const current = terminalVisibleOutputForPinned({
+      lines: ["newer"],
+      outputAvailable: true,
+      outputText: "newer",
+      sessionKey: "session-1",
+    });
+    const liveOutput = terminalVisibleOutputForPinned({
+      lines: ["older", "newer", "newest"],
+      outputAvailable: true,
+      outputText: "older\nnewer\nnewest",
+      sessionKey: "session-1",
+    });
+
+    expect(terminalVisibleOutputForLiveChange(current, { intent: "reading", liveOutput })).toBe(
+      liveOutput,
+    );
+  });
+
+  it("keeps the frozen tail when output is only appended", () => {
+    // The freeze itself, stated as the inverse of the two acceptances above:
+    // growth at the bottom alone must not move a reader who is scrolled up.
+    const current = terminalVisibleOutputForPinned({
+      lines: ["older", "newer"],
+      outputAvailable: true,
+      outputText: "older\nnewer",
+      sessionKey: "session-1",
+    });
+    const liveOutput = terminalVisibleOutputForPinned({
+      lines: ["older", "newer", "newest"],
+      outputAvailable: true,
+      outputText: "older\nnewer\nnewest",
+      sessionKey: "session-1",
+    });
+
+    expect(terminalVisibleOutputForLiveChange(current, { intent: "reading", liveOutput })).toBe(
+      current,
+    );
+  });
+
   it("resets to live output when the session changes", () => {
     const current = terminalVisibleOutputForPinned({
       lines: ["old"],

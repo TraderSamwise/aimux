@@ -1,5 +1,5 @@
 import { ansiLineText, parseAnsiLines, type AnsiSpan } from "@/lib/ansi";
-import { CHAT_OUTPUT_CAPTURE_LINE_LIMIT } from "@/lib/chat-output-constants";
+import { CHAT_OUTPUT_MAX_CAPTURE_LINES } from "@/lib/chat-output-constants";
 import type { HistoryTextSpan } from "@/lib/events";
 
 const DIVIDER_LINE_MIN_LENGTH = 24;
@@ -19,7 +19,7 @@ interface TerminalOutputDisplayOptions {
 
 export function terminalOutputTail(
   output: string,
-  maxLines = CHAT_OUTPUT_CAPTURE_LINE_LIMIT,
+  maxLines = CHAT_OUTPUT_MAX_CAPTURE_LINES,
 ): string {
   return output.replace(/\r/g, "").split("\n").slice(-maxLines).join("\n");
 }
