@@ -230,6 +230,28 @@ describe("a transcript too short to scroll", () => {
     ).not.toBeNull();
   });
 
+  it("stops asking after three unanswered tries, with no gesture to retry", () => {
+    // Releasing the latch on a failure could have been a loop: this view
+    // cannot scroll, so `chatHistoryPagingRetryable` -- which needs the reader
+    // to move well away from the top -- can never clear the failure count.
+    // The count is what bounds it instead, and this pins the bound.
+    let state = chatHistoryPagerState();
+    let asks = 0;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const next = chatHistoryPagerContentSized(state, { ...ask, metrics: short });
+      if (next.request === null) {
+        state = next.state;
+        continue;
+      }
+      asks += 1;
+      state = chatHistoryPagerResolved(next.state, {
+        requestedStartLine: next.request,
+        arrived: false,
+      });
+    }
+    expect(asks).toBe(CHAT_HISTORY_PAGE_FAILURE_LIMIT);
+  });
+
   it("keeps the page spent once one actually arrived", () => {
     const asked = chatHistoryPagerContentSized(chatHistoryPagerState(), {
       ...ask,
