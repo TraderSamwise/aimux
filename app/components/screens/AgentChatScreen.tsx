@@ -1156,7 +1156,7 @@ export default function ChatScreen() {
   });
 
   // Coming back from a long background, re-read the deepest tail the service
-  // will serve rather than the 160-line default: a shallow window shares no
+  // will serve rather than the opening window: a shallow window shares no
   // message with the stored transcript, and the lines between were never
   // fetched. `-2000 < currentStartLine` takes the wholesale-replace branch.
   // One place both paging paths decide what a page meant. A React updater has
