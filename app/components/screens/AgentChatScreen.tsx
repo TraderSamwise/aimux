@@ -72,6 +72,7 @@ import { AttachmentDropZone } from "@/components/AttachmentDropZone";
 import {
   CHAT_RECONNECTING_PANEL_RESERVE,
   CHAT_SESSION_HEADER_HEIGHT,
+  chatChromeRowHeight,
   chatControlPanelReserveHeight,
   chatOverlayPanelReserveHeight,
   chatTopBarReserveHeight,
@@ -782,6 +783,12 @@ export default function ChatScreen() {
   // comes from the store -- and because a resolved page must read it without
   // an impure React updater.
   const chatHistoryPagerRef = useRef(chatHistoryPagerState());
+  // Measured, because the panels below these rows are positioned by adding
+  // their heights up and every pixel a guess is over by is a visible gap.
+  const [sessionHeaderHeight, setSessionHeaderHeight] = useState<number | undefined>(undefined);
+  const [reconnectingPanelHeight, setReconnectingPanelHeight] = useState<number | undefined>(
+    undefined,
+  );
   const [pendingChatOutputHistoryStartLine, setPendingChatOutputHistoryStartLine] = useState<
     number | null
   >(null);
@@ -1020,9 +1027,11 @@ export default function ChatScreen() {
     pairingBannerVisible: showPairingBanner,
     topInset: resolvedTopInset,
   });
-  const chatHeaderTopReserve = topBarHeight + CHAT_SESSION_HEADER_HEIGHT;
+  const chatHeaderTopReserve =
+    topBarHeight + chatChromeRowHeight(sessionHeaderHeight, CHAT_SESSION_HEADER_HEIGHT);
   const chatOverlayPanelReserve = chatOverlayPanelReserveHeight({
     manageOpen: managePanelOpen,
+    reconnectingPanelHeight,
     serviceDisconnected,
     shareDetailsExpanded: shareDetailsExpanded || !activeShare,
     shareOpen: sharePanelOpen,
@@ -1035,10 +1044,14 @@ export default function ChatScreen() {
     windowHeight,
   });
   const chatControlPanelTopReserve =
-    chatHeaderTopReserve + (serviceDisconnected ? CHAT_RECONNECTING_PANEL_RESERVE : 0);
+    chatHeaderTopReserve +
+    (serviceDisconnected
+      ? chatChromeRowHeight(reconnectingPanelHeight, CHAT_RECONNECTING_PANEL_RESERVE)
+      : 0);
   const chatTopContentReserve = chatTranscriptTopReserveHeight({
     pairingBannerVisible: showPairingBanner,
     panelReserveHeight: chatOverlayPanelReserve,
+    sessionHeaderHeight,
     topInset: resolvedTopInset,
   });
   const chatBottomContentReserve =
@@ -2445,7 +2458,13 @@ export default function ChatScreen() {
               }}
               visible={effectiveChatChromeVisible}
             >
-              <View className="border-b border-border bg-background px-4 py-3 flex-row items-center justify-between">
+              <View
+                className="border-b border-border bg-background px-4 py-3 flex-row items-center justify-between"
+                onLayout={(event: LayoutChangeEvent) => {
+                  const next = event.nativeEvent.layout.height;
+                  setSessionHeaderHeight((current) => (current === next ? current : next));
+                }}
+              >
                 {useScrollableNativeHeader ? (
                   <ScrollView
                     horizontal
@@ -2892,6 +2911,10 @@ export default function ChatScreen() {
             {serviceDisconnected ? (
               <View
                 className="border-b border-border bg-card/80 px-4 py-2"
+                onLayout={(event: LayoutChangeEvent) => {
+                  const next = event.nativeEvent.layout.height;
+                  setReconnectingPanelHeight((current) => (current === next ? current : next));
+                }}
                 style={{
                   left: 0,
                   position: "absolute",

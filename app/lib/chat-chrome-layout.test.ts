@@ -6,6 +6,7 @@ import {
   CHAT_SESSION_HEADER_HEIGHT,
   CHAT_SHARE_PANEL_COLLAPSED_RESERVE,
   CHAT_TOP_BAR_BASE_HEIGHT,
+  chatChromeRowHeight,
   chatControlPanelReserveHeight,
   chatOverlayPanelReserveHeight,
   chatTopBarReserveHeight,
@@ -22,7 +23,7 @@ describe("chat chrome layout", () => {
     );
   });
 
-  it("reserves session header plus open overlays without measuring rendered height", () => {
+  it("reserves session header plus open overlays, falling back before measurement", () => {
     expect(
       chatTranscriptTopReserveHeight({
         pairingBannerVisible: true,
@@ -32,6 +33,47 @@ describe("chat chrome layout", () => {
     ).toBe(
       CHAT_TOP_BAR_BASE_HEIGHT + 54 + CHAT_PAIRING_BANNER_HEIGHT + 200 + CHAT_SESSION_HEADER_HEIGHT,
     );
+  });
+
+  it("prefers a measured chrome row to the constant guess", () => {
+    // The constants are guesses at rendered height and the panels below are
+    // positioned by adding them up, so a guess that is too tall IS the gap.
+    expect(chatChromeRowHeight(66, CHAT_SESSION_HEADER_HEIGHT)).toBe(66);
+    expect(chatChromeRowHeight(53, CHAT_RECONNECTING_PANEL_RESERVE)).toBe(53);
+  });
+
+  it("falls back until a measurement exists, and never to a zero", () => {
+    // Zero is what an unmeasured layout reports, and taking it would put the
+    // panels on top of the header for a frame -- worse than the hairline a
+    // slightly tall guess leaves.
+    expect(chatChromeRowHeight(undefined, CHAT_SESSION_HEADER_HEIGHT)).toBe(
+      CHAT_SESSION_HEADER_HEIGHT,
+    );
+    expect(chatChromeRowHeight(0, CHAT_SESSION_HEADER_HEIGHT)).toBe(CHAT_SESSION_HEADER_HEIGHT);
+  });
+
+  it("reserves the measured rows once they have measured", () => {
+    // The fallback path above is only half of it. These two consumers have to
+    // agree with the panel offsets, and before this they quietly did not.
+    expect(
+      chatTranscriptTopReserveHeight({
+        pairingBannerVisible: false,
+        panelReserveHeight: 0,
+        sessionHeaderHeight: 66,
+        topInset: 0,
+      }),
+    ).toBe(CHAT_TOP_BAR_BASE_HEIGHT + 66);
+
+    expect(
+      chatOverlayPanelReserveHeight({
+        manageOpen: false,
+        reconnectingPanelHeight: 53,
+        serviceDisconnected: true,
+        shareDetailsExpanded: false,
+        shareOpen: false,
+        windowHeight: 900,
+      }),
+    ).toBe(53);
   });
 
   it("reserves reconnect plus the largest active control panel", () => {
