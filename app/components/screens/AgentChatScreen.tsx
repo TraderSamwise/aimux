@@ -3554,7 +3554,9 @@ const AgentTerminalOutputPane = React.memo(
           ref={scrollRef as React.Ref<ScrollView>}
           className="flex-1 bg-background"
           contentContainerStyle={contentContainerStyle}
-          keyboardDismissMode="on-drag"
+          // No `keyboardDismissMode` on web. See the transcript pane below:
+          // react-native-web dismisses on every scroll event, not on a drag,
+          // and dismissing on web is only `blurTextInput()`.
           keyboardShouldPersistTaps="handled"
           onContentSizeChange={handleTerminalContentSizeChange}
           onLayout={handleTerminalLayout}
@@ -4087,7 +4089,14 @@ const AgentChatTranscript = React.memo(
         ref={ref as React.Ref<ScrollView>}
         className="flex-1 bg-background"
         contentContainerStyle={contentContainerStyle}
-        keyboardDismissMode="on-drag"
+        // Deliberately absent on web, and this is the whole focus-theft bug.
+        // react-native-web's ScrollView calls `dismissKeyboard()` from
+        // `_handleScroll` on EVERY scroll event when this is "on-drag" --
+        // there is no drag detection -- and on web `dismissKeyboard()` is
+        // only `blurTextInput()`. Every agent output tick scrolls this
+        // transcript to the end, so every tick blurred the composer out from
+        // under whoever was typing. Native keeps it, where a keyboard exists
+        // and a drag really should dismiss it.
         keyboardShouldPersistTaps="handled"
         onContentSizeChange={onContentSizeChange}
         onLayout={onLayout}
