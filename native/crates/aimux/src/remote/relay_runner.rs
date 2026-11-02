@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 use std::future::poll_fn;
 use std::task::{Context, Poll};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -25,9 +25,9 @@ use crate::remote::relay_client::{
     project_events_subscribed_frame, response_frame,
 };
 use crate::remote::websocket::{
-    BoxFuture, INITIAL_RETRY_MS, MAX_HANDSHAKE_FAILURES, WebSocketConnectionParts,
-    WebSocketConnector, WebSocketEvent, WebSocketReader, WebSocketWriter, next_retry_ms,
-    relay_subprotocols,
+    BoxFuture, INITIAL_RETRY_MS, MAX_HANDSHAKE_FAILURES, MIN_HELD_CONNECTION_MS,
+    WebSocketConnectionParts, WebSocketConnector, WebSocketEvent, WebSocketReader, WebSocketWriter,
+    next_retry_ms, relay_subprotocols,
 };
 
 /// The pump drains the outbox before every socket read. Five hundred twelve
@@ -199,6 +199,18 @@ impl RelayRunner {
         }
     }
 
+    fn note_short_connection(&self) {
+        if let Ok(mut snapshot) = self.handle.status.lock() {
+            snapshot.short_connection_streak = snapshot.short_connection_streak.saturating_add(1);
+        }
+    }
+
+    fn note_connection_held(&self) {
+        if let Ok(mut snapshot) = self.handle.status.lock() {
+            snapshot.short_connection_streak = 0;
+        }
+    }
+
     /// Stamp what happened to the socket that just went away.
     ///
     /// Called for every ending, including the ones the loop then decides to
@@ -267,9 +279,21 @@ impl RelayRunner {
 
             match connect_result {
                 Ok(connection) => {
-                    retry_ms = INITIAL_RETRY_MS;
                     self.set_status(RelayStatus::Connected, None);
+                    let connected_at = Instant::now();
                     let close = self.pump(connection).await;
+                    // The ladder resets on a connection that HELD, not on one
+                    // that opened. Resetting on Ok meant a socket dying a
+                    // second later reset it too, so the backoff never engaged
+                    // and the daemon dialled every few seconds for as long as
+                    // it ran.
+                    let held = connected_at.elapsed();
+                    if held >= Duration::from_millis(MIN_HELD_CONNECTION_MS) {
+                        retry_ms = INITIAL_RETRY_MS;
+                        self.note_connection_held();
+                    } else {
+                        self.note_short_connection();
+                    }
                     if !self.handle.is_stopped() {
                         self.record_close(close.code, close.reason.clone());
                     }
@@ -1149,6 +1173,96 @@ mod tests {
         assert!(
             snapshot.last_error.is_none(),
             "last_error still answers 'why are we not connected now', so a connect clears it"
+        );
+    }
+
+    /// Every dial succeeds and every socket dies at once -- the measured
+    /// shape of the mini's link. Records the delay the loop sleeps for.
+    struct AlwaysDiesConnector {
+        handle: super::RelayHandle,
+        dials: usize,
+        stop_after: usize,
+    }
+
+    impl crate::remote::websocket::WebSocketConnector for AlwaysDiesConnector {
+        fn connect<'a>(
+            &'a mut self,
+            _url: &'a str,
+            _subprotocols: &'a [String],
+        ) -> BoxFuture<'a, Result<WebSocketConnectionParts, WebSocketError>> {
+            self.dials += 1;
+            if self.dials >= self.stop_after {
+                self.handle.stop();
+            }
+            Box::pin(async move {
+                Ok(WebSocketConnectionParts {
+                    reader: Box::new(ScriptedWebSocketReader {
+                        events: VecDeque::from([WebSocketEvent::Closed {
+                            code: Some(1006),
+                            reason: "died".to_owned(),
+                        }]),
+                    }),
+                    writer: Box::new(RecordingWebSocketWriter {
+                        sent: Arc::new(Mutex::new(Vec::new())),
+                    }),
+                })
+            })
+        }
+    }
+
+    /// The backoff has to engage when connections keep dying instantly.
+    ///
+    /// It did not: `retry_ms` was reset the moment `connect` returned Ok,
+    /// before the socket had proved anything, so a link whose sockets lasted
+    /// about a second reset the ladder every time and the daemon dialled the
+    /// relay every few seconds for as long as it ran. Measured on sam-mini as
+    /// one dial every 3-4 seconds, without pause.
+    #[test]
+    fn a_connection_that_dies_at_once_does_not_reset_the_backoff() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let runner = RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        );
+        let mut connector = AlwaysDiesConnector {
+            handle: runner.handle(),
+            dials: 0,
+            stop_after: 4,
+        };
+        let delays = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&delays);
+
+        // aimux-async-seam: test - traverses the ladder without real waiting
+        crate::async_runtime::block_on_named("relay:test-backoff", async {
+            let mut sleep = move |delay: Duration| {
+                recorded.lock().unwrap().push(delay.as_millis() as u64);
+                Box::pin(async {}) as BoxFuture<'static, ()>
+            };
+            runner.run_with_sleep(&mut connector, &mut sleep).await;
+        });
+
+        let delays = delays.lock().unwrap().clone();
+        assert!(
+            delays.len() >= 2,
+            "the loop must have retried more than once, got {delays:?}"
+        );
+        assert!(
+            delays.windows(2).all(|pair| pair[1] > pair[0]),
+            "each retry must wait longer than the last, got {delays:?}"
+        );
+
+        let snapshot = runner.handle().status();
+        assert!(
+            snapshot.short_connection_streak >= 2,
+            "consecutive instant deaths must be counted, got {}",
+            snapshot.short_connection_streak
+        );
+        assert_eq!(
+            snapshot.to_json()["flapping"],
+            serde_json::Value::Bool(true),
+            "a link whose sockets keep dying at once reports as flapping, not merely connected"
         );
     }
 

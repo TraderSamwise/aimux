@@ -47,6 +47,32 @@ fn daemon_status_reports_what_the_last_relay_socket_died_of() {
         Some("Last close: (no code) connection reset by peer (at 2026-11-02T07:27:58Z)")
     );
 
+    // Connected and flapping is the state the old surface could not express.
+    assert_eq!(
+        render_core_daemon_status_lines(&json!({
+            "daemon": { "pid": 12, "port": 49152 },
+            "projects": [],
+            "relay": {
+                "status": "connected",
+                "relayUrl": "wss://relay.example",
+                "flapping": true,
+                "consecutiveShortConnections": 7,
+                "shortConnectionThresholdMs": 2000,
+                "lastCloseCode": 1006,
+                "lastCloseReason": "died",
+                "lastDisconnectedAt": "2026-11-02T07:27:58Z"
+            }
+        })),
+        vec![
+            "Daemon pid=12 port=49152",
+            "Known projects: 0",
+            "Live project services: 0",
+            "Relay: connected (wss://relay.example)",
+            "Relay is FLAPPING: 7 connections in a row died within 2s",
+            "Last close: 1006 died (at 2026-11-02T07:27:58Z)",
+        ]
+    );
+
     // A link that has never dropped says nothing, rather than an empty row.
     assert_eq!(
         render_core_daemon_status_lines(&json!({

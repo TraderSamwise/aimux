@@ -145,11 +145,36 @@ pub fn render_core_daemon_status_lines(payload: &Value) -> Vec<String> {
         // reconnecting every second, because it is a reading of one instant.
         // What the last socket died of is the fact that distinguishes a live
         // link from a collapsing one, and this surface used to drop it.
+        lines.extend(relay_flapping_line(relay));
         lines.extend(relay_last_close_line(relay));
     } else {
         lines.push("Relay: off".into());
     }
     lines
+}
+
+/// Says the link is collapsing, which "connected" does not.
+///
+/// The status word is a reading of one instant. On the mini it read
+/// "connected" for an hour while the socket was being replaced every second,
+/// so the word was true at every sample and wrong about the link.
+fn relay_flapping_line(relay: Option<&serde_json::Map<String, Value>>) -> Option<String> {
+    let relay = relay?;
+    if relay.get("flapping").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let streak = relay
+        .get("consecutiveShortConnections")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let threshold_ms = relay
+        .get("shortConnectionThresholdMs")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    Some(format!(
+        "Relay is FLAPPING: {streak} connections in a row died within {}s",
+        threshold_ms / 1000
+    ))
 }
 
 /// "Last close: 1006 Replaced (at 2026-11-02T07:27:58Z)", when there was one.

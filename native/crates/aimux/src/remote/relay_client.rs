@@ -6,7 +6,9 @@
 
 use serde_json::{Value, json};
 
-use crate::remote::websocket::WebSocketError;
+use crate::remote::websocket::{
+    FLAPPING_CONNECTION_STREAK, MIN_HELD_CONNECTION_MS, WebSocketError,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RelayStatus {
@@ -47,6 +49,13 @@ pub struct RelayStatusSnapshot {
     pub last_disconnected_at: Option<String>,
     pub last_close_code: Option<u16>,
     pub last_close_reason: Option<String>,
+    /// Connections in a row that did not outlive `MIN_HELD_CONNECTION_MS`.
+    ///
+    /// `status` is a reading of one instant, and on a link that reconnects
+    /// every second the instant is true and useless -- it said "connected"
+    /// throughout. This is the shape of the failure rather than a sample of
+    /// it, so a caller can tell a live link from a collapsing one.
+    pub short_connection_streak: u32,
 }
 
 impl RelayStatusSnapshot {
@@ -59,6 +68,13 @@ impl RelayStatusSnapshot {
             "lastDisconnectedAt": self.last_disconnected_at,
             "lastCloseCode": self.last_close_code,
             "lastCloseReason": self.last_close_reason,
+            "consecutiveShortConnections": self.short_connection_streak,
+            "flapping": self.short_connection_streak >= FLAPPING_CONNECTION_STREAK,
+            // Carried rather than re-stated by the renderer: `core_text` is
+            // built without the `remote-control` feature, so it cannot reach
+            // this constant, and a second copy of a threshold is how two
+            // surfaces come to disagree about the same number.
+            "shortConnectionThresholdMs": MIN_HELD_CONNECTION_MS,
         })
     }
 }

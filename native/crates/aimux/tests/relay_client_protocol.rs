@@ -234,6 +234,9 @@ fn the_status_snapshot_matches_the_shape_the_cli_reads() {
             "lastDisconnectedAt": null,
             "lastCloseCode": null,
             "lastCloseReason": null,
+            "consecutiveShortConnections": 0,
+            "flapping": false,
+            "shortConnectionThresholdMs": 2000,
         })
     );
 
@@ -248,6 +251,7 @@ fn the_status_snapshot_matches_the_shape_the_cli_reads() {
         last_disconnected_at: Some("2026-09-10T00:00:01.000Z".to_owned()),
         last_close_code: Some(1006),
         last_close_reason: Some("Replaced".to_owned()),
+        short_connection_streak: 7,
     };
     assert_eq!(
         after_a_drop.to_json(),
@@ -259,7 +263,21 @@ fn the_status_snapshot_matches_the_shape_the_cli_reads() {
             "lastDisconnectedAt": "2026-09-10T00:00:01.000Z",
             "lastCloseCode": 1006,
             "lastCloseReason": "Replaced",
+            "consecutiveShortConnections": 7,
+            "flapping": true,
+            "shortConnectionThresholdMs": 2000,
         })
+    );
+
+    // Two short connections is not yet a pattern, and saying so would train
+    // a reader to ignore the word.
+    assert_eq!(
+        RelayStatusSnapshot {
+            short_connection_streak: 2,
+            ..RelayStatusSnapshot::default()
+        }
+        .to_json()["flapping"],
+        json!(false)
     );
     // An unset status must read as disconnected, never as connected.
     assert_eq!(
