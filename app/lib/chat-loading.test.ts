@@ -130,15 +130,18 @@ describe("chatTranscriptPlaceholderState", () => {
   });
 
   it("still shows a real failure immediately, even while loading", () => {
-    // The inverse, and the reason this is scoped to transient errors: a
-    // session that no longer exists must not hide behind a spinner.
+    // The inverse, and the reason this is scoped to transient errors. The
+    // message is the one the project service really returns for a session
+    // that is gone (`json_error(404, format!("Session \"{session_id}\" not
+    // found"))`), not an invented string: a permanent failure must not hide
+    // behind a spinner.
     expect(
       chatTranscriptPlaceholderState({
         initialStatus: "loading",
-        lastError: "Session not found",
+        lastError: 'Session "claude-6t1ucu" not found',
         messageCount: 0,
       }),
-    ).toMatchObject({ kind: "error", message: "Session not found" });
+    ).toMatchObject({ kind: "error", message: 'Session "claude-6t1ucu" not found' });
   });
 
   it("surfaces a transient error once the load is no longer in flight", () => {

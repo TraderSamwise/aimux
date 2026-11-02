@@ -189,7 +189,21 @@ export function useAgentOutputFeed({
         }
         return loaded;
       } catch (error) {
-        if (options.surfaceError) setLastError(getErrorMessage(error));
+        if (options.surfaceError) {
+          setLastError(getErrorMessage(error));
+          // A retry that failed has to LEAVE "loading". This path set the
+          // status to loading and armed nothing, so a rejected retry left it
+          // pinned there for ever, with only a later successful poll to get
+          // it out. That was survivable while any error outranked the
+          // loader; once a transient error stops pre-empting it, the same
+          // state renders as a spinner that never resolves and whose Retry
+          // button is gone, because a loading placeholder offers none.
+          //
+          // Immediately, not on a timer: the reader asked for this one, and
+          // an explicit retry that failed is a failure now, not in twelve
+          // seconds.
+          setInitialStatusState((current) => initialAgentOutputFeedTimedOutState(current, feedKey));
+        }
         throw error;
       }
     },
