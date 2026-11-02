@@ -20,6 +20,7 @@ import {
   View,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
+  type TextInputSelectionChangeEventData,
   type TextStyle,
   type ViewStyle,
 } from "react-native";
@@ -373,9 +374,16 @@ type PendingAttachment = PickedAttachment & {
   uploadedAttachmentId?: string;
 };
 
+type ComposerTextSelection = {
+  end: number;
+  start: number;
+};
+
 type ComposerDraftSnapshot = {
   draft: string;
+  focused: boolean;
   pendingAttachments: PendingAttachment[];
+  selection: ComposerTextSelection;
 };
 
 type PendingComposerAck = {
@@ -391,6 +399,8 @@ type AcceptedComposerMessage = AcceptedComposerEcho;
 const composerDraftsByKey = new Map<string, ComposerDraftSnapshot>();
 type JotaiStore = ReturnType<typeof useStore>;
 
+const EMPTY_COMPOSER_SELECTION: ComposerTextSelection = { start: 0, end: 0 };
+
 function hasComposerDraftContent(text: string): boolean {
   return /\S/.test(text);
 }
@@ -404,6 +414,17 @@ function writeComposerDraft(store: JotaiStore, key: string | null, draft: string
   store.set(chatComposerDraftFamily(key), draft);
 }
 
+function clampComposerSelection(
+  selection: ComposerTextSelection | undefined,
+  text: string,
+): ComposerTextSelection {
+  if (!selection) return EMPTY_COMPOSER_SELECTION;
+  const max = text.length;
+  const start = Math.max(0, Math.min(selection.start, max));
+  const end = Math.max(0, Math.min(selection.end, max));
+  return { start, end };
+}
+
 function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapshot) {
   if (!key) return;
   if (snapshot.draft.length === 0 && snapshot.pendingAttachments.length === 0) {
@@ -413,6 +434,7 @@ function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapsh
   composerDraftsByKey.set(key, {
     ...snapshot,
     pendingAttachments: [...snapshot.pendingAttachments],
+    selection: clampComposerSelection(snapshot.selection, snapshot.draft),
   });
 }
 
@@ -719,11 +741,15 @@ export default function ChatScreen() {
   const interruptInFlightRef = useRef(false);
   const composerDraftSnapshotRef = useRef<ComposerDraftSnapshot>({
     draft: "",
+    focused: false,
     pendingAttachments: [],
+    selection: EMPTY_COMPOSER_SELECTION,
   });
   const composerDraftTextRef = useRef("");
+  const composerSelectionRef = useRef<ComposerTextSelection>(EMPTY_COMPOSER_SELECTION);
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
   const sendErrorRef = useRef<string | null>(null);
+  const shouldRestoreComposerFocusRef = useRef(false);
   const session = sessionId
     ? (desktopState?.sessions.find((s) => s.id === sessionId) ??
       (activeShareForRoute ? sessionFromActiveShare(activeShareForRoute) : null))
@@ -800,7 +826,9 @@ export default function ChatScreen() {
     pendingAttachmentsRef.current = pendingAttachments;
     composerDraftSnapshotRef.current = {
       draft: composerDraftTextRef.current,
+      focused: composerFocusedRef.current,
       pendingAttachments,
+      selection: composerSelectionRef.current,
     };
   }, [pendingAttachments]);
 
@@ -813,7 +841,9 @@ export default function ChatScreen() {
     if (previousKey && previousKey !== composerDraftKey) {
       rememberComposerDraft(previousKey, {
         draft: readComposerDraft(jotaiStore, previousKey),
+        focused: composerFocusedRef.current,
         pendingAttachments: pendingAttachmentsRef.current,
+        selection: composerSelectionRef.current,
       });
     }
 
@@ -822,6 +852,8 @@ export default function ChatScreen() {
     const nextDraft = saved?.draft ?? "";
     writeComposerDraft(jotaiStore, composerDraftKey, nextDraft);
     composerDraftTextRef.current = nextDraft;
+    composerSelectionRef.current = clampComposerSelection(saved?.selection, nextDraft);
+    shouldRestoreComposerFocusRef.current = Boolean(saved?.focused);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the composer is re-seeded from the draft store when the conversation changes
     setPendingAttachments(saved?.pendingAttachments ? [...saved.pendingAttachments] : []);
     setPendingComposerAck(null);
@@ -839,7 +871,9 @@ export default function ChatScreen() {
       const activeKey = activeComposerDraftKeyRef.current;
       rememberComposerDraft(activeKey, {
         draft: readComposerDraft(jotaiStore, activeKey),
+        focused: composerFocusedRef.current,
         pendingAttachments: pendingAttachmentsRef.current,
+        selection: composerSelectionRef.current,
       });
     };
   }, [jotaiStore]);
@@ -1522,6 +1556,7 @@ export default function ChatScreen() {
           } else {
             setSendError(deliveryState.text);
           }
+          composerSelectionRef.current = EMPTY_COMPOSER_SELECTION;
           if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
           // A refresh failure must not replace the queued-input explanation,
           // which is the one thing the user needs here.
@@ -1542,6 +1577,7 @@ export default function ChatScreen() {
         );
         writeComposerDraft(jotaiStore, sendComposerDraftKey, "");
         composerDraftTextRef.current = "";
+        composerSelectionRef.current = EMPTY_COMPOSER_SELECTION;
         setPendingAttachments([]);
         setPendingComposerAck(null);
         if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
@@ -1553,7 +1589,9 @@ export default function ChatScreen() {
           if (sendComposerDraftKey) {
             rememberComposerDraft(sendComposerDraftKey, {
               draft: text,
+              focused: composerFocusedRef.current,
               pendingAttachments: attachments,
+              selection: composerSelectionRef.current,
             });
           } else {
             releasePendingAttachmentPreviews(attachments);
@@ -1782,6 +1820,12 @@ export default function ChatScreen() {
     useCallback(() => registerChatComposerFocus(() => composerInputRef.current?.focus()), []),
   );
 
+  useEffect(() => {
+    if (!shouldRestoreComposerFocusRef.current || !showComposerFooter) return;
+    shouldRestoreComposerFocusRef.current = false;
+    requestAnimationFrame(() => composerInputRef.current?.focus());
+  }, [composerDraftKey, showComposerFooter]);
+
   useFocusEffect(
     useCallback(() => {
       screenFocusedRef.current = true;
@@ -1863,13 +1907,30 @@ export default function ChatScreen() {
   const handleComposerDraftChange = useCallback(
     (text: string) => {
       composerDraftTextRef.current = text;
+      composerSelectionRef.current = clampComposerSelection(composerSelectionRef.current, text);
       composerDraftSnapshotRef.current = {
         draft: text,
+        focused: composerFocusedRef.current,
         pendingAttachments: pendingAttachmentsRef.current,
+        selection: composerSelectionRef.current,
       };
       if (sendErrorRef.current) setSendError(null);
     },
     [setSendError],
+  );
+
+  const handleComposerSelectionChange = useCallback(
+    (selection: ComposerTextSelection) => {
+      const nextSelection = clampComposerSelection(selection, composerDraftTextRef.current);
+      composerSelectionRef.current = nextSelection;
+      composerDraftSnapshotRef.current = {
+        draft: composerDraftTextRef.current,
+        focused: composerFocusedRef.current,
+        pendingAttachments: pendingAttachmentsRef.current,
+        selection: nextSelection,
+      };
+    },
+    [],
   );
 
   const composerPasteProps = useMemo(
@@ -1913,6 +1974,12 @@ export default function ChatScreen() {
   const setComposerNativeFocus = useCallback(
     (focused: boolean, updateFocusShell: () => void) => {
       composerFocusedRef.current = focused;
+      composerDraftSnapshotRef.current = {
+        draft: composerDraftTextRef.current,
+        focused,
+        pendingAttachments: pendingAttachmentsRef.current,
+        selection: composerSelectionRef.current,
+      };
       recordComposerFocusIntent(focused, {
         appVisible: isAppVisible(),
         hasHardwareKeyboard,
@@ -2189,9 +2256,11 @@ export default function ChatScreen() {
                     composerKeyboardProps={composerKeyboardProps}
                     composerPasteProps={composerPasteProps}
                     disabled={sendBusy}
+                    initialSelection={composerSelectionRef.current}
                     onFocus={() => setComposerNativeFocus(true, onFocus)}
                     onBlur={() => setComposerNativeFocus(false, onBlur)}
                     onDraftChange={handleComposerDraftChange}
+                    onSelectionChange={handleComposerSelectionChange}
                   />
                   <View className="flex-row items-center gap-2">
                     <ComposerControl
@@ -2250,6 +2319,7 @@ export default function ChatScreen() {
       composerPasteProps,
       handleAttachAttachment,
       handleComposerDraftChange,
+      handleComposerSelectionChange,
       handleDropAttachments,
       handleInterrupt,
       handleSendPress,
@@ -2889,9 +2959,11 @@ type ComposerDraftTextInputProps = {
   composerPasteProps?: Record<string, unknown>;
   disabled: boolean;
   draftKey: string;
+  initialSelection: ComposerTextSelection;
   onBlur: () => void;
   onDraftChange: (text: string) => void;
   onFocus: () => void;
+  onSelectionChange: (selection: ComposerTextSelection) => void;
 };
 
 const ComposerDraftTextInput = React.memo(
@@ -2901,19 +2973,38 @@ const ComposerDraftTextInput = React.memo(
       composerPasteProps,
       disabled,
       draftKey,
+      initialSelection,
       onBlur,
       onDraftChange,
       onFocus,
+      onSelectionChange,
     },
     ref,
   ) {
     const [draft, setDraft] = useAtom(chatComposerDraftFamily(draftKey));
+    const [restoreSelection, setRestoreSelection] = useState<ComposerTextSelection | undefined>(
+      () => clampComposerSelection(initialSelection, draft),
+    );
+
+    useEffect(() => {
+      setRestoreSelection(clampComposerSelection(initialSelection, draft));
+      const frame = requestAnimationFrame(() => setRestoreSelection(undefined));
+      return () => cancelAnimationFrame(frame);
+    }, [draftKey, initialSelection]);
+
     const handleDraftChange = useCallback(
       (text: string) => {
         setDraft(text);
         onDraftChange(text);
       },
       [onDraftChange, setDraft],
+    );
+    const handleSelectionChange = useCallback(
+      (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
+        const nextSelection = clampComposerSelection(event.nativeEvent.selection, draft);
+        onSelectionChange(nextSelection);
+      },
+      [draft, onSelectionChange],
     );
 
     return (
@@ -2930,6 +3021,8 @@ const ComposerDraftTextInput = React.memo(
         onBlur={onBlur}
         value={draft}
         onChangeText={handleDraftChange}
+        selection={restoreSelection}
+        onSelectionChange={handleSelectionChange}
         {...composerKeyboardProps}
         {...COMPOSER_WEB_INPUT_PROPS}
         {...composerPasteProps}
