@@ -136,7 +136,6 @@ function chatBindings(delivery: LivePaneInputDelivery) {
     composerSelectionRef: { current: { start: 0, end: 0 } },
     composerFocusedRef: { current: false },
     EMPTY_COMPOSER_SELECTION: { start: 0, end: 0 },
-    rememberComposerDraft: vi.fn(),
   };
 }
 

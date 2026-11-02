@@ -143,6 +143,9 @@ function harness(
     // throws mid-send -- which surfaced as a draft that was never cleared.
     composerSelectionRef: { current: { start: 0, end: 0 } },
     composerFocusedRef: { current: false },
+    // Read by the draft-key effect this harness also extracts, not by
+    // `handleSendMessage` -- a review called it dead and removing it broke
+    // two tests, so it is declared with the reason it is needed.
     shouldRestoreComposerFocusRef: { current: false },
   };
   const clearLocalInterruptHold = vi.fn();

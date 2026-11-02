@@ -1847,7 +1847,15 @@ export default function ChatScreen() {
     useCallback(() => registerChatComposerFocus(() => composerInputRef.current?.focus()), []),
   );
 
+  // Web only. Returning focus costs nothing there, but on a phone `focus()`
+  // raises the soft keyboard, and whether that is wanted is a question this
+  // repo answers in `chat-keyboard-intent.ts` -- a TTL, a programmatic-blur
+  // window and a hardware-keyboard check. Restoring focus from a remembered
+  // snapshot walks around all of it, so a conversation left focused and
+  // reopened would throw the keyboard up unasked. The caret is remembered on
+  // every platform; only the focus is web's.
   useEffect(() => {
+    if (Platform.OS !== "web") return;
     if (!shouldRestoreComposerFocusRef.current || !showComposerFooter) return;
     shouldRestoreComposerFocusRef.current = false;
     requestAnimationFrame(() => composerInputRef.current?.focus());
@@ -3038,9 +3046,7 @@ const ComposerDraftTextInput = React.memo(
     // is the whole point of remembering it.
     useEffect(() => {
       if (selectionRestoreToken === 0) return;
-      const saved = initialSelectionRef.current;
-      if (!saved) return;
-      setRestoreSelection(saved);
+      setRestoreSelection(initialSelectionRef.current);
       const frame = requestAnimationFrame(() => setRestoreSelection(undefined));
       return () => cancelAnimationFrame(frame);
     }, [initialSelectionRef, selectionRestoreToken]);
