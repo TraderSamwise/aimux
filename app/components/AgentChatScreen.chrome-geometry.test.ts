@@ -19,11 +19,15 @@ function screenSource(): string {
 describe("chat chrome geometry", () => {
   it("positions the panels from measured rows, not from the guesses", () => {
     const source = screenSource();
-    expect(source).toContain(
-      "topBarHeight + chatChromeRowHeight(sessionHeaderHeight, CHAT_SESSION_HEADER_HEIGHT)",
+    // Whitespace-tolerant, for the same reason the two below are: at 88 chars
+    // against a 100 print width, one more argument makes prettier wrap after
+    // `topBarHeight +` and a geometry gate fails for a reformat. Round 1
+    // raised this and I fixed only half of it.
+    expect(source).toMatch(
+      /topBarHeight\s*\+\s*chatChromeRowHeight\(\s*sessionHeaderHeight,\s*CHAT_SESSION_HEADER_HEIGHT,?\s*\)/s,
     );
-    expect(source).toContain(
-      "chatChromeRowHeight(reconnectingPanelHeight, CHAT_RECONNECTING_PANEL_RESERVE)",
+    expect(source).toMatch(
+      /chatChromeRowHeight\(\s*reconnectingPanelHeight,\s*CHAT_RECONNECTING_PANEL_RESERVE,?\s*\)/s,
     );
   });
 
