@@ -87,15 +87,19 @@ export function chatControlPanelReserveHeight({
 export function chatTranscriptTopReserveHeight({
   panelReserveHeight,
   pairingBannerVisible,
+  sessionHeaderHeight,
   topInset,
 }: {
   panelReserveHeight: number;
   pairingBannerVisible: boolean;
+  /** Measured, when it has been. Both this and the panel offsets have to use
+   * the same answer, or the transcript starts lower than the panels end. */
+  sessionHeaderHeight?: number;
   topInset: number;
 }): number {
   return (
     chatTopBarReserveHeight({ pairingBannerVisible, topInset }) +
-    CHAT_SESSION_HEADER_HEIGHT +
+    chatChromeRowHeight(sessionHeaderHeight, CHAT_SESSION_HEADER_HEIGHT) +
     panelReserveHeight
   );
 }

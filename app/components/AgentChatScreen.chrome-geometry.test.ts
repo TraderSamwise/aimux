@@ -39,6 +39,13 @@ describe("chat chrome geometry", () => {
     );
   });
 
+  it("gives the transcript the same header height as the panels", () => {
+    // The miss this catches is mine: the panel offsets took the measurement
+    // and the transcript's own top padding kept the constant, so the two
+    // disagreed by exactly the pixels this change is about.
+    expect(screenSource()).toContain("sessionHeaderHeight,\n    topInset: resolvedTopInset,");
+  });
+
   it("does not add a bare constant back into the offsets", () => {
     const source = screenSource();
     expect(source).not.toContain("topBarHeight + CHAT_SESSION_HEADER_HEIGHT");

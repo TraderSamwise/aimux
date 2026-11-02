@@ -1050,6 +1050,7 @@ export default function ChatScreen() {
   const chatTopContentReserve = chatTranscriptTopReserveHeight({
     pairingBannerVisible: showPairingBanner,
     panelReserveHeight: chatOverlayPanelReserve,
+    sessionHeaderHeight,
     topInset: resolvedTopInset,
   });
   const chatBottomContentReserve =
