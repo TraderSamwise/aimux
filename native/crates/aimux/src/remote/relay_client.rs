@@ -35,6 +35,18 @@ pub struct RelayStatusSnapshot {
     pub relay_url: String,
     pub last_connected_at: Option<String>,
     pub last_error: Option<String>,
+    /// When the last socket went away, and why it went away.
+    ///
+    /// Separate from `last_error`, which answers "why are we not connected
+    /// RIGHT NOW" and is therefore cleared by the next connect. These three
+    /// answer "what happened to the last socket", and nothing clears them.
+    /// A link that reconnects every second cleared `last_error` every second,
+    /// so `aimux daemon status` reported `connected` with no error while the
+    /// connection was collapsing continuously -- the one fact that would have
+    /// named the cause was erased a second after it was recorded.
+    pub last_disconnected_at: Option<String>,
+    pub last_close_code: Option<u16>,
+    pub last_close_reason: Option<String>,
 }
 
 impl RelayStatusSnapshot {
@@ -44,6 +56,9 @@ impl RelayStatusSnapshot {
             "relayUrl": self.relay_url,
             "lastConnectedAt": self.last_connected_at,
             "lastError": self.last_error,
+            "lastDisconnectedAt": self.last_disconnected_at,
+            "lastCloseCode": self.last_close_code,
+            "lastCloseReason": self.last_close_reason,
         })
     }
 }

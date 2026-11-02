@@ -222,6 +222,7 @@ fn the_status_snapshot_matches_the_shape_the_cli_reads() {
         relay_url: "wss://relay.example".to_owned(),
         last_connected_at: Some("2026-09-10T00:00:00.000Z".to_owned()),
         last_error: None,
+        ..RelayStatusSnapshot::default()
     };
     assert_eq!(
         snapshot.to_json(),
@@ -230,6 +231,34 @@ fn the_status_snapshot_matches_the_shape_the_cli_reads() {
             "relayUrl": "wss://relay.example",
             "lastConnectedAt": "2026-09-10T00:00:00.000Z",
             "lastError": null,
+            "lastDisconnectedAt": null,
+            "lastCloseCode": null,
+            "lastCloseReason": null,
+        })
+    );
+
+    // Connected AND carrying the last close is the state that matters: it is
+    // what a flapping link looks like from here, and the state in which the
+    // old shape reported nothing wrong at all.
+    let after_a_drop = RelayStatusSnapshot {
+        status: Some(RelayStatus::Connected),
+        relay_url: "wss://relay.example".to_owned(),
+        last_connected_at: Some("2026-09-10T00:00:02.000Z".to_owned()),
+        last_error: None,
+        last_disconnected_at: Some("2026-09-10T00:00:01.000Z".to_owned()),
+        last_close_code: Some(1006),
+        last_close_reason: Some("Replaced".to_owned()),
+    };
+    assert_eq!(
+        after_a_drop.to_json(),
+        json!({
+            "status": "connected",
+            "relayUrl": "wss://relay.example",
+            "lastConnectedAt": "2026-09-10T00:00:02.000Z",
+            "lastError": null,
+            "lastDisconnectedAt": "2026-09-10T00:00:01.000Z",
+            "lastCloseCode": 1006,
+            "lastCloseReason": "Replaced",
         })
     );
     // An unset status must read as disconnected, never as connected.

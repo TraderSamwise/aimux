@@ -1,6 +1,65 @@
 use aimux::core_text::*;
 use serde_json::json;
 
+/// `aimux daemon status` used to print the status word and nothing else, so
+/// a link reconnecting every second read as plainly "connected" -- the status
+/// is a reading of one instant, and on a flapping link the instant is a lie.
+/// What the last socket died of is the fact that tells them apart, so it has
+/// to reach this surface.
+#[test]
+fn daemon_status_reports_what_the_last_relay_socket_died_of() {
+    assert_eq!(
+        render_core_daemon_status_lines(&json!({
+            "daemon": { "pid": 12, "port": 49152 },
+            "projects": [],
+            "relay": {
+                "status": "connected",
+                "relayUrl": "wss://relay.example",
+                "lastCloseCode": 1006,
+                "lastCloseReason": "Replaced",
+                "lastDisconnectedAt": "2026-11-02T07:27:58Z"
+            }
+        })),
+        vec![
+            "Daemon pid=12 port=49152",
+            "Known projects: 0",
+            "Live project services: 0",
+            "Relay: connected (wss://relay.example)",
+            "Last close: 1006 Replaced (at 2026-11-02T07:27:58Z)",
+        ]
+    );
+
+    // A handshake that never became a socket has no code, and saying so is
+    // different from saying nothing: it places the failure before the upgrade.
+    assert_eq!(
+        render_core_daemon_status_lines(&json!({
+            "daemon": { "pid": 12, "port": 49152 },
+            "projects": [],
+            "relay": {
+                "status": "reconnecting",
+                "relayUrl": "wss://relay.example",
+                "lastCloseReason": "connection reset by peer",
+                "lastDisconnectedAt": "2026-11-02T07:27:58Z"
+            }
+        }))
+        .last()
+        .map(String::as_str),
+        Some("Last close: (no code) connection reset by peer (at 2026-11-02T07:27:58Z)")
+    );
+
+    // A link that has never dropped says nothing, rather than an empty row.
+    assert_eq!(
+        render_core_daemon_status_lines(&json!({
+            "daemon": { "pid": 12, "port": 49152 },
+            "projects": [],
+            "relay": { "status": "connected", "relayUrl": "wss://relay.example" }
+        }))
+        .last()
+        .map(String::as_str),
+        Some("Relay: connected (wss://relay.example)")
+    );
+}
+
 #[test]
 fn renders_daemon_and_host_status_with_typescript_fallbacks() {
     assert_eq!(

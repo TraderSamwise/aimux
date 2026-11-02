@@ -141,10 +141,41 @@ pub fn render_core_daemon_status_lines(payload: &Value) -> Vec<String> {
             status.unwrap(),
             relay_url.map(|url| format!(" ({url})")).unwrap_or_default()
         ));
+        // The status word alone said "connected" all through a link that was
+        // reconnecting every second, because it is a reading of one instant.
+        // What the last socket died of is the fact that distinguishes a live
+        // link from a collapsing one, and this surface used to drop it.
+        lines.extend(relay_last_close_line(relay));
     } else {
         lines.push("Relay: off".into());
     }
     lines
+}
+
+/// "Last close: 1006 Replaced (at 2026-11-02T07:27:58Z)", when there was one.
+fn relay_last_close_line(relay: Option<&serde_json::Map<String, Value>>) -> Option<String> {
+    let relay = relay?;
+    let code = relay.get("lastCloseCode").and_then(Value::as_u64);
+    let reason = relay
+        .get("lastCloseReason")
+        .and_then(Value::as_str)
+        .filter(|reason| !reason.is_empty());
+    let at = relay.get("lastDisconnectedAt").and_then(Value::as_str);
+    if code.is_none() && reason.is_none() && at.is_none() {
+        return None;
+    }
+    let mut line = "Last close:".to_owned();
+    match code {
+        Some(code) => line.push_str(&format!(" {code}")),
+        None => line.push_str(" (no code)"),
+    }
+    if let Some(reason) = reason {
+        line.push_str(&format!(" {reason}"));
+    }
+    if let Some(at) = at {
+        line.push_str(&format!(" (at {at})"));
+    }
+    Some(line)
 }
 
 pub fn render_core_host_status_lines(payload: &Value, known_project: bool) -> Vec<String> {

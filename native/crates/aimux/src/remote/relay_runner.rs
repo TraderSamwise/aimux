@@ -17,6 +17,7 @@ use tokio::sync::Notify;
 use crate::backlog_metrics::{
     BacklogMetric, BacklogMetricSnapshot, BacklogMetricStatus, RELAY_OUTBOX_BACKLOG, backlog_metric,
 };
+use crate::debug_logging::{LogLevel, log_always_at};
 use crate::machine_identity::MachineIdentity;
 use crate::remote::relay_client::{
     CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close,
@@ -161,6 +162,7 @@ impl RelayRunner {
                     relay_url: relay_url.clone(),
                     last_connected_at: None,
                     last_error: None,
+                    ..RelayStatusSnapshot::default()
                 })),
                 stopped: Arc::new(AtomicBool::new(false)),
                 stopped_notify: Arc::new(Notify::new()),
@@ -185,11 +187,44 @@ impl RelayRunner {
             snapshot.status = Some(status);
             if status == RelayStatus::Connected {
                 snapshot.last_connected_at = Some(now_iso());
+                // Deliberately clears `last_error` and deliberately does NOT
+                // touch the close fields. `last_error` says why we are not
+                // connected now, so a connect answers it; what killed the last
+                // socket is a different question, and on a flapping link it is
+                // the only question worth asking.
                 snapshot.last_error = None;
             } else if last_error.is_some() {
                 snapshot.last_error = last_error;
             }
         }
+    }
+
+    /// Stamp what happened to the socket that just went away.
+    ///
+    /// Called for every ending, including the ones the loop then decides to
+    /// retry, because a retry is exactly when the reason used to be lost.
+    fn record_close(&self, code: Option<u16>, reason: Option<String>) {
+        let disconnected_at = now_iso();
+        if let Ok(mut snapshot) = self.handle.status.lock() {
+            snapshot.last_disconnected_at = Some(disconnected_at.clone());
+            snapshot.last_close_code = code;
+            snapshot.last_close_reason = reason.clone();
+        }
+        // A hundred reconnects left nothing at all in daemon.jsonl, so the
+        // only record of a link collapsing all afternoon was that someone was
+        // watching it. Warn, because a relay that closes us is not routine.
+        log_always_at(
+            LogLevel::Warn,
+            "relay connection closed",
+            "relay",
+            Some(json!({
+                "relayUrl": self.relay_url,
+                "machineId": self.machine.id,
+                "closeCode": code,
+                "closeReason": reason,
+                "disconnectedAt": disconnected_at,
+            })),
+        );
     }
 
     /// Run until stopped or the relay refuses our credentials.
@@ -235,6 +270,9 @@ impl RelayRunner {
                     retry_ms = INITIAL_RETRY_MS;
                     self.set_status(RelayStatus::Connected, None);
                     let close = self.pump(connection).await;
+                    if !self.handle.is_stopped() {
+                        self.record_close(close.code, close.reason.clone());
+                    }
                     match decide_close(
                         close.code,
                         0,
@@ -272,6 +310,10 @@ impl RelayRunner {
                         }
                         CloseDecision::Reconnect => {}
                     }
+                    // A handshake that never became a socket is still an
+                    // ending, and stamping it is what tells a reader whether
+                    // the link is failing before or after the upgrade.
+                    self.record_close(None, Some(error.message().into_owned()));
                     self.set_status(
                         RelayStatus::Reconnecting,
                         Some(error.message().into_owned()),
@@ -808,7 +850,7 @@ impl CloseInfo {
 mod tests {
     use super::{
         DaemonRelayBridge, DaemonRouteResponse, MAX_RELAY_OUTBOX_FRAMES, ProjectEventStream,
-        ProjectEventStreamItem, RelayRunner, RelaySubscriptions, daemon_connect_url,
+        ProjectEventStreamItem, RelayRunner, RelayStatus, RelaySubscriptions, daemon_connect_url,
         push_front_outbox_frame, push_outbox_frame,
     };
     use crate::machine_identity::MachineIdentity;
@@ -1027,6 +1069,122 @@ mod tests {
             urls.lock().unwrap().clone(),
             vec![daemon_connect_url("wss://relay.example", &test_machine())],
         );
+    }
+
+    /// Connects once with a socket that dies immediately, then stops on the
+    /// second dial -- the shape of a flapping link, in two iterations.
+    struct CloseThenStopConnector {
+        handle: super::RelayHandle,
+        dials: usize,
+        code: Option<u16>,
+        reason: String,
+    }
+
+    impl crate::remote::websocket::WebSocketConnector for CloseThenStopConnector {
+        fn connect<'a>(
+            &'a mut self,
+            _url: &'a str,
+            _subprotocols: &'a [String],
+        ) -> BoxFuture<'a, Result<WebSocketConnectionParts, WebSocketError>> {
+            self.dials += 1;
+            if self.dials >= 2 {
+                self.handle.stop();
+            }
+            let code = self.code;
+            let reason = self.reason.clone();
+            Box::pin(async move {
+                Ok(WebSocketConnectionParts {
+                    reader: Box::new(ScriptedWebSocketReader {
+                        events: VecDeque::from([WebSocketEvent::Closed { code, reason }]),
+                    }),
+                    writer: Box::new(RecordingWebSocketWriter {
+                        sent: Arc::new(Mutex::new(Vec::new())),
+                    }),
+                })
+            })
+        }
+    }
+
+    /// The whole point of the close fields: they outlive the reconnect.
+    ///
+    /// A link that reconnects every second cleared `last_error` every second,
+    /// so every surface read `connected` with no error while the connection
+    /// was collapsing continuously. The close facts must survive a LATER
+    /// successful connect, and `last_error` must still be cleared by it --
+    /// both directions, because collapsing them back into one field is
+    /// exactly the regression.
+    #[test]
+    fn a_reconnect_does_not_erase_what_killed_the_last_socket() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let runner = RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        );
+        let mut connector = CloseThenStopConnector {
+            handle: runner.handle(),
+            dials: 0,
+            code: Some(1006),
+            reason: "boom".to_owned(),
+        };
+
+        // aimux-async-seam: test - drives the reconnect ladder with no sleeping
+        crate::async_runtime::block_on_named("relay:test-close-survives", async {
+            let mut sleep = |_: Duration| Box::pin(async {}) as BoxFuture<'static, ()>;
+            runner.run_with_sleep(&mut connector, &mut sleep).await;
+        });
+
+        let snapshot = runner.handle().status();
+        assert_eq!(
+            snapshot.last_close_code,
+            Some(1006),
+            "the close code must outlive the reconnect that followed it"
+        );
+        assert_eq!(snapshot.last_close_reason.as_deref(), Some("boom"));
+        assert!(
+            snapshot.last_disconnected_at.is_some(),
+            "a close must stamp when it happened"
+        );
+        assert!(
+            snapshot.last_error.is_none(),
+            "last_error still answers 'why are we not connected now', so a connect clears it"
+        );
+    }
+
+    /// The invariant itself, driven directly.
+    ///
+    /// The loop test above cannot reach this: its second dial stops the
+    /// runner, and the stop is checked before the connect result is used, so
+    /// `set_status(Connected)` never runs and the erase it is meant to catch
+    /// cannot happen. Mutating the clear to wipe the close fields left that
+    /// test green, which is the whole reason this one exists.
+    #[test]
+    fn connecting_clears_the_current_error_and_keeps_the_last_close() {
+        let runner = RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        );
+        runner.set_status(RelayStatus::Reconnecting, Some("transport died".to_owned()));
+        runner.record_close(Some(1006), Some("boom".to_owned()));
+
+        runner.set_status(RelayStatus::Connected, None);
+
+        let snapshot = runner.handle().status();
+        assert_eq!(snapshot.status, Some(RelayStatus::Connected));
+        assert!(
+            snapshot.last_error.is_none(),
+            "a connect answers 'why are we not connected now'"
+        );
+        assert_eq!(
+            snapshot.last_close_code,
+            Some(1006),
+            "a connect must not answer 'what killed the last socket'"
+        );
+        assert_eq!(snapshot.last_close_reason.as_deref(), Some("boom"));
+        assert!(snapshot.last_disconnected_at.is_some());
     }
 
     #[test]
