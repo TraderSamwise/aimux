@@ -1,4 +1,5 @@
 import type { InitialAgentOutputFeedStatus } from "@/lib/agent-output-feed-state";
+import { isTransientRequestError } from "@/lib/request-errors";
 
 export type PaneOutputSnapshotContent = {
   messages?: readonly unknown[];
@@ -44,7 +45,21 @@ export function chatTranscriptPlaceholderState({
   messageCount: number;
 }): ChatTranscriptPlaceholderState {
   if (messageCount > 0) return { kind: "none" };
-  if (lastError) {
+  // A blip while the first load is still in flight is not a failure yet.
+  //
+  // `lastError` used to win outright, so opening a shared chat showed
+  // "Transcript unavailable -- Relay not connected" with a Retry button, and
+  // then loaded by itself a moment later: the first request had landed in
+  // one of the relay's dead windows while the connection was flapping, and
+  // the retry nobody pressed succeeded. The reader was asked to act on
+  // something that was already fixing itself.
+  //
+  // Only while loading, and only for the errors the app already classes as
+  // transient. A real failure -- a 500, a session that no longer exists --
+  // still shows the moment it arrives rather than hiding behind a spinner,
+  // and once the load stops being in flight a transient error surfaces too,
+  // because by then it has genuinely failed.
+  if (lastError && !(initialStatus === "loading" && isTransientRequestError(lastError))) {
     return {
       kind: "error",
       title: "Transcript unavailable",
