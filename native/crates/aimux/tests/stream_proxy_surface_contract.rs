@@ -335,12 +335,11 @@ fn relay_project_events_subscription_case() -> CharacterizationCase {
             "sent": recorder.sent_json(),
             "closedWrites": recorder.closed_writes(),
             "authLost": recorder.auth_lost(),
-            "status": {
-                "status": status.status.map(|status| status.as_str()),
-                "relayUrl": status.relay_url,
-                "lastConnectedAt": status.last_connected_at.map(|_| "<timestamp>"),
-                "lastError": status.last_error,
-            },
+            // The snapshot's own serialisation. Hand-built, this recorded
+            // four fields of a shape that now has ten, so it could not
+            // notice one being added, removed or renamed -- which is the
+            // only thing a characterization record is for.
+            "status": stable_relay_status(status.to_json()),
         }),
         pending_intended: false,
     }
@@ -2099,4 +2098,15 @@ fn surface_machine() -> MachineIdentity {
         id: "testmachine01".to_owned(),
         name: "test-host".to_owned(),
     }
+}
+
+/// Wall-clock stamps flattened, so a characterization record does not depend
+/// on when it was produced.
+fn stable_relay_status(mut status: serde_json::Value) -> serde_json::Value {
+    for key in ["lastConnectedAt", "lastDisconnectedAt"] {
+        if status.get(key).is_some_and(|value| value.is_string()) {
+            status[key] = serde_json::Value::String("<timestamp>".to_owned());
+        }
+    }
+    status
 }

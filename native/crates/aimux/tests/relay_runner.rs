@@ -227,7 +227,6 @@ fn harness_with_options(
 impl Harness {
     /// Runs the loop, ending it from inside the injected sleep after
     /// `max_sleeps` backoffs. Stopping the handle up front would exit before
-    /// the first connect and prove nothing.
     /// Treat every socket as having held this long before it closed.
     fn holding_for(mut self, held_ms: u64) -> Self {
         self.held_ms = held_ms;

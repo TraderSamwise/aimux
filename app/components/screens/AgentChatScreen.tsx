@@ -4091,7 +4091,7 @@ const AgentChatTranscript = React.memo(
         contentContainerStyle={contentContainerStyle}
         // Deliberately absent on web, and this is the whole focus-theft bug.
         // react-native-web's ScrollView calls `dismissKeyboard()` from
-        // `_handleScroll` on EVERY scroll event when this is "on-drag" --
+        // `_handleScroll` on EVERY scroll event in the drag mode --
         // there is no drag detection -- and on web `dismissKeyboard()` is
         // only `blurTextInput()`. Every agent output tick scrolls this
         // transcript to the end, so every tick blurred the composer out from

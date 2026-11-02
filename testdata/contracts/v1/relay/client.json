@@ -224,5 +224,7 @@
       "inputSha256": "e018fbea537edee5071dacab95a097d70a917c93c7b54bd309fec8e249fffea8"
     }
   ],
-  "rustDivergence": "Rust deliberately diverges from Node in the relay status snapshot: it carries lastDisconnectedAt / lastCloseCode / lastCloseReason / consecutiveShortConnections / flapping / shortConnectionThresholdMs, which the Node client never had. Node cleared its only error field on every reconnect, so a link reconnecting once a second reported as healthy on every surface."
+  "rustDivergences": [
+    "Rust deliberately diverges from Node in the relay status snapshot: it carries lastDisconnectedAt / lastCloseCode / lastCloseReason / consecutiveShortConnections / flapping / shortConnectionThresholdMs, which the Node client never had. Node cleared its only error field on every reconnect, so a link reconnecting once a second reported as healthy on every surface."
+  ]
 }
