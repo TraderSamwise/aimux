@@ -160,10 +160,10 @@ describe("attachments are checked before anything is uploaded", () => {
     const source = agentChatScreenSource();
 
     // The ref, not its contents. `composerSelectionRef.current` is reassigned
-    // a fresh object on every keystroke, so passing the VALUE made the restore
-    // effect re-run per character and replay a position web never updates --
-    // web reports a selection only on the DOM `select` event. The caret jumped
-    // backwards whenever output landed mid-typing.
+    // a fresh object on every keystroke, so passing the VALUE re-ran the
+    // restore effect per character. react-dom reports a selection on keydown
+    // and keyup, so the remembered caret is one keystroke stale in between --
+    // and output landing in that window replayed it, a character backwards.
     expect(source).toContain("initialSelectionRef={composerSelectionRef}");
     expect(
       source.includes("initialSelection={composerSelectionRef.current}"),

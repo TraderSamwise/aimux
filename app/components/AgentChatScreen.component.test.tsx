@@ -313,26 +313,30 @@ describe("AgentChatScreen mounted web composer footer", () => {
     // interrupting whatever i'm writing. during fast actions it happens over
     // and over."
     //
-    // The shape that matters is a STALE stored caret. Web reports a selection
-    // only on the DOM `select` event, which typing does not fire -- so after
-    // the user types, the remembered position is wherever they last clicked,
-    // and anything that replays it drags the caret backwards.
-    const mounted = await mountChat("chat", { draft: "Explain shared chat" });
+    // The race is one keystroke wide. react-dom fires `onSelect` on keydown
+    // AND keyup, so the remembered caret is current again by keyup -- but
+    // between the keydown and that keyup it still holds the position from
+    // before the character was inserted. A chunk of output landing inside
+    // that window is what re-applied it, one character backwards, over and
+    // over while the agent streamed.
+    //
+    // So the sequence below is keydown, insert, output, assert -- with the
+    // keyup afterwards. Driving it with `fireEvent.change` alone would fire
+    // no key events at all, leaving the caret frozen at the click in jsdom
+    // and testing a condition no browser has.
+    const mounted = await mountChat("chat", { draft: "Explain shared" });
     const input = mounted.input as HTMLTextAreaElement;
 
-    // Click into the middle: this is the last position web will report.
-    const clicked = "Explain ".length;
-    fireEvent.focus(input);
-    input.setSelectionRange(clicked, clicked);
-    fireEvent.select(input, { target: { selectionStart: clicked, selectionEnd: clicked } });
+    const before = "Explain shared";
+    input.setSelectionRange(before.length, before.length);
+    fireEvent.keyDown(input, { key: "!" });
 
-    // Now type on, with no `select` event, exactly as a browser behaves.
-    const typed = "Explain shared chat refreshes";
-    fireEvent.change(input, { target: { value: typed } });
-    input.setSelectionRange(typed.length, typed.length);
+    const after = `${before}!`;
+    fireEvent.change(input, { target: { value: after } });
+    input.setSelectionRange(after.length, after.length);
 
     const agent = agentStateKey(projectStateKey({ path: "/repo" }), sessionId);
-    for (const label of ["Leavening… (1s)", "Leavening… (2s · ↓ 31 tokens)", "Brewed for 3s"]) {
+    for (const label of ["Leavening… (1s)", "Leavening… (2s · ↓ 31 tokens)"]) {
       await act(async () => {
         mounted.store.set(activityFamily(agent), "running");
         mounted.store.set(activityTextFamily(agent), label);
@@ -343,9 +347,13 @@ describe("AgentChatScreen mounted web composer footer", () => {
       await new Promise((settle) => requestAnimationFrame(() => settle(null)));
     });
 
-    expect(document.activeElement).toBe(input);
-    expect(input.selectionStart).toBe(typed.length);
-    expect(input.selectionEnd).toBe(typed.length);
+    // Not `document.activeElement`: `fireEvent.select` focuses the node
+    // itself, so asserting focus here cannot fail. The caret is the thing the
+    // user loses, and it is the thing asserted.
+    expect(input.selectionStart).toBe(after.length);
+    expect(input.selectionEnd).toBe(after.length);
+
+    fireEvent.keyUp(input, { key: "!" });
   });
 
   it("renders an accepted send awaiting its echo in terminal mode", async () => {

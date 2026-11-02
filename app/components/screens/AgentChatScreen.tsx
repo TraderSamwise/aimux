@@ -2987,9 +2987,13 @@ type ComposerDraftTextInputProps = {
   draftKey: string;
   /// The ref itself, not its value. Passing the value made this prop a new
   /// identity on every keystroke, which re-ran the restore effect and pushed
-  /// `selection` back into react-native-web mid-typing -- and because web only
-  /// reports a selection on the DOM `select` event, never on typing, the value
-  /// it restored was stale. The caret jumped backwards on every agent chunk.
+  /// `selection` back into react-native-web mid-typing.
+  ///
+  /// The window that made that visible is one keystroke wide. react-dom fires
+  /// `onSelect` on keydown AND keyup, so the remembered caret is current again
+  /// by keyup -- but between them it still holds the position from before the
+  /// character was inserted. Output landing inside that window re-applied it,
+  /// one character backwards, over and over while the agent streamed.
   initialSelectionRef: React.RefObject<ComposerTextSelection>;
   /// Bumped by the parent when a saved caret is ready to restore.
   selectionRestoreToken: number;
@@ -3020,11 +3024,18 @@ const ComposerDraftTextInput = React.memo(
       undefined,
     );
 
-    // Controlled for exactly one frame. `selection` is the only lever
-    // react-native-web gives for placing a caret, and leaving it set would peg
-    // the caret there on every later render -- so it is handed over and
-    // immediately taken back. Keyed on the token alone: the parent bumps that
-    // when it has loaded a saved caret, and nothing else can.
+    // Keyed on the token alone: the parent bumps it when it has loaded a saved
+    // caret, and nothing else can. Typing cannot reach this.
+    //
+    // The clear on the next frame is belt-and-braces, not load-bearing:
+    // react-native-web's layout effect keys on `selection` by identity and
+    // applies it once, and `isSelectionStale` skips the call when the numbers
+    // already match. A value left in place would not peg the caret. It is
+    // cleared anyway so the prop cannot be mistaken for controlled state.
+    //
+    // Restoring on this component's own mount is deliberate: if the footer is
+    // hidden and shown again the caret belongs where the reader left it, which
+    // is the whole point of remembering it.
     useEffect(() => {
       if (selectionRestoreToken === 0) return;
       const saved = initialSelectionRef.current;
