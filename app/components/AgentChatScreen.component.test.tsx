@@ -131,12 +131,7 @@ import { COMPOSER_SEND_AWAITING_ECHO_NOTICE } from "@/lib/composer-footer";
 import { agentStateKey, projectStateKey } from "@/lib/project-key";
 import { ResponsiveViewportProvider } from "@/lib/responsive-viewport";
 import { createResponsiveViewportValue } from "@/lib/responsive-viewport-core";
-import {
-  activityFamily,
-  activityTextFamily,
-  outputAvailableFamily,
-  outputBufferFamily,
-} from "@/stores/chat";
+import { outputAvailableFamily, outputBufferFamily } from "@/stores/chat";
 import { desktopStateFamily } from "@/stores/desktopState";
 import {
   agentOutputViewModeAtom,
@@ -308,53 +303,27 @@ describe("AgentChatScreen mounted web composer footer", () => {
     expect(remountedInput.selectionEnd).toBe(caret);
   });
 
-  it("leaves the caret alone while the agent is talking", async () => {
-    // daxx: "when im typing, any agent activity pulls my editbox focus,
-    // interrupting whatever i'm writing. during fast actions it happens over
-    // and over."
-    //
-    // The race is one keystroke wide. react-dom fires `onSelect` on keydown
-    // AND keyup, so the remembered caret is current again by keyup -- but
-    // between the keydown and that keyup it still holds the position from
-    // before the character was inserted. A chunk of output landing inside
-    // that window is what re-applied it, one character backwards, over and
-    // over while the agent streamed.
-    //
-    // So the sequence below is keydown, insert, output, assert -- with the
-    // keyup afterwards. Driving it with `fireEvent.change` alone would fire
-    // no key events at all, leaving the caret frozen at the click in jsdom
-    // and testing a condition no browser has.
-    const mounted = await mountChat("chat", { draft: "Explain shared" });
-    const input = mounted.input as HTMLTextAreaElement;
-
-    const before = "Explain shared";
-    input.setSelectionRange(before.length, before.length);
-    fireEvent.keyDown(input, { key: "!" });
-
-    const after = `${before}!`;
-    fireEvent.change(input, { target: { value: after } });
-    input.setSelectionRange(after.length, after.length);
-
-    const agent = agentStateKey(projectStateKey({ path: "/repo" }), sessionId);
-    for (const label of ["Leavening… (1s)", "Leavening… (2s · ↓ 31 tokens)"]) {
-      await act(async () => {
-        mounted.store.set(activityFamily(agent), "running");
-        mounted.store.set(activityTextFamily(agent), label);
-        mounted.store.set(outputBufferFamily(agent), `terminal fixture output ${label}`);
-      });
-    }
-    await act(async () => {
-      await new Promise((settle) => requestAnimationFrame(() => settle(null)));
-    });
-
-    // Not `document.activeElement`: `fireEvent.select` focuses the node
-    // itself, so asserting focus here cannot fail. The caret is the thing the
-    // user loses, and it is the thing asserted.
-    expect(input.selectionStart).toBe(after.length);
-    expect(input.selectionEnd).toBe(after.length);
-
-    fireEvent.keyUp(input, { key: "!" });
-  });
+  // THERE IS NO BEHAVIOURAL CARET TEST HERE, AND THAT IS DELIBERATE.
+  //
+  // The defect it would cover is one keystroke wide: react-dom reports a
+  // selection on keydown and keyup for the FOCUSED node, so the remembered
+  // caret is only stale between the keydown and the insert, and a re-apply is
+  // only visible if output lands inside that window. Measured in jsdom:
+  // keydown unfocused fires nothing, keydown focused fires once, keyup again.
+  //
+  // Two attempts at this test passed for the wrong reason. The first drove
+  // typing with `fireEvent.change`, which fires no key events at all, so the
+  // remembered caret froze where a browser keeps it current -- it failed
+  // against the old implementation for a condition no browser has. The second
+  // focused the input so the events were real, and then it stopped
+  // distinguishing the implementations at all, because jsdom's synchronous
+  // event model does not let the render land inside the window.
+  //
+  // A test that passes for reasons its author cannot name is worse than no
+  // test, so what holds this line is the source contract in
+  // `AgentChatScreen.composer-render.test.ts`: the selection must be passed as
+  // a ref and the restore must be keyed on the parent's token. That one is
+  // exact, and it fails when the value prop comes back.
 
   it("renders an accepted send awaiting its echo in terminal mode", async () => {
     await sendMessage();
