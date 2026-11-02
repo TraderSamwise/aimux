@@ -23,6 +23,16 @@ import type { LivePaneOutputInput } from "../../src/project-api-contract";
 export type AgentOutputFeedMode = "full" | "chat";
 export type AgentOutputFeedPurpose = NonNullable<LivePaneOutputInput["purpose"]>;
 export type AgentOutputFeedRefreshOptions = {
+  /**
+   * This refresh owns the transcript placeholder for its duration.
+   *
+   * It does more than record the error text: it puts the feed back into
+   * "loading" on the way in and into "timed-out" if it rejects, so the
+   * placeholder shows a spinner and then either the transcript or the
+   * failure. Only the Retry button passes it. A poll that set it would take
+   * the placeholder over from the mount path and show the reader a spinner
+   * for a background refresh they did not ask for.
+   */
   surfaceError?: boolean;
   startLine?: number;
   /**
@@ -189,7 +199,21 @@ export function useAgentOutputFeed({
         }
         return loaded;
       } catch (error) {
-        if (options.surfaceError) setLastError(getErrorMessage(error));
+        if (options.surfaceError) {
+          setLastError(getErrorMessage(error));
+          // A retry that failed has to LEAVE "loading". This path set the
+          // status to loading and armed nothing, so a rejected retry left it
+          // pinned there for ever, with only a later successful poll to get
+          // it out. That was survivable while any error outranked the
+          // loader; once a transient error stops pre-empting it, the same
+          // state renders as a spinner that never resolves and whose Retry
+          // button is gone, because a loading placeholder offers none.
+          //
+          // Immediately, not on a timer: the reader asked for this one, and
+          // an explicit retry that failed is a failure now, not in twelve
+          // seconds.
+          setInitialStatusState((current) => initialAgentOutputFeedTimedOutState(current, feedKey));
+        }
         throw error;
       }
     },
