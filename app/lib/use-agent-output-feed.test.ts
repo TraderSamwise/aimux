@@ -23,6 +23,20 @@ describe("initial agent output feed status", () => {
     });
   });
 
+  it("moves a still-loading feed to timed-out", () => {
+    // The positive transition, which nothing pinned. Both tests here asserted
+    // a NO-OP, so changing the guard from `status === "loading"` to
+    // `"timed-out"` left the suite green while killing two things at once:
+    // the twelve-second mount timeout, and the escape from a failed retry
+    // that the hang fix depends on. One word, two bugs, no failing test.
+    expect(
+      initialAgentOutputFeedTimedOutState(
+        { key: "endpoint:session:chat", status: "loading" },
+        "endpoint:session:chat",
+      ),
+    ).toEqual({ key: "endpoint:session:chat", status: "timed-out" });
+  });
+
   it("ignores stale timeout callbacks from a previous feed key", () => {
     const current: InitialAgentOutputFeedState = {
       key: "endpoint:session:full",

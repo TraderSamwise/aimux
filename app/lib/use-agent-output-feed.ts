@@ -23,6 +23,16 @@ import type { LivePaneOutputInput } from "../../src/project-api-contract";
 export type AgentOutputFeedMode = "full" | "chat";
 export type AgentOutputFeedPurpose = NonNullable<LivePaneOutputInput["purpose"]>;
 export type AgentOutputFeedRefreshOptions = {
+  /**
+   * This refresh owns the transcript placeholder for its duration.
+   *
+   * It does more than record the error text: it puts the feed back into
+   * "loading" on the way in and into "timed-out" if it rejects, so the
+   * placeholder shows a spinner and then either the transcript or the
+   * failure. Only the Retry button passes it. A poll that set it would take
+   * the placeholder over from the mount path and show the reader a spinner
+   * for a background refresh they did not ask for.
+   */
   surfaceError?: boolean;
   startLine?: number;
   /**
