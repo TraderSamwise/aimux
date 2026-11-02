@@ -1,4 +1,5 @@
 import {
+  CHAT_OUTPUT_MAX_CAPTURE_LINES,
   CHAT_OUTPUT_HISTORY_PAGE_TOP_THRESHOLD_PX,
   CHAT_OUTPUT_MAX_CAPTURE_START_LINE,
   type ChatOutputHistoryScrollMetrics,
@@ -11,7 +12,7 @@ import {
  * can state as a fact: the service reports a `captureLineLimit` of its own and
  * the two are not the same number.
  */
-export const CHAT_HISTORY_FLOOR_LINES = -CHAT_OUTPUT_MAX_CAPTURE_START_LINE;
+export const CHAT_HISTORY_FLOOR_LINES = CHAT_OUTPUT_MAX_CAPTURE_LINES;
 
 /**
  * Why scrolling up stopped loading more, or null while it has not stopped.

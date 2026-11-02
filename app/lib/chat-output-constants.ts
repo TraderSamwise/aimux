@@ -1,6 +1,15 @@
 export const CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE = -320;
 export const CHAT_OUTPUT_HISTORY_PAGE_LINES = 320;
 export const CHAT_OUTPUT_MAX_CAPTURE_START_LINE = -2_000;
+/**
+ * The deepest window this app asks for, as a positive count of lines.
+ *
+ * This app's own bound, and deliberately not named after the service's
+ * `captureLineLimit`, which is a different number -- the renderer has to keep
+ * at least what the pager can fetch, or a page arrives and is trimmed away
+ * before it is drawn, which is what made terminal scrollback stop at 500.
+ */
+export const CHAT_OUTPUT_MAX_CAPTURE_LINES = -CHAT_OUTPUT_MAX_CAPTURE_START_LINE;
 export const CHAT_OUTPUT_CAPTURE_START_LINE = CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE;
 export const CHAT_OUTPUT_HISTORY_PAGE_TOP_THRESHOLD_PX = 96;
 
