@@ -35,6 +35,7 @@ import { ResponsiveViewportProvider, useResponsiveViewportValue } from "@/lib/re
 import { useRouteShare } from "@/lib/use-route-share";
 import { useSidebarKeyboard } from "@/lib/sidebar-keyboard";
 import { sidebarOpenForPresentation } from "@/lib/sidebar-visibility";
+import { topChromeLayerStyle } from "@/lib/top-chrome-layer";
 import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
 import { desktopAppZoomAtom, desktopAppZoomScale, stepDesktopAppZoom } from "@/stores/settings";
 import { chatChromeVisibleAtom, sidebarForcedHiddenAtom, sidebarOpenAtom } from "@/stores/ui";
@@ -213,13 +214,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <View className="flex-1 bg-background">
       <ResponsiveViewportProvider value={viewport}>
         <View style={shellZoomStyle}>
-          <View
-            style={
-              overlayTopChrome
-                ? { left: 0, position: "absolute", right: 0, top: 0, zIndex: 60 }
-                : { flexShrink: 0 }
-            }
-          >
+          <View style={topChromeLayerStyle(overlayTopChrome)}>
             <ChatChromeMotion
               direction="top"
               distance={topChromeHideDistance}
