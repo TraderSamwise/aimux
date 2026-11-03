@@ -43,6 +43,29 @@ function confirmationSlotIndex(
   return -1;
 }
 
+/**
+ * Whether two echo lists hold the same echoes.
+ *
+ * `mergeAcceptedComposerEchoes` always allocates a fresh `echoes` array, so a
+ * reference check against its input is ALWAYS unequal. An effect that both
+ * depends on the echo state and writes it back on reference inequality
+ * therefore never settles: set state, re-render, merge, new array, set state.
+ * That is an infinite render loop, and it hung the app suite.
+ *
+ * Element identity is the right grain. The merge reuses an echo object when
+ * nothing about it changed and allocates a new one only when it actually
+ * transitions, so comparing element by element reaches a fixed point after at
+ * most one write.
+ */
+export function sameAcceptedComposerEchoes(
+  left: readonly AcceptedComposerEcho[],
+  right: readonly AcceptedComposerEcho[],
+): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return left.every((echo, index) => echo === right[index]);
+}
+
 export function mergeAcceptedComposerEchoes(
   parsedMessages: readonly ChatMessage[],
   acceptedEchoes: readonly AcceptedComposerEcho[],

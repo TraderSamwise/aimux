@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
   mergeAcceptedComposerEchoes,
+  sameAcceptedComposerEchoes,
   type AcceptedComposerEcho,
 } from "./composer-echo";
 import type { ChatMessage } from "./events";
@@ -129,5 +130,43 @@ describe("composer optimistic echo reconciliation", () => {
     expect(reconciled.droppedUnconfirmedCount).toBe(1);
     expect(reconciled.droppedExpiredCount).toBe(0);
     expect(reconciled.droppedTranscriptAdvancedCount).toBe(1);
+  });
+});
+
+describe("settling reaches a fixed point", () => {
+  // The effect that settles echoes depends on the echo state AND writes it
+  // back, so it only terminates if "nothing changed" can be recognised.
+  // `mergeAcceptedComposerEchoes` always allocates a fresh `echoes` array, so
+  // a reference check is always unequal -- set state, re-render, merge, set
+  // state, for ever. That infinite render loop hung the app suite for over an
+  // hour before it was caught.
+  it("recognises an unchanged echo list by value, not reference", () => {
+    const pending = echo("composer:one", "still waiting");
+    const first = mergeAcceptedComposerEchoes([], [pending], { nowMs: 1_000 });
+
+    expect(sameAcceptedComposerEchoes(first.echoes, [pending])).toBe(true);
+  });
+
+  it("settles after no writes rather than looping", () => {
+    const pending = echo("composer:one", "still waiting");
+    let echoes: AcceptedComposerEcho[] = [pending];
+    let writes = 0;
+
+    // Exactly what the effect does, run until it stops changing.
+    for (let pass = 0; pass < 10; pass += 1) {
+      const result = mergeAcceptedComposerEchoes([], echoes, { nowMs: 1_000 });
+      if (sameAcceptedComposerEchoes(result.echoes, echoes)) break;
+      echoes = result.echoes;
+      writes += 1;
+    }
+
+    expect(writes).toBe(0);
+  });
+
+  it("tells a real change from an unchanged list", () => {
+    const pending = echo("composer:one", "still waiting");
+    expect(sameAcceptedComposerEchoes([pending], [])).toBe(false);
+    expect(sameAcceptedComposerEchoes([pending], [{ ...pending }])).toBe(false);
+    expect(sameAcceptedComposerEchoes([pending], [pending])).toBe(true);
   });
 });
