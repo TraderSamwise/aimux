@@ -175,6 +175,7 @@ import {
   type ChatTranscriptPlaceholderState,
 } from "@/lib/chat-loading";
 import { CHAT_PANE_PLACEHOLDER_SHELL } from "@/lib/chat-pane-placeholder";
+import { reportSendTimeout } from "@/lib/send-timeout-report";
 import { formatTerminalOutputForDisplay, terminalOutputTail } from "@/lib/terminal-output";
 import {
   terminalScrollStateAfterUserScroll,
@@ -1341,6 +1342,18 @@ export default function ChatScreen() {
             timeoutMs: COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
           });
           if (result.droppedExpiredCount > 0) {
+            // Recorded with the relay state, because a send is confirmed by
+            // the message reaching the PARSED transcript -- so a late or
+            // reset transcript raises this too, and without the relay state
+            // the two are indistinguishable.
+            reportSendTimeout({
+              droppedExpiredCount: result.droppedExpiredCount,
+              parsedMessageCount: parsedMessages.length,
+              relayConfigured,
+              relayStatus,
+              sessionId,
+              shared: Boolean(routeShareId),
+            });
             setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
           }
           return result.echoes;
@@ -1349,7 +1362,18 @@ export default function ChatScreen() {
       Math.max(0, nextExpiryMs - now),
     );
     return () => clearTimeout(timer);
-  }, [acceptedComposerMessages, parsedMessages]);
+    // The report's context is in here too. Re-running on a relay change is
+    // harmless: `nextExpiryMs` is an absolute deadline, so the rebuilt timer
+    // fires at the same moment, and the record then carries the relay state
+    // as it is when the send is given up on rather than when it was queued.
+  }, [
+    acceptedComposerMessages,
+    parsedMessages,
+    relayConfigured,
+    relayStatus,
+    routeShareId,
+    sessionId,
+  ]);
 
   const userMessageCount = useMemo(
     () => allMessages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0),
