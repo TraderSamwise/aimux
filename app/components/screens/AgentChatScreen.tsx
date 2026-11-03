@@ -1309,16 +1309,27 @@ export default function ChatScreen() {
     [allMessages.length, initialOutputStatus, transcriptLastError],
   );
 
+  const settleContext = {
+    parsedMessages,
+    relayConfigured,
+    relayStatus,
+    routeShareId,
+    sessionId,
+    setAcceptedComposerMessages,
+    setSendError,
+  };
+
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- parsed transcript updates settle local accepted composer echoes
-    setAcceptedComposerMessages((current) => {
-      const result = mergeAcceptedComposerEchoes(parsedMessages, current, {
-        nowMs: Date.now(),
-        timeoutMs: COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
-      });
-      return result.echoes === current ? current : result.echoes;
-    });
-  }, [parsedMessages]);
+    settleComposerEchoes(acceptedComposerMessages, settleContext);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- settleContext is rebuilt each render; its contents are the real dependencies
+  }, [
+    acceptedComposerMessages,
+    parsedMessages,
+    relayConfigured,
+    relayStatus,
+    routeShareId,
+    sessionId,
+  ]);
 
   useEffect(() => {
     parsedMessageCountRef.current = parsedMessageCount;
@@ -1335,37 +1346,15 @@ export default function ChatScreen() {
       ),
     );
     const timer = setTimeout(
-      () => {
-        setAcceptedComposerMessages((current) => {
-          const result = mergeAcceptedComposerEchoes(parsedMessages, current, {
-            nowMs: Date.now(),
-            timeoutMs: COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
-          });
-          if (result.droppedExpiredCount > 0) {
-            // Recorded with the relay state, because a send is confirmed by
-            // the message reaching the PARSED transcript -- so a late or
-            // reset transcript raises this too, and without the relay state
-            // the two are indistinguishable.
-            reportSendTimeout({
-              droppedExpiredCount: result.droppedExpiredCount,
-              parsedMessageCount: parsedMessages.length,
-              relayConfigured,
-              relayStatus,
-              sessionId,
-              shared: Boolean(routeShareId),
-            });
-            setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
-          }
-          return result.echoes;
-        });
-      },
+      () => settleComposerEchoes(acceptedComposerMessages, settleContext),
       Math.max(0, nextExpiryMs - now),
     );
     return () => clearTimeout(timer);
-    // The report's context is in here too. Re-running on a relay change is
-    // harmless: `nextExpiryMs` is an absolute deadline, so the rebuilt timer
-    // fires at the same moment, and the record then carries the relay state
-    // as it is when the send is given up on rather than when it was queued.
+    // Re-running on a relay change is harmless: `nextExpiryMs` is an absolute
+    // deadline, so the rebuilt timer fires at the same moment, and the record
+    // then carries the relay state as it is when the send is given up on
+    // rather than when it was queued.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- settleContext is rebuilt each render; its contents are the real dependencies
   }, [
     acceptedComposerMessages,
     parsedMessages,
@@ -4142,6 +4131,63 @@ const AgentChatTranscript = React.memo(
   }),
 );
 AgentChatTranscript.displayName = "AgentChatTranscript";
+
+/**
+ * Settle the pending composer echoes, and record any that expired.
+ *
+ * Both places that can drop an expired echo come through here. The timer is
+ * not the only one: a transcript update settles echoes too, and when it was
+ * the one to drop an expired echo nothing was reported and nothing was shown
+ * -- which is exactly the late-transcript case the record exists to measure.
+ *
+ * Outside the component, and the merge runs OUTSIDE the state updater, on
+ * purpose. React may invoke a queued updater more than once, so reporting
+ * from inside it emitted two records for one timeout and double-counted the
+ * very thing being counted.
+ */
+function settleComposerEchoes(
+  accepted: AcceptedComposerMessage[],
+  {
+    parsedMessages,
+    relayConfigured,
+    relayStatus,
+    routeShareId,
+    sessionId,
+    setAcceptedComposerMessages,
+    setSendError,
+  }: {
+    parsedMessages: ChatMessage[];
+    relayConfigured: boolean;
+    relayStatus: string;
+    routeShareId: string | undefined;
+    sessionId: string | undefined;
+    setAcceptedComposerMessages: (echoes: AcceptedComposerMessage[]) => void;
+    setSendError: (message: string) => void;
+  },
+): void {
+  const result = mergeAcceptedComposerEchoes(parsedMessages, accepted, {
+    nowMs: Date.now(),
+    timeoutMs: COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+  });
+  if (result.droppedExpiredCount > 0) {
+    // Recorded with the relay state, because a send is confirmed by the
+    // message reaching the PARSED transcript -- so a late or reset transcript
+    // raises this too, and without the relay state the two cannot be told
+    // apart.
+    reportSendTimeout({
+      droppedExpiredCount: result.droppedExpiredCount,
+      parsedMessageCount: parsedMessages.length,
+      relayConfigured,
+      relayStatus,
+      sessionId,
+      shared: Boolean(routeShareId),
+    });
+    setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
+  }
+  if (result.echoes !== accepted) {
+    setAcceptedComposerMessages(result.echoes);
+  }
+}
 
 function ChatTranscriptPlaceholder({
   onRetryTranscriptLoad,

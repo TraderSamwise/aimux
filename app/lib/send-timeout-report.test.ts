@@ -71,6 +71,33 @@ describe("the screen actually reports it", () => {
     expect(sets.length).toBe(1);
   });
 
+  it("reports from the one place both drop sites go through", () => {
+    // The timer is not the only thing that can drop an expired echo -- a
+    // transcript update settles them too, and when IT dropped one nothing was
+    // reported and nothing was shown. That is the late-transcript case the
+    // record exists to measure, so it cannot be the silent one.
+    const settleCalls = SCREEN.match(/settleComposerEchoes\(acceptedComposerMessages/g) ?? [];
+    expect(settleCalls.length).toBe(2);
+    // And exactly one definition of it, or the two sites can drift apart.
+    expect((SCREEN.match(/function settleComposerEchoes\(/g) ?? []).length).toBe(1);
+  });
+
+  it("merges outside the state updater, so one timeout is one record", () => {
+    // React may invoke a queued updater more than once. Reporting from inside
+    // `setAcceptedComposerMessages((current) => ...)` emitted two records for
+    // one timeout and double-counted the thing being counted.
+    //
+    // The reporting merge takes its array as an ARGUMENT, so it runs once per
+    // call rather than once per updater invocation. (A second merge exists
+    // for rendering with `timeoutMs: Number.POSITIVE_INFINITY`; it expires
+    // nothing and reports nothing, so it is not this.)
+    const settle = SCREEN.slice(SCREEN.indexOf("function settleComposerEchoes("));
+    expect(settle).toMatch(/mergeAcceptedComposerEchoes\(parsedMessages, accepted,/);
+    // And the single report lives in that function, not in an updater.
+    expect((SCREEN.match(/reportSendTimeout\(\{/g) ?? []).length).toBe(1);
+    expect(settle).toMatch(/reportSendTimeout\(\{/);
+  });
+
   it("reports the relay state rather than hardcoding one", () => {
     expect(SCREEN).toMatch(/relayStatus,/);
     expect(SCREEN).toMatch(/relayConfigured,/);

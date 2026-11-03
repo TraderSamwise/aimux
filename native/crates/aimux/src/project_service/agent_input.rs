@@ -60,12 +60,16 @@ pub fn safe_shared_chat_actor_name(actor: &Value) -> String {
     }
 }
 
-/// Characters that make the first character of an input a command rather than
-/// prose: a slash command, a shell escape, a shell line, a memory note.
+/// Characters that make an input a command rather than prose: a slash
+/// command, a shell escape, a shell line.
 ///
 /// Every agent we run reads these at position ZERO, which is exactly what the
 /// attribution prefix takes away.
-const AGENT_COMMAND_SIGILS: [char; 4] = ['/', '!', '$', '#'];
+///
+/// `#` is deliberately NOT here. It is a markdown heading far more often than
+/// it is a command, so including it would strip the sender from ordinary
+/// prose for no command preserved.
+const AGENT_COMMAND_SIGILS: [char; 3] = ['/', '!', '$'];
 
 /// Whether this input is a command the agent parses rather than prose.
 ///
@@ -76,7 +80,16 @@ const AGENT_COMMAND_SIGILS: [char; 4] = ['/', '!', '$', '#'];
 /// that still arrives intact. So `/home/sam is broken` goes through
 /// unattributed, and that is the trade taken on purpose.
 pub fn looks_like_agent_command(text: &str) -> bool {
-    text.trim_start()
+    let trimmed = text.trim();
+    // SINGLE LINE ONLY. Dropping the prefix drops the only record of who sent
+    // the line -- the actor is not persisted anywhere else -- so testing the
+    // first character of the WHOLE message let one sigil carry any number of
+    // following paragraphs through unattributed. That is a bypass for
+    // arbitrary content, not an exemption for commands.
+    if trimmed.contains('\n') || trimmed.contains('\r') {
+        return false;
+    }
+    trimmed
         .chars()
         .next()
         .is_some_and(|character| AGENT_COMMAND_SIGILS.contains(&character))
@@ -199,19 +212,37 @@ mod tests {
     fn commands_are_not_prefixed() {
         // The bug: `[sam@example.com] /clear` begins with a bracket, so the
         // agent reads it as prose and the command never runs.
-        for command in [
-            "/clear",
-            "/model opus",
-            "!ls -la",
-            "$ echo hi",
-            "# remember this",
-        ] {
+        for command in ["/clear", "/model opus", "!ls -la", "$ echo hi"] {
             assert_eq!(
                 format_shared_chat_agent_input(command, &guest()),
                 command,
                 "{command} must reach the agent unprefixed"
             );
         }
+    }
+
+    #[test]
+    fn a_sigil_cannot_smuggle_a_whole_unattributed_message() {
+        // The hole this closes: testing only the first character of the whole
+        // message let one sigil carry any number of following paragraphs
+        // through with no sender on them. A command is ONE line.
+        let smuggled = "/clear\nand here is a long unattributed paragraph";
+        assert_eq!(
+            format_shared_chat_agent_input(smuggled, &guest()),
+            format!("[sam@example.com] {smuggled}")
+        );
+        assert!(!looks_like_agent_command("# note\nparagraph"));
+        assert!(!looks_like_agent_command("!ls\nrm -rf /"));
+    }
+
+    #[test]
+    fn a_heading_is_prose_and_keeps_its_sender() {
+        // `#` at position zero is a markdown heading far more often than a
+        // command, so it is not a sigil here.
+        assert_eq!(
+            format_shared_chat_agent_input("# Plan", &guest()),
+            "[sam@example.com] # Plan"
+        );
     }
 
     #[test]
