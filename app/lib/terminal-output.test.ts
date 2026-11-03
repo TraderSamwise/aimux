@@ -80,6 +80,41 @@ describe("formatTerminalOutputForDisplay", () => {
     );
   });
 
+  it("does not weld two commands together across a real gap", () => {
+    // The rows of ONE wrapped rule are adjacent. A wide blank gap is two
+    // different pieces of output, and collapsing it would delete the second
+    // command's rule and the space before it.
+    const divider = "─".repeat(80);
+    const output = ["first", divider, "", "", "", divider, "second"].join("\n");
+
+    expect(plain(output, 24)).toEqual([
+      "first",
+      "─".repeat(24),
+      "",
+      "",
+      "",
+      "─".repeat(24),
+      "second",
+    ]);
+  });
+
+  it("keeps both blanks when the gap is two rows", () => {
+    // One blank is slack for a tool that pads its rule; two is spacing the
+    // author meant. Holding only the most recent blank would lose a row here.
+    const divider = "─".repeat(80);
+    const output = ["a", divider, "", "", "b"].join("\n");
+
+    expect(plain(output, 24)).toEqual(["a", "─".repeat(24), "", "", "b"]);
+  });
+
+  it("keeps a blank that ends the output", () => {
+    // Nothing follows to classify it, so it is just the end of the pane. The
+    // held blanks have to be flushed when the input runs out.
+    const output = ["x", "─".repeat(80), ""].join("\n");
+
+    expect(plain(output, 24)).toEqual(["x", "─".repeat(24), ""]);
+  });
+
   it("preserves normal terminal text and short separators", () => {
     const lines = ["❯ hi", "-----", "⏺ Hey! What would you like to work on?"];
 
