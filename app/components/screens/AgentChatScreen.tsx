@@ -2003,7 +2003,14 @@ export default function ChatScreen() {
     () =>
       Platform.OS === "web"
         ? ({
-            onKeyDown: handleComposerKeyboardEvent,
+            // `onKeyPress`, not `onKeyDown`. react-native-web's TextInput
+            // assigns its OWN `onKeyDown` over whatever you pass
+            // (exports/TextInput/index.js: `supportedProps.onKeyDown =
+            // handleKeyDown`), so the handler never reached the DOM and Enter
+            // could not send on web at all. Its handler forwards the real
+            // React keyboard event to `onKeyPress` first, modifiers and
+            // `code` included, which is everything the decision needs.
+            onKeyPress: handleComposerKeyboardEvent,
           } as unknown as Partial<React.ComponentProps<typeof TextInput>>)
         : {},
     [handleComposerKeyboardEvent],
