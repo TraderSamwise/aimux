@@ -1,6 +1,6 @@
 import React from "react";
 import { Image, Pressable, View } from "react-native";
-import { usePathname, useRouter, type Href } from "expo-router";
+import { Link, usePathname, useRouter, type Href } from "expo-router";
 import { useAtomValue } from "jotai";
 import { Bell, Camera, FolderKanban, MessageSquare, Share2 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -11,6 +11,7 @@ import { resolveChromeTopInset } from "@/lib/native-safe-area";
 import { cn } from "@/lib/utils";
 import { Text } from "@/components/ui/text";
 import { buildMainTabHref } from "@/lib/main-tabs";
+import { restingHomeParams, restingHomeTarget } from "@/lib/resting-home";
 import { useResponsiveViewport } from "@/lib/responsive-viewport";
 import { useRouteShare } from "@/lib/use-route-share";
 import { relayConfiguredAtom } from "@/stores/relay";
@@ -62,11 +63,12 @@ function TopLevelExperienceNav() {
         : pathname === "/shares" || pathname.startsWith("/shares/")
           ? "shared"
           : "projects";
-  // A share names one host and carries no machine of its own.
-  const projectTarget =
-    activeShare && activeShare.ownerUserId === userId
-      ? { path: activeShare.projectRoot }
-      : selectedProjectRef;
+  // Switching tabs inside the tab navigator, so the group-qualified path.
+  const projectTarget = restingHomeTarget({
+    selectedProject: selectedProjectRef,
+    activeShare,
+    userId,
+  });
   const options = [
     {
       id: "projects",
@@ -125,6 +127,15 @@ function TopLevelExperienceNav() {
 export const TopBar = React.memo(function TopBar({ left }: { left?: React.ReactNode }) {
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const { sidebarPresentation, topBarCompact: compact } = useResponsiveViewport();
+  const selectedProjectRef = useAtomValue(selectedProjectRefAtom);
+  const activeShare = useRouteShare();
+  const { userId } = useAuth();
+  // The same destination the Projects tab resolves, but pressed from outside
+  // the tab navigator -- `/agent/...` is not a tab -- so the public route,
+  // not the group-qualified one. The internal path does not move from there.
+  const homeParams = restingHomeParams(
+    restingHomeTarget({ selectedProject: selectedProjectRef, activeShare, userId }),
+  );
   const insets = useSafeAreaInsets();
   const topInset = resolveChromeTopInset(insets.top, {
     reserveTopSafeArea: sidebarPresentation !== "persistent",
@@ -136,7 +147,20 @@ export const TopBar = React.memo(function TopBar({ left }: { left?: React.ReactN
       style={{ height: 56 + topInset, paddingTop: topInset }}
     >
       {left ? <View className="-ml-1 mr-2">{left}</View> : null}
-      <View className="flex-row items-center">
+      {/* A real anchor, not a programmatic navigate. `router.navigate` to the
+          project route from `/agent/...` does nothing -- measured, it clicked
+          and stayed put -- and a link also gets cmd-click and a status-bar
+          target for free. */}
+      <Link
+        href={{ pathname: "/project", params: homeParams }}
+        // `/agent/...` is a Stack screen pushed OVER the tabs, so reaching the
+        // overview means popping back to it. A plain navigate is a no-op from
+        // there -- measured twice, the URL did not change -- because the route
+        // is already below in the stack rather than somewhere new to go.
+        dismissTo
+        accessibilityLabel="aimux home"
+        className="flex-row items-center rounded-lg px-1 py-1 active:bg-accent"
+      >
         <Image
           source={require("@/assets/images/icon.png")}
           style={{ width: 24, height: 24, borderRadius: 6, marginRight: 8 }}
@@ -146,7 +170,7 @@ export const TopBar = React.memo(function TopBar({ left }: { left?: React.ReactN
         {!compact ? (
           <Text className="font-mono text-[17px] font-bold text-foreground">aimux</Text>
         ) : null}
-      </View>
+      </Link>
       <TopLevelExperienceNav />
       <View className="min-w-2 flex-1" />
       {relayConfigured ? (
