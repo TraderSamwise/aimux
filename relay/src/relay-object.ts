@@ -4,6 +4,8 @@ import {
   MAX_MACHINES_PER_ROOM,
   type MachineInfo,
   machineFromConnectUrl,
+  connectionSequenceFromTags,
+  connectionTag,
   machineFromTags,
   machineNameTag,
   machineTag,
@@ -113,6 +115,21 @@ export class RelayObject extends DurableObject<Env> {
     { client: WebSocket; clientSubscriptionId: string; machineId: string }
   >();
   private requestCounter = 0;
+  private lastConnectionSequence = 0;
+
+  /**
+   * A value that only ever goes up, for the accept-time socket tag that says
+   * which of two sockets for one machine is the live one.
+   *
+   * Wall clock carries it across a hibernation, where an in-memory counter
+   * would restart at zero and make every socket look older than the dead one
+   * it is replacing. The max keeps it strictly increasing when two daemons
+   * land in the same millisecond, or the clock steps back.
+   */
+  private nextConnectionSequence(): number {
+    this.lastConnectionSequence = Math.max(Date.now(), this.lastConnectionSequence + 1);
+    return this.lastConnectionSequence;
+  }
 
   async fetch(request: Request): Promise<Response> {
     this.rehydrateSockets();
@@ -256,6 +273,7 @@ export class RelayObject extends DurableObject<Env> {
               ...(daemonOwnerUserId ? [`user:${daemonOwnerUserId}`] : []),
               machineTag(daemonMachine.id),
               machineNameTag(daemonMachine.name),
+              connectionTag(this.nextConnectionSequence()),
             ]
           : [role],
     );
@@ -1719,11 +1737,18 @@ export class RelayObject extends DurableObject<Env> {
       const tags = this.ctx.getTags(ws);
       if (tags.includes("daemon")) {
         const machine = machineFromTags(tags);
-        // Two live sockets for one machine is the state eviction prevents. If
-        // hibernation left both, the NEWEST wins -- `getWebSockets` is in
-        // accept order, so keeping the first would resurrect the socket the
-        // connect path already closed and leave the new daemon reconnecting.
-        const superseded = this.daemonSockets.get(machine.id);
+        // Two live sockets for one machine is the state eviction prevents, and
+        // if hibernation left both the NEWEST has to win. Which one that is
+        // comes from the accept-time tag, never from the position in
+        // `getWebSockets()` -- Cloudflare documents no order for it, and when
+        // it handed them back newest-first this kept the dead socket and
+        // closed the live one, so the daemon reconnected into the same verdict
+        // for ever. That was sam-mini flapping for days.
+        const incumbent = this.daemonSockets.get(machine.id);
+        const keepsIncumbent =
+          incumbent !== undefined &&
+          connectionSequenceFromTags(this.ctx.getTags(incumbent)) >= connectionSequenceFromTags(tags);
+        const superseded = keepsIncumbent ? ws : incumbent;
         if (superseded) {
           // Its in-flight work goes with it, rather than waiting out the
           // request TTL: the socket that was going to answer is gone, and the
@@ -1733,6 +1758,7 @@ export class RelayObject extends DurableObject<Env> {
             superseded.close(1000, "Replaced");
           } catch {}
         }
+        if (keepsIncumbent) continue;
         this.daemonSockets.set(machine.id, ws);
         this.daemonMachineNames.set(machine.id, machine.name);
       } else if (tags.includes("client")) {

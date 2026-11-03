@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_MACHINES_PER_ROOM } from "./machines";
+import { MAX_MACHINES_PER_ROOM, UNSEQUENCED_CONNECTION, connectionSequenceFromTags } from "./machines";
 import { RelayObject } from "./relay-object";
 import { deviceProofMessage } from "./security";
 import type { Env } from "./types";
@@ -1291,7 +1291,11 @@ describe("RelayObject owner device security", () => {
   });
 });
 
-function createObject(storage: MemoryStorage & { sockets?: Array<ReturnType<typeof fakeSocket>> }, env: Env) {
+function createObject(
+  storage: MemoryStorage & { sockets?: Array<ReturnType<typeof fakeSocket>> },
+  env: Env,
+  acceptedTagSets: string[][] = [],
+) {
   const tags = new Map<WebSocket, string[]>();
   return new RelayObject(
     {
@@ -1300,6 +1304,7 @@ function createObject(storage: MemoryStorage & { sockets?: Array<ReturnType<type
       getTags: (ws: WebSocket) => tags.get(ws) ?? (ws as WebSocket & { tags?: string[] }).tags ?? [],
       acceptWebSocket: (ws: WebSocket, acceptedTags: string[]) => {
         tags.set(ws, acceptedTags);
+        acceptedTagSets.push(acceptedTags);
         storage.sockets = [...(storage.sockets ?? []), ws as ReturnType<typeof fakeSocket>];
       },
     } as unknown as DurableObjectState,
@@ -1565,8 +1570,14 @@ describe("RelayObject machines", () => {
     );
   });
 
-  function daemonSocket(machineId: string, machineName: string) {
-    return fakeSocket(["daemon", "user:user_owner", `machine:${machineId}`, `machineName:${machineName}`]);
+  function daemonSocket(machineId: string, machineName: string, connectedSeq?: number) {
+    return fakeSocket([
+      "daemon",
+      "user:user_owner",
+      `machine:${machineId}`,
+      `machineName:${machineName}`,
+      ...(connectedSeq === undefined ? [] : [`conn:${connectedSeq}`]),
+    ]);
   }
 
   async function connectDaemon(object: RelayObject, query: string) {
@@ -1618,6 +1629,46 @@ describe("RelayObject machines", () => {
     expect(mbp.send).toHaveBeenCalledWith(expect.stringContaining("Replaced by new daemon connection"));
     expect(strix.close).not.toHaveBeenCalled();
     expect(strix.send).not.toHaveBeenCalled();
+  });
+
+  // sam-mini flapped for days: 88 of its last 100 closes were `1000 Replaced`,
+  // each within two seconds of connecting, while the daemon logged ZERO runner
+  // replacements. The relay was evicting the socket it had just accepted.
+  //
+  // `rehydrateSockets` decided which of two sockets for one machine was newer
+  // by their position in `getWebSockets()`, which Cloudflare does not document
+  // as ordered. Rebuilt in the other order -- which is what hibernation can
+  // hand back -- it kept the dead socket and closed the live one, so the
+  // daemon reconnected into the same verdict for ever.
+  it("keeps the newest daemon socket however getWebSockets orders them", async () => {
+    for (const order of ["accept", "reversed"] as const) {
+      const stale = daemonSocket("mini", "sam-mini", 1);
+      const live = daemonSocket("mini", "sam-mini", 2);
+      const sockets = order === "accept" ? [stale, live] : [live, stale];
+      const object = createObject(storageWithSockets(sockets), {} as unknown as Env);
+
+      await object.webSocketMessage(live, JSON.stringify({ type: "ping" }));
+
+      expect(live.close, `live socket closed when rebuilt in ${order} order`).not.toHaveBeenCalled();
+      expect(stale.close, `stale socket survived in ${order} order`).toHaveBeenCalledWith(1000, "Replaced");
+    }
+  });
+
+  // The rule above reads recency off a tag, so the connect path has to write
+  // one. Without this the sockets in production all tie as unsequenced and the
+  // decision silently falls back to `getWebSockets()` order -- the exact bug,
+  // with the test above still green because it tags its sockets by hand.
+  it("stamps each accepted daemon socket with a rising connection sequence", async () => {
+    const acceptedTagSets: string[][] = [];
+    const object = createObject(storageWithSockets([]), {} as unknown as Env, acceptedTagSets);
+
+    await connectDaemon(object, "?machineId=mini&machineName=sam-mini");
+    await connectDaemon(object, "?machineId=mini&machineName=sam-mini");
+
+    const sequences = acceptedTagSets.map((set) => connectionSequenceFromTags(set));
+    expect(sequences).toHaveLength(2);
+    expect(sequences[0]).toBeGreaterThan(UNSEQUENCED_CONNECTION);
+    expect(sequences[1]).toBeGreaterThan(sequences[0]);
   });
 
   it("sends a request to the machine the client named", async () => {

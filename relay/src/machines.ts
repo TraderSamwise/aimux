@@ -6,6 +6,10 @@
 // identity from here rather than each keeping their own copy.
 
 export const MACHINE_TAG_PREFIX = "machine:";
+// When a daemon socket was accepted. Tags are the only state that survives
+// hibernation, so this is the only place a rebuilt map can learn which of two
+// sockets for one machine is the live one.
+export const CONNECTION_TAG_PREFIX = "conn:";
 export const MACHINE_NAME_TAG_PREFIX = "machineName:";
 // A daemon from before machine identity existed. It gets one slot, so such a
 // daemon behaves exactly as it does today: alone in the room, replaced by the
@@ -65,6 +69,22 @@ export function machineNameFromTags(tags: readonly string[]): string | undefined
   return sanitizeMachineName(
     tags.find((tag) => tag.startsWith(MACHINE_NAME_TAG_PREFIX))?.slice(MACHINE_NAME_TAG_PREFIX.length),
   );
+}
+
+// Sockets accepted before this tag existed. Any tagged socket is newer than
+// an untagged one, which is what a rolling deploy needs: the daemon that
+// reconnects after it ships must win against the socket it is replacing.
+export const UNSEQUENCED_CONNECTION = -1;
+
+export function connectionTag(sequence: number): string {
+  return `${CONNECTION_TAG_PREFIX}${sequence}`;
+}
+
+export function connectionSequenceFromTags(tags: readonly string[]): number {
+  const raw = tags.find((tag) => tag.startsWith(CONNECTION_TAG_PREFIX))?.slice(CONNECTION_TAG_PREFIX.length);
+  if (raw === undefined) return UNSEQUENCED_CONNECTION;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : UNSEQUENCED_CONNECTION;
 }
 
 export function machineFromTags(tags: readonly string[]): MachineInfo {
