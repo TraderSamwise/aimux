@@ -174,6 +174,7 @@ import {
   chatTranscriptPlaceholderState,
   type ChatTranscriptPlaceholderState,
 } from "@/lib/chat-loading";
+import { CHAT_PANE_PLACEHOLDER_SHELL } from "@/lib/chat-pane-placeholder";
 import { formatTerminalOutputForDisplay, terminalOutputTail } from "@/lib/terminal-output";
 import {
   terminalScrollStateAfterUserScroll,
@@ -3518,7 +3519,7 @@ const AgentTerminalOutputPane = React.memo(
           ))}
         </View>
       ) : (
-        <View className="items-center justify-center px-4 py-10">
+        <View className={CHAT_PANE_PLACEHOLDER_SHELL}>
           <View
             className="max-w-[90%] flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2"
             style={{ minWidth: 220 }}
@@ -4129,7 +4130,7 @@ function ChatTranscriptPlaceholder({
   const retryable = state.kind === "timed-out" || state.kind === "error";
   const loading = state.kind === "loading";
   return (
-    <View className="flex-1 items-center justify-center px-4 py-10">
+    <View className={CHAT_PANE_PLACEHOLDER_SHELL}>
       <View
         className="max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 shadow-sm"
         style={{ minWidth: 240 }}

@@ -35,7 +35,7 @@ import { ResponsiveViewportProvider, useResponsiveViewportValue } from "@/lib/re
 import { useRouteShare } from "@/lib/use-route-share";
 import { useSidebarKeyboard } from "@/lib/sidebar-keyboard";
 import { sidebarOpenForPresentation } from "@/lib/sidebar-visibility";
-import { topChromeLayerStyle } from "@/lib/top-chrome-layer";
+import { contentLayerStyle, topChromeLayerStyle } from "@/lib/top-chrome-layer";
 import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
 import { desktopAppZoomAtom, desktopAppZoomScale, stepDesktopAppZoom } from "@/stores/settings";
 import { chatChromeVisibleAtom, sidebarForcedHiddenAtom, sidebarOpenAtom } from "@/stores/ui";
@@ -248,7 +248,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {overlayTopChrome ? (
             <ChatTopEdgeFade topInset={resolvedTopInset} visible={!chatChromeVisible} />
           ) : null}
-          <View className="flex-1 flex-row">
+          <View
+            className="flex-1 flex-row"
+            style={contentLayerStyle(usesDrawerSidebar && sidebarOpen)}
+          >
             {usesPersistentSidebar ? (
               <Reanimated.View
                 pointerEvents={sidebarOpen ? "auto" : "none"}
