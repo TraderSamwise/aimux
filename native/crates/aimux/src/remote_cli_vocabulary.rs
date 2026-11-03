@@ -76,6 +76,7 @@ pub enum RemoteCliAction {
     },
     SecurityDeviceApproveLive {
         device_id: Option<String>,
+        approval_code: Option<String>,
         json: bool,
     },
     SecurityDeviceUpdate {
