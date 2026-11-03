@@ -131,6 +131,7 @@ import {
 import {
   COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
   mergeAcceptedComposerEchoes,
+  sameAcceptedComposerEchoes,
   type AcceptedComposerEcho,
 } from "@/lib/composer-echo";
 import {
@@ -4184,7 +4185,11 @@ function settleComposerEchoes(
     });
     setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
   }
-  if (result.echoes !== accepted) {
+  // By VALUE, not reference. The merge always allocates a fresh array, so a
+  // reference check is always unequal -- and this effect depends on the state
+  // it writes, so that would set state, re-render, merge, and set state again
+  // for ever.
+  if (!sameAcceptedComposerEchoes(result.echoes, accepted)) {
     setAcceptedComposerMessages(result.echoes);
   }
 }
