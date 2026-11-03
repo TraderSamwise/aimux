@@ -43,6 +43,43 @@ describe("formatTerminalOutputForDisplay", () => {
     expect(plain(output, 24)).toEqual(["done", "─".repeat(24), "next"]);
   });
 
+  // Sam's screenshot: rules stacked down the pane with gaps between them. The
+  // run-collapsing was already here and did not catch this, because a blank
+  // row is neither a divider nor a continuation -- it fell through to the
+  // passthrough branch and reset the run, so the next rule looked like the
+  // first one again.
+  it("collapses a wrapped divider run that has blank rows in it", () => {
+    const divider = "─".repeat(80);
+    const output = ["before", divider, "", divider, "", divider, "after"].join("\n");
+
+    expect(plain(output, 24)).toEqual(["before", "─".repeat(24), "after"]);
+  });
+
+  it("collapses a run of short residue separated by blanks", () => {
+    const output = ["done", "─".repeat(80), "", "─".repeat(18), "", "─".repeat(12), "next"].join(
+      "\n",
+    );
+
+    expect(plain(output, 24)).toEqual(["done", "─".repeat(24), "next"]);
+  });
+
+  it("keeps a blank line that genuinely follows a rule", () => {
+    // The blank only belongs to the run when a rule follows it. Here real text
+    // does, so the spacing the tool drew is the author's and is kept.
+    const output = ["before", "─".repeat(80), "", "after"].join("\n");
+
+    expect(plain(output, 24)).toEqual(["before", "─".repeat(24), "", "after"]);
+  });
+
+  it("collapses blank-separated rules in chat text too", () => {
+    const divider = "-".repeat(80);
+    const output = ["done", divider, "", divider, "next"].join("\n");
+
+    expect(formatPlainTextForDisplay(output, { dividerWidth: 28 })).toBe(
+      ["done", "-".repeat(28), "next"].join("\n"),
+    );
+  });
+
   it("preserves normal terminal text and short separators", () => {
     const lines = ["❯ hi", "-----", "⏺ Hey! What would you like to work on?"];
 
