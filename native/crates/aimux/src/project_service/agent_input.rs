@@ -60,8 +60,37 @@ pub fn safe_shared_chat_actor_name(actor: &Value) -> String {
     }
 }
 
+/// Characters that make the first character of an input a command rather than
+/// prose: a slash command, a shell escape, a shell line, a memory note.
+///
+/// Every agent we run reads these at position ZERO, which is exactly what the
+/// attribution prefix takes away.
+const AGENT_COMMAND_SIGILS: [char; 4] = ['/', '!', '$', '#'];
+
+/// Whether this input is a command the agent parses rather than prose.
+///
+/// Deliberately a first-character test and nothing cleverer. The alternative
+/// is guessing which `/word` is a command and which is a path, and a guess
+/// that gets it wrong in the command direction is a broken command, while one
+/// that gets it wrong in the prose direction only loses a name from a line
+/// that still arrives intact. So `/home/sam is broken` goes through
+/// unattributed, and that is the trade taken on purpose.
+pub fn looks_like_agent_command(text: &str) -> bool {
+    text.trim_start()
+        .chars()
+        .next()
+        .is_some_and(|character| AGENT_COMMAND_SIGILS.contains(&character))
+}
+
 pub fn format_shared_chat_agent_input(text: &str, actor: &Value) -> String {
-    format!("[{}] {}", safe_shared_chat_actor_name(actor), text.trim())
+    let trimmed = text.trim();
+    // A prefixed command is not a command. `[sam@example.com] /clear` is a
+    // message beginning with a bracket, so the agent takes it as prose and
+    // the thing the sender asked for never happens.
+    if looks_like_agent_command(trimmed) {
+        return trimmed.to_owned();
+    }
+    format!("[{}] {}", safe_shared_chat_actor_name(actor), trimmed)
 }
 
 pub fn shared_chat_body_actor_prompt(body: &Value, text: &str) -> Option<String> {
@@ -147,4 +176,87 @@ fn collapse_whitespace(value: &str) -> String {
 
 fn string_field<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
     value.get(field).and_then(Value::as_str)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn guest() -> Value {
+        json!({ "role": "guest", "displayName": "sam@example.com" })
+    }
+
+    #[test]
+    fn prose_keeps_its_attribution() {
+        assert_eq!(
+            format_shared_chat_agent_input("Help us make a document.", &guest()),
+            "[sam@example.com] Help us make a document."
+        );
+    }
+
+    #[test]
+    fn commands_are_not_prefixed() {
+        // The bug: `[sam@example.com] /clear` begins with a bracket, so the
+        // agent reads it as prose and the command never runs.
+        for command in [
+            "/clear",
+            "/model opus",
+            "!ls -la",
+            "$ echo hi",
+            "# remember this",
+        ] {
+            assert_eq!(
+                format_shared_chat_agent_input(command, &guest()),
+                command,
+                "{command} must reach the agent unprefixed"
+            );
+        }
+    }
+
+    #[test]
+    fn leading_whitespace_does_not_hide_a_command() {
+        // Trimmed before the test and before sending, so a pasted command
+        // with a stray space is still a command.
+        assert_eq!(
+            format_shared_chat_agent_input("   /clear", &guest()),
+            "/clear"
+        );
+    }
+
+    #[test]
+    fn a_sigil_inside_the_line_is_prose() {
+        // Only position zero decides. A sentence mentioning a path or a bang
+        // is an ordinary message and keeps its sender.
+        assert_eq!(
+            format_shared_chat_agent_input("look at /etc/hosts", &guest()),
+            "[sam@example.com] look at /etc/hosts"
+        );
+    }
+
+    #[test]
+    fn the_remote_path_agrees_with_the_body_path() {
+        // Both callers go through `format_shared_chat_agent_input`, so a
+        // command sent over the relay must be treated the same as one sent
+        // through the project service body.
+        let body = json!({
+            "sharedChatActor": { "role": "guest", "displayName": "sam@example.com" }
+        });
+        assert_eq!(
+            shared_chat_body_actor_prompt(&body, "/clear").as_deref(),
+            Some("/clear")
+        );
+        assert_eq!(
+            shared_chat_body_actor_prompt(&body, "hello").as_deref(),
+            Some("[sam@example.com] hello")
+        );
+    }
+
+    #[test]
+    fn empty_input_is_still_refused() {
+        let body = json!({
+            "sharedChatActor": { "role": "guest", "displayName": "sam@example.com" }
+        });
+        assert_eq!(shared_chat_body_actor_prompt(&body, "   "), None);
+    }
 }
