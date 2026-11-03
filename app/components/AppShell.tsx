@@ -34,9 +34,10 @@ import { pairingPromptDeviceKey, shouldOpenPairingPrompt } from "@/lib/pairing-p
 import { ResponsiveViewportProvider, useResponsiveViewportValue } from "@/lib/responsive-viewport";
 import { useRouteShare } from "@/lib/use-route-share";
 import { useSidebarKeyboard } from "@/lib/sidebar-keyboard";
+import { sidebarOpenForPresentation } from "@/lib/sidebar-visibility";
 import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
 import { desktopAppZoomAtom, desktopAppZoomScale, stepDesktopAppZoom } from "@/stores/settings";
-import { chatChromeVisibleAtom, sidebarOpenAtom } from "@/stores/ui";
+import { chatChromeVisibleAtom, sidebarForcedHiddenAtom, sidebarOpenAtom } from "@/stores/ui";
 
 const DRAWER_WIDTH = 320;
 const SIDEBAR_SURFACE_MOTION_MS = 110;
@@ -53,6 +54,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const usesDrawerSidebar = !usesPersistentSidebar;
 
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
+  const [sidebarForcedHidden, setSidebarForcedHidden] = useAtom(sidebarForcedHiddenAtom);
   const setDesktopAppZoom = useSetAtom(desktopAppZoomAtom);
   const pathname = usePathname();
   const chatChromeVisible = useAtomValue(chatChromeVisibleAtom);
@@ -78,9 +80,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     topInset: resolvedTopInset,
   });
 
+  // Both directions. This only ever closed the sidebar, so narrowing the
+  // window hid it and widening never brought it back.
   useEffect(() => {
-    if (!usesPersistentSidebar) setSidebarOpen(false);
-  }, [setSidebarOpen, usesPersistentSidebar]);
+    setSidebarOpen(
+      sidebarOpenForPresentation({
+        persistent: usesPersistentSidebar,
+        forcedHidden: sidebarForcedHidden,
+      }),
+    );
+  }, [setSidebarOpen, sidebarForcedHidden, usesPersistentSidebar]);
 
   // Keyed on the atom rather than the one button that writes it, so a second
   // opener cannot be added without this.
@@ -152,12 +161,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         variant="ghost"
         size="icon"
         accessibilityLabel="Toggle sidebar"
-        onPress={() => setSidebarOpen((v) => !v)}
+        onPress={() => {
+          const next = !sidebarOpen;
+          setSidebarOpen(next);
+          // On a window wide enough to hold the sidebar, this is the reader
+          // saying so, and it has to survive a resize or the restore above
+          // would undo it on the next width change.
+          if (usesPersistentSidebar) setSidebarForcedHidden(!next);
+        }}
       >
         <Menu size={20} color="#a1a1aa" />
       </Button>
     ),
-    [setSidebarOpen],
+    [setSidebarForcedHidden, setSidebarOpen, sidebarOpen, usesPersistentSidebar],
   );
   const desktopSidebarSurface = overlayTopChrome ? (
     <View className="flex-1 bg-[#161719]">
