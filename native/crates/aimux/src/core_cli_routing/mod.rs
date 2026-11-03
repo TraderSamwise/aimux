@@ -915,12 +915,33 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
     }
 }
 
+/// The shape of `aimux security device approve [<id>] [--code <code>]`.
+///
+/// `--code` belongs here. The pairing dialog shows an approval code and no
+/// device id, so the code is the one argument an operator actually has, and
+/// this grammar used to reject it before the planner ever saw the command --
+/// so it came back as "unsupported core command" rather than anything about
+/// codes. This is a second copy of the parser in `remote/cli.rs`, and the two
+/// have to accept the same words or the gate refuses what the parser handles.
 fn security_device_approve_live_shape<S: AsRef<str>>(args: &[S]) -> bool {
     let mut device_seen = false;
     let mut index = 3;
     while index < args.len() {
         let arg = args[index].as_ref();
         if arg == "--json" {
+            index += 1;
+        } else if arg == "--code" {
+            let Some(value) = args.get(index + 1).map(AsRef::as_ref) else {
+                return false;
+            };
+            if value.starts_with('-') {
+                return false;
+            }
+            index += 2;
+        } else if let Some(value) = arg.strip_prefix("--code=") {
+            if value.is_empty() {
+                return false;
+            }
             index += 1;
         } else if !device_seen && !arg.starts_with('-') {
             device_seen = true;

@@ -3511,6 +3511,113 @@ fn security_device_commands_match_node_cli_surface() {
         [("dev-1".into(), "approve".into(), Some("123456".into()))]
     );
 
+    // `security device approve` used to list the waiting devices and then
+    // refuse every single time with "Interactive approval requires a TTY",
+    // having consulted no terminal: there is no `isatty` anywhere on that
+    // path, so it failed identically sitting at the machine. The pairing
+    // dialog's own copy-to-clipboard button ran exactly that command.
+    //
+    // It also never parsed `--code`, so the one argument the dialog gives you
+    // was an invalid-arguments error.
+    runtime.pending_security_devices = vec![json!({
+        "deviceId": "client_abc",
+        "id": "client_abc",
+        "name": "Web browser",
+        "platform": "web",
+    })];
+    runtime.security_updates.borrow_mut().clear();
+
+    let approve_live = run_core_cli_with(
+        &args(&["security", "device", "approve", "--code", "GET-Y5T"]),
+        &mut runtime,
+    );
+    assert_eq!(approve_live.code, 0, "{:?}", approve_live.stderr);
+    assert_eq!(
+        runtime.security_updates.borrow().as_slice(),
+        [(
+            "client_abc".into(),
+            "approve".into(),
+            Some("GET-Y5T".into())
+        )],
+        "one device waiting and a code is all it takes: there is nothing to disambiguate"
+    );
+
+    // The id spelling has to work too, since that is what the dialog shows.
+    runtime.security_updates.borrow_mut().clear();
+    let approve_by_id = run_core_cli_with(
+        &args(&[
+            "security",
+            "device",
+            "approve",
+            "client_abc",
+            "--code",
+            "GET-Y5T",
+        ]),
+        &mut runtime,
+    );
+    assert_eq!(approve_by_id.code, 0, "{:?}", approve_by_id.stderr);
+    assert_eq!(
+        runtime.security_updates.borrow().as_slice(),
+        [(
+            "client_abc".into(),
+            "approve".into(),
+            Some("GET-Y5T".into())
+        )]
+    );
+
+    // The dialog shows a code and no id, so pasting the code where the id
+    // goes is the likeliest mistake. "No live remote client is waiting for
+    // approval as GET-Y5T" reads as a connection problem; Sam took it for a
+    // multi-host bug. Say which argument it is.
+    runtime.security_updates.borrow_mut().clear();
+    let code_as_id = run_core_cli_with(
+        &args(&["security", "device", "approve", "GET-Y5T"]),
+        &mut runtime,
+    );
+    assert_eq!(code_as_id.code, 0);
+    assert!(
+        code_as_id.stdout[0].contains("looks like an approval code"),
+        "got {:?}",
+        code_as_id.stdout
+    );
+    assert!(
+        runtime.security_updates.borrow().is_empty(),
+        "a code in the id slot must not approve anything"
+    );
+
+    // Two waiting devices cannot be disambiguated, so print the ids rather
+    // than guessing which browser the operator meant.
+    runtime.pending_security_devices = vec![
+        json!({ "deviceId": "client_abc", "id": "client_abc" }),
+        json!({ "deviceId": "client_def", "id": "client_def" }),
+    ];
+    runtime.security_updates.borrow_mut().clear();
+    let ambiguous = run_core_cli_with(
+        &args(&["security", "device", "approve", "--code", "GET-Y5T"]),
+        &mut runtime,
+    );
+    assert_eq!(ambiguous.code, 0);
+    assert!(
+        ambiguous.stdout[0].contains("More than one device"),
+        "got {:?}",
+        ambiguous.stdout
+    );
+    assert!(
+        ambiguous
+            .stdout
+            .iter()
+            .any(|line| line.contains("client_def")),
+        "the ids must be printed so one can be chosen, got {:?}",
+        ambiguous.stdout
+    );
+    assert!(
+        runtime.security_updates.borrow().is_empty(),
+        "ambiguity must not approve anything"
+    );
+
+    runtime.pending_security_devices = Vec::new();
+    runtime.security_updates.borrow_mut().clear();
+
     let revoke = run_core_cli_with(&args(&["security", "revoke", "dev-1"]), &mut runtime);
     assert_eq!(revoke.code, 0);
     assert_eq!(revoke.stdout, ["Blocked dev-1 (Sam MBP)"]);

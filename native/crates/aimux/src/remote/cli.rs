@@ -138,6 +138,7 @@ pub fn plan_remote_core_cli(
                 RemoteCliOperation::SecurityDeviceApprove,
                 RemoteCliAction::SecurityDeviceApproveLive {
                     device_id: parsed.device_id,
+                    approval_code: parsed.approval_code,
                     json: parsed.json,
                 },
                 None,
@@ -277,9 +278,17 @@ pub fn run_remote_cli_action(
         RemoteCliAction::SecurityDevices { json } => {
             run_security_devices(json, false, output_mode, runtime)
         }
-        RemoteCliAction::SecurityDeviceApproveLive { device_id, json } => {
-            run_security_device_approve_live(device_id.as_deref(), json, output_mode, runtime)
-        }
+        RemoteCliAction::SecurityDeviceApproveLive {
+            device_id,
+            approval_code,
+            json,
+        } => run_security_device_approve_live(
+            device_id.as_deref(),
+            approval_code.as_deref(),
+            json,
+            output_mode,
+            runtime,
+        ),
         RemoteCliAction::SecurityDeviceUpdate {
             device_id,
             action,
@@ -329,6 +338,7 @@ fn existing_daemon_call(command: &'static str) -> CoreCommandCall {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SecurityDeviceApproveLiveArgs {
     device_id: Option<String>,
+    approval_code: Option<String>,
     json: bool,
 }
 
@@ -344,12 +354,26 @@ fn parse_security_device_approve_live_args(
     args: &[String],
 ) -> Option<SecurityDeviceApproveLiveArgs> {
     let mut device_id = None;
+    let mut approval_code = None;
     let mut json = false;
     let mut index = 3;
     while index < args.len() {
         let arg = args[index].as_str();
         if arg == "--json" {
             json = true;
+            index += 1;
+        } else if arg == "--code" {
+            let value = args.get(index + 1)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            approval_code = Some(value.clone());
+            index += 2;
+        } else if let Some(value) = arg.strip_prefix("--code=") {
+            if value.is_empty() {
+                return None;
+            }
+            approval_code = Some(value.to_owned());
             index += 1;
         } else if device_id.is_none() && !arg.starts_with('-') {
             device_id = Some(arg.to_owned());
@@ -358,7 +382,11 @@ fn parse_security_device_approve_live_args(
             return None;
         }
     }
-    Some(SecurityDeviceApproveLiveArgs { device_id, json })
+    Some(SecurityDeviceApproveLiveArgs {
+        device_id,
+        approval_code,
+        json,
+    })
 }
 
 fn parse_security_device_update_args(args: &[String]) -> Option<SecurityDeviceUpdateArgs> {
@@ -426,28 +454,48 @@ fn run_security_devices(
     ))
 }
 
+/// The id of a waiting device, as the list reports it.
+fn security_device_id(device: &Value) -> Option<&str> {
+    [device.get("deviceId"), device.get("id")]
+        .into_iter()
+        .flatten()
+        .find_map(Value::as_str)
+}
+
+/// Approve the device that is waiting.
+///
+/// This used to list the waiting devices and then refuse every time with
+/// "Interactive approval requires a TTY", which was wrong twice over: no
+/// terminal was ever consulted -- there is no `isatty` anywhere on this path
+/// -- and the terminal it sent you to failed identically. The prompt it
+/// stood in for was never written, so the pairing dialog's own
+/// copy-to-clipboard command could not succeed on any machine.
+///
+/// Approving needs an id and a code, and the dialog only shows the code, so
+/// the common case is a bare `approve --code <code>`: with exactly one
+/// device waiting there is nothing to disambiguate and that one is approved.
+/// More than one, and the ids are printed rather than a guess being made.
 fn run_security_device_approve_live(
     device_id: Option<&str>,
+    approval_code: Option<&str>,
     json_flag: bool,
     output_mode: CoreCliOutputMode,
     runtime: &impl RemoteCliRuntime,
 ) -> Result<CoreCliExecution, String> {
+    let as_json = json_flag || output_mode == CoreCliOutputMode::Json;
     let devices = runtime.list_remote_security_devices(true)?;
     let candidates = if let Some(device_id) = device_id {
         devices
-            .into_iter()
-            .filter(|device| {
-                [device.get("id"), device.get("deviceId")]
-                    .into_iter()
-                    .flatten()
-                    .any(|value| value.as_str() == Some(device_id))
-            })
+            .iter()
+            .filter(|device| security_device_id(device) == Some(device_id))
+            .cloned()
             .collect::<Vec<_>>()
     } else {
-        devices
+        devices.clone()
     };
+
     if candidates.is_empty() {
-        if json_flag || output_mode == CoreCliOutputMode::Json {
+        if as_json {
             return Ok(CoreCliExecution::ok(vec![
                 serde_json::to_string_pretty(
                     &json!({ "ok": false, "devices": [], "error": "No live remote clients are waiting for approval" }),
@@ -455,14 +503,64 @@ fn run_security_device_approve_live(
                 .map_err(|error| error.to_string())?,
             ]));
         }
-        let message = device_id
-            .map(|device_id| {
+        // The dialog shows a code and no id, so a code in the id's place is
+        // the likeliest mistake by far, and "nothing is waiting" reads as a
+        // connection problem instead of a wrong argument.
+        let message = match device_id {
+            Some(device_id) if looks_like_an_approval_code(device_id) => format!(
+                "{device_id} looks like an approval code, not a device id. Run `aimux security device approve --code {device_id}`, or pass the id from `aimux security devices`."
+            ),
+            Some(device_id) => {
                 format!("No live remote client is waiting for approval as {device_id}.")
-            })
-            .unwrap_or_else(|| "No live remote clients are waiting for approval.".into());
+            }
+            None => "No live remote clients are waiting for approval.".into(),
+        };
         return Ok(CoreCliExecution::ok(vec![message]));
     }
-    Err("Interactive approval requires a TTY. Run `aimux security device approve` in a terminal and type the code shown on the waiting device.".into())
+
+    if candidates.len() > 1 {
+        let ids = candidates
+            .iter()
+            .filter_map(security_device_id)
+            .collect::<Vec<_>>();
+        if as_json {
+            return Ok(CoreCliExecution::ok(vec![
+                serde_json::to_string_pretty(
+                    &json!({ "ok": false, "devices": candidates, "error": "More than one device is waiting for approval" }),
+                )
+                .map_err(|error| error.to_string())?,
+            ]));
+        }
+        let mut lines =
+            vec!["More than one device is waiting for approval. Approve one by id:".to_owned()];
+        lines.extend(
+            ids.iter()
+                .map(|id| format!("  aimux security device approve {id} --code <code>")),
+        );
+        return Ok(CoreCliExecution::ok(lines));
+    }
+
+    let target = security_device_id(&candidates[0])
+        .ok_or_else(|| "A waiting device was listed without an id".to_owned())?
+        .to_owned();
+    run_security_device_update(
+        &target,
+        "approve",
+        approval_code,
+        json_flag,
+        output_mode,
+        runtime,
+    )
+}
+
+/// The codes the pairing dialog shows are short and have no `client_` prefix,
+/// which is the whole difference a reader needs.
+fn looks_like_an_approval_code(value: &str) -> bool {
+    !value.starts_with("client_")
+        && value.len() <= 16
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 fn run_security_device_update(

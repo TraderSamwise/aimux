@@ -19,7 +19,7 @@ import Reanimated, {
 } from "react-native-reanimated";
 import { MonitorSidebar } from "@/components/MonitorSidebar";
 import { NotificationStartupBanner } from "@/components/NotificationStartupBanner";
-import { PairDeviceDialog, APPROVE_COMMAND } from "@/components/PairDeviceDialog";
+import { PairDeviceDialog, approveCommand } from "@/components/PairDeviceDialog";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SharedSidebar } from "@/components/SharedSidebar";
 import { ChatChromeMotion } from "@/components/ChatChromeMotion";
@@ -214,7 +214,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {showPairingBanner ? (
                 <Pressable
                   accessibilityLabel="Pair this browser"
-                  accessibilityHint={`Run ${APPROVE_COMMAND} on your Mac to approve this device.`}
+                  accessibilityHint={`Run ${approveCommand(pendingApproval?.deviceId, pendingApproval?.approvalCode)} on your Mac to approve this device.`}
                   onPress={() => setPairingDialogOpen(true)}
                   className="flex-row items-center border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 active:bg-amber-500/20"
                 >
@@ -224,11 +224,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       Approve this browser to connect
                     </Text>
                     <Text className="mt-0.5 text-[12px] text-amber-100/80" numberOfLines={1}>
-                      Run {APPROVE_COMMAND}
-                      {pendingApproval?.approvalCode
-                        ? ` and match code ${pendingApproval.approvalCode}`
-                        : ""}
-                      .
+                      {/* The whole command, code included. Telling someone to
+                          "match the code" left them to find the device id,
+                          which this banner never showed. */}
+                      Run {approveCommand(pendingApproval?.deviceId, pendingApproval?.approvalCode)}
                     </Text>
                   </View>
                 </Pressable>
