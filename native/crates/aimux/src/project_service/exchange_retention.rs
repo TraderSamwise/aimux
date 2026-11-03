@@ -28,18 +28,6 @@ pub struct RuntimeExchangeRetention {
     /// before its body is compacted even though a delivery is still pending.
     pub pending_body_grace_ms: i64,
     pub closed_task_text_bytes: usize,
-    /// Inbox entries kept, newest first.
-    ///
-    /// `subject_exists` was the only filter, so the inbox tracked thread
-    /// count roughly one to one and never shrank on its own. Measured on
-    /// 2026-11-03: 826 entries on aimux, 962 on tealstreet-next, 763 on
-    /// thegrand. Not hurting yet -- those stores are around 2MB -- but it is
-    /// the one part of the exchange with no bound at all, so it only ever
-    /// goes the wrong way.
-    pub inbox_entries: usize,
-    /// Waits kept, newest first. Same reasoning; smaller in practice, with
-    /// 174 the worst seen.
-    pub wait_entries: usize,
 }
 
 pub const RUNTIME_EXCHANGE_RETENTION: RuntimeExchangeRetention = RuntimeExchangeRetention {
@@ -53,10 +41,6 @@ pub const RUNTIME_EXCHANGE_RETENTION: RuntimeExchangeRetention = RuntimeExchange
     delivered_message_body_bytes: 4 * 1024,
     pending_body_grace_ms: 6 * 60 * 60 * 1000,
     closed_task_text_bytes: 2 * 1024,
-    // Comfortably above what any live project holds, because this is a
-    // backstop against unbounded growth and not a target to prune toward.
-    inbox_entries: 2_000,
-    wait_entries: 1_000,
 };
 
 pub fn compact_runtime_exchange(exchange: &Value) -> Value {
@@ -129,43 +113,34 @@ pub fn compact_runtime_exchange(exchange: &Value) -> Value {
         .iter()
         .filter_map(|review| id(review).map(str::to_owned))
         .collect::<HashSet<_>>();
-    // Both are filtered by subject AND bounded. Subject alone meant they grew
-    // with their subjects and never shrank, which is how the inbox reached
-    // 962 entries on one project with nothing to stop it.
-    let waits = retain_latest(
-        array_field(exchange, "waits")
-            .iter()
-            .filter(|wait| {
-                subject_exists(
-                    wait,
-                    &thread_ids,
-                    &task_ids,
-                    &handoff_ids,
-                    &review_ids,
-                    &retained_message_ids,
-                )
-            })
-            .cloned()
-            .collect::<Vec<_>>(),
-        RUNTIME_EXCHANGE_RETENTION.wait_entries,
-    );
-    let inbox = retain_latest(
-        array_field(exchange, "inbox")
-            .iter()
-            .filter(|entry| {
-                subject_exists(
-                    entry,
-                    &thread_ids,
-                    &task_ids,
-                    &handoff_ids,
-                    &review_ids,
-                    &retained_message_ids,
-                )
-            })
-            .cloned()
-            .collect::<Vec<_>>(),
-        RUNTIME_EXCHANGE_RETENTION.inbox_entries,
-    );
+    let waits = array_field(exchange, "waits")
+        .iter()
+        .filter(|wait| {
+            subject_exists(
+                wait,
+                &thread_ids,
+                &task_ids,
+                &handoff_ids,
+                &review_ids,
+                &retained_message_ids,
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let inbox = array_field(exchange, "inbox")
+        .iter()
+        .filter(|entry| {
+            subject_exists(
+                entry,
+                &thread_ids,
+                &task_ids,
+                &handoff_ids,
+                &review_ids,
+                &retained_message_ids,
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     let plan_refs = array_field(exchange, "planRefs")
         .iter()
         .filter(|reference| {
@@ -581,28 +556,6 @@ fn latest_retained_message_id(messages: &[Value]) -> Option<String> {
         .first()
         .and_then(|message| id(message))
         .map(str::to_owned)
-}
-
-/// The newest `limit` records, in their original order.
-///
-/// `select_latest_ids` answers the same question for records that are chosen
-/// by id elsewhere. Inbox entries and waits are kept as whole records, and
-/// their order is what readers see, so the newest are selected and then put
-/// back the way they came rather than left sorted by recency.
-fn retain_latest(records: Vec<Value>, limit: usize) -> Vec<Value> {
-    if records.len() <= limit {
-        return records;
-    }
-    let keep = sorted_by_updated_at_desc(&records)
-        .into_iter()
-        .take(limit)
-        .map(|record| record as *const Value)
-        .collect::<HashSet<_>>();
-    records
-        .iter()
-        .filter(|record| keep.contains(&(*record as *const Value)))
-        .cloned()
-        .collect()
 }
 
 fn select_latest_ids(records: &[Value], limit: usize) -> Vec<String> {
