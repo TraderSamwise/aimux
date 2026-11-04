@@ -4309,7 +4309,7 @@ impl AgentOutputCaptureRuntime for FakeChooserRuntime {
 fn selecting_an_option_walks_the_cursor_onto_it_and_then_commits() {
     let project = temp_project("select-answer");
     let state_dir = project.join("state");
-    write_state(&state_dir);
+    write_state_with_window(&state_dir, "@select-answer");
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
     let mut runtime = FakeChooserRuntime::new(&["Yes", "Yes, and switch to accept edits", "No"]);
 
@@ -4348,7 +4348,7 @@ fn selecting_an_option_walks_the_cursor_onto_it_and_then_commits() {
 fn selecting_an_option_the_pane_no_longer_offers_commits_nothing() {
     let project = temp_project("select-moved-on");
     let state_dir = project.join("state");
-    write_state(&state_dir);
+    write_state_with_window(&state_dir, "@select-moved-on");
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
     // The client was looking at a tool permission; the pane is now asking a
     // plan question whose option 3 is something else entirely.
@@ -4389,7 +4389,7 @@ fn selecting_an_option_the_pane_no_longer_offers_commits_nothing() {
 fn a_cursor_that_will_not_move_is_never_committed() {
     let project = temp_project("select-stuck");
     let state_dir = project.join("state");
-    write_state(&state_dir);
+    write_state_with_window(&state_dir, "@select-stuck");
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
     let mut runtime = FakeChooserRuntime::frozen(&["Yes", "No"]);
 
@@ -4422,7 +4422,7 @@ fn a_cursor_that_will_not_move_is_never_committed() {
 fn a_cursor_that_overshot_is_put_back_where_it_was() {
     let project = temp_project("select-overshoot");
     let state_dir = project.join("state");
-    write_state(&state_dir);
+    write_state_with_window(&state_dir, "@select-overshoot");
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
     // Each key moves two rows, so the walk planned for "Yes, allow all edits"
     // lands on "No" instead.
@@ -4455,7 +4455,7 @@ fn a_cursor_that_overshot_is_put_back_where_it_was() {
 fn a_chooser_that_redrew_mid_answer_is_neither_committed_nor_tidied() {
     let project = temp_project("select-redraw");
     let state_dir = project.join("state");
-    write_state(&state_dir);
+    write_state_with_window(&state_dir, "@select-redraw");
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
     // The agent answers and asks something else while the keys are in flight.
     // Its row 2 is a different answer than the row 2 that was planned.
@@ -4500,7 +4500,7 @@ fn a_chooser_that_redrew_mid_answer_is_neither_committed_nor_tidied() {
 fn a_shared_guest_answers_its_own_chooser_and_no_one_elses() {
     let project = temp_project("select-guest");
     let state_dir = project.join("state");
-    write_state(&state_dir);
+    write_state_with_window(&state_dir, "@select-guest");
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
         .with_request_headers([
             ("x-aimux-actor-role", "guest"),
@@ -4579,6 +4579,30 @@ fn write_state_with_unbound_running_session(state_dir: &PathBuf) {
     create_dir_all(state_dir).unwrap();
     let mut topology = topology_fixture();
     topology["bindings"] = json!([]);
+    write(
+        runtime_topology_path(state_dir),
+        serde_yaml::to_string(&topology).unwrap(),
+    )
+    .unwrap();
+}
+
+/// `write_state`, but with a window id of this test's own.
+///
+/// Answering a chooser takes an exclusive claim on the pane, keyed on the tmux
+/// window id -- which is right, because two answers interleaving their cursor
+/// walks commit an option nobody chose. The claim is process-global, as the
+/// pane is, and `cargo test` runs these in one process: with every fixture
+/// bound to `@1`, two select tests running at once refused each other. It
+/// passed locally and failed on CI, which is the whole signature of shared
+/// state in a test.
+fn write_state_with_window(state_dir: &PathBuf, window_id: &str) {
+    create_dir_all(state_dir).unwrap();
+    let mut topology = topology_fixture();
+    for binding in topology["bindings"].as_array_mut().unwrap() {
+        if binding["tmuxWindowId"] == json!("@1") {
+            binding["tmuxWindowId"] = json!(window_id);
+        }
+    }
     write(
         runtime_topology_path(state_dir),
         serde_yaml::to_string(&topology).unwrap(),
