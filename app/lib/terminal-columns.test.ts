@@ -124,9 +124,15 @@ describe("the pane is wired to its own width", () => {
     // `layout.width` is in dp but a scaled glyph is wider, so at Larger Text
     // the computed column count is ~30% too many and every rule wraps again.
     //
-    // BOTH nodes: the line and the span inside it. Asserting "contains" was
-    // satisfied by either one, so dropping it from the span still passed.
-    const pinned = SCREEN.match(/allowFontScaling=\{false\}/g) ?? [];
-    expect(pinned.length).toBe(2);
+    // Anchored to the two nodes that render columns, not counted across the
+    // file. A bare `toContain` was satisfied by either one; a bare count of
+    // two fails on an unrelated third match elsewhere in a 3500-line screen
+    // and still passes if one is moved OUT of the terminal pane.
+    expect(SCREEN).toContain(
+      "<RNText key={lineIndex} allowFontScaling={false} style={TERMINAL_OUTPUT_LINE_STYLE}>",
+    );
+    expect(SCREEN).toContain(
+      "<RNText key={spanIndex} allowFontScaling={false} style={span.style}>",
+    );
   });
 });
