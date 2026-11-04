@@ -1012,8 +1012,10 @@ export interface SelectLivePaneOptionResponse extends ProjectApiOk {
 /**
  * Answer the chooser the pane is showing, by the option the user read.
  *
- * `question` says WHICH chooser was read, and the service refuses the answer
- * if the pane is asking something else now. It is not optional in practice: an
+ * `question` and `subject` together say WHICH prompt was read, and the service
+ * refuses the answer if the pane is asking about something else now. The
+ * subject is opaque — it is everything the prompt showed above its options, and
+ * it is what separates two prompts whose question and options are identical. It is not optional in practice: an
  * option label alone does not identify a question, because `Yes` / `No` is the
  * shape of nearly every prompt these tools ask. The label identifies the
  * choice within it; the number only narrows the label, since a chooser
@@ -1022,7 +1024,7 @@ export interface SelectLivePaneOptionResponse extends ProjectApiOk {
 export async function selectLivePaneOption(
   endpoint: ServiceEndpoint,
   sessionId: string,
-  option: { label: string; number?: number; question?: string },
+  option: { label: string; number?: number; question?: string; subject?: string },
   opts?: ApiOpts,
 ): Promise<SelectLivePaneOptionResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.select, opts, {
@@ -1030,6 +1032,7 @@ export async function selectLivePaneOption(
     label: option.label,
     ...(option.number === undefined ? {} : { number: option.number }),
     ...(option.question === undefined ? {} : { question: option.question }),
+    ...(option.subject === undefined ? {} : { subject: option.subject }),
   });
 }
 

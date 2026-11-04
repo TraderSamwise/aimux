@@ -4322,6 +4322,7 @@ fn selecting_an_option_walks_the_cursor_onto_it_and_then_commits() {
             "label": "No",
             "number": 3,
             "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
         })),
         &mut runtime,
     )
@@ -4367,6 +4368,7 @@ fn selecting_an_option_the_pane_no_longer_offers_commits_nothing() {
             "label": "No",
             "number": 3,
             "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
         })),
         &mut runtime,
     )
@@ -4402,6 +4404,7 @@ fn a_cursor_that_will_not_move_is_never_committed() {
             "label": "No",
             "number": 2,
             "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
         })),
         &mut runtime,
     )
@@ -4437,6 +4440,7 @@ fn a_cursor_that_overshot_is_put_back_where_it_was() {
             "label": "Yes, allow all edits",
             "number": 2,
             "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
         })),
         &mut runtime,
     )
@@ -4476,6 +4480,7 @@ fn a_chooser_that_redrew_mid_answer_is_neither_committed_nor_tidied() {
             "label": "No",
             "number": 2,
             "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
         })),
         &mut runtime,
     )
@@ -4518,6 +4523,7 @@ fn a_shared_guest_answers_its_own_chooser_and_no_one_elses() {
             "label": "No",
             "number": 2,
             "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
         })),
         &mut own,
     )
@@ -4535,6 +4541,7 @@ fn a_shared_guest_answers_its_own_chooser_and_no_one_elses() {
             "label": "No",
             "number": 2,
             "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
         })),
         &mut other,
     )

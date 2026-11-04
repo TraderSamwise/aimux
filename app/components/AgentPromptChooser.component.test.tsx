@@ -46,6 +46,7 @@ describe("AgentPromptChooser", () => {
       label: "No",
       number: 3,
       question: "Do you want to create hello.txt?",
+      subject: undefined,
     });
   });
 
@@ -67,6 +68,7 @@ describe("AgentPromptChooser", () => {
       label: "Yes, I trust this folder",
       number: undefined,
       question: "Quick safety check: Is this a project you created or one you trust?",
+      subject: undefined,
     });
   });
 

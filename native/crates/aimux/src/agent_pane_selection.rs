@@ -61,6 +61,11 @@ pub struct PaneSelectionOption {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaneSelection {
+    /// Everything shown above the options, joined. Opaque to a client, which
+    /// echoes it back so the service can tell two prompts apart when their
+    /// question and options are identical and only the subject differs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub question: Option<String>,
     pub options: Vec<PaneSelectionOption>,
@@ -88,13 +93,31 @@ pub fn pane_selection(pane: &str) -> Option<PaneSelection> {
     // chosen and then rejected, which lost the real chooser underneath it
     // instead of falling through to it.
     let block = live_chooser_block(&tail)?;
+    // A chooser has to be ASKING something, and the question has to look like
+    // one. This is the positive half of the test, and it was missing: every
+    // other rule here says what a chooser is not, and `/config`'s settings
+    // list satisfies all of them -- thirteen rows, one marked, a key-hint
+    // footer below -- while being an editor rather than a question. Enter in
+    // that dialog toggles the focused setting, so the reader handed a client
+    // thirteen buttons that write Claude Code configuration.
+    //
+    // The `?` is doing the work, and it earns it on every captured shape: the
+    // trust prompt, the tool permission, AskUserQuestion and plan approval all
+    // ask one, and `/config`, `/model` and a composer draft all have no
+    // question above their rows at all. A chooser whose question has no `?`
+    // reads as nothing, which is the safe direction to be wrong in.
+    let question = question_above(&tail, block.first_row)?;
+    if !question.contains('?') {
+        return None;
+    }
     let footer = tail
         .iter()
         .rev()
         .find(|line| looks_like_footer(line))
         .map(|line| line.trim().to_owned());
     Some(PaneSelection {
-        question: question_above(&tail, block.first_row),
+        subject: subject_above(&tail, block.first_row),
+        question: Some(question),
         options: block.options,
         footer,
     })
@@ -125,9 +148,27 @@ struct OptionBlock {
 /// wrote earlier, which has the agent's own output under it. Both of those
 /// presented a first phantom "option" whose press sent a carriage return.
 fn only_chrome_below(tail: &[String], last_row: usize) -> bool {
-    tail[last_row + 1..]
-        .iter()
-        .all(|line| line.trim().is_empty() || looks_like_border(line) || looks_like_footer(line))
+    let mut in_footer = false;
+    for line in &tail[last_row + 1..] {
+        if looks_like_footer(line) {
+            in_footer = true;
+            continue;
+        }
+        // Past the first key-hint row, the rest of the pane is that footer.
+        // A footer wraps on a narrow pane -- captured at 62 columns, the plan
+        // approval's becomes `ctrl+g to edit in Vim ·` and then the plan's
+        // path on its own row -- and judging the continuation on its own text
+        // lost the whole chooser, which is the one with "switch to BYPASS
+        // PERMISSIONS" in it. Split panes are the normal case for this product.
+        if in_footer {
+            continue;
+        }
+        if line.trim().is_empty() || looks_like_border(line) {
+            continue;
+        }
+        return false;
+    }
+    true
 }
 
 /// Whether a block of rows could be the chooser the pane is waiting on.
@@ -145,10 +186,12 @@ fn is_live_chooser(tail: &[String], block: &OptionBlock) -> bool {
 /// the cursored reader and would come back with the numbers stuck to the front
 /// of the labels.
 ///
-/// `next_back` is a tie-break, not a ranking: only one run can have nothing
-/// but chrome below it, since any run above another has that other run in the
-/// way. Two cursor rows inside one block are the case it settles, and it
-/// settles them towards the lower one.
+/// `rfind` rather than `find`, and it is a guard: the obvious argument that
+/// only one run can qualify -- any run above another has that other run in
+/// the way -- is false, because `looks_like_footer` is a substring test and an
+/// option row can therefore read as chrome. Two stacked runs where the lower
+/// one's labels happen to contain key-hint wording both qualify, and `find`
+/// would answer the stale one above. The live chooser is the lower.
 fn live_chooser_block(tail: &[String]) -> Option<OptionBlock> {
     numbered_blocks(tail)
         .into_iter()
@@ -190,7 +233,8 @@ impl PaneSelection {
     /// check -- so "Yes" to `create hello.txt?` would commit "Yes" to
     /// `switch to BYPASS PERMISSIONS?` if the agent redrew in between.
     pub fn is_same_chooser(&self, other: &Self) -> bool {
-        self.question == other.question
+        self.subject == other.subject
+            && self.question == other.question
             && self.options.len() == other.options.len()
             && self
                 .options
@@ -207,9 +251,10 @@ impl PaneSelection {
             .map(|option| option.label.as_str())
             .collect::<Vec<_>>()
             .join(" / ");
-        match &self.question {
-            Some(question) => format!("{question} [{options}]"),
-            None => format!("[{options}]"),
+        match (&self.subject, &self.question) {
+            (Some(subject), _) => format!("{subject} [{options}]"),
+            (None, Some(question)) => format!("{question} [{options}]"),
+            (None, None) => format!("[{options}]"),
         }
     }
 }
@@ -244,17 +289,20 @@ pub fn plan_selection_answer(
     label: &str,
     number: Option<u32>,
     question: Option<&str>,
+    subject: Option<&str>,
 ) -> Result<SelectionAnswerPlan, String> {
     let Some(chooser) = pane_selection(pane) else {
         return Err("the pane is no longer showing a chooser".to_owned());
     };
-    // The question first, because it says WHICH chooser this is. Compared
-    // strictly, so a caller that sends no question cannot answer a chooser
-    // that has one: refusing is the safe direction when we cannot tell which
-    // question is being answered.
-    if chooser.question.as_deref() != question {
+    // The question and its subject first, because together they say WHICH
+    // prompt this is. Compared strictly, so a caller that sends neither cannot
+    // answer a prompt that has them: refusing is the safe direction when we
+    // cannot tell what is being answered. The subject matters on its own --
+    // Claude's Bash permission asks the same question above the same options
+    // whether the command is `rm -rf build` or `rm -rf /`.
+    if chooser.question.as_deref() != question || chooser.subject.as_deref() != subject {
         return Err(format!(
-            "the pane is asking something else now; it is showing: {}",
+            "the pane is asking about something else now; it is showing: {}",
             chooser.describe()
         ));
     }
@@ -558,6 +606,28 @@ fn is_cursor_option_row(line: &str) -> bool {
 /// would offer that as the question. A wrapped question continues onto the
 /// following lines, so they are joined back on until a blank or a border ends
 /// the paragraph.
+/// Everything the prompt shows above its options, which is what the question
+/// is ABOUT.
+///
+/// The question alone does not identify a prompt. Claude's Bash permission
+/// asks "Do you want to proceed?" above the options and puts the command
+/// itself above a rule, outside the question -- so two prompts for `rm -rf
+/// build` and `rm -rf /` have the same question, the same three labels and the
+/// same numbers, and answering one answers the other. Folded into the
+/// chooser's identity so a client cannot answer a prompt it was not shown.
+fn subject_above(tail: &[String], first_option_at: usize) -> Option<String> {
+    let floor = first_option_at.saturating_sub(QUESTION_SEARCH_LINES);
+    let rows = tail[floor..first_option_at]
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if rows.is_empty() {
+        return None;
+    }
+    Some(rows.join(" / "))
+}
+
 fn question_above(tail: &[String], first_option_at: usize) -> Option<String> {
     let floor = first_option_at.saturating_sub(QUESTION_SEARCH_LINES);
     let asked_at = tail[floor..first_option_at]
@@ -657,6 +727,14 @@ mod tests {
     const PLAN: &str = include_str!("../../../../testdata/pane-captures/05-plan-approval.ansi");
     const SLASH_PALETTE: &str =
         include_str!("../../../../testdata/pane-captures/06-slash-command-palette.ansi");
+    const CONFIG_LIST: &str =
+        include_str!("../../../../testdata/pane-captures/07-config-settings-list.ansi");
+    const MODEL_CHOOSER: &str =
+        include_str!("../../../../testdata/pane-captures/08-model-chooser.ansi");
+    const NARROW_DRAFT: &str =
+        include_str!("../../../../testdata/pane-captures/09-narrow-composer-draft.ansi");
+    const NARROW_PERMISSION: &str =
+        include_str!("../../../../testdata/pane-captures/10-narrow-tool-permission.ansi");
 
     #[test]
     fn reads_the_numbered_tool_permission() {
@@ -873,9 +951,10 @@ mod tests {
         assert!(selection(PLAN).is_some());
     }
 
-    /// The plan question for a capture, so a test does not have to restate it.
-    fn question_of(capture: &str) -> Option<String> {
-        selection(capture).and_then(|selection| selection.question)
+    /// The question and subject for a capture, so a test does not restate them.
+    fn asked_by(capture: &str) -> (Option<String>, Option<String>) {
+        let selection = selection(capture).expect("capture is a chooser");
+        (selection.question, selection.subject)
     }
 
     #[test]
@@ -1019,7 +1098,7 @@ mod tests {
         // only the straight rules -- so an edge under a cursored row was
         // collected as a sibling and offered as a button made of box-drawing
         // characters.
-        let pane = " ❯ No, exit\n   Yes, I trust this folder\n ╰────────────────────╯\n\n Enter to confirm · Esc to cancel";
+        let pane = " Is this a project you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n ╰────────────────────╯\n\n Enter to confirm · Esc to cancel";
 
         let selection = pane_selection(pane).expect("two real options are still there");
         assert_eq!(
@@ -1033,9 +1112,144 @@ mod tests {
     }
 
     #[test]
+    fn the_lower_of_two_qualifying_runs_is_the_live_one() {
+        // I claimed this was unreachable -- any run above another has that
+        // other run in the way -- and the claim was false. `looks_like_footer`
+        // is a substring test, so an option row whose label happens to carry
+        // key-hint wording reads as chrome, and then BOTH runs qualify.
+        // Taking the first would answer the stale one above.
+        let pane = " Do you want to continue?\n ❯ 1. Yes\n   2. No\n\n ❯ 1. Press Tab to continue\n   2. Press Enter to cancel";
+
+        let selection = pane_selection(pane).expect("the lower run is the live chooser");
+        assert_eq!(
+            selection.options[0].label, "Press Tab to continue",
+            "the live chooser is the lower run, not the stale one above it"
+        );
+    }
+
+    #[test]
+    fn the_config_settings_list_is_an_editor_not_a_question() {
+        // Captured from a live agent at 62 columns. This is the one that made
+        // the question requirement necessary: thirteen rows, one marked, a
+        // key-hint footer below, nothing above but a search box -- so every
+        // rule that says what a chooser is NOT was satisfied. Enter in this
+        // dialog toggles the focused setting, so a client was handed thirteen
+        // buttons that write Claude Code configuration, three of which
+        // ("Thinking can't be turned off for Opus 5.5", "↓ 33 more below")
+        // are not options at all.
+        let pane = strip_sgr(CONFIG_LIST);
+        assert!(pane.contains("Auto-compact"), "capture lost its settings");
+        assert!(pane.contains("Esc to close"), "capture lost its footer");
+
+        assert_eq!(pane_selection(&pane), None);
+    }
+
+    #[test]
+    fn a_dialog_with_no_question_above_its_rows_is_not_a_chooser() {
+        // `/model`, same session, same width. Rejected for the stated reason
+        // now -- it asks nothing above its rows -- rather than incidentally.
+        let pane = strip_sgr(MODEL_CHOOSER);
+        assert!(pane.contains("Opus 5.5"), "capture lost its models");
+
+        assert_eq!(pane_selection(&pane), None);
+    }
+
+    #[test]
+    fn a_narrow_two_row_draft_is_rejected_by_its_shape_not_by_a_status_line() {
+        // The real two-row draft, captured at 62 columns. It was already
+        // rejected, but only because the rows under the composer included a
+        // custom status line that reads as neither chrome nor a footer. Claude
+        // Code's own row in auto mode -- `⏵⏵ auto mode on (shift+tab to
+        // cycle)` -- DOES read as a footer, so a user without that status line
+        // got the phantom chooser over their own half-typed message, and its
+        // first press submitted it. Keeping only the rows Claude Code draws
+        // itself proves the rejection no longer rests on user configuration.
+        let pane = strip_sgr(NARROW_DRAFT);
+        assert!(
+            pane.contains("fix the bug in the parser"),
+            "capture lost its draft"
+        );
+        assert_eq!(pane_selection(&pane), None);
+
+        let without_user_config = pane
+            .lines()
+            .filter(|line| !line.contains("sam@sam-mbp") && !line.contains("/effort"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            without_user_config.contains("auto mode on"),
+            "the row Claude Code draws itself must still be there"
+        );
+
+        assert_eq!(pane_selection(&without_user_config), None);
+    }
+
+    #[test]
+    fn a_narrow_tool_permission_is_still_read() {
+        // The inverse, and the reason the question rule is safe: the real
+        // prompt at the same width still comes through.
+        let selection =
+            pane_selection(&strip_sgr(NARROW_PERMISSION)).expect("a real prompt at 62 columns");
+
+        assert_eq!(
+            selection.question.as_deref(),
+            Some("Do you want to create hello.txt?")
+        );
+        assert_eq!(selection.options.len(), 3);
+        assert!(selection.options[0].selected);
+    }
+
+    #[test]
+    fn a_footers_wrapped_continuation_does_not_hide_the_chooser() {
+        // At 62 columns the plan approval's footer wraps, and judging the
+        // continuation row on its own text lost the whole chooser -- the one
+        // with "switch to BYPASS PERMISSIONS" in it. Split panes are the
+        // normal case for this product.
+        let wrapped = strip_sgr(PLAN).replace(
+            " ctrl+g to edit in Vim · ~/.claude/plans/plan-a-one-line-change-bright-salamander.md",
+            " ctrl+g to edit in Vim ·\n ~/.claude/plans/plan-a-one-line-change-bright-salamander.md",
+        );
+        assert!(wrapped.contains("Vim ·\n"), "the footer did not wrap");
+
+        let selection = pane_selection(&wrapped).expect("the plan approval is still a chooser");
+        assert_eq!(selection.options.len(), 3);
+    }
+
+    #[test]
+    fn the_subject_above_the_question_is_part_of_the_prompts_identity() {
+        // Claude's Bash permission asks the same question over the same three
+        // labels whichever command it is about, and puts the command above the
+        // question. Without the subject in the identity, a client shown
+        // `rm -rf build` answered `rm -rf /` -- and because option one was
+        // already selected the walk sent no keys, so nothing was verified.
+        let prompt = |command: &str| {
+            format!(
+                " ╌╌╌╌╌╌╌\n   {command}\n ╌╌╌╌╌╌╌\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again\n   3. No\n\n Esc to cancel"
+            )
+        };
+        let shown = pane_selection(&prompt("rm -rf build")).expect("a chooser");
+        let now = pane_selection(&prompt("rm -rf /")).expect("a chooser");
+
+        assert_eq!(shown.question, now.question);
+        assert_ne!(shown.subject, now.subject);
+        assert!(!shown.is_same_chooser(&now));
+
+        let refusal = plan_selection_answer(
+            &prompt("rm -rf /"),
+            "Yes",
+            Some(1),
+            shown.question.as_deref(),
+            shown.subject.as_deref(),
+        )
+        .expect_err("the pane is about a different command");
+        assert!(refusal.contains("about something else"), "got {refusal}");
+        assert!(refusal.contains("rm -rf /"), "got {refusal}");
+    }
+
+    #[test]
     fn plans_the_walk_from_where_the_cursor_actually_is() {
         let pane = strip_sgr(PLAN);
-        let question = question_of(PLAN);
+        let (question, subject) = asked_by(PLAN);
 
         // Cursor starts on option 1; "Tell Claude what to change" is the third.
         let walk = plan_selection_answer(
@@ -1043,6 +1257,7 @@ mod tests {
             "Tell Claude what to change",
             Some(3),
             question.as_deref(),
+            subject.as_deref(),
         )
         .expect("the option is on screen");
         assert_eq!(walk.keys, vec!["Down", "Down"]);
@@ -1054,6 +1269,7 @@ mod tests {
             "Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session",
             Some(1),
             question.as_deref(),
+            subject.as_deref(),
         )
         .expect("the option is on screen");
         assert!(stay.keys.is_empty());
@@ -1063,16 +1279,28 @@ mod tests {
     fn refuses_to_answer_a_pane_that_moved_on_and_says_what_it_shows() {
         let prose = strip_sgr(PROSE);
         let plan = strip_sgr(PLAN);
-        let question = question_of(PLAN);
+        let (question, subject) = asked_by(PLAN);
 
-        let gone = plan_selection_answer(&prose, "Yes", Some(1), question.as_deref())
-            .expect_err("no chooser is up");
+        let gone = plan_selection_answer(
+            &prose,
+            "Yes",
+            Some(1),
+            question.as_deref(),
+            subject.as_deref(),
+        )
+        .expect_err("no chooser is up");
         assert!(gone.contains("no longer showing a chooser"), "got {gone}");
 
         // The dangerous case: the client was looking at a different question,
         // and its option 1 is not this pane's option 1.
-        let moved = plan_selection_answer(&plan, "Yes", Some(1), question.as_deref())
-            .expect_err("label is not there");
+        let moved = plan_selection_answer(
+            &plan,
+            "Yes",
+            Some(1),
+            question.as_deref(),
+            subject.as_deref(),
+        )
+        .expect_err("label is not there");
         assert!(moved.contains("no longer offers"), "got {moved}");
         assert!(
             moved.contains("Yes, manually approve edits"),
@@ -1088,15 +1316,17 @@ mod tests {
         // the wrong question walks nowhere, confirms nothing and commits.
         let plan = strip_sgr(PLAN);
 
+        let (_, subject) = asked_by(PLAN);
         let wrong_question = plan_selection_answer(
             &plan,
             "Yes, manually approve edits",
             Some(2),
             Some("Do you want to create hello.txt?"),
+            subject.as_deref(),
         )
         .expect_err("that is not the question on screen");
         assert!(
-            wrong_question.contains("asking something else"),
+            wrong_question.contains("asking about something else"),
             "got {wrong_question}"
         );
         assert!(
@@ -1107,16 +1337,23 @@ mod tests {
         // A caller that sends no question at all cannot answer a chooser that
         // has one: with nothing to compare, refusing is the safe direction.
         assert!(
-            plan_selection_answer(&plan, "Yes, manually approve edits", Some(2), None).is_err()
+            plan_selection_answer(&plan, "Yes, manually approve edits", Some(2), None, None)
+                .is_err()
         );
     }
 
     #[test]
     fn commits_only_when_the_cursor_landed_where_it_was_sent() {
         let permission = strip_sgr(PERMISSION);
-        let question = question_of(PERMISSION);
-        let plan = plan_selection_answer(&permission, "Yes", Some(1), question.as_deref())
-            .expect("the option is on screen");
+        let (question, subject) = asked_by(PERMISSION);
+        let plan = plan_selection_answer(
+            &permission,
+            "Yes",
+            Some(1),
+            question.as_deref(),
+            subject.as_deref(),
+        )
+        .expect("the option is on screen");
 
         assert!(matches!(
             selection_landing(&permission, &plan, "Yes", Some(1)),
@@ -1148,9 +1385,15 @@ mod tests {
         // Same question text would not save this: the options moved, so row 2
         // is a different answer than the one that was planned.
         let permission = strip_sgr(PERMISSION);
-        let question = question_of(PERMISSION);
-        let plan = plan_selection_answer(&permission, "Yes", Some(1), question.as_deref())
-            .expect("the option is on screen");
+        let (question, subject) = asked_by(PERMISSION);
+        let plan = plan_selection_answer(
+            &permission,
+            "Yes",
+            Some(1),
+            question.as_deref(),
+            subject.as_deref(),
+        )
+        .expect("the option is on screen");
         let redrawn = " Do you want to create hello.txt?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel";
 
         let SelectionLanding::Changed { message } =
@@ -1189,12 +1432,13 @@ mod tests {
 
         // And the whole answer now goes through: plan against the pane before
         // the walk, confirm against the pane after it.
-        let question = question_of(TRUST);
+        let (question, subject) = asked_by(TRUST);
         let plan = plan_selection_answer(
             &before,
             "Yes, I trust this folder",
             None,
             question.as_deref(),
+            subject.as_deref(),
         )
         .expect("the option is on screen");
         assert_eq!(plan.keys, vec!["Down"]);

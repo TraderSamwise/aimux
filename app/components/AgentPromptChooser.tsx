@@ -28,7 +28,12 @@ export function AgentPromptChooser({
   busyLabel: string | null;
   /** Why the service refused the last answer, if it did. */
   refusal: string | null;
-  onChoose: (option: { label: string; number?: number; question?: string }) => void;
+  onChoose: (option: {
+    label: string;
+    number?: number;
+    question?: string;
+    subject?: string;
+  }) => void;
   /** Release a held answer the pane never confirmed either way. */
   onGiveUpWaiting: () => void;
   /** Reported so the transcript can reserve the height this card actually takes. */
@@ -63,6 +68,10 @@ export function AgentPromptChooser({
                 // pane is asking something else by the time it looks. The
                 // label alone does not say which question this was.
                 question: selection.question,
+                // Opaque, and sent for the same reason: two prompts can ask
+                // the same question over the same options and be about
+                // different commands.
+                subject: selection.subject,
               })
             }
             className={`flex-row items-center gap-2 rounded-md border px-2 py-2 ${

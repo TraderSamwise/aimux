@@ -1647,6 +1647,11 @@ struct SelectionAnswerRequest {
     /// it read. An option label alone does not: `Yes` / `No` is the shape of
     /// nearly every prompt the tool asks.
     question: Option<String>,
+    /// What the question was ABOUT, echoed back opaquely. The question alone
+    /// is not enough: the Bash permission asks "Do you want to proceed?" over
+    /// the same three labels whether the command is `rm -rf build` or `rm -rf
+    /// /`, and the command itself sits above the question.
+    subject: Option<String>,
 }
 
 fn parse_selection_answer_request(
@@ -1677,11 +1682,17 @@ fn parse_selection_answer_request(
         Some(Value::String(question)) => Some(question.trim().to_owned()),
         Some(_) => return Err(Box::new(json_error(400, "question must be a string"))),
     };
+    let subject = match body.get("subject") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(subject)) => Some(subject.trim().to_owned()),
+        Some(_) => return Err(Box::new(json_error(400, "subject must be a string"))),
+    };
     Ok(SelectionAnswerRequest {
         session_id,
         label,
         number,
         question,
+        subject,
     })
 }
 
@@ -1770,6 +1781,7 @@ fn select_live_pane_route(
         &request.label,
         request.number,
         request.question.as_deref(),
+        request.subject.as_deref(),
     ) {
         Ok(plan) => plan,
         Err(error) => return json_error(409, error),
@@ -2258,6 +2270,7 @@ async fn select_live_pane_route_async(
         &request.label,
         request.number,
         request.question.as_deref(),
+        request.subject.as_deref(),
     ) {
         Ok(plan) => plan,
         Err(error) => return json_error(409, error),

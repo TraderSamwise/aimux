@@ -1887,7 +1887,7 @@ export default function ChatScreen() {
   ]);
 
   const handleChoosePromptOption = useCallback(
-    async (option: { label: string; number?: number; question?: string }) => {
+    async (option: { label: string; number?: number; question?: string; subject?: string }) => {
       if (!endpointHost || !endpointPort || !sessionId) return;
       // Read through the store, not from the `answeringOption` value this
       // callback closed over: two taps inside one commit see the same stale

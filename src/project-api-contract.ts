@@ -695,6 +695,15 @@ export interface LivePaneSelectionOption {
 }
 
 export interface LivePaneSelection {
+  /**
+   * Everything the prompt shows above its options, joined.
+   *
+   * Opaque to a client, which echoes it back when it answers. The question
+   * alone does not identify a prompt: Claude's Bash permission asks "Do you
+   * want to proceed?" over the same three labels whether the command is
+   * `rm -rf build` or `rm -rf /`, and the command sits above the question.
+   */
+  subject?: string;
   question?: string;
   options: LivePaneSelectionOption[];
   /** The key hints the tool printed, when it printed any. */

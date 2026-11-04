@@ -258,7 +258,9 @@ mod tests {
     fn a_shell_pane_drawing_a_cursored_list_is_not_a_chooser() {
         // The inverse of the gate. `fzf` in a shell session draws exactly this
         // shape, and its rows are not answers to anything.
-        let pane = "❯ 1. src/main.rs\n  2. src/lib.rs\n  3. README.md";
+        // Carries a question, because the reader now requires one — so this
+        // test exercises the tool gate rather than passing for want of it.
+        let pane = "Which file do you want?\n❯ 1. src/main.rs\n  2. src/lib.rs\n  3. README.md";
 
         assert_eq!(classify_tool_pane("shell", pane).selection, None);
         assert!(
