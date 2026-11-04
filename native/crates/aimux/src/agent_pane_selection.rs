@@ -386,6 +386,74 @@ pub fn selection_landing(
     }
 }
 
+/// What the pane shows after the carriage return.
+///
+/// One read, no waiting. Nothing used to look at all, so an Enter the pane
+/// swallowed was reported exactly like an answered prompt.
+pub enum CommitOutcome {
+    /// The chooser is gone. All the route can truthfully know: something took
+    /// the Enter, and which option it took is not visible here.
+    Unverified,
+    /// The agent printed what it recorded, e.g. `⎿ · Pick a fruit: → Apple`.
+    /// Opportunistic -- only some shapes print it -- and free when absent.
+    Confirmed { taken: String },
+    /// The same chooser is still up, so the Enter did not land.
+    StillShowing,
+}
+
+pub fn commit_outcome(pane: &str, plan: &SelectionAnswerPlan) -> CommitOutcome {
+    if let Some(taken) = recorded_answer(pane) {
+        return CommitOutcome::Confirmed { taken };
+    }
+    match pane_selection(pane) {
+        Some(chooser) if chooser.is_same_chooser(&plan.chooser) => CommitOutcome::StillShowing,
+        _ => CommitOutcome::Unverified,
+    }
+}
+
+/// The line an agent prints to record what it took, when it prints one.
+fn recorded_answer(pane: &str) -> Option<String> {
+    pane.lines()
+        .rev()
+        .take(TAIL_LINES)
+        .map(str::trim)
+        .find(|line| line.starts_with('⎿') && line.contains('→'))
+        .map(|line| {
+            line.trim_start_matches('⎿')
+                .trim()
+                .trim_start_matches('·')
+                .trim()
+                .to_owned()
+        })
+}
+
+/// Where the cursor ended up after a restore, which is the only honest thing
+/// to put in a refusal.
+pub enum RestoreOutcome {
+    /// Back where it started.
+    Restored,
+    /// Still on an option nobody chose, named so the refusal can say so.
+    LeftOn { label: String },
+    /// The pane is no longer the chooser that was walked.
+    PaneChanged,
+}
+
+pub fn restore_outcome(pane: &str, plan: &SelectionAnswerPlan) -> RestoreOutcome {
+    let Some(chooser) = pane_selection(pane) else {
+        return RestoreOutcome::PaneChanged;
+    };
+    if !chooser.is_same_chooser(&plan.chooser) {
+        return RestoreOutcome::PaneChanged;
+    }
+    match chooser.selected_index() {
+        Some(at) if at == plan.from => RestoreOutcome::Restored,
+        Some(at) => RestoreOutcome::LeftOn {
+            label: chooser.options[at].label.clone(),
+        },
+        None => RestoreOutcome::PaneChanged,
+    }
+}
+
 /// Whether to press Enter, and what to undo if not.
 pub enum SelectionCommit {
     Commit,

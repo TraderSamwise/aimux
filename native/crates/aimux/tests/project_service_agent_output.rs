@@ -4213,6 +4213,16 @@ struct FakeChooserRuntime {
     /// Options the chooser switches to on the first key, standing in for the
     /// agent redrawing a different question mid-answer.
     redraw_to: Option<Vec<String>>,
+    /// Set once the carriage return has been taken, so the pane stops showing
+    /// the chooser — what a real pane does, and what the post-commit read
+    /// looks for.
+    answered: bool,
+    /// A pane that takes the Enter without acting on it. `send_keys` succeeds
+    /// and the prompt stays up, which used to be reported as a delivered
+    /// answer because nothing read the pane afterwards.
+    swallows_enter: bool,
+    /// What the agent prints to record its answer, when it prints one.
+    records: Option<String>,
     actions: Vec<FakeRuntimeAction>,
 }
 
@@ -4224,7 +4234,24 @@ impl FakeChooserRuntime {
             frozen: false,
             step: 1,
             redraw_to: None,
+            answered: false,
+            swallows_enter: false,
+            records: None,
             actions: Vec::new(),
+        }
+    }
+
+    fn swallowing_enter(options: &[&str]) -> Self {
+        Self {
+            swallows_enter: true,
+            ..Self::new(options)
+        }
+    }
+
+    fn recording(options: &[&str], records: &str) -> Self {
+        Self {
+            records: Some(records.to_owned()),
+            ..Self::new(options)
         }
     }
 
@@ -4250,6 +4277,13 @@ impl FakeChooserRuntime {
     }
 
     fn pane(&self) -> String {
+        if self.answered {
+            let mut pane = String::from(" ⏺ Working\n");
+            if let Some(records) = &self.records {
+                pane.push_str(&format!(" ⎿ · {records}\n"));
+            }
+            return pane;
+        }
         let mut pane = String::from(" Do you want to create hello.txt?\n");
         for (index, option) in self.options.iter().enumerate() {
             let marker = if index == self.cursor { "❯" } else { " " };
@@ -4299,6 +4333,9 @@ impl AgentOutputCaptureRuntime for FakeChooserRuntime {
     fn send_carriage_return(&mut self, window_id: &str) -> Result<(), String> {
         self.actions
             .push(FakeRuntimeAction::CarriageReturn(window_id.to_owned()));
+        if !self.swallows_enter {
+            self.answered = true;
+        }
         Ok(())
     }
 
@@ -4330,7 +4367,7 @@ fn selecting_an_option_walks_the_cursor_onto_it_and_then_commits() {
 
     assert_eq!(response.status, 200);
     assert_eq!(response.body["accepted"], true);
-    assert_eq!(response.body["label"], "No");
+    assert_eq!(response.body["requestedLabel"], "No");
     assert_eq!(runtime.cursor, 2);
     let keys = runtime
         .actions
@@ -4452,6 +4489,10 @@ fn a_cursor_that_overshot_is_put_back_where_it_was() {
     // it can be parked on switches the session to bypassing permissions.
     assert_eq!(runtime.cursor, 0, "the cursor must be put back");
     assert!(!runtime.committed());
+    // And the refusal says so, because a key that returns Ok without moving
+    // the cursor reads exactly like a successful restore.
+    let error = response.body["error"].as_str().unwrap_or_default();
+    assert!(error.contains("the cursor was put back"), "got {error}");
     cleanup(project);
 }
 
@@ -4498,6 +4539,111 @@ fn a_chooser_that_redrew_mid_answer_is_neither_committed_nor_tidied() {
         .filter(|action| matches!(action, FakeRuntimeAction::Key(_, _)))
         .count();
     assert_eq!(keys_after_redraw, 1, "only the planned key should be sent");
+    cleanup(project);
+}
+
+#[test]
+fn an_enter_the_pane_swallowed_is_not_reported_as_an_answer() {
+    let project = temp_project("select-swallowed");
+    let state_dir = project.join("state");
+    write_state_with_window(&state_dir, "@select-swallowed");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // The Enter is taken and the prompt stays up, which is what a loaded pane
+    // does. Nothing used to look afterwards, so this was a 200.
+    let mut runtime = FakeChooserRuntime::swallowing_enter(&["Yes", "No"]);
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "No",
+            "number": 2,
+            "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 409);
+    assert_eq!(response.body["accepted"], false);
+    assert_eq!(response.body["requestedLabel"], "No");
+    let error = response.body["error"].as_str().unwrap_or_default();
+    assert!(error.contains("still up"), "got {error}");
+    cleanup(project);
+}
+
+#[test]
+fn an_answer_the_route_cannot_confirm_says_so_rather_than_claiming_a_label() {
+    let project = temp_project("select-unverified");
+    let state_dir = project.join("state");
+    write_state_with_window(&state_dir, "@select-unverified");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeChooserRuntime::new(&["Yes", "No"]);
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "No",
+            "number": 2,
+            "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["accepted"], true);
+    // The chooser is gone, so something took the Enter — but a person's own
+    // keypress can move the cursor between the confirming read and the
+    // commit, and no amount of reading closes that window. So the route
+    // reports what it ASKED for and that it could not confirm what landed.
+    assert_eq!(response.body["requestedLabel"], "No");
+    assert_eq!(response.body["committed"], "unverified");
+    assert!(
+        response.body.get("label").is_none(),
+        "no claim about what landed"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn an_answer_the_agent_recorded_is_upgraded_to_confirmed() {
+    let project = temp_project("select-confirmed");
+    let state_dir = project.join("state");
+    write_state_with_window(&state_dir, "@select-confirmed");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // Some shapes print what they took. Opportunistic, and free when absent.
+    let mut runtime =
+        FakeChooserRuntime::recording(&["Yes", "No"], "Do you want to create hello.txt? → No");
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "No",
+            "number": 2,
+            "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["committed"], "confirmed");
+    assert_eq!(
+        response.body["recorded"],
+        "Do you want to create hello.txt? → No"
+    );
     cleanup(project);
 }
 
@@ -4555,6 +4701,12 @@ fn a_shared_guest_answers_its_own_chooser_and_no_one_elses() {
     cleanup(project);
 }
 
+/// The default fixture, bound to window `@1`.
+///
+/// A test that answers a chooser must use `write_state_with_window` instead:
+/// answering takes an exclusive claim on the tmux window, so two tests on
+/// `@1` refuse each other, and the refusal reads like a legitimate one. It
+/// names the pane for exactly that reason.
 fn write_state(state_dir: &PathBuf) {
     create_dir_all(state_dir).unwrap();
     write(
