@@ -202,6 +202,15 @@ describe("sharing state", () => {
     expect(isSharedRelayRequestAllowed({ method: "POST", path: "/attachments", sessionId: "claude-abc" }, share)).toBe(
       true,
     );
+    // Answering the agent's own chooser. Same authority as typing the option's
+    // number into the composer, so withholding it would only make the guest
+    // reach for the worse route.
+    expect(
+      isSharedRelayRequestAllowed({ method: "POST", path: "/live-pane/select", sessionId: "claude-abc" }, share),
+    ).toBe(true);
+    expect(isSharedRelayRequestAllowed({ method: "POST", path: "/live-pane/select", sessionId: "other" }, share)).toBe(
+      false,
+    );
     expect(
       isSharedRelayRequestAllowed(
         { method: "GET", path: "/attachments/att_abc/content", sessionId: "claude-abc" },

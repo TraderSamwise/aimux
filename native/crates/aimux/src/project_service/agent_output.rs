@@ -1,3 +1,4 @@
+use crate::agent_pane_selection::{plan_selection_answer, selection_landed_on};
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{
     DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS,
@@ -144,6 +145,15 @@ pub trait AgentOutputCaptureRuntime {
 
     fn send_key(&mut self, _window_id: &str, _key: &str) -> Result<(), String> {
         Err("agent input not supported by this service".into())
+    }
+
+    /// Wait for the pane to redraw between looks.
+    ///
+    /// Overridden to nothing by test doubles, whose next capture already
+    /// reflects the keys that were sent; the real runtimes have to wait for
+    /// the tool to draw.
+    fn settle(&mut self, millis: u64) {
+        std::thread::sleep(Duration::from_millis(millis));
     }
 
     fn send_carriage_return(&mut self, _window_id: &str) -> Result<(), String> {
@@ -627,6 +637,7 @@ pub fn route_agent_output_request_with_runtime(
         routes::agents::INTERRUPT | routes::live_pane::INTERRUPT => {
             Some(interrupt_live_pane_route(context, body, runtime))
         }
+        routes::live_pane::SELECT => Some(select_live_pane_route(context, body, runtime)),
         routes::agents::INPUT | routes::live_pane::INPUT => {
             Some(input_live_pane_route(context, pathname, body, runtime))
         }
@@ -656,6 +667,7 @@ pub async fn route_agent_output_request_async(
         routes::agents::INTERRUPT | routes::live_pane::INTERRUPT => {
             Some(interrupt_live_pane_route_async(context, body).await)
         }
+        routes::live_pane::SELECT => Some(select_live_pane_route_async(context, body).await),
         routes::agents::INPUT | routes::live_pane::INPUT => {
             Some(input_live_pane_route_async(context, pathname, body, irreversible_input).await)
         }
@@ -1604,6 +1616,173 @@ fn interrupt_live_pane_route(
     )
 }
 
+/// How much of the pane the chooser is read back from.
+///
+/// The reader only ever looks at the tail, and a chooser is at most a couple
+/// of dozen rows, so this is the window with room to spare rather than a
+/// capture of the whole scrollback on every answered option.
+const SELECTION_CAPTURE_START_LINE: i64 = -60;
+
+const SELECTION_CAPTURE: CapturePaneOptions = CapturePaneOptions {
+    start_line: Some(SELECTION_CAPTURE_START_LINE),
+    end_line: None,
+    include_escapes: true,
+};
+
+/// How long to wait between looks while the cursor move redraws, and how many
+/// looks to take. Short, because this is one TUI redraw and nothing else.
+const SELECTION_SETTLE_MS: u64 = 60;
+const SELECTION_SETTLE_ATTEMPTS: u32 = 8;
+
+/// What the client asked for, as the client read it off its own screen.
+struct SelectionAnswerRequest {
+    session_id: String,
+    label: String,
+    number: Option<u32>,
+}
+
+fn parse_selection_answer_request(
+    body: Option<&Value>,
+) -> Result<SelectionAnswerRequest, Box<ProjectServiceDispatchResponse>> {
+    let body = body.unwrap_or(&Value::Null);
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return Err(Box::new(json_error(400, "sessionId is required")));
+    };
+    let Some(label) = body_trimmed_string(body, "label").filter(|value| !value.is_empty()) else {
+        return Err(Box::new(json_error(400, "label is required")));
+    };
+    let number = match body.get("number") {
+        None | Some(Value::Null) => None,
+        Some(value) => match value.as_u64().and_then(|number| u32::try_from(number).ok()) {
+            Some(number) => Some(number),
+            None => {
+                return Err(Box::new(json_error(
+                    400,
+                    "number must be a positive integer",
+                )));
+            }
+        },
+    };
+    Ok(SelectionAnswerRequest {
+        session_id,
+        label,
+        number,
+    })
+}
+
+/// A shared guest answering a chooser in the session that was shared with it.
+///
+/// Full trust over that one agent includes answering the questions it asks:
+/// refusing this is how a guest ends up watching a permission prompt it is
+/// allowed to type `2` into but not allowed to press. The scope is the share's
+/// own session and nothing else.
+fn refuse_foreign_selection_guest(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+) -> Option<ProjectServiceDispatchResponse> {
+    let actor = remote_actor_from_headers(&context.request_headers)?;
+    if actor.role != RemoteActorRole::Guest {
+        return None;
+    }
+    if actor.share_session_id.as_deref() == Some(session_id) {
+        return None;
+    }
+    Some(json_error(
+        403,
+        "shared guest cannot access another session",
+    ))
+}
+
+fn selection_answer_accepted(session_id: &str, label: &str) -> ProjectServiceDispatchResponse {
+    let now = now_iso();
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({
+            "ok": true,
+            "accepted": true,
+            "label": label,
+            "transition": {
+                "operationId": operation_id("agent.select", session_id),
+                "operation": "agent.select",
+                "targetKind": "agent",
+                "targetId": session_id,
+                "phase": "succeeded",
+                "startedAt": now,
+                "updatedAt": now,
+            }
+        }),
+    )
+}
+
+/// Answer the chooser a pane is showing, by moving its cursor and committing.
+///
+/// Three reads, not one: plan against the pane as it is now, move, then read
+/// again to confirm the cursor landed before pressing Enter. The commit is the
+/// irreversible half and the options are not interchangeable -- one of the real
+/// ones switches the session to bypassing permissions -- so a cursor that did
+/// not land where it was sent returns the mismatch instead of guessing.
+fn select_live_pane_route(
+    context: &ProjectServiceRequestContext,
+    body: Option<&Value>,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> ProjectServiceDispatchResponse {
+    let request = match parse_selection_answer_request(body) {
+        Ok(request) => request,
+        Err(response) => return *response,
+    };
+    if let Some(refusal) = refuse_foreign_selection_guest(context, &request.session_id) {
+        return refusal;
+    }
+    let target = match resolve_live_session_target(context, &request.session_id) {
+        Ok(Some(target)) => target,
+        Ok(None) => {
+            return json_error(
+                500,
+                format!("Session \"{}\" is not running", request.session_id),
+            );
+        }
+        Err(error) => return json_error(500, error),
+    };
+    let pane = match runtime.capture_pane(&target.window_id, SELECTION_CAPTURE) {
+        Ok(pane) => strip_sgr(&pane),
+        Err(error) => return json_error(500, error),
+    };
+    let keys = match plan_selection_answer(&pane, &request.label, request.number) {
+        Ok(keys) => keys,
+        Err(error) => return json_error(409, error),
+    };
+    for key in keys {
+        if let Err(error) = runtime.send_key(&target.window_id, key) {
+            return json_error(500, error);
+        }
+    }
+    // Polled rather than slept once: a cursor move is a local redraw, so the
+    // first look usually has it, and a fixed wait would be both slower in the
+    // common case and still too short on a loaded machine.
+    let mut landed = Err("the pane was never read back after moving the cursor".to_owned());
+    for attempt in 0..SELECTION_SETTLE_ATTEMPTS {
+        if attempt > 0 {
+            runtime.settle(SELECTION_SETTLE_MS);
+        }
+        let moved = match runtime.capture_pane(&target.window_id, SELECTION_CAPTURE) {
+            Ok(pane) => strip_sgr(&pane),
+            Err(error) => return json_error(500, error),
+        };
+        landed = selection_landed_on(&moved, &request.label, request.number);
+        if landed.is_ok() {
+            break;
+        }
+    }
+    if let Err(error) = landed {
+        return json_error(409, error);
+    }
+    if let Err(error) = runtime.send_carriage_return(&target.window_id) {
+        return json_error(500, error);
+    }
+    selection_answer_accepted(&request.session_id, &request.label)
+}
+
 fn input_live_pane_route(
     context: &ProjectServiceRequestContext,
     pathname: &str,
@@ -2003,6 +2182,80 @@ async fn interrupt_live_pane_route_async(
             }
         }),
     )
+}
+
+async fn select_live_pane_route_async(
+    context: &ProjectServiceRequestContext,
+    body: Option<&Value>,
+) -> ProjectServiceDispatchResponse {
+    let request = match parse_selection_answer_request(body) {
+        Ok(request) => request,
+        Err(response) => return *response,
+    };
+    if let Some(refusal) = refuse_foreign_selection_guest(context, &request.session_id) {
+        return refusal;
+    }
+    let target = match resolve_live_session_target(context, &request.session_id) {
+        Ok(Some(target)) => target,
+        Ok(None) => {
+            return json_error(
+                500,
+                format!("Session \"{}\" is not running", request.session_id),
+            );
+        }
+        Err(error) => return json_error(500, error),
+    };
+    let pane = match capture_pane_async(&target.window_id, SELECTION_CAPTURE, TMUX_COMMAND_TIMEOUT)
+        .await
+    {
+        Ok(pane) => strip_sgr(&pane),
+        Err(error) => return json_error(500, error),
+    };
+    let keys = match plan_selection_answer(&pane, &request.label, request.number) {
+        Ok(keys) => keys,
+        Err(error) => return json_error(409, error),
+    };
+    for key in keys {
+        if let Err(error) = run_tmux_argv_with_timeout_async(
+            send_key_argv(&target.window_id, key),
+            format!("tmux send-keys {key} failed for {}", target.window_id),
+            TMUX_COMMAND_TIMEOUT,
+        )
+        .await
+        {
+            return json_error(500, error);
+        }
+    }
+    let mut landed = Err("the pane was never read back after moving the cursor".to_owned());
+    for attempt in 0..SELECTION_SETTLE_ATTEMPTS {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(SELECTION_SETTLE_MS)).await;
+        }
+        let moved =
+            match capture_pane_async(&target.window_id, SELECTION_CAPTURE, TMUX_COMMAND_TIMEOUT)
+                .await
+            {
+                Ok(pane) => strip_sgr(&pane),
+                Err(error) => return json_error(500, error),
+            };
+        landed = selection_landed_on(&moved, &request.label, request.number);
+        if landed.is_ok() {
+            break;
+        }
+    }
+    if let Err(error) = landed {
+        return json_error(409, error);
+    }
+    if let Err(error) = run_tmux_argv_with_timeout_async(
+        send_carriage_return_argv(&target.window_id),
+        format!("tmux send carriage return failed for {}", target.window_id),
+        TMUX_COMMAND_TIMEOUT,
+    )
+    .await
+    {
+        return json_error(500, error);
+    }
+    selection_answer_accepted(&request.session_id, &request.label)
 }
 
 async fn input_live_pane_route_async(

@@ -98,6 +98,100 @@ pub fn pane_selection(pane: &str) -> Option<PaneSelection> {
     })
 }
 
+impl PaneSelection {
+    /// Where the cursor is sitting, when it is sitting on an option.
+    pub fn selected_index(&self) -> Option<usize> {
+        self.options.iter().position(|option| option.selected)
+    }
+
+    /// The option a client asked for, matched on what the client was SHOWN.
+    ///
+    /// Matched on the label, with the number only as an extra condition when
+    /// the client carries one. A chooser's numbering is positional -- the agent
+    /// renumbers from 1 every time it draws a different question -- so a number
+    /// alone names a row, not a choice, and answering by row against a pane
+    /// that moved on is how "2. No" becomes "2. Yes, and switch to BYPASS
+    /// PERMISSIONS". The label is what the person read and meant.
+    pub fn option_index(&self, label: &str, number: Option<u32>) -> Option<usize> {
+        self.options.iter().position(|option| {
+            option.label == label && number.is_none_or(|number| option.number == Some(number))
+        })
+    }
+}
+
+/// The cursor keys that walk a chooser from one option to another.
+///
+/// `Up`/`Down` rather than typing the option's digit. Typing a digit answers
+/// only the numbered shapes -- the workspace trust prompt has no numbers at
+/// all -- and on the shapes where it does work it submits in the same
+/// keystroke, which leaves nothing to check between moving the cursor and
+/// committing to the answer.
+pub fn selection_cursor_keys(from: usize, to: usize) -> Vec<&'static str> {
+    let (key, steps) = if to >= from {
+        ("Down", to - from)
+    } else {
+        ("Up", from - to)
+    };
+    vec![key; steps]
+}
+
+/// The keystrokes that move a chooser's cursor onto the option a client asked
+/// for, or why that cannot be done.
+///
+/// Planned from the pane as it is RIGHT NOW, never from what the client was
+/// looking at. A client's chooser is a poll old at best, and the agent may have
+/// answered it, redrawn it, or moved to a different question in between. Every
+/// refusal names both sides, because "could not select that" without saying
+/// what the pane is showing instead is the kind of wrapper this repository
+/// does not keep.
+pub fn plan_selection_answer(
+    pane: &str,
+    label: &str,
+    number: Option<u32>,
+) -> Result<Vec<&'static str>, String> {
+    let Some(selection) = pane_selection(pane) else {
+        return Err("the pane is no longer showing a chooser".to_owned());
+    };
+    let Some(target) = selection.option_index(label, number) else {
+        let showing = selection
+            .options
+            .iter()
+            .map(|option| option.label.as_str())
+            .collect::<Vec<_>>()
+            .join(" / ");
+        return Err(format!(
+            "the pane no longer offers {label:?}; it is showing: {showing}"
+        ));
+    };
+    let Some(from) = selection.selected_index() else {
+        return Err("the chooser has no option selected to move from".to_owned());
+    };
+    Ok(selection_cursor_keys(from, target))
+}
+
+/// Whether the cursor ended up on the option that was asked for.
+///
+/// Checked between moving the cursor and committing, because the commit is the
+/// irreversible half: one of the real options is "Yes, and switch to BYPASS
+/// PERMISSIONS (no further prompts) for this session", and pressing Enter on a
+/// cursor that did not land where it was sent is how a person who chose "No"
+/// gets that instead.
+pub fn selection_landed_on(pane: &str, label: &str, number: Option<u32>) -> Result<(), String> {
+    let Some(selection) = pane_selection(pane) else {
+        return Err("the chooser went away before the answer was committed".to_owned());
+    };
+    let Some(selected) = selection.selected_index() else {
+        return Err("the chooser has no option selected after moving the cursor".to_owned());
+    };
+    if selection.option_index(label, number) == Some(selected) {
+        return Ok(());
+    }
+    Err(format!(
+        "the cursor is on {:?}, not {label:?}",
+        selection.options[selected].label
+    ))
+}
+
 /// The rows that can hold a live chooser.
 ///
 /// Trailing blanks come off FIRST. `tmux capture-pane` pads the capture to the
@@ -267,7 +361,10 @@ fn looks_like_footer(line: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{PaneSelection, pane_selection};
+    use super::{
+        PaneSelection, pane_selection, plan_selection_answer, selection_cursor_keys,
+        selection_landed_on,
+    };
     use crate::project_service::agent_output::strip_sgr;
 
     /// The captures are raw tmux output, and the service parses the pane only
@@ -432,6 +529,90 @@ mod tests {
         assert!(cursors(PROSE) > cursors(TRUST));
         assert_eq!(selection(PROSE), None);
         assert!(selection(TRUST).is_some());
+    }
+
+    #[test]
+    fn walks_the_cursor_both_ways_and_stays_put_when_it_is_already_there() {
+        assert_eq!(selection_cursor_keys(0, 2), vec!["Down", "Down"]);
+        assert_eq!(selection_cursor_keys(2, 0), vec!["Up", "Up"]);
+        assert!(selection_cursor_keys(1, 1).is_empty());
+    }
+
+    #[test]
+    fn an_option_is_matched_on_its_label_not_its_row() {
+        let selection = selection(PLAN).expect("plan approval is a chooser");
+
+        // Numbering is positional: the agent renumbers from 1 for each new
+        // question, so row 2 of one chooser is a different answer in the next.
+        assert_eq!(
+            selection.option_index("Yes, manually approve edits", None),
+            Some(1)
+        );
+        assert_eq!(
+            selection.option_index("Yes, manually approve edits", Some(2)),
+            Some(1)
+        );
+        // A label the pane no longer shows is not answered by position.
+        assert_eq!(selection.option_index("Yes", Some(1)), None);
+        // Nor is a label whose number has moved under it.
+        assert_eq!(
+            selection.option_index("Yes, manually approve edits", Some(3)),
+            None
+        );
+    }
+
+    #[test]
+    fn plans_the_walk_from_where_the_cursor_actually_is() {
+        let pane = strip_sgr(PLAN);
+
+        // Cursor starts on option 1; "Tell Claude what to change" is the third.
+        assert_eq!(
+            plan_selection_answer(&pane, "Tell Claude what to change", Some(3)),
+            Ok(vec!["Down", "Down"])
+        );
+        // Already there is a plan with no keys in it, not a refusal.
+        assert_eq!(
+            plan_selection_answer(
+                &pane,
+                "Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session",
+                Some(1)
+            ),
+            Ok(Vec::new())
+        );
+    }
+
+    #[test]
+    fn refuses_to_answer_a_pane_that_moved_on_and_says_what_it_shows() {
+        let prose = strip_sgr(PROSE);
+        let plan = strip_sgr(PLAN);
+
+        let gone = plan_selection_answer(&prose, "Yes", Some(1)).expect_err("no chooser is up");
+        assert!(gone.contains("no longer showing a chooser"), "got {gone}");
+
+        // The dangerous case: the client was looking at a different question,
+        // and its option 1 is not this pane's option 1.
+        let moved = plan_selection_answer(&plan, "Yes", Some(1)).expect_err("label is not there");
+        assert!(moved.contains("no longer offers"), "got {moved}");
+        assert!(
+            moved.contains("Yes, manually approve edits"),
+            "the refusal must name what the pane is showing, got {moved}"
+        );
+    }
+
+    #[test]
+    fn commits_only_when_the_cursor_landed_where_it_was_sent() {
+        let permission = strip_sgr(PERMISSION);
+
+        assert_eq!(selection_landed_on(&permission, "Yes", Some(1)), Ok(()));
+
+        let wrong = selection_landed_on(&permission, "No", Some(3))
+            .expect_err("the cursor is still on option 1");
+        assert!(wrong.contains("The cursor is on") || wrong.contains("cursor is on"));
+        assert!(wrong.contains("\"Yes\""), "got {wrong}");
+
+        let gone = selection_landed_on(&strip_sgr(PROSE), "Yes", Some(1))
+            .expect_err("the chooser is gone");
+        assert!(gone.contains("went away"), "got {gone}");
     }
 
     #[test]

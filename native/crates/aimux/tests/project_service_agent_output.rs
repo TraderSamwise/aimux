@@ -4194,6 +4194,228 @@ fn prompt_normalization_matches_submitted_tmux_prompt_contract() {
     );
 }
 
+/// A pane that is actually showing a chooser, with a cursor the keys move.
+///
+/// Modelled rather than stubbed on purpose: a double that returns the same
+/// pane whatever is sent to it would let the route commit without the cursor
+/// ever having moved, which is the one thing the route exists to prevent.
+struct FakeChooserRuntime {
+    options: Vec<String>,
+    cursor: usize,
+    /// Set when the chooser ignores the cursor keys, standing in for a pane
+    /// that answered or redrew between the plan and the move.
+    frozen: bool,
+    actions: Vec<FakeRuntimeAction>,
+}
+
+impl FakeChooserRuntime {
+    fn new(options: &[&str]) -> Self {
+        Self {
+            options: options.iter().map(|option| (*option).to_owned()).collect(),
+            cursor: 0,
+            frozen: false,
+            actions: Vec::new(),
+        }
+    }
+
+    fn frozen(options: &[&str]) -> Self {
+        Self {
+            frozen: true,
+            ..Self::new(options)
+        }
+    }
+
+    fn pane(&self) -> String {
+        let mut pane = String::from(" Do you want to create hello.txt?\n");
+        for (index, option) in self.options.iter().enumerate() {
+            let marker = if index == self.cursor { "❯" } else { " " };
+            pane.push_str(&format!(" {marker} {}. {option}\n", index + 1));
+        }
+        pane.push_str(" Esc to cancel · Tab to amend\n");
+        pane
+    }
+
+    fn committed(&self) -> bool {
+        self.actions
+            .iter()
+            .any(|action| matches!(action, FakeRuntimeAction::CarriageReturn(_)))
+    }
+}
+
+impl AgentOutputCaptureRuntime for FakeChooserRuntime {
+    fn capture_pane(
+        &mut self,
+        window_id: &str,
+        _options: CapturePaneOptions,
+    ) -> Result<String, String> {
+        self.actions
+            .push(FakeRuntimeAction::Capture(window_id.to_owned()));
+        Ok(self.pane())
+    }
+
+    fn send_key(&mut self, window_id: &str, key: &str) -> Result<(), String> {
+        self.actions
+            .push(FakeRuntimeAction::Key(window_id.to_owned(), key.to_owned()));
+        if self.frozen {
+            return Ok(());
+        }
+        match key {
+            "Down" => self.cursor = (self.cursor + 1).min(self.options.len() - 1),
+            "Up" => self.cursor = self.cursor.saturating_sub(1),
+            _ => return Err(format!("unexpected key {key}")),
+        }
+        Ok(())
+    }
+
+    fn send_carriage_return(&mut self, window_id: &str) -> Result<(), String> {
+        self.actions
+            .push(FakeRuntimeAction::CarriageReturn(window_id.to_owned()));
+        Ok(())
+    }
+
+    fn settle(&mut self, _millis: u64) {}
+}
+
+#[test]
+fn selecting_an_option_walks_the_cursor_onto_it_and_then_commits() {
+    let project = temp_project("select-answer");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeChooserRuntime::new(&["Yes", "Yes, and switch to accept edits", "No"]);
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({ "sessionId": "codex-1", "label": "No", "number": 3 })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["accepted"], true);
+    assert_eq!(response.body["label"], "No");
+    assert_eq!(runtime.cursor, 2);
+    let keys = runtime
+        .actions
+        .iter()
+        .filter_map(|action| match action {
+            FakeRuntimeAction::Key(_, key) => Some(key.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(keys, vec!["Down", "Down"]);
+    assert!(runtime.committed());
+    cleanup(project);
+}
+
+#[test]
+fn selecting_an_option_the_pane_no_longer_offers_commits_nothing() {
+    let project = temp_project("select-moved-on");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // The client was looking at a tool permission; the pane is now asking a
+    // plan question whose option 3 is something else entirely.
+    let mut runtime = FakeChooserRuntime::new(&[
+        "Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session",
+        "Yes, manually approve edits",
+        "Tell Claude what to change",
+    ]);
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({ "sessionId": "codex-1", "label": "No", "number": 3 })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 409);
+    let error = response.body["error"].as_str().unwrap_or_default();
+    assert!(error.contains("no longer offers"), "got {error}");
+    // The refusal names what the pane is showing instead, and nothing was sent.
+    assert!(error.contains("Tell Claude what to change"), "got {error}");
+    assert!(
+        !runtime.committed(),
+        "answering by row against a pane that moved on is the whole hazard"
+    );
+    assert_eq!(runtime.cursor, 0);
+    cleanup(project);
+}
+
+#[test]
+fn a_cursor_that_will_not_move_is_never_committed() {
+    let project = temp_project("select-stuck");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeChooserRuntime::frozen(&["Yes", "No"]);
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({ "sessionId": "codex-1", "label": "No", "number": 2 })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 409);
+    let error = response.body["error"].as_str().unwrap_or_default();
+    assert!(error.contains("cursor is on"), "got {error}");
+    assert!(error.contains("\"Yes\""), "got {error}");
+    assert!(
+        !runtime.committed(),
+        "Enter on a cursor that did not land is how \"No\" becomes \"Yes\""
+    );
+    cleanup(project);
+}
+
+#[test]
+fn a_shared_guest_answers_its_own_chooser_and_no_one_elses() {
+    let project = temp_project("select-guest");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_request_headers([
+            ("x-aimux-actor-role", "guest"),
+            ("x-aimux-actor-display-name", "Ada Guest"),
+            ("x-aimux-share-session-id", "codex-1"),
+        ]);
+
+    let mut own = FakeChooserRuntime::new(&["Yes", "No"]);
+    let allowed = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({ "sessionId": "codex-1", "label": "No", "number": 2 })),
+        &mut own,
+    )
+    .unwrap();
+    assert_eq!(allowed.status, 200);
+    assert!(own.committed());
+
+    let mut other = FakeChooserRuntime::new(&["Yes", "No"]);
+    let refused = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({ "sessionId": "codex-offline", "label": "No", "number": 2 })),
+        &mut other,
+    )
+    .unwrap();
+    assert_eq!(refused.status, 403);
+    assert_eq!(
+        refused.body["error"],
+        "shared guest cannot access another session"
+    );
+    assert!(other.actions.is_empty(), "a refused guest reaches no pane");
+    cleanup(project);
+}
+
 fn write_state(state_dir: &PathBuf) {
     create_dir_all(state_dir).unwrap();
     write(

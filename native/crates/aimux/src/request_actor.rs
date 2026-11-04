@@ -439,6 +439,11 @@ fn shared_guest_write_route(sub_path: &str) -> bool {
     matches!(
         sub_path,
         project_routes::live_pane::INPUT
+            // Answering the agent's own question. Withholding this leaves a
+            // guest watching a chooser it is trusted to type `2` into but not
+            // trusted to press, which is not a narrower share -- it is the
+            // same authority through a worse route.
+            | project_routes::live_pane::SELECT
             | project_routes::ATTACHMENTS
             // Both spellings of interrupt: the GUI sends the live-pane one and
             // the gate is about the capability, not about which client asked.

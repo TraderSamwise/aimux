@@ -88,6 +88,7 @@ export const PROJECT_API_ROUTES = {
     input: "/live-pane/input",
     interrupt: "/live-pane/interrupt",
     resize: "/live-pane/resize",
+    select: "/live-pane/select",
   },
   services: {
     create: "/services/create",
