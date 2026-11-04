@@ -29,6 +29,7 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { type DesktopSession, isSupervisorLaneSession } from "@/lib/desktop-state";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
+import { useNativeTooltip } from "@/lib/action-tooltip";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import { agentActionsFamily, type AgentRowAction } from "@/stores/agentActions";
 import {
@@ -372,8 +373,14 @@ function ActionButton({
   loading?: boolean;
   label: string;
 }) {
+  // The browser draws this one. A tooltip rendered in the tree is clipped by
+  // an ancestor with `overflow: auto hidden` and cannot escape it, since that
+  // ancestor is also transformed -- see `useNativeTooltip`.
+  const tooltipRef = useNativeTooltip<View>(label);
+
   return (
     <Button
+      ref={tooltipRef}
       variant="outline"
       size="icon"
       onPress={onPress}
