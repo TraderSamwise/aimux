@@ -147,22 +147,30 @@ struct OptionBlock {
 /// wrote earlier, which has the agent's own output under it. Both of those
 /// presented a first phantom "option" whose press sent a carriage return.
 fn only_chrome_below(tail: &[String], last_row: usize) -> bool {
-    let mut in_footer = false;
+    // Rows a wrapped footer may carry on after its hint row. Measured: at 62
+    // columns the plan approval's footer becomes `ctrl+g to edit in Vim ·`
+    // and then the plan's path on its own row, so one is the real case and two
+    // is the margin.
+    const FOOTER_CONTINUATION_ROWS: u8 = 2;
+    let mut continuation = 0u8;
     for line in &tail[last_row + 1..] {
-        if looks_like_footer(line) {
-            in_footer = true;
-            continue;
-        }
-        // Past the first key-hint row, the rest of the pane is that footer.
-        // A footer wraps on a narrow pane -- captured at 62 columns, the plan
-        // approval's becomes `ctrl+g to edit in Vim ·` and then the plan's
-        // path on its own row -- and judging the continuation on its own text
-        // lost the whole chooser, which is the one with "switch to BYPASS
-        // PERMISSIONS" in it. Split panes are the normal case for this product.
-        if in_footer {
-            continue;
-        }
         if line.trim().is_empty() || looks_like_border(line) {
+            // A blank ends the footer block. This is the whole correction:
+            // "everything after the first hint row is that footer" let an
+            // ANSWERED prompt stay live, with the agent's output and a live
+            // composer below it -- so a client rendered buttons for a dead
+            // prompt, the already-selected row meant zero keys were sent, and
+            // the Enter went into the composer and submitted whatever the user
+            // had typed there.
+            continuation = 0;
+            continue;
+        }
+        if looks_like_footer(line) {
+            continuation = FOOTER_CONTINUATION_ROWS;
+            continue;
+        }
+        if continuation > 0 {
+            continuation -= 1;
             continue;
         }
         return false;
@@ -400,23 +408,54 @@ pub enum CommitOutcome {
     StillShowing,
 }
 
-pub fn commit_outcome(pane: &str, plan: &SelectionAnswerPlan) -> CommitOutcome {
-    if let Some(taken) = recorded_answer(pane) {
-        return CommitOutcome::Confirmed { taken };
+/// `before` is the pane as the confirming read saw it, which is what makes a
+/// receipt evidence of THIS answer rather than of an older one.
+pub fn commit_outcome(pane: &str, plan: &SelectionAnswerPlan, before: &str) -> CommitOutcome {
+    // The chooser still being up vetoes everything.
+    //
+    // Checked first because the receipt check used to run ahead of it, and a
+    // pane that swallowed the Enter with an older question's receipt on screen
+    // reported the strongest claim the route makes. The two checks below now
+    // reject that case on their own -- the receipt has to name THIS question
+    // and not have been there before -- so this ordering is defence in depth
+    // rather than the thing that catches it, and no test fails without it.
+    if let Some(chooser) = pane_selection(pane)
+        && chooser.is_same_chooser(&plan.chooser)
+    {
+        return CommitOutcome::StillShowing;
     }
-    match pane_selection(pane) {
-        Some(chooser) if chooser.is_same_chooser(&plan.chooser) => CommitOutcome::StillShowing,
-        _ => CommitOutcome::Unverified,
+    match new_recorded_answer(pane, before, plan) {
+        Some(taken) => CommitOutcome::Confirmed { taken },
+        None => CommitOutcome::Unverified,
     }
 }
 
-/// The line an agent prints to record what it took, when it prints one.
-fn recorded_answer(pane: &str) -> Option<String> {
+/// A receipt that was not there before the carriage return and names this
+/// prompt's question.
+///
+/// Both halves matter. "Not there before" makes it this answer rather than a
+/// heuristic about recency, and the route already holds the earlier capture.
+/// Naming the question stops an unrelated prompt's receipt standing in for
+/// ours -- the `⎿ · <question> → <answer>` shape gives that for free.
+fn new_recorded_answer(pane: &str, before: &str, plan: &SelectionAnswerPlan) -> Option<String> {
+    let question = plan.chooser.question.as_deref()?;
+    let earlier = receipts(before);
+    receipts(pane).into_iter().find(|receipt| {
+        !earlier.contains(receipt)
+            && receipt
+                .split('→')
+                .next()
+                .is_some_and(|asked| asked.trim() == question.trim())
+    })
+}
+
+/// The lines an agent prints to record what it took, when it prints any.
+fn receipts(pane: &str) -> Vec<String> {
     pane.lines()
         .rev()
         .take(TAIL_LINES)
         .map(str::trim)
-        .find(|line| line.starts_with('⎿') && line.contains('→'))
+        .filter(|line| line.starts_with('⎿') && line.contains('→'))
         .map(|line| {
             line.trim_start_matches('⎿')
                 .trim()
@@ -424,6 +463,7 @@ fn recorded_answer(pane: &str) -> Option<String> {
                 .trim()
                 .to_owned()
         })
+        .collect()
 }
 
 /// Where the cursor ended up after a restore, which is the only honest thing
@@ -437,17 +477,25 @@ pub enum RestoreOutcome {
     PaneChanged,
 }
 
-pub fn restore_outcome(pane: &str, plan: &SelectionAnswerPlan) -> RestoreOutcome {
+pub fn restore_outcome(pane: &str, plan: &SelectionAnswerPlan, at: usize) -> RestoreOutcome {
     let Some(chooser) = pane_selection(pane) else {
-        return RestoreOutcome::PaneChanged;
+        // The pane stopped parsing, but the cursor was last seen on a row we
+        // can still name from the plan. Reporting only "the pane changed"
+        // would drop the one detail the user needs.
+        return match plan.chooser.options.get(at) {
+            Some(option) => RestoreOutcome::LeftOn {
+                label: option.label.clone(),
+            },
+            None => RestoreOutcome::PaneChanged,
+        };
     };
     if !chooser.is_same_chooser(&plan.chooser) {
         return RestoreOutcome::PaneChanged;
     }
     match chooser.selected_index() {
-        Some(at) if at == plan.from => RestoreOutcome::Restored,
-        Some(at) => RestoreOutcome::LeftOn {
-            label: chooser.options[at].label.clone(),
+        Some(index) if index == plan.from => RestoreOutcome::Restored,
+        Some(index) => RestoreOutcome::LeftOn {
+            label: chooser.options[index].label.clone(),
         },
         None => RestoreOutcome::PaneChanged,
     }
@@ -461,6 +509,9 @@ pub enum SelectionCommit {
         /// no longer the chooser we walked, because more keys there would be
         /// blind.
         restore: Vec<&'static str>,
+        /// Where the cursor was when the walk was abandoned, so the row can be
+        /// named even if the pane stops parsing afterwards.
+        left_at: usize,
         error: String,
     },
 }
@@ -483,10 +534,12 @@ pub fn selection_commit_decision(
         // session to bypassing permissions.
         SelectionLanding::WrongRow { at, message } => SelectionCommit::Refuse {
             restore: selection_cursor_keys(at, plan.from),
+            left_at: at,
             error: message,
         },
         SelectionLanding::Changed { message } => SelectionCommit::Refuse {
             restore: Vec::new(),
+            left_at: plan.from,
             error: message,
         },
     }
@@ -809,8 +862,8 @@ fn looks_like_footer(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        PaneSelection, SelectionLanding, pane_selection, plan_selection_answer,
-        selection_cursor_keys, selection_landing,
+        CommitOutcome, PaneSelection, SelectionLanding, commit_outcome, pane_selection,
+        plan_selection_answer, selection_cursor_keys, selection_landing,
     };
     use crate::project_service::agent_output::strip_sgr;
 
@@ -1222,6 +1275,99 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["No, exit", "Yes, I trust this folder"]
         );
+    }
+
+    #[test]
+    fn an_answered_chooser_with_the_agents_output_below_it_is_not_live() {
+        // The worst one, and a round-3 fix caused it: treating everything
+        // after the first key-hint row as that footer's continuation left an
+        // ANSWERED prompt reading as live, with the agent's output and a live
+        // composer below it. The client rendered buttons for a dead prompt,
+        // the already-selected row meant zero keys were sent, and the Enter
+        // went into the composer -- submitting whatever the user had typed
+        // there. A requested option needing a cursor move was worse: the
+        // Up/Down went into the composer, where Up recalls history.
+        let answered_then_output = " Do you want to create hello.txt?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend\n\n⏺ Create(hello.txt)";
+        // A blank ends the footer block, which is what separates the prompt's
+        // own wrapped hint row from the agent's next line.
+        assert_eq!(pane_selection(answered_then_output), None);
+
+        // And the whole shape, as a pane really looks minutes later.
+        let pane = " Do you want to create hello.txt?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend\n\n⏺ Create(hello.txt)\n  ⎿ Wrote 1 line to hello.txt\n\n⏺ Done. The file is created.\n\n────────────────\n❯ ship the release notes\n────────────────\n  sam@host ~/repo";
+        assert_eq!(pane_selection(pane), None);
+    }
+
+    #[test]
+    fn a_wrapped_footer_is_still_allowed_its_continuation() {
+        // The case the round-3 fix was for, kept: at 62 columns the plan
+        // approval's footer becomes a hint row and then the plan's path.
+        let pane = " Would you like to proceed?\n ❯ 1. Yes\n   2. No\n\n ctrl+g to edit in Vim ·\n ~/.claude/plans/plan-a-one-line-change-bright-salamander.md";
+
+        assert!(pane_selection(pane).is_some());
+    }
+
+    #[test]
+    fn a_stale_receipt_is_not_evidence_that_this_answer_landed() {
+        // `confirmed` is the strongest claim the route makes, and it used to
+        // be made on the strength of somebody else's answer: the receipt check
+        // ran before the still-showing check, and any `⎿ … → …` row in the
+        // last forty would do.
+        let chooser = " Which colour do you prefer?\n ❯ 1. Red\n   2. Blue\n\n Esc to cancel";
+        let before = format!("⎿ · Pick a fruit: → Apple\n{chooser}");
+        let plan = plan_selection_answer(
+            &before,
+            "Blue",
+            Some(2),
+            Some("Which colour do you prefer?"),
+            pane_selection(&before).and_then(|s| s.subject).as_deref(),
+        )
+        .expect("a chooser");
+
+        // The Enter was swallowed: the same chooser is still up, and the stale
+        // receipt must not override that.
+        assert!(matches!(
+            commit_outcome(&before, &plan, &before),
+            CommitOutcome::StillShowing
+        ));
+
+        // Gone, but the only receipt is the old one and it names another
+        // question.
+        let after_stale = "⎿ · Pick a fruit: → Apple\n⏺ Working";
+        assert!(matches!(
+            commit_outcome(after_stale, &plan, &before),
+            CommitOutcome::Unverified
+        ));
+
+        // The case the question match cannot catch: the SAME question was
+        // answered earlier and its receipt is still on screen. Only "was it
+        // there before the carriage return" separates that from evidence of
+        // this answer, and the route already holds the earlier capture.
+        let asked_again = format!("⎿ · Which colour do you prefer? → Red\n{chooser}");
+        let plan_again = plan_selection_answer(
+            &asked_again,
+            "Blue",
+            Some(2),
+            Some("Which colour do you prefer?"),
+            pane_selection(&asked_again)
+                .and_then(|s| s.subject)
+                .as_deref(),
+        )
+        .expect("a chooser");
+        let still_only_the_old_one = "⎿ · Which colour do you prefer? → Red\n⏺ Working";
+        assert!(
+            matches!(
+                commit_outcome(still_only_the_old_one, &plan_again, &asked_again),
+                CommitOutcome::Unverified
+            ),
+            "an answer this prompt was given BEFORE is not evidence of this one"
+        );
+
+        // A receipt that is new AND names this question is the real thing.
+        let after_real = "⎿ · Pick a fruit: → Apple\n⎿ · Which colour do you prefer? → Blue";
+        let CommitOutcome::Confirmed { taken } = commit_outcome(after_real, &plan, &before) else {
+            panic!("a new receipt naming this question is confirmation");
+        };
+        assert_eq!(taken, "Which colour do you prefer? → Blue");
     }
 
     #[test]

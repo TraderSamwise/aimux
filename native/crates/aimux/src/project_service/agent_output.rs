@@ -1,6 +1,6 @@
 use crate::agent_pane_selection::{
-    CommitOutcome, RestoreOutcome, SelectionAnswerPlan, SelectionCommit, SelectionLanding,
-    commit_outcome, plan_selection_answer, restore_outcome, selection_commit_decision,
+    CommitOutcome, RestoreOutcome, SelectionCommit, SelectionLanding, commit_outcome,
+    plan_selection_answer, restore_outcome, selection_commit_decision, selection_cursor_keys,
     selection_landing,
 };
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
@@ -1754,16 +1754,14 @@ fn session_window_changed(
 }
 
 /// What the refusal says about where the cursor was left.
-fn describe_restore(error: String, pane: Option<&str>, plan: &SelectionAnswerPlan) -> String {
-    let Some(pane) = pane else {
-        return format!("{error}; the pane could not be read back to confirm the cursor");
-    };
-    match restore_outcome(pane, plan) {
-        RestoreOutcome::Restored => format!("{error}; the cursor was put back"),
-        RestoreOutcome::LeftOn { label } => {
+fn describe_restore(error: String, outcome: Option<RestoreOutcome>) -> String {
+    match outcome {
+        None => format!("{error}; the pane could not be read back to confirm the cursor"),
+        Some(RestoreOutcome::Restored) => format!("{error}; the cursor was put back"),
+        Some(RestoreOutcome::LeftOn { label }) => {
             format!("{error}; the cursor is left on {label:?}")
         }
-        RestoreOutcome::PaneChanged => {
+        Some(RestoreOutcome::PaneChanged) => {
             format!("{error}; the pane changed before the cursor could be put back")
         }
     }
@@ -1779,10 +1777,8 @@ fn describe_restore(error: String, pane: Option<&str>, plan: &SelectionAnswerPla
 fn selection_answer_result(
     session_id: &str,
     label: &str,
-    pane: Option<&str>,
-    plan: &SelectionAnswerPlan,
+    outcome: Option<CommitOutcome>,
 ) -> ProjectServiceDispatchResponse {
-    let outcome = pane.map(|pane| commit_outcome(pane, plan));
     if let Some(CommitOutcome::StillShowing) = outcome {
         return ProjectServiceDispatchResponse::json(
             409,
@@ -1883,6 +1879,7 @@ fn select_live_pane_route(
     let mut landing = SelectionLanding::Changed {
         message: "the pane was never read back after moving the cursor".to_owned(),
     };
+    let mut moved_pane = String::new();
     for attempt in 0..SELECTION_SETTLE_ATTEMPTS {
         if attempt > 0 {
             runtime.settle(SELECTION_SETTLE_MS);
@@ -1892,13 +1889,22 @@ fn select_live_pane_route(
             Err(error) => return json_error(500, error),
         };
         landing = selection_landing(&moved, &plan, &request.label, request.number);
+        moved_pane = moved;
         if matches!(landing, SelectionLanding::Landed) {
             break;
         }
     }
+    let landed_at = plan
+        .chooser
+        .option_index(&request.label, request.number)
+        .unwrap_or(plan.from);
     match selection_commit_decision(landing, &plan) {
         SelectionCommit::Commit => {}
-        SelectionCommit::Refuse { restore, error } => {
+        SelectionCommit::Refuse {
+            restore,
+            left_at,
+            error,
+        } => {
             let restoring = !restore.is_empty();
             let mut error = error;
             for key in restore {
@@ -1909,13 +1915,28 @@ fn select_live_pane_route(
             }
             // A key that returns Ok without moving the cursor reads as a
             // successful restore, and the pane that swallowed the walk is
-            // exactly the pane that swallows this. One read, so the refusal
-            // can name where the cursor actually IS.
+            // exactly the pane that swallows this. Polled rather than read
+            // once: an immediate read catches the frame before the redraw and
+            // reports the cursor sitting on a row it has already left, which
+            // sends the user to fix something that is already fine.
             if restoring {
-                let read = runtime
-                    .capture_pane(&target.window_id, SELECTION_CAPTURE)
-                    .map(|pane| strip_sgr(&pane));
-                error = describe_restore(error, read.as_deref().ok(), &plan);
+                let mut seen = None;
+                for _ in 0..SELECTION_SETTLE_ATTEMPTS {
+                    runtime.settle(SELECTION_SETTLE_MS);
+                    let Ok(pane) = runtime
+                        .capture_pane(&target.window_id, SELECTION_CAPTURE)
+                        .map(|pane| strip_sgr(&pane))
+                    else {
+                        break;
+                    };
+                    let outcome = restore_outcome(&pane, &plan, left_at);
+                    let settled = matches!(outcome, RestoreOutcome::Restored);
+                    seen = Some(outcome);
+                    if settled {
+                        break;
+                    }
+                }
+                error = describe_restore(error, seen);
             }
             return json_error(409, error);
         }
@@ -1926,20 +1947,43 @@ fn select_live_pane_route(
     // dialog it would answer is the one being answered deliberately here.
     let _ = claim_submit_generation(&target.window_id);
     if let Some(moved) = session_window_changed(context, &request.session_id, &target.window_id) {
-        return json_error(409, moved);
+        // Through a restore as well. This was the one refusal that left the
+        // cursor parked on the row it had been walked to and said nothing.
+        let mut error = moved;
+        for key in selection_cursor_keys(landed_at, plan.from) {
+            if let Err(failure) = runtime.send_key(&target.window_id, key) {
+                error = format!("{error}; the cursor could not be put back: {failure}");
+                break;
+            }
+        }
+        return json_error(409, error);
     }
     if let Err(error) = runtime.send_carriage_return(&target.window_id) {
         return json_error(500, error);
     }
-    let after = runtime
-        .capture_pane(&target.window_id, SELECTION_CAPTURE)
-        .map(|pane| strip_sgr(&pane));
-    selection_answer_result(
-        &request.session_id,
-        &request.label,
-        after.as_deref().ok(),
-        &plan,
-    )
+    // Settled BEFORE the first look, and retried only while the chooser is
+    // still up. `send-keys` returns when the bytes reach the pty and
+    // `capture-pane` is a separate round trip, so the agent's redraw is
+    // routinely slower -- reading immediately reported a good answer as "the
+    // prompt is still up", which the app shows as an error the user answers by
+    // tapping again, into whatever the pane holds by then.
+    let mut outcome = None;
+    for _ in 0..SELECTION_SETTLE_ATTEMPTS {
+        runtime.settle(SELECTION_SETTLE_MS);
+        let Ok(pane) = runtime
+            .capture_pane(&target.window_id, SELECTION_CAPTURE)
+            .map(|pane| strip_sgr(&pane))
+        else {
+            break;
+        };
+        let seen = commit_outcome(&pane, &plan, &moved_pane);
+        let retry = matches!(seen, CommitOutcome::StillShowing);
+        outcome = Some(seen);
+        if !retry {
+            break;
+        }
+    }
+    selection_answer_result(&request.session_id, &request.label, outcome)
 }
 
 fn input_live_pane_route(
@@ -2407,6 +2451,7 @@ async fn select_live_pane_route_async(
     let mut landing = SelectionLanding::Changed {
         message: "the pane was never read back after moving the cursor".to_owned(),
     };
+    let mut moved_pane = String::new();
     for attempt in 0..SELECTION_SETTLE_ATTEMPTS {
         if attempt > 0 {
             tokio::time::sleep(Duration::from_millis(SELECTION_SETTLE_MS)).await;
@@ -2419,13 +2464,22 @@ async fn select_live_pane_route_async(
                 Err(error) => return json_error(500, error),
             };
         landing = selection_landing(&moved, &plan, &request.label, request.number);
+        moved_pane = moved;
         if matches!(landing, SelectionLanding::Landed) {
             break;
         }
     }
+    let landed_at = plan
+        .chooser
+        .option_index(&request.label, request.number)
+        .unwrap_or(plan.from);
     match selection_commit_decision(landing, &plan) {
         SelectionCommit::Commit => {}
-        SelectionCommit::Refuse { restore, error } => {
+        SelectionCommit::Refuse {
+            restore,
+            left_at,
+            error,
+        } => {
             let restoring = !restore.is_empty();
             let mut error = error;
             for key in restore {
@@ -2435,17 +2489,39 @@ async fn select_live_pane_route_async(
                 }
             }
             if restoring {
-                let read =
-                    capture_pane_async(&target.window_id, SELECTION_CAPTURE, TMUX_COMMAND_TIMEOUT)
-                        .await
-                        .map(|pane| strip_sgr(&pane));
-                error = describe_restore(error, read.as_deref().ok(), &plan);
+                let mut seen = None;
+                for _ in 0..SELECTION_SETTLE_ATTEMPTS {
+                    tokio::time::sleep(Duration::from_millis(SELECTION_SETTLE_MS)).await;
+                    let Ok(pane) = capture_pane_async(
+                        &target.window_id,
+                        SELECTION_CAPTURE,
+                        TMUX_COMMAND_TIMEOUT,
+                    )
+                    .await
+                    .map(|pane| strip_sgr(&pane)) else {
+                        break;
+                    };
+                    let outcome = restore_outcome(&pane, &plan, left_at);
+                    let settled = matches!(outcome, RestoreOutcome::Restored);
+                    seen = Some(outcome);
+                    if settled {
+                        break;
+                    }
+                }
+                error = describe_restore(error, seen);
             }
             return json_error(409, error);
         }
     }
     if let Some(moved) = session_window_changed(context, &request.session_id, &target.window_id) {
-        return json_error(409, moved);
+        let mut error = moved;
+        for key in selection_cursor_keys(landed_at, plan.from) {
+            if let Err(failure) = send_selection_key_async(&target.window_id, key).await {
+                error = format!("{error}; the cursor could not be put back: {failure}");
+                break;
+            }
+        }
+        return json_error(409, error);
     }
     let _ = claim_submit_generation(&target.window_id);
     if let Err(error) = run_tmux_argv_with_timeout_async(
@@ -2457,15 +2533,24 @@ async fn select_live_pane_route_async(
     {
         return json_error(500, error);
     }
-    let after = capture_pane_async(&target.window_id, SELECTION_CAPTURE, TMUX_COMMAND_TIMEOUT)
-        .await
-        .map(|pane| strip_sgr(&pane));
-    selection_answer_result(
-        &request.session_id,
-        &request.label,
-        after.as_deref().ok(),
-        &plan,
-    )
+    let mut outcome = None;
+    for _ in 0..SELECTION_SETTLE_ATTEMPTS {
+        tokio::time::sleep(Duration::from_millis(SELECTION_SETTLE_MS)).await;
+        let Ok(pane) =
+            capture_pane_async(&target.window_id, SELECTION_CAPTURE, TMUX_COMMAND_TIMEOUT)
+                .await
+                .map(|pane| strip_sgr(&pane))
+        else {
+            break;
+        };
+        let seen = commit_outcome(&pane, &plan, &moved_pane);
+        let retry = matches!(seen, CommitOutcome::StillShowing);
+        outcome = Some(seen);
+        if !retry {
+            break;
+        }
+    }
+    selection_answer_result(&request.session_id, &request.label, outcome)
 }
 
 async fn send_selection_key_async(window_id: &str, key: &str) -> Result<(), String> {

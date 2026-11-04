@@ -4223,6 +4223,16 @@ struct FakeChooserRuntime {
     swallows_enter: bool,
     /// What the agent prints to record its answer, when it prints one.
     records: Option<String>,
+    /// Captures that still show the pane as it was before the last key. tmux
+    /// `send-keys` returns when the bytes reach the pty and `capture-pane` is
+    /// a separate round trip, so the agent's redraw is routinely one frame
+    /// behind -- the default ordering, not a loaded-machine edge.
+    redraw_lag: u8,
+    lag_left: u8,
+    shown_cursor: usize,
+    shown_answered: bool,
+    /// A receipt from an EARLIER question, already on screen.
+    stale_receipt: Option<String>,
     actions: Vec<FakeRuntimeAction>,
 }
 
@@ -4237,7 +4247,35 @@ impl FakeChooserRuntime {
             answered: false,
             swallows_enter: false,
             records: None,
+            redraw_lag: 0,
+            lag_left: 0,
+            shown_cursor: 0,
+            shown_answered: false,
+            stale_receipt: None,
             actions: Vec::new(),
+        }
+    }
+
+    fn lagging(options: &[&str]) -> Self {
+        Self {
+            redraw_lag: 1,
+            ..Self::new(options)
+        }
+    }
+
+    fn lagging_overshoot(options: &[&str]) -> Self {
+        Self {
+            redraw_lag: 1,
+            step: 2,
+            ..Self::new(options)
+        }
+    }
+
+    fn swallowing_with_stale_receipt(options: &[&str], receipt: &str) -> Self {
+        Self {
+            swallows_enter: true,
+            stale_receipt: Some(receipt.to_owned()),
+            ..Self::new(options)
         }
     }
 
@@ -4277,20 +4315,42 @@ impl FakeChooserRuntime {
     }
 
     fn pane(&self) -> String {
-        if self.answered {
-            let mut pane = String::from(" ⏺ Working\n");
+        let mut pane = String::new();
+        if let Some(stale) = &self.stale_receipt {
+            pane.push_str(&format!(" ⎿ · {stale}\n"));
+        }
+        if self.shown_answered {
+            pane.push_str(" ⏺ Working\n");
             if let Some(records) = &self.records {
                 pane.push_str(&format!(" ⎿ · {records}\n"));
             }
             return pane;
         }
-        let mut pane = String::from(" Do you want to create hello.txt?\n");
+        pane.push_str(" Do you want to create hello.txt?\n");
         for (index, option) in self.options.iter().enumerate() {
-            let marker = if index == self.cursor { "❯" } else { " " };
+            let marker = if index == self.shown_cursor {
+                "❯"
+            } else {
+                " "
+            };
             pane.push_str(&format!(" {marker} {}. {option}\n", index + 1));
         }
         pane.push_str(" Esc to cancel · Tab to amend\n");
         pane
+    }
+
+    /// One capture's worth of redraw.
+    fn advance_frame(&mut self) {
+        if self.lag_left > 0 {
+            self.lag_left -= 1;
+            return;
+        }
+        self.shown_cursor = self.cursor;
+        self.shown_answered = self.answered;
+    }
+
+    fn changed(&mut self) {
+        self.lag_left = self.redraw_lag;
     }
 
     fn committed(&self) -> bool {
@@ -4308,12 +4368,14 @@ impl AgentOutputCaptureRuntime for FakeChooserRuntime {
     ) -> Result<String, String> {
         self.actions
             .push(FakeRuntimeAction::Capture(window_id.to_owned()));
+        self.advance_frame();
         Ok(self.pane())
     }
 
     fn send_key(&mut self, window_id: &str, key: &str) -> Result<(), String> {
         self.actions
             .push(FakeRuntimeAction::Key(window_id.to_owned(), key.to_owned()));
+        self.changed();
         if self.frozen {
             return Ok(());
         }
@@ -4333,6 +4395,7 @@ impl AgentOutputCaptureRuntime for FakeChooserRuntime {
     fn send_carriage_return(&mut self, window_id: &str) -> Result<(), String> {
         self.actions
             .push(FakeRuntimeAction::CarriageReturn(window_id.to_owned()));
+        self.changed();
         if !self.swallows_enter {
             self.answered = true;
         }
@@ -4644,6 +4707,105 @@ fn an_answer_the_agent_recorded_is_upgraded_to_confirmed() {
         response.body["recorded"],
         "Do you want to create hello.txt? → No"
     );
+    cleanup(project);
+}
+
+#[test]
+fn a_redraw_one_frame_behind_is_not_a_failed_answer() {
+    let project = temp_project("select-lag");
+    let state_dir = project.join("state");
+    write_state_with_window(&state_dir, "@select-lag");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // The default ordering: send-keys returns at the pty, capture-pane is a
+    // separate round trip. Reading immediately reported a perfectly good
+    // answer as "the prompt is still up" -- which the app shows as an error,
+    // so the user taps again, into whatever the pane holds by then.
+    let mut runtime = FakeChooserRuntime::lagging(&["Yes", "No"]);
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "No",
+            "number": 2,
+            "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["committed"], "unverified");
+    assert!(runtime.committed());
+    cleanup(project);
+}
+
+#[test]
+fn a_restore_read_a_frame_early_does_not_claim_the_cursor_is_parked() {
+    let project = temp_project("select-lag-restore");
+    let state_dir = project.join("state");
+    write_state_with_window(&state_dir, "@select-lag-restore");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // Overshoots AND redraws late. The refusal is right; what must not happen
+    // is telling the user the cursor sits on a row it has already left, which
+    // sends them to fix something that is already fine.
+    let mut runtime = FakeChooserRuntime::lagging_overshoot(&["Yes", "Yes, allow all edits", "No"]);
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "Yes, allow all edits",
+            "number": 2,
+            "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 409);
+    assert_eq!(runtime.cursor, 0, "the cursor really is back");
+    let error = response.body["error"].as_str().unwrap_or_default();
+    assert!(error.contains("the cursor was put back"), "got {error}");
+    assert!(!runtime.committed());
+    cleanup(project);
+}
+
+#[test]
+fn a_swallowed_enter_is_not_confirmed_by_an_older_answer() {
+    let project = temp_project("select-stale-receipt");
+    let state_dir = project.join("state");
+    write_state_with_window(&state_dir, "@select-stale-receipt");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // The receipt check used to run before the still-showing check, so an
+    // earlier question's receipt reported the strongest claim the route makes.
+    let mut runtime =
+        FakeChooserRuntime::swallowing_with_stale_receipt(&["Yes", "No"], "Pick a fruit: → Apple");
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "No",
+            "number": 2,
+            "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 409);
+    assert_eq!(response.body["accepted"], false);
+    assert!(response.body.get("committed").is_none());
     cleanup(project);
 }
 
