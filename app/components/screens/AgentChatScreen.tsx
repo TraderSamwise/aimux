@@ -3318,12 +3318,13 @@ const AgentTerminalOutputPane = React.memo(
       const liveOutput = useMemo(
         () =>
           terminalVisibleOutputForPinned({
+            columns: terminalDividerWidth,
             lines: liveLines,
             outputAvailable,
             outputText: outputTail,
             sessionKey: agentKey,
           }),
-        [liveLines, outputAvailable, outputTail, agentKey],
+        [liveLines, outputAvailable, outputTail, agentKey, terminalDividerWidth],
       );
       const [visibleOutput, setVisibleOutput] = useState(liveOutput);
       const terminalScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());

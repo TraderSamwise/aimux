@@ -73,10 +73,13 @@ describe("a rule never outgrows its pane", () => {
   });
 
   it("counts every inset between the pane frame and the glyphs", () => {
-    // `onLayout` reports the ScrollView host frame, so the scroll content's
-    // 24 AND the output card's px-3 plus border must come off. Counting only
-    // the first left 26px unaccounted and ate three columns of the slack.
-    expect(TERMINAL_CONTENT_PADDING).toBe(24 + 24 + 2);
+    // Asserted against the SCREEN, not restated as arithmetic: writing
+    // `toBe(24 + 24 + 2)` passes happily after someone changes the padding
+    // in the JSX, which is the only place that can make it wrong.
+    expect(SCREEN).toContain("paddingHorizontal: 12");
+    expect(SCREEN).toContain("rounded-lg border border-border bg-card/80 px-3 py-2");
+    // 12*2 scroll content + 12*2 card + 1*2 border.
+    expect(TERMINAL_CONTENT_PADDING).toBe(50);
   });
 
   it("keeps real slack after the insets are paid", () => {
@@ -120,6 +123,10 @@ describe("the pane is wired to its own width", () => {
   it("pins the terminal font against the OS text scale", () => {
     // `layout.width` is in dp but a scaled glyph is wider, so at Larger Text
     // the computed column count is ~30% too many and every rule wraps again.
-    expect(SCREEN).toContain("allowFontScaling={false}");
+    //
+    // BOTH nodes: the line and the span inside it. Asserting "contains" was
+    // satisfied by either one, so dropping it from the span still passed.
+    const pinned = SCREEN.match(/allowFontScaling=\{false\}/g) ?? [];
+    expect(pinned.length).toBe(2);
   });
 });
