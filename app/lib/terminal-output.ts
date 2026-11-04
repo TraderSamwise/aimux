@@ -6,11 +6,6 @@ const DIVIDER_LINE_MIN_LENGTH = 24;
 const DIVIDER_LINE_MIN_RATIO = 0.9;
 const DIVIDER_CONTINUATION_MIN_LENGTH = 8;
 const DEFAULT_DIVIDER_WIDTH = 72;
-// How much blank space a single wrapped rule may contain. The rows of one
-// wrapped rule are adjacent by construction, so one blank is slack for a tool
-// that pads its rule; more than that is two different pieces of output, and
-// swallowing the gap would weld them together.
-const MAX_DIVIDER_RUN_GAP_LINES = 1;
 const DEFAULT_SOFT_WRAP_COLUMN = 28;
 const SOFT_WRAP_MIN_SEPARATOR_RUN = 12;
 const SOFT_BREAK = "\u200B";
@@ -68,14 +63,6 @@ function collapseDividerRuns<T>(
   let inRun = false;
   let heldBlanks: T[] = [];
 
-  // Held blanks are ordinary lines once they are kept, so they go through the
-  // same passthrough as any other -- pushing them raw would quietly skip
-  // whatever it does the moment it starts touching whitespace.
-  const flushHeld = () => {
-    for (const blank of heldBlanks) out.push(adapter.passthrough(blank));
-    heldBlanks = [];
-  };
-
   for (const line of lines) {
     const raw = adapter.text(line);
 
@@ -94,28 +81,19 @@ function collapseDividerRuns<T>(
     }
 
     if (inRun && raw.trim().length === 0) {
-      if (heldBlanks.length < MAX_DIVIDER_RUN_GAP_LINES) {
-        heldBlanks.push(line);
-        continue;
-      }
-      // Too much blank space to be one wrapped rule. Everything held is real
-      // spacing between two separate things, and the run is over -- without
-      // this, a rule, ten empty rows, and the next command's rule collapse
-      // into one line and the two commands are welded together.
-      flushHeld();
-      out.push(adapter.passthrough(line));
-      inRun = false;
+      heldBlanks.push(line);
       continue;
     }
 
-    flushHeld();
+    for (const blank of heldBlanks) out.push(blank);
+    heldBlanks = [];
     out.push(adapter.passthrough(line));
     inRun = false;
   }
 
   // Trailing blanks never got a following line to classify them, so they are
   // just the end of the output.
-  flushHeld();
+  for (const blank of heldBlanks) out.push(blank);
   return out;
 }
 
