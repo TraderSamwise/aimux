@@ -4803,6 +4803,45 @@ fn a_restore_read_a_frame_early_does_not_claim_the_cursor_is_parked() {
 }
 
 #[test]
+fn a_refusal_names_the_status_that_caused_it() {
+    let project = temp_project("select-status");
+    let state_dir = project.join("state");
+    // The session resolver only accepts starting/running/idle, so a status
+    // that leaves that set refuses the answer. "The session left window @N"
+    // described a window move, which is not what happened — the status is.
+    write_state_with_session_status(&state_dir, "stopping");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeChooserRuntime::new(&["Yes", "No"]);
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "No",
+            "number": 2,
+            "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    // It cannot even be planned against, since the session does not resolve —
+    // but whichever refusal fires, it has to name the status rather than
+    // describe something that did not happen.
+    assert_ne!(response.status, 200);
+    let error = response.body["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("stopping") || error.contains("not running"),
+        "the refusal must say why, got {error}"
+    );
+    assert!(!runtime.committed());
+    cleanup(project);
+}
+
+#[test]
 fn one_unreadable_frame_does_not_accept_an_answer_that_never_landed() {
     let project = temp_project("select-torn");
     let state_dir = project.join("state");

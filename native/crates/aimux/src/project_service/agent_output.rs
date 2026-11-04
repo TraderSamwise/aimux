@@ -1742,15 +1742,41 @@ fn session_window_changed(
             "the session moved from window {window_id} to {} while the answer was being sent",
             target.window_id
         )),
+        // `None` is not only "the session went away": the resolver filters on
+        // starting/running/idle, so a status that transiently leaves that set
+        // refuses a legitimate answer. Naming the status is what makes such a
+        // refusal diagnosable instead of mysterious.
+        Ok(None) => Some(match session_status(context, session_id) {
+            Some(status) => {
+                format!("the session is {status}, so the answer was not sent to window {window_id}")
+            }
+            None => format!(
+                "the session is no longer listed, so the answer was not sent to window {window_id}"
+            ),
+        }),
         // Errors are not absence: a topology we could not read is not a
         // session that went away, and neither is grounds for pressing Enter.
-        Ok(None) => Some(format!(
-            "the session left window {window_id} while the answer was being sent"
-        )),
         Err(error) => Some(format!(
             "the session's window could not be rechecked before committing: {error}"
         )),
     }
+}
+
+/// The status the topology records for a session, whatever it is.
+///
+/// Deliberately unfiltered: the point is to report a status the active-session
+/// filter rejected, so filtering here would answer `None` for exactly the case
+/// this exists to explain.
+fn session_status(context: &ProjectServiceRequestContext, session_id: &str) -> Option<String> {
+    let topology =
+        read_runtime_topology(runtime_topology_path(context.project_state_dir())).ok()?;
+    topology
+        .get("sessions")?
+        .as_array()?
+        .iter()
+        .find(|session| string_field(session, "id") == Some(session_id))
+        .and_then(|session| string_field(session, "status"))
+        .map(str::to_owned)
 }
 
 /// What the refusal says about where the cursor was left.
