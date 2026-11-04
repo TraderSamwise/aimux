@@ -33,6 +33,7 @@ vi.mock("@/stores/projectViews", () => ({ kickProjectApiViewRefreshAtom: {} }));
 
 import type { DesktopSession } from "@/lib/desktop-state";
 import { overseerActionForSession, planeActionForSession } from "@/components/agent-actions";
+import { shouldApplyNativeTooltip } from "@/lib/action-tooltip";
 
 const source = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "agent-actions.tsx"),
@@ -98,9 +99,38 @@ describe("overseer row actions", () => {
 });
 
 describe("agent action hover labels", () => {
-  it("uses the action label for both accessibility and the web hover label", () => {
-    expect(source).toContain("onHoverIn");
+  it("is a pointer affordance, so web only", () => {
+    // On a touch build the accessibility label is already the whole story,
+    // and a tooltip there would have no way to be dismissed.
+    expect(shouldApplyNativeTooltip("web")).toBe(true);
+    expect(shouldApplyNativeTooltip("ios")).toBe(false);
+    expect(shouldApplyNativeTooltip("android")).toBe(false);
+  });
+
+  it("lets the BROWSER draw the label, because nothing in the tree can", () => {
+    // Measured on the agent action row: the buttons sit under an ancestor
+    // with `overflow: auto hidden`, which clips vertically, so a label placed
+    // above or below is cut off whatever z-index it carries -- and that
+    // ancestor is transformed, so `position: fixed` cannot escape it either.
+    // A rendered tooltip was verified covered before this was abandoned.
+    expect(source).toContain("useNativeTooltip");
+    expect(source).toContain("ref={tooltipRef}");
+    // No in-tree tooltip may come back without hitting the same wall.
+    expect(source).not.toContain("bg-popover");
+    expect(source).not.toContain("top-full");
+    expect(source).not.toContain("bottom-full");
+  });
+
+  it("keeps the label as the accessible name too", () => {
+    // The half of the original change that was never in question: one label
+    // serves the hover text and the accessibility name, so they cannot drift.
     expect(source).toContain("accessibilityLabel={label}");
-    expect(source).toMatch(/<Text[\s\S]*>\s*\{label\}\s*<\/Text>/);
+  });
+
+  it("does not leave hover state behind driving nothing", () => {
+    // The browser tracks hover now. A leftover `hovered` state would
+    // re-render every button on pointer move for no reason.
+    expect(source).not.toContain("setHovered");
+    expect(source).not.toContain("onHoverIn");
   });
 });

@@ -1,6 +1,6 @@
 import React from "react";
 import type { ProjectStateKey } from "@/lib/project-key";
-import { ActivityIndicator, Platform, View } from "react-native";
+import { ActivityIndicator, View } from "react-native";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
   GitFork,
@@ -29,6 +29,7 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { type DesktopSession, isSupervisorLaneSession } from "@/lib/desktop-state";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
+import { useNativeTooltip } from "@/lib/action-tooltip";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import { agentActionsFamily, type AgentRowAction } from "@/stores/agentActions";
 import {
@@ -372,38 +373,27 @@ function ActionButton({
   loading?: boolean;
   label: string;
 }) {
-  const [hovered, setHovered] = React.useState(false);
-  const showTooltip = Platform.OS === "web" && hovered;
+  // The browser draws this one. A tooltip rendered in the tree is clipped by
+  // an ancestor with `overflow: auto hidden` and cannot escape it, since that
+  // ancestor is also transformed -- see `useNativeTooltip`.
+  const tooltipRef = useNativeTooltip<View>(label);
 
   return (
-    <View className={cn("relative shrink-0", sizeClass)}>
-      <Button
-        variant="outline"
-        size="icon"
-        onPress={onPress}
-        onHoverIn={Platform.OS === "web" ? () => setHovered(true) : undefined}
-        onHoverOut={Platform.OS === "web" ? () => setHovered(false) : undefined}
-        disabled={disabled}
-        accessibilityLabel={label}
-        accessibilityState={{ busy: Boolean(loading), disabled: Boolean(disabled) }}
-        className={cn("p-0", sizeClass)}
-      >
-        {loading ? (
-          <ActivityIndicator size="small" color="#a1a1aa" />
-        ) : (
-          <Icon size={iconSize} color="#a1a1aa" />
-        )}
-      </Button>
-      {showTooltip ? (
-        <View
-          pointerEvents="none"
-          className="absolute left-0 top-full z-50 mt-1 max-w-64 rounded-md border border-border bg-popover px-2 py-1 shadow-lg"
-        >
-          <Text className="text-[11px] text-popover-foreground" numberOfLines={1}>
-            {label}
-          </Text>
-        </View>
-      ) : null}
-    </View>
+    <Button
+      ref={tooltipRef}
+      variant="outline"
+      size="icon"
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityLabel={label}
+      accessibilityState={{ busy: Boolean(loading), disabled: Boolean(disabled) }}
+      className={cn("p-0", sizeClass)}
+    >
+      {loading ? (
+        <ActivityIndicator size="small" color="#a1a1aa" />
+      ) : (
+        <Icon size={iconSize} color="#a1a1aa" />
+      )}
+    </Button>
   );
 }
