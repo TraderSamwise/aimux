@@ -6,11 +6,6 @@ const DIVIDER_LINE_MIN_LENGTH = 24;
 const DIVIDER_LINE_MIN_RATIO = 0.9;
 const DIVIDER_CONTINUATION_MIN_LENGTH = 8;
 const DEFAULT_DIVIDER_WIDTH = 72;
-// How much blank space a single wrapped rule may contain. The rows of one
-// wrapped rule are adjacent by construction, so one blank is slack for a tool
-// that pads its rule; more than that is two different pieces of output, and
-// swallowing the gap would weld them together.
-const MAX_DIVIDER_RUN_GAP_LINES = 1;
 const DEFAULT_SOFT_WRAP_COLUMN = 28;
 const SOFT_WRAP_MIN_SEPARATOR_RUN = 12;
 const SOFT_BREAK = "\u200B";
@@ -29,98 +24,16 @@ export function terminalOutputTail(
   return output.replace(/\r/g, "").split("\n").slice(-maxLines).join("\n");
 }
 
-interface DividerCollapse<T> {
-  /** The line's visible text, with any styling stripped. */
-  text(line: T): string;
-  /** The same line re-emitted as a single capped rule. */
-  renderDivider(line: T, capped: string): T;
-  /** Any line that is not part of a rule run. */
-  passthrough(line: T): T;
-}
-
-/**
- * Keep the first rule of a wrapped run and drop the rest.
- *
- * A tool draws its rules to the width of ITS pane, so in a narrower view one
- * rule arrives as several rows: a full-width row, then short residue, and --
- * the case this missed for a long time -- sometimes blank rows in between.
- *
- * A blank row is neither a divider nor a continuation, so the previous version
- * of this fell through to the passthrough branch and reset the run, and every
- * rule after a gap looked like a fresh one. That is the stack of rules running
- * down the pane in Sam's screenshot.
- *
- * So a blank inside a run is HELD rather than emitted or discarded, because
- * which it is cannot be known yet: if a rule follows, the blank was part of
- * the wrap and goes with it; if real text follows, the blank was the author's
- * spacing and is kept. Deciding at the next real line is the whole trick.
- *
- * One pass for all three renderers. It was three copies of this loop, which is
- * how the plain-text one and the styled one could disagree about the same
- * output -- and when this bug was last attacked, only some of them were fixed.
- */
-function collapseDividerRuns<T>(
-  lines: readonly T[],
-  dividerWidth: number,
-  adapter: DividerCollapse<T>,
-): T[] {
-  const out: T[] = [];
-  let inRun = false;
-  let heldBlanks: T[] = [];
-
-  // Held blanks are ordinary lines once they are kept, so they go through the
-  // same passthrough as any other -- pushing them raw would quietly skip
-  // whatever it does the moment it starts touching whitespace.
-  const flushHeld = () => {
-    for (const blank of heldBlanks) out.push(adapter.passthrough(blank));
-    heldBlanks = [];
-  };
-
-  for (const line of lines) {
-    const raw = adapter.text(line);
-
-    if (isDividerLine(raw)) {
-      heldBlanks = [];
-      if (inRun) continue;
-      const indent = raw.match(/^\s*/)?.[0] ?? "";
-      out.push(adapter.renderDivider(line, `${indent}${raw.trim().slice(0, dividerWidth)}`));
-      inRun = true;
-      continue;
-    }
-
-    if (inRun && isDividerContinuationLine(raw)) {
-      heldBlanks = [];
-      continue;
-    }
-
-    if (inRun && raw.trim().length === 0) {
-      if (heldBlanks.length < MAX_DIVIDER_RUN_GAP_LINES) {
-        heldBlanks.push(line);
-        continue;
-      }
-      // Too much blank space to be one wrapped rule. Everything held is real
-      // spacing between two separate things, and the run is over -- without
-      // this, a rule, ten empty rows, and the next command's rule collapse
-      // into one line and the two commands are welded together.
-      flushHeld();
-      out.push(adapter.passthrough(line));
-      inRun = false;
-      continue;
-    }
-
-    flushHeld();
-    out.push(adapter.passthrough(line));
-    inRun = false;
-  }
-
-  // Trailing blanks never got a following line to classify them, so they are
-  // just the end of the output.
-  flushHeld();
-  return out;
-}
-
 /**
  * The pane as styled lines: tmux's colours kept, its full-width rules cut down.
+ *
+ * Consecutive rules are NOT merged, and that is deliberate. An attempt to do
+ * so was reverted: reading real output showed two adjacent rules are usually
+ * the top and bottom of an agent's prompt box with the input line between
+ * them, so merging them deletes the bottom border. The rows of a genuinely
+ * wrapped rule are adjacent anyway, and the fix for wrapping is to truncate
+ * to the pane's real column count -- see `terminal-columns.ts` -- not to
+ * clean up afterwards.
  *
  * A tool draws its rules to the width of *its* pane, which is not the width of
  * this view, so a wrapped rule arrives as two or three rows of box characters.
@@ -130,13 +43,30 @@ export function formatTerminalOutputForDisplay(
   output: string,
   { dividerWidth = DEFAULT_DIVIDER_WIDTH }: TerminalOutputDisplayOptions = {},
 ): AnsiSpan[][] {
-  return collapseDividerRuns<AnsiSpan[]>(parseAnsiLines(output), dividerWidth, {
-    text: ansiLineText,
-    // A rule is one run of one character, so re-emitting it as a single span
-    // at the first span's style loses nothing and avoids slicing across spans.
-    renderDivider: (spans, capped) => [{ text: capped, style: spans[0]?.style ?? {} }],
-    passthrough: (spans) => spans,
-  });
+  const lines = parseAnsiLines(output);
+  const formatted: AnsiSpan[][] = [];
+  let previousWasDivider = false;
+
+  for (const spans of lines) {
+    const line = ansiLineText(spans);
+    if (isDividerLine(line)) {
+      if (previousWasDivider) continue;
+      const indent = line.match(/^\s*/)?.[0] ?? "";
+      // A rule is one run of one character, so re-emitting it as a single span
+      // at the first span's style loses nothing and avoids slicing across spans.
+      formatted.push([
+        { text: `${indent}${line.trim().slice(0, dividerWidth)}`, style: spans[0]?.style ?? {} },
+      ]);
+      previousWasDivider = true;
+      continue;
+    }
+    if (previousWasDivider && isDividerContinuationLine(line)) continue;
+
+    formatted.push(spans);
+    previousWasDivider = false;
+  }
+
+  return formatted;
 }
 
 export function formatTerminalOutputPlainLinesForDisplay(
@@ -153,11 +83,24 @@ export function formatPlainTextForDisplay(
     softWrapColumn = DEFAULT_SOFT_WRAP_COLUMN,
   }: TerminalOutputDisplayOptions = {},
 ): string {
-  return collapseDividerRuns(trimTrailingTerminalChromeLines(text.split("\n")), dividerWidth, {
-    text: (line) => line,
-    renderDivider: (_line, capped) => capped,
-    passthrough: (line) => softWrapLongRuns(line, softWrapColumn).text,
-  }).join("\n");
+  const formatted: string[] = [];
+  let previousWasDivider = false;
+
+  for (const line of trimTrailingTerminalChromeLines(text.split("\n"))) {
+    if (isDividerLine(line)) {
+      if (previousWasDivider) continue;
+      const indent = line.match(/^\s*/)?.[0] ?? "";
+      formatted.push(`${indent}${line.trim().slice(0, dividerWidth)}`);
+      previousWasDivider = true;
+      continue;
+    }
+    if (previousWasDivider && isDividerContinuationLine(line)) continue;
+
+    formatted.push(softWrapLongRuns(line, softWrapColumn).text);
+    previousWasDivider = false;
+  }
+
+  return formatted.join("\n");
 }
 
 export function formatRichTextSpansForDisplay(
@@ -167,15 +110,28 @@ export function formatRichTextSpansForDisplay(
     softWrapColumn = DEFAULT_SOFT_WRAP_COLUMN,
   }: TerminalOutputDisplayOptions = {},
 ): HistoryTextSpan[] {
-  const formatted = collapseDividerRuns<HistoryTextSpan[]>(
-    trimTrailingTerminalChromeSpanLines(splitRichTextLines(spans)),
-    dividerWidth,
-    {
-      text: richTextLineText,
-      renderDivider: (lineSpans, capped) => [{ ...lineSpans[0], text: capped }],
-      passthrough: (lineSpans) => softWrapLongRunSpans(lineSpans, softWrapColumn),
-    },
-  );
+  const formatted: HistoryTextSpan[][] = [];
+  let previousWasDivider = false;
+
+  for (const lineSpans of trimTrailingTerminalChromeSpanLines(splitRichTextLines(spans))) {
+    const line = richTextLineText(lineSpans);
+    if (isDividerLine(line)) {
+      if (previousWasDivider) continue;
+      const indent = line.match(/^\s*/)?.[0] ?? "";
+      formatted.push([
+        {
+          ...lineSpans[0],
+          text: `${indent}${line.trim().slice(0, dividerWidth)}`,
+        },
+      ]);
+      previousWasDivider = true;
+      continue;
+    }
+    if (previousWasDivider && isDividerContinuationLine(line)) continue;
+
+    formatted.push(softWrapLongRunSpans(lineSpans, softWrapColumn));
+    previousWasDivider = false;
+  }
 
   return joinRichTextLines(formatted);
 }

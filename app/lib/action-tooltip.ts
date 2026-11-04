@@ -1,4 +1,3 @@
-import { useEffect, useRef } from "react";
 import { Platform } from "react-native";
 
 /**
@@ -25,22 +24,21 @@ export function shouldApplyNativeTooltip(platform: string = Platform.OS): boolea
  * z-index never reaches past its button.
  *
  * `title` sidesteps all of it: the browser paints it in its own chrome,
- * outside the document, where no ancestor can clip or cover it. The costs are
- * real and accepted -- no styling, and the browser's own delay before it
- * appears -- and in exchange it works on every surface the button appears on
- * without us owning a tooltip layer.
+ * outside the document, where no ancestor can clip or cover it. The costs
+ * are real and accepted -- no styling, and the browser's own delay before it
+ * appears. react-native-web does not forward `title`, hence the ref.
  *
- * react-native-web does not forward `title` (it is not in its forwarded-prop
- * list), hence the ref rather than a prop.
+ * A REF CALLBACK, deliberately, not a hook. The first version used `useRef`
+ * and `useEffect`, which broke nine tests in `agent-start.test.tsx`: that
+ * suite calls components as plain functions, so there is no React dispatcher
+ * and any hook throws. A callback is an ordinary prop and needs none. It also
+ * runs at the moment the node is attached, which is exactly when the
+ * attribute can be set.
  */
-export function useNativeTooltip<T>(label: string) {
-  const ref = useRef<T | null>(null);
-
-  useEffect(() => {
+export function nativeTooltipRef(label: string) {
+  return (node: unknown) => {
     if (!shouldApplyNativeTooltip()) return;
-    const node = ref.current as { setAttribute?: (name: string, value: string) => void } | null;
-    node?.setAttribute?.("title", label);
-  }, [label]);
-
-  return ref;
+    const element = node as { setAttribute?: (name: string, value: string) => void } | null;
+    element?.setAttribute?.("title", label);
+  };
 }

@@ -29,7 +29,7 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { type DesktopSession, isSupervisorLaneSession } from "@/lib/desktop-state";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
-import { useNativeTooltip } from "@/lib/action-tooltip";
+import { nativeTooltipRef } from "@/lib/action-tooltip";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import { agentActionsFamily, type AgentRowAction } from "@/stores/agentActions";
 import {
@@ -375,12 +375,12 @@ function ActionButton({
 }) {
   // The browser draws this one. A tooltip rendered in the tree is clipped by
   // an ancestor with `overflow: auto hidden` and cannot escape it, since that
-  // ancestor is also transformed -- see `useNativeTooltip`.
-  const tooltipRef = useNativeTooltip<View>(label);
-
+  // ancestor is also transformed -- see `nativeTooltipRef`. A ref callback
+  // rather than a hook, because this component is called as a plain function
+  // in `agent-start.test.tsx` where no hook can run.
   return (
     <Button
-      ref={tooltipRef}
+      ref={nativeTooltipRef(label)}
       variant="outline"
       size="icon"
       onPress={onPress}
