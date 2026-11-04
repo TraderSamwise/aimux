@@ -12,7 +12,11 @@ vi.mock("jotai", async (importOriginal) => ({
     (...args: Args) =>
       store.set(target, ...args),
 }));
-vi.mock("react-native", () => ({ View: "View", ActivityIndicator: "ActivityIndicator" }));
+vi.mock("react-native", () => ({
+  View: "View",
+  ActivityIndicator: "ActivityIndicator",
+  Platform: { OS: "web" },
+}));
 vi.mock("lucide-react-native", () => ({
   GitFork: "GitFork",
   Layers: "Layers",

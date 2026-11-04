@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("react-native", () => ({ View: "View" }));
+vi.mock("react-native", () => ({ View: "View", Platform: { OS: "web" } }));
 vi.mock("jotai", () => ({ useSetAtom: vi.fn(() => vi.fn()) }));
 vi.mock("lucide-react-native", () => ({
   GitFork: "GitFork",
@@ -33,7 +33,7 @@ vi.mock("@/stores/projectViews", () => ({ kickProjectApiViewRefreshAtom: {} }));
 
 import type { DesktopSession } from "@/lib/desktop-state";
 import { overseerActionForSession, planeActionForSession } from "@/components/agent-actions";
-import { shouldApplyNativeTooltip } from "@/lib/action-tooltip";
+import { nativeTooltipRef, shouldApplyNativeTooltip } from "@/lib/action-tooltip";
 
 const source = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "agent-actions.tsx"),
@@ -107,14 +107,31 @@ describe("agent action hover labels", () => {
     expect(shouldApplyNativeTooltip("android")).toBe(false);
   });
 
+  it("needs no hook, because this component is called as a plain function", () => {
+    // `agent-start.test.tsx` invokes ActionButton directly, with no React
+    // dispatcher. The first version used `useRef`/`useEffect` and broke nine
+    // of its cases -- and that shipped, because only this file was run.
+    const setAttribute = vi.fn();
+    nativeTooltipRef("Stop claude")({ setAttribute });
+    expect(setAttribute).toHaveBeenCalledWith("title", "Stop claude");
+    expect(source).not.toContain("useRef");
+    expect(source).not.toContain("useNativeTooltip");
+  });
+
+  it("survives a detached ref and a node that cannot take attributes", () => {
+    // React calls a ref callback with null on unmount, and the native
+    // renderer's node has no setAttribute at all.
+    expect(() => nativeTooltipRef("x")(null)).not.toThrow();
+    expect(() => nativeTooltipRef("x")({})).not.toThrow();
+  });
+
   it("lets the BROWSER draw the label, because nothing in the tree can", () => {
     // Measured on the agent action row: the buttons sit under an ancestor
     // with `overflow: auto hidden`, which clips vertically, so a label placed
     // above or below is cut off whatever z-index it carries -- and that
     // ancestor is transformed, so `position: fixed` cannot escape it either.
     // A rendered tooltip was verified covered before this was abandoned.
-    expect(source).toContain("useNativeTooltip");
-    expect(source).toContain("ref={tooltipRef}");
+    expect(source).toContain("nativeTooltipRef(label)");
     // No in-tree tooltip may come back without hitting the same wall.
     expect(source).not.toContain("bg-popover");
     expect(source).not.toContain("top-full");

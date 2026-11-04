@@ -178,6 +178,7 @@ import {
 import { CHAT_PANE_PLACEHOLDER_SHELL } from "@/lib/chat-pane-placeholder";
 import { reportSendTimeout } from "@/lib/send-timeout-report";
 import { formatTerminalOutputForDisplay, terminalOutputTail } from "@/lib/terminal-output";
+import { terminalDividerColumns } from "@/lib/terminal-columns";
 import {
   terminalScrollStateAfterUserScroll,
   terminalVisibleOutputForLiveChange,
@@ -3299,14 +3300,22 @@ const AgentTerminalOutputPane = React.memo(
       const outputAnsi = useAtomValue(outputAnsiFamily(agentKey));
       const outputAvailable = useAtomValue(outputAvailableFamily(agentKey));
       const scrollRef = useRef<ChatScrollHandle | null>(null);
+      // THIS pane's width, not the chat bubble's. The rules being truncated
+      // are drawn in this font at this size, so the column count is this
+      // pane's arithmetic and nothing else's.
+      const [paneWidth, setPaneWidth] = useState(0);
       const output = outputAnsi || outputPlain;
       const outputTail = useMemo(() => terminalOutputTail(output), [output]);
+      const terminalDividerWidth = useMemo(
+        () => terminalDividerColumns(paneWidth, dividerWidth),
+        [dividerWidth, paneWidth],
+      );
       const liveLines = useMemo(
         () =>
           formatTerminalOutputForDisplay(outputTail, {
-            dividerWidth: Math.max(48, dividerWidth * 2),
+            dividerWidth: terminalDividerWidth,
           }),
-        [dividerWidth, outputTail],
+        [outputTail, terminalDividerWidth],
       );
       const liveOutput = useMemo(
         () =>
@@ -3432,6 +3441,11 @@ const AgentTerminalOutputPane = React.memo(
 
       const handleTerminalLayout = useCallback(
         (event: LayoutChangeEvent) => {
+          // Rules are truncated to THIS pane's columns, so its width is read
+          // where its height already is. Ignoring sub-pixel changes keeps a
+          // float width from re-truncating every line on every layout pass.
+          const measured = event.nativeEvent.layout.width;
+          setPaneWidth((current) => (Math.abs(current - measured) < 1 ? current : measured));
           terminalGeometryRef.current = {
             ...terminalGeometryRef.current,
             viewportHeight: event.nativeEvent.layout.height,
