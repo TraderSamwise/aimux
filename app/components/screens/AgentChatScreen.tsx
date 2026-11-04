@@ -67,11 +67,7 @@ import { ChatNewMessagesBadge } from "@/components/ChatNewMessagesBadge";
 import { Button } from "@/components/ui/button";
 import { Input, NO_BROWSER_FOCUS_RING } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
-import {
-  AgentPromptChooser,
-  UnreadablePromptNotice,
-  paneIsWaitingOnAnUnreadablePrompt,
-} from "@/components/AgentPromptChooser";
+import { AgentPromptChooser } from "@/components/AgentPromptChooser";
 import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
 import { AttachmentDropZone } from "@/components/AttachmentDropZone";
 import {
@@ -237,7 +233,6 @@ import {
   answeringOptionFamily,
   markOutputInterruptedAtom,
   paneSelectionFamily,
-  paneStateFamily,
   transcriptFamily,
   transcriptStartLineFamily,
 } from "@/stores/chat";
@@ -283,17 +278,7 @@ const COMPOSER_FOOTER_VERTICAL_PADDING = 12;
 const CHAT_COMPOSER_CONTROL_ROW_HEIGHT = 34;
 const CHAT_COMPOSER_RESERVE_GAP = 8;
 const CHAT_ATTACHMENT_STRIP_RESERVE = 88;
-/**
- * What the chooser adds above the composer: its question, its rows, its card.
- *
- * Measured per row rather than fixed, because a plan approval is three rows and
- * an AskUserQuestion is five. It has to be in the reserve for the same reason
- * the attachment strip beside it is: the footer is absolutely positioned and
- * grows upward, so content the reserve does not know about overlays the last
- * lines of the transcript — here, the diff and the tool call being approved.
- */
-const CHAT_CHOOSER_ROW_RESERVE = 40;
-const CHAT_CHOOSER_CARD_RESERVE = 44;
+
 const CHAT_NEW_MESSAGE_BADGE_DEBOUNCE_MS = 180;
 const CHAT_NEW_MESSAGE_BADGE_VISIBLE_MS = 3200;
 const FOOTER_LABEL_SHIMMER_DURATION_MS = 1700;
@@ -573,14 +558,13 @@ export default function ChatScreen() {
   const transcriptLastError = useAtomValue(lastErrorFamily(agentKey));
   const activity = useAtomValue(activityFamily(agentKey));
   const paneSelection = useAtomValue(paneSelectionFamily(agentKey));
-  const paneState = useAtomValue(paneStateFamily(agentKey));
   // Per agent, not per mounted screen: this component instance is reused
   // across route params, so a marker held in it followed the user to another
   // agent's chooser, and a remount lost it entirely and re-enabled every row
   // while the first answer was still walking the cursor.
   const [answeringOption, setAnsweringOption] = useAtom(answeringOptionFamily(agentKey));
   const [answerRefusal, setAnswerRefusal] = useAtom(answerRefusalFamily(agentKey));
-  const unreadablePrompt = paneIsWaitingOnAnUnreadablePrompt(paneState);
+  const [chooserHeight, setChooserHeight] = useState<number | undefined>(undefined);
   const activityText = useAtomValue(activityTextFamily(agentKey));
   const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
   const relayConfigured = useAtomValue(relayConfiguredAtom);
@@ -1084,11 +1068,13 @@ export default function ChatScreen() {
     (serviceDisconnected
       ? chatChromeRowHeight(reconnectingPanelHeight, CHAT_RECONNECTING_PANEL_RESERVE)
       : 0);
-  const chooserReserve = paneSelection
-    ? CHAT_CHOOSER_CARD_RESERVE + paneSelection.options.length * CHAT_CHOOSER_ROW_RESERVE
-    : unreadablePrompt
-      ? CHAT_CHOOSER_CARD_RESERVE
-      : 0;
+  // Measured, not computed from a row count. A chooser's height is its
+  // content: the most common permission prompt has a 109-character option that
+  // wraps to three lines on a phone, so any per-row constant is short exactly
+  // where it matters, and the footer it under-reserves for grows upward over
+  // the diff being approved. Same treatment as the session header and the
+  // reconnecting panel beside it.
+  const chooserReserve = paneSelection ? (chooserHeight ?? 0) : 0;
   const chatTopContentReserve = chatTranscriptTopReserveHeight({
     pairingBannerVisible: showPairingBanner,
     panelReserveHeight: chatOverlayPanelReserve,
@@ -1903,6 +1889,13 @@ export default function ChatScreen() {
   const handleChoosePromptOption = useCallback(
     async (option: { label: string; number?: number; question?: string }) => {
       if (!endpointHost || !endpointPort || !sessionId) return;
+      // Read through the store, not from the `answeringOption` value this
+      // callback closed over: two taps inside one commit see the same stale
+      // value, and the component's `disabled` cannot help until React has
+      // rendered. Two requests would be refused by the service's one-per-pane
+      // claim, and that refusal re-enables the rows with the answered question
+      // still on screen — reopening the hazard the hold exists to close.
+      if (jotaiStore.get(answeringOptionFamily(agentKey)) !== null) return;
       setAnsweringOption(option.label);
       setAnswerRefusal(null);
       try {
@@ -1943,9 +1936,11 @@ export default function ChatScreen() {
       // the chooser has actually moved on.
     },
     [
+      agentKey,
       endpointHost,
       endpointMachineId,
       endpointPort,
+      jotaiStore,
       refreshOutputSnapshot,
       sessionId,
       setAnswerRefusal,
@@ -2371,9 +2366,12 @@ export default function ChatScreen() {
             busyLabel={answeringOption}
             refusal={answerRefusal}
             onChoose={(option) => void handleChoosePromptOption(option)}
+            onGiveUpWaiting={() => setAnsweringOption(null)}
+            onLayout={(event: LayoutChangeEvent) => {
+              const next = event.nativeEvent.layout.height;
+              setChooserHeight((current) => (current === next ? current : next));
+            }}
           />
-        ) : unreadablePrompt ? (
-          <UnreadablePromptNotice />
         ) : null}
         {pendingAttachments.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
@@ -2507,7 +2505,8 @@ export default function ChatScreen() {
       composerDraftKey,
       handleChoosePromptOption,
       paneSelection,
-      unreadablePrompt,
+      setAnsweringOption,
+      setChooserHeight,
       composerFooterBottomPadding,
       selectionRestoreToken,
       composerKeyboardProps,

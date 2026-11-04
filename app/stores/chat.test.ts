@@ -743,6 +743,66 @@ describe("the projected transcript", () => {
     expect(store.get(answeringOptionFamily(key))).toBeNull();
   });
 
+  it("releases a held answer when the pane can no longer be read", () => {
+    const store = createStore();
+    const key = agentKey("agent-1");
+
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection: PERMISSION_CHOOSER },
+    });
+    store.set(answeringOptionFamily(key), "Yes");
+
+    // An agent that exits stops producing paneState at all, so the frame that
+    // would confirm the answer never comes. Holding forever leaves every row
+    // disabled with `sending…` on one of them.
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: undefined,
+      tmuxUnavailable: { ok: false, error: "Session is not running" },
+    });
+
+    expect(store.get(answeringOptionFamily(key))).toBeNull();
+  });
+
+  it("releases a held answer when the stream for that session fails", () => {
+    const store = createStore();
+    const key = agentKey("agent-1");
+    store.set(answeringOptionFamily(key), "Yes");
+
+    store.set(ingestEventAtom, {
+      projectStateKey: TEST_PROJECT_KEY,
+      event: { type: "error", sessionId: "agent-1", error: "stream lost" },
+    });
+
+    // We do not know whether the answer landed, and pretending it is still in
+    // flight disables the chooser for good.
+    expect(store.get(answeringOptionFamily(key))).toBeNull();
+  });
+
+  it("lets Stop clear the chooser it knows it dismissed", () => {
+    const store = createStore();
+    const key = agentKey("agent-1");
+
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection: PERMISSION_CHOOSER },
+    });
+    store.set(answeringOptionFamily(key), "Yes");
+
+    // Stop sends Esc, which dismisses whatever chooser was up. This is the one
+    // local writer that knows that, and it used to say "the service did not
+    // say" — so Stop, the obvious thing to press when a row has been showing
+    // `sending…`, moved neither the chooser nor the held answer.
+    store.set(markOutputInterruptedAtom, key);
+
+    expect(store.get(paneSelectionFamily(key))).toBeUndefined();
+    expect(store.get(answeringOptionFamily(key))).toBeNull();
+  });
+
   it("keeps one agent's answer marker out of another's chooser", () => {
     const store = createStore();
 

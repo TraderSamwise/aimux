@@ -1,7 +1,7 @@
-import { Pressable, View } from "react-native";
+import { Pressable, View, type LayoutChangeEvent } from "react-native";
 
 import { Text } from "@/components/ui/text";
-import type { LivePaneSelection, LivePaneState } from "@/lib/events";
+import type { LivePaneSelection } from "@/lib/events";
 
 /**
  * The chooser the agent is waiting on, rendered as real controls.
@@ -20,6 +20,8 @@ export function AgentPromptChooser({
   busyLabel,
   refusal,
   onChoose,
+  onGiveUpWaiting,
+  onLayout,
 }: {
   selection: LivePaneSelection;
   /** The option currently being sent, so the row can say so. */
@@ -27,10 +29,17 @@ export function AgentPromptChooser({
   /** Why the service refused the last answer, if it did. */
   refusal: string | null;
   onChoose: (option: { label: string; number?: number; question?: string }) => void;
+  /** Release a held answer the pane never confirmed either way. */
+  onGiveUpWaiting: () => void;
+  /** Reported so the transcript can reserve the height this card actually takes. */
+  onLayout?: (event: LayoutChangeEvent) => void;
 }) {
   const busy = busyLabel !== null;
   return (
-    <View className="mb-2 gap-1.5 rounded-lg border border-border bg-muted/40 p-2">
+    <View
+      className="mb-2 gap-1.5 rounded-lg border border-border bg-muted/40 p-2"
+      onLayout={onLayout}
+    >
       {selection.question ? (
         <Text className="px-1 text-[13px] font-medium text-foreground">{selection.question}</Text>
       ) : null}
@@ -71,6 +80,25 @@ export function AgentPromptChooser({
         );
       })}
       {/*
+        An answer is held until the pane says the chooser moved on, and a pane
+        that stops answering at all — the agent exited, the stream dropped —
+        would otherwise hold it forever with every row disabled. The frames
+        that prove an answer cannot still be in flight clear it on their own;
+        this is the escape when none of them arrives.
+      */}
+      {busy ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Stop waiting for this answer"
+          onPress={onGiveUpWaiting}
+          className="self-start rounded-md px-2 py-1"
+        >
+          <Text className="text-[11px] text-muted-foreground underline">
+            Stop waiting and choose again
+          </Text>
+        </Pressable>
+      ) : null}
+      {/*
         Inside the card, not in the composer's shared error line. The refusal
         names what the pane is offering instead, and that slot is cleared by
         the next keystroke — so the one message explaining why the buttons did
@@ -86,47 +114,6 @@ export function AgentPromptChooser({
           {selection.footer}
         </Text>
       ) : null}
-    </View>
-  );
-}
-
-/**
- * Whether the pane is waiting on something this view cannot render.
- *
- * An absent `selection` is three different facts, and only the rest of
- * `paneState` separates them: no chooser at all; a service too old to project
- * one; or a chooser the reader could not make sense of. The last is real — the
- * reader reports nothing when it can see fewer than two options — and
- * `promptVisible` is what tells them apart, because it answers a different
- * question (is the composer idle and ready for words) and the service
- * documents the two as mutually exclusive. A pane with no chooser and no idle
- * composer, that is not erroring or interrupted, is waiting on something that
- * is not a text field.
- */
-export function paneIsWaitingOnAnUnreadablePrompt(paneState: LivePaneState | undefined): boolean {
-  if (paneState === undefined) return false;
-  if (paneState.selection !== undefined) return false;
-  return (
-    !paneState.promptVisible &&
-    !paneState.errorVisible &&
-    !paneState.interruptedVisible &&
-    !paneState.updatePromptVisible
-  );
-}
-
-/**
- * Said out loud rather than left as a composer standing in front of a prompt.
- *
- * The trust prompt's default row is "No, exit", so a pane left in this state
- * with no explanation is one whose default answer quits the agent.
- */
-export function UnreadablePromptNotice() {
-  return (
-    <View className="mb-2 rounded-lg border border-border bg-muted/40 p-2">
-      <Text className="px-1 text-[12px] text-muted-foreground">
-        This agent is waiting on a prompt this view cannot read. Answer it in the terminal, or type
-        the option.
-      </Text>
     </View>
   );
 }

@@ -374,6 +374,14 @@ function applyAgentOutputPayload(
   // absence. The service sends it on every read, so a chooser that has been
   // answered clears on the next one; a service too old to project it sends
   // nothing, and clearing on that would mean clearing forever.
+  // A pane we cannot read is not a pane with an answer in flight. Without
+  // this the hold has no end: an agent that exits stops producing `paneState`
+  // altogether, so the chooser stays disabled with `sending…` on a row, and on
+  // the trust prompt the only way left to reach the pane is the composer —
+  // whose carriage return commits the cursor row, which is "No, exit".
+  if (payload.tmuxUnavailable) {
+    set(answeringOptionFamily(payload.agentStateKey), null);
+  }
   if (payload.paneState !== undefined) {
     const previous = get(paneStateFamily(payload.agentStateKey));
     set(paneStateFamily(payload.agentStateKey), payload.paneState);
@@ -425,8 +433,16 @@ export const markOutputInterruptedAtom = atom(null, (_get, set, agentStateKey: A
     activity: "interrupted",
     activityText: "",
     attention: undefined,
+    // `undefined` means "the service did not say", and this writer is the one
+    // that KNOWS: Stop sends Esc, which dismisses whatever chooser was up. It
+    // used to pass `undefined` and so moved neither the chooser nor the held
+    // answer — leaving Stop, the obvious thing to press when a row has said
+    // `sending…` and nothing has happened, with no effect on either.
     paneState: undefined,
   });
+  set(paneStateFamily(agentStateKey), undefined);
+  set(answeringOptionFamily(agentStateKey), null);
+  set(answerRefusalFamily(agentStateKey), null);
 });
 
 export const clearLocalInterruptHoldAtom = atom(null, (_get, set, agentStateKey: AgentStateKey) => {
@@ -494,6 +510,11 @@ export const ingestEventAtom = atom(
       case "error":
         set(lastErrorFamily(keyFor(event.sessionId)), event.error);
         set(streamingFamily(keyFor(event.sessionId)), false);
+        // The stream for this session has failed, so the frame that would
+        // confirm an answer landed is never coming. Releasing the hold is the
+        // honest reading: we do not know whether it landed, and pretending it
+        // is still in flight disables the chooser for good.
+        set(answeringOptionFamily(keyFor(event.sessionId)), null);
         return;
     }
   },

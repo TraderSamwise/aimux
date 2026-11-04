@@ -1,10 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  AgentPromptChooser,
-  paneIsWaitingOnAnUnreadablePrompt,
-} from "@/components/AgentPromptChooser";
+import { AgentPromptChooser } from "@/components/AgentPromptChooser";
 import type { LivePaneSelection } from "@/lib/events";
 
 const PERMISSION: LivePaneSelection = {
@@ -25,57 +22,6 @@ const TRUST: LivePaneSelection = {
   ],
 };
 
-describe("paneIsWaitingOnAnUnreadablePrompt", () => {
-  const IDLE = {
-    promptVisible: true,
-    errorVisible: false,
-    interruptedVisible: false,
-    updatePromptVisible: false,
-  };
-
-  it("tells a pane with no chooser apart from a pane whose chooser cannot be read", () => {
-    // An absent selection is three facts, and the rest of paneState separates
-    // them. A composer sitting idle means the agent wants words.
-    expect(paneIsWaitingOnAnUnreadablePrompt({ ...IDLE })).toBe(false);
-    // No chooser AND no idle composer, not erroring, not interrupted: the pane
-    // is waiting on something that is not a text field. Showing a live
-    // composer in front of that says the agent wants words when it wants a
-    // choice — and the trust prompt's default row is "No, exit".
-    expect(paneIsWaitingOnAnUnreadablePrompt({ ...IDLE, promptVisible: false })).toBe(true);
-    // A readable chooser is not this case.
-    expect(
-      paneIsWaitingOnAnUnreadablePrompt({
-        ...IDLE,
-        promptVisible: false,
-        selection: TRUST,
-      }),
-    ).toBe(false);
-    // Nor is an error, an interrupt, or an update prompt, each of which has
-    // its own treatment.
-    expect(
-      paneIsWaitingOnAnUnreadablePrompt({ ...IDLE, promptVisible: false, errorVisible: true }),
-    ).toBe(false);
-    expect(
-      paneIsWaitingOnAnUnreadablePrompt({
-        ...IDLE,
-        promptVisible: false,
-        interruptedVisible: true,
-      }),
-    ).toBe(false);
-    expect(
-      paneIsWaitingOnAnUnreadablePrompt({
-        ...IDLE,
-        promptVisible: false,
-        updatePromptVisible: true,
-      }),
-    ).toBe(false);
-  });
-
-  it("says nothing about a service that does not project pane state at all", () => {
-    expect(paneIsWaitingOnAnUnreadablePrompt(undefined)).toBe(false);
-  });
-});
-
 describe("AgentPromptChooser", () => {
   it("sends the label the user read, with the number the pane showed", () => {
     const onChoose = vi.fn();
@@ -85,6 +31,7 @@ describe("AgentPromptChooser", () => {
         busyLabel={null}
         refusal={null}
         onChoose={onChoose}
+        onGiveUpWaiting={vi.fn()}
       />,
     );
 
@@ -105,7 +52,13 @@ describe("AgentPromptChooser", () => {
   it("offers the unnumbered shape too, without inventing numbers for it", () => {
     const onChoose = vi.fn();
     render(
-      <AgentPromptChooser selection={TRUST} busyLabel={null} refusal={null} onChoose={onChoose} />,
+      <AgentPromptChooser
+        selection={TRUST}
+        busyLabel={null}
+        refusal={null}
+        onChoose={onChoose}
+        onGiveUpWaiting={vi.fn()}
+      />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Yes, I trust this folder" }));
@@ -124,6 +77,7 @@ describe("AgentPromptChooser", () => {
         busyLabel={null}
         refusal={null}
         onChoose={vi.fn()}
+        onGiveUpWaiting={vi.fn()}
       />,
     );
 
@@ -142,6 +96,7 @@ describe("AgentPromptChooser", () => {
         busyLabel={null}
         refusal={'the pane no longer offers "No"; it is showing: Yes / No, allow once'}
         onChoose={vi.fn()}
+        onGiveUpWaiting={vi.fn()}
       />,
     );
 
@@ -152,6 +107,28 @@ describe("AgentPromptChooser", () => {
     expect(screen.getByText(/no longer offers/)).toBeTruthy();
   });
 
+  it("offers a way out of an answer the pane never confirmed", () => {
+    const onGiveUpWaiting = vi.fn();
+    render(
+      <AgentPromptChooser
+        selection={PERMISSION}
+        busyLabel="Yes"
+        refusal={null}
+        onChoose={vi.fn()}
+        onGiveUpWaiting={onGiveUpWaiting}
+      />,
+    );
+
+    // The hold ends when the pane says the chooser moved on, and a pane that
+    // stops answering — the agent exited, the stream dropped — would otherwise
+    // hold it forever with every row disabled. On the trust prompt that is
+    // worse than a dead end: the composer is the only way left to the pane,
+    // and its carriage return commits the cursor row, which is "No, exit".
+    fireEvent.click(screen.getByRole("button", { name: "Stop waiting for this answer" }));
+
+    expect(onGiveUpWaiting).toHaveBeenCalledTimes(1);
+  });
+
   it("takes no second answer while the first is still going", () => {
     const onChoose = vi.fn();
     render(
@@ -160,6 +137,7 @@ describe("AgentPromptChooser", () => {
         busyLabel="No"
         refusal={null}
         onChoose={onChoose}
+        onGiveUpWaiting={vi.fn()}
       />,
     );
 
