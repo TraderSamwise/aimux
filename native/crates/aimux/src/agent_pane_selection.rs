@@ -93,30 +93,29 @@ pub fn pane_selection(pane: &str) -> Option<PaneSelection> {
     // chosen and then rejected, which lost the real chooser underneath it
     // instead of falling through to it.
     let block = live_chooser_block(&tail)?;
-    // A chooser has to be ASKING something, and the question has to look like
-    // one. This is the positive half of the test, and it was missing: every
-    // other rule here says what a chooser is not, and `/config`'s settings
-    // list satisfies all of them -- thirteen rows, one marked, a key-hint
-    // footer below -- while being an editor rather than a question. Enter in
-    // that dialog toggles the focused setting, so the reader handed a client
-    // thirteen buttons that write Claude Code configuration.
+    // A chooser has to be ASKING something, and the question has to be part of
+    // the same thing the options belong to.
     //
-    // The `?` is doing the work, and it earns it on every captured shape: the
-    // trust prompt, the tool permission, AskUserQuestion and plan approval all
-    // ask one, and `/config`, `/model` and a composer draft all have no
-    // question above their rows at all. A chooser whose question has no `?`
-    // reads as nothing, which is the safe direction to be wrong in.
-    let question = question_above(&tail, block.first_row)?;
-    if !question.contains('?') {
-        return None;
-    }
+    // Requiring a `?` was not enough on its own, and the way it failed is the
+    // lesson: `/config`'s settings list acquired a question as soon as the
+    // agent had asked anything in the twenty rows above it, which in real use
+    // is most of the time. A dialog that borrows a question out of the
+    // scrollback is still a dialog, and Enter in that one toggles a setting.
+    //
+    // What separates them is structure, not punctuation. A real prompt draws
+    // its question inside its own frame with nothing but blanks and prose
+    // between it and the options; a dialog's rows are fenced off from
+    // anything question-like by its own box edge, and a composer draft is
+    // fenced off by the composer's. So the search for the question stops at a
+    // border, and the `?` still has to be there.
+    let question = question_in_frame(&tail, block.first_row)?;
     let footer = tail
         .iter()
         .rev()
         .find(|line| looks_like_footer(line))
         .map(|line| line.trim().to_owned());
     Some(PaneSelection {
-        subject: subject_above(&tail, block.first_row),
+        subject: subject_in_frame(&tail, block.first_row),
         question: Some(question),
         options: block.options,
         footer,
@@ -679,16 +678,25 @@ fn is_cursor_option_row(line: &str) -> bool {
 ///
 /// The question alone does not identify a prompt. Claude's Bash permission
 /// asks "Do you want to proceed?" above the options and puts the command
-/// itself above a rule, outside the question -- so two prompts for `rm -rf
-/// build` and `rm -rf /` have the same question, the same three labels and the
-/// same numbers, and answering one answers the other. Folded into the
-/// chooser's identity so a client cannot answer a prompt it was not shown.
-fn subject_above(tail: &[String], first_option_at: usize) -> Option<String> {
+/// itself further up inside the same box -- so two prompts for `rm -rf build`
+/// and `rm -rf /` have the same question, the same labels and the same
+/// numbers, and answering one answers the other.
+///
+/// Scoped to the prompt's own frame, which ends at the transcript above it.
+/// A fixed window of rows swept in the session banner, three separator rules,
+/// an MCP warning and the PREVIOUS turn's elapsed-time line -- so the identity
+/// changed when a timer ticked from 3s to 4s, and every answer would then
+/// refuse. The frame is what distinguishes one command from another.
+fn subject_in_frame(tail: &[String], first_option_at: usize) -> Option<String> {
     let floor = first_option_at.saturating_sub(QUESTION_SEARCH_LINES);
-    let rows = tail[floor..first_option_at]
+    let frame_top = tail[floor..first_option_at]
         .iter()
+        .rposition(|line| looks_like_transcript_row(line))
+        .map_or(floor, |index| floor + index + 1);
+    let rows = tail[frame_top..first_option_at]
+        .iter()
+        .filter(|line| !line.trim().is_empty() && !looks_like_border(line))
         .map(|line| line.trim())
-        .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
     if rows.is_empty() {
         return None;
@@ -696,8 +704,37 @@ fn subject_above(tail: &[String], first_option_at: usize) -> Option<String> {
     Some(rows.join(" / "))
 }
 
-fn question_above(tail: &[String], first_option_at: usize) -> Option<String> {
+/// A row the agent wrote to its transcript, which is where the prompt's frame
+/// ends. The markers are the tool's own: a turn, a result, an echoed message.
+fn looks_like_transcript_row(line: &str) -> bool {
+    line.trim_start()
+        .starts_with(['⏺', '✻', '⎿', CURSOR, '•', '·'])
+}
+
+/// The question, when it is inside the same frame as the options.
+///
+/// The search stops at a border, which is the whole point: `/config` puts a
+/// `╰───╯` edge between its search box and its rows, and a composer draft puts
+/// the composer's own rule between the draft and whatever the agent last
+/// asked. Both were reading a question out of the scrollback and presenting
+/// the rows below as answers to it.
+fn question_in_frame(tail: &[String], first_option_at: usize) -> Option<String> {
     let floor = first_option_at.saturating_sub(QUESTION_SEARCH_LINES);
+    let fenced = tail[floor..first_option_at]
+        .iter()
+        .rposition(|line| looks_like_border(line))
+        .map_or(floor, |index| floor + index + 1);
+    let question = question_above(&tail[fenced..first_option_at])?;
+    if !question.contains('?') {
+        return None;
+    }
+    Some(question)
+}
+
+fn question_above(rows: &[String]) -> Option<String> {
+    let first_option_at = rows.len();
+    let floor = 0;
+    let tail = rows;
     let asked_at = tail[floor..first_option_at]
         .iter()
         .rposition(|line| line.contains('?'))
@@ -803,6 +840,14 @@ mod tests {
         include_str!("../../../../testdata/pane-captures/09-narrow-composer-draft.ansi");
     const NARROW_PERMISSION: &str =
         include_str!("../../../../testdata/pane-captures/10-narrow-tool-permission.ansi");
+    const CODEX_DAEMON: &str =
+        include_str!("../../../../testdata/pane-captures/11-codex-daemon-prompt.ansi");
+    const CODEX_UPDATE: &str =
+        include_str!("../../../../testdata/pane-captures/12-codex-update-prompt.ansi");
+    const CODEX_TRUST: &str =
+        include_str!("../../../../testdata/pane-captures/13-codex-trust-prompt.ansi");
+    const BASH_PERMISSION: &str =
+        include_str!("../../../../testdata/pane-captures/14-live-bash-permission.ansi");
 
     #[test]
     fn reads_the_numbered_tool_permission() {
@@ -1176,6 +1221,109 @@ mod tests {
                 .map(|option| option.label.as_str())
                 .collect::<Vec<_>>(),
             vec!["No, exit", "Yes, I trust this folder"]
+        );
+    }
+
+    #[test]
+    fn a_question_the_agent_asked_in_prose_does_not_make_a_dialog_a_chooser() {
+        // Requiring a `?` was not enough. The real `/config` capture with an
+        // ordinary agent reply above it -- the state after the agent asks
+        // something and the user then opens `/config` -- borrowed that
+        // question out of the scrollback and came back as a thirteen-option
+        // chooser whose top button toggles a Claude Code setting. In real use
+        // the agent has asked something in the last twenty rows most of the
+        // time, so the `?` only moved the trigger from "always" to "usually".
+        let dialog = strip_sgr(CONFIG_LIST);
+        let with_prose = format!(
+            "⏺ I fixed the parser. Should I also update the docs?\n❯ /config\n{}",
+            dialog
+                .lines()
+                .skip_while(|line| line.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        assert!(
+            with_prose.contains("update the docs?"),
+            "the prose question is there"
+        );
+        assert!(with_prose.contains("Auto-compact"), "the dialog is there");
+
+        // The dialog's own box edge sits between the borrowed question and its
+        // rows, which is the structural difference a `?` cannot see.
+        assert_eq!(pane_selection(&with_prose), None);
+    }
+
+    #[test]
+    fn a_question_above_the_composer_is_not_about_the_draft_below_it() {
+        // Same bypass, the other shape: the agent asks something, the user
+        // starts typing a two-row answer, and the draft's rows read as
+        // options to the question above the composer. The composer's own rule
+        // is between them.
+        let draft = strip_sgr(NARROW_DRAFT).replace(
+            "⎿  Kept model as Opus 5.5 (1M context)",
+            "⎿  Which parser bug did you mean?",
+        );
+        assert!(draft.contains("did you mean?"), "the question is there");
+
+        assert_eq!(pane_selection(&draft), None);
+    }
+
+    #[test]
+    fn the_subject_is_the_prompts_own_frame_not_a_window_of_rows() {
+        // Scoped to the frame, because a fixed window swept in the session
+        // banner, three separator rules, an MCP warning and the PREVIOUS
+        // turn's elapsed-time line -- so the identity changed when a timer
+        // ticked, and every answer would have refused.
+        let selection =
+            pane_selection(&strip_sgr(BASH_PERMISSION)).expect("the Bash permission is a chooser");
+
+        let subject = selection.subject.expect("the prompt has a subject");
+        // The command is the thing that distinguishes one of these from
+        // another, and it is what has to be in the identity.
+        assert!(
+            subject.contains("touch probe.txt"),
+            "subject was {subject:?}"
+        );
+        // And the transcript above the frame is not.
+        assert!(!subject.contains("Waiting"), "subject was {subject:?}");
+        assert!(!subject.contains("Bash(touch"), "subject was {subject:?}");
+    }
+
+    #[test]
+    fn a_ticking_timer_above_the_prompt_does_not_change_its_identity() {
+        // The failure this scoping prevents: a subject built from a row window
+        // moved whenever anything in that window moved, and a refusal on every
+        // answer is safe but useless.
+        let before = pane_selection(&strip_sgr(PLAN)).expect("a chooser");
+        let after = pane_selection(&strip_sgr(PLAN).replace("Churned for 3s", "Churned for 4s"))
+            .expect("a chooser");
+
+        assert!(before.is_same_chooser(&after));
+    }
+
+    #[test]
+    fn no_codex_prompt_is_read_because_none_of_them_can_be() {
+        // Four real Codex 0.163.0 captures. Three are live choosers and the
+        // reader sees nothing in any of them, for three independent reasons:
+        // Codex marks its selection with `›` rather than `❯`, which drops the
+        // selected row entirely because the numbered reader strips only `❯`
+        // before looking for digits; its key hints read `enter continue · esc
+        // quit`, which no footer rule recognises; and two of the three ask
+        // nothing with a `?`.
+        //
+        // The gate is narrowed to Claude for exactly this reason -- claiming a
+        // runtime whose prompts come back empty is worse than saying so. These
+        // captures are the evidence for doing Codex properly.
+        for capture in [CODEX_DAEMON, CODEX_UPDATE, CODEX_TRUST] {
+            assert_eq!(pane_selection(&strip_sgr(capture)), None);
+        }
+        assert!(
+            strip_sgr(CODEX_TRUST).contains("Trust this folder?"),
+            "the trust capture does ask a question, and is still unreadable"
+        );
+        assert!(
+            strip_sgr(CODEX_TRUST).contains("› 1. Trust and continue"),
+            "and its selected row carries Codex's own cursor"
         );
     }
 

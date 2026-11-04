@@ -28,11 +28,22 @@ pub fn classify_tool_pane(tool: &str, text: &str) -> ToolPaneState {
     let prompt_visible = !update_prompt_visible
         && tracks_prompt_readiness(tool)
         && has_tool_input_prompt(tool, text);
-    // Gated on the tool the runtime recorded, not on the shape alone. The
-    // shapes read here are an agent TUI's; a shell session running `fzf` draws
-    // a cursored list too, and offering its rows as answers to a question
-    // nobody asked is the failure that gate prevents.
-    let selection = if tracks_prompt_readiness(tool) && !update_prompt_visible {
+    // Claude only, deliberately, and narrower than `tracks_prompt_readiness`.
+    //
+    // The shapes this reader knows are Claude Code's. Codex is admitted by
+    // that helper and cannot be read at all: it marks its selection with `›`
+    // rather than `❯`, which does not merely lose the flag but drops the
+    // selected row, because the numbered reader strips only `❯` before looking
+    // for digits; its key hints read `enter continue · esc quit`, which no
+    // footer rule recognises; and two of its three captured prompts ask
+    // nothing with a `?`. Claiming support for a runtime whose prompts come
+    // back empty is worse than saying so -- see the four Codex captures in
+    // `testdata/pane-captures/`, which are the evidence for doing it properly.
+    //
+    // A shell session running `fzf` draws a cursored list too, and offering
+    // its rows as answers to a question nobody asked is the other half of what
+    // this gate prevents.
+    let selection = if reads_pane_choosers(tool) && !update_prompt_visible {
         pane_selection(text)
     } else {
         None
@@ -152,6 +163,11 @@ fn has_idle_composer_prompt(text: &str) -> bool {
     false
 }
 
+/// Tools whose chooser shapes this reader has captures for.
+fn reads_pane_choosers(tool: &str) -> bool {
+    tool.trim().eq_ignore_ascii_case("claude")
+}
+
 fn tracks_prompt_readiness(tool: &str) -> bool {
     matches!(tool.trim().to_lowercase().as_str(), "claude" | "codex")
 }
@@ -267,6 +283,22 @@ mod tests {
             classify_tool_pane("claude", pane).selection.is_some(),
             "the same shape under an agent tool must still read as a chooser"
         );
+    }
+
+    #[test]
+    fn codex_is_not_offered_a_chooser_this_reader_cannot_read() {
+        // The shape here is Claude's, and the same pane under Codex must not
+        // be offered: Codex marks its selection with `\u{203a}`, writes its key
+        // hints as `enter continue \u{b7} esc quit`, and asks two of its three
+        // captured prompts without a `?`. Reading a Claude-shaped pane under
+        // the Codex label would claim a support this reader does not have.
+        let pane =
+            " Do you want to create hello.txt?\n \u{276f} 1. Yes\n   2. No\n\n Esc to cancel";
+
+        assert!(classify_tool_pane("claude", pane).selection.is_some());
+        assert_eq!(classify_tool_pane("codex", pane).selection, None);
+        assert_eq!(classify_tool_pane("aider", pane).selection, None);
+        assert_eq!(classify_tool_pane("shell", pane).selection, None);
     }
 
     #[test]
