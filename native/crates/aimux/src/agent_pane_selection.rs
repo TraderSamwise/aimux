@@ -770,9 +770,20 @@ fn subject_in_frame(tail: &[String], first_option_at: usize) -> Option<String> {
 
 /// A row the agent wrote to its transcript, which is where the prompt's frame
 /// ends. The markers are the tool's own: a turn, a result, an echoed message.
+///
+/// `•` and `·` were in this set and had to come out. They are prose, not
+/// structure: a plan's body is model-written markdown rendered verbatim, so a
+/// bullet the model chose ended the frame from INSIDE the prompt, and the
+/// subject then collapsed to exactly the question. Two different plans were
+/// then the same chooser -- same subject, same question, same labels -- so an
+/// answer to "add three files" could commit against a pane showing "delete
+/// every file under /Users/sam". Claude Code emits `•` in its own output too,
+/// and `·` runs through its separators, so neither was ever safe here.
+///
+/// The four that remain are the tool's own line markers and cannot appear as
+/// the first character of a prompt's body row.
 fn looks_like_transcript_row(line: &str) -> bool {
-    line.trim_start()
-        .starts_with(['⏺', '✻', '⎿', CURSOR, '•', '·'])
+    line.trim_start().starts_with(['⏺', '✻', '⎿', CURSOR])
 }
 
 /// The question, when it is inside the same frame as the options.
@@ -912,6 +923,14 @@ mod tests {
         include_str!("../../../../testdata/pane-captures/13-codex-trust-prompt.ansi");
     const BASH_PERMISSION: &str =
         include_str!("../../../../testdata/pane-captures/14-live-bash-permission.ansi");
+    const PLAN_MODE_DRAFT: &str =
+        include_str!("../../../../testdata/pane-captures/15-plan-mode-draft.ansi");
+    const PLAN_BULLETS: &str =
+        include_str!("../../../../testdata/pane-captures/16-plan-bullets.ansi");
+    const PLAN_MIDDOT: &str =
+        include_str!("../../../../testdata/pane-captures/18-plan-middot-bullets.ansi");
+    const PERMISSIONS_LIST: &str =
+        include_str!("../../../../testdata/pane-captures/19-permissions-list-selected.ansi");
 
     #[test]
     fn reads_the_numbered_tool_permission() {
@@ -1486,6 +1505,76 @@ mod tests {
         assert!(draft.contains("did you mean?"), "the question is there");
 
         assert_eq!(pane_selection(&draft), None);
+    }
+
+    #[test]
+    fn a_bullet_the_model_chose_does_not_end_the_prompts_frame() {
+        // A plan body is model-written markdown rendered verbatim, so a `•`
+        // bullet ended the frame from INSIDE the prompt. The subject then
+        // collapsed to exactly the question, and two different plans became
+        // the same chooser -- so an answer to one could commit against the
+        // other. Real capture; Claude Code passes the bullet through, and
+        // emits `•` in its own output elsewhere.
+        let selection =
+            pane_selection(&strip_sgr(PLAN_MIDDOT)).expect("the plan approval is a chooser");
+        let subject = selection.subject.expect("the plan has a subject");
+
+        assert!(subject.contains("LICENSE"), "subject was {subject:?}");
+        assert!(subject.contains("AUTHORS"), "subject was {subject:?}");
+        assert!(subject.contains("VERSION"), "subject was {subject:?}");
+        // And not the transcript above the box.
+        assert!(!subject.contains("Updated plan"), "subject was {subject:?}");
+
+        // The consequence, measured rather than argued: two plans whose
+        // bodies differ must not answer each other.
+        let other = strip_sgr(PLAN_MIDDOT).replace(
+            "LICENSE: MIT License text",
+            "DELETE: every file under /Users/sam",
+        );
+        let shown = pane_selection(&strip_sgr(PLAN_MIDDOT)).expect("a chooser");
+        let now = pane_selection(&other).expect("a chooser");
+        assert!(!shown.is_same_chooser(&now));
+    }
+
+    #[test]
+    fn an_ordinary_hyphen_plan_keeps_its_body_too() {
+        // The control the reviewer used: hyphen bullets are what Claude Code
+        // renders for ordinary markdown lists, and they were never affected.
+        let subject = pane_selection(&strip_sgr(PLAN_BULLETS))
+            .expect("a chooser")
+            .subject
+            .expect("a subject");
+
+        assert!(subject.contains("LICENSE"), "subject was {subject:?}");
+    }
+
+    #[test]
+    fn the_permissions_dialog_is_fenced_off_like_the_config_one() {
+        // `/permissions` is `/config` one level up, and a pane the frame rule
+        // was not written against. Rejected because the dialog's search-box
+        // `╰───╯` edge sits between every prose row and the list, so the
+        // question slice holds nothing.
+        let pane = strip_sgr(PERMISSIONS_LIST);
+        assert!(pane.contains("Esc to"), "capture lost its footer");
+        assert_eq!(pane_selection(&pane), None);
+
+        // And still rejected without the scroll row, which is what a user
+        // with nine or fewer rules sees -- so the rejection is the frame rule
+        // rather than the incidental one.
+        let without_scroll = pane
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("↓ "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(pane_selection(&without_scroll), None);
+    }
+
+    #[test]
+    fn a_plan_mode_composer_draft_is_rejected_by_its_frame() {
+        // Real two-row draft at 100 columns in plan mode. The composer's own
+        // top border is immediately above the first draft row, so the question
+        // slice is empty -- structural, not dependent on a status line.
+        assert_eq!(pane_selection(&strip_sgr(PLAN_MODE_DRAFT)), None);
     }
 
     #[test]
