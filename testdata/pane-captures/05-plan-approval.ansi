@@ -1,0 +1,82 @@
+[38;2;215;119;87m ▐[48;2;0;0;0m▛███▛█[39m[49m   [1mClaude[0m [1mCode[0m [38;2;153;153;153mv2.1.285[39m
+[38;2;215;119;87m▝▜[48;2;0;0;0m█████[49m█▀[39m  [38;2;153;153;153mOpus[39m [38;2;153;153;153m5.5[39m [38;2;153;153;153m(1M[39m [38;2;153;153;153mcontext)[39m [38;2;153;153;153m·[39m [38;2;153;153;153mClaude[39m [38;2;153;153;153mUltra[39m
+[38;2;215;119;87m ▝▝[39m   [38;2;215;119;87m▝▝[39m   [38;2;153;153;153m~/cs/aimux-prompt-capture[39m
+
+[38;2;255;193;7m⚠[39m [38;2;255;193;7m2 MCP servers need authentication[38;2;153;153;153m · run /mcp[39m
+
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mCreate a file called hello.txt containing the word hi. Do not explain, just do it.[39m
+
+[38;2;78;186;101m[49m⏺[39m [1mWrite[0m(]8;id=1atbyce;file:///Users/sam/cs/aimux-prompt-capture/hello.txt\hello.txt]8;;\)
+[38;2;153;153;153m  ⎿  [39mWrote [1m1[0m line to [1mhello.txt[0m
+     [2m[38;2;248;248;242m 1 [0m[38;2;248;248;242mhi[39m
+
+[38;2;255;255;255m⏺[39m I created [38;2;177;185;249m/Users/sam/cs/aimux-prompt-capture/hello.txt[39m containing [38;2;177;185;249mhi[39m.
+
+[38;2;153;153;153m✻[39m [38;2;153;153;153mChurned for 4s · done 12:08 PM[39m
+
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mRun exactly this shell command and nothing else, do not explain: rm -rf $S/$c[39m
+
+[38;2;255;255;255m[49m⏺[39m I haven't run it. Shell state doesn't carry over between my commands, so [38;2;177;185;249m$S[39m and [38;2;177;185;249m$c[39m are almost certainly empty in a new shell. If they are, the command becomes [38;2;177;185;249mrm -rf /[39m, which tries to delete the
+  whole filesystem.
+
+  Tell me the actual path, or what [38;2;177;185;249mS[39m and [38;2;177;185;249mc[39m should be, and I'll run it with those values.
+
+[38;2;153;153;153m✻[39m [38;2;153;153;153mWorked for 5s · done 12:09 PM[39m
+
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mUse your AskUserQuestion tool right now to ask me which colour I prefer, with options red, green and blue. Do not explain first.[39m
+
+[38;2;153;153;153m[49m⏺ [39mUser declined to answer questions
+[38;2;153;153;153m  ⎿  · Which colour do you prefer? (Red / Green / Blue)[39m
+
+[38;2;153;153;153m✻[39m [38;2;153;153;153mCrunched for 3s · done 12:25 PM[39m
+
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mPlan a one-line change: add a LICENSE file saying MIT. Keep the plan to two sentences and then present it for approval.[39m
+
+[38;2;78;186;101m[49m⏺[39m [1mUpdated plan[0m
+[38;2;153;153;153m  ⎿  /plan to preview[39m
+
+[38;2;72;150;140m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [1m[38;2;177;185;249mReady to code?[0m
+
+ Here is Claude's plan:
+[38;2;80;80;80m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+[39m Create [38;2;177;185;249m/Users/sam/cs/aimux-prompt-capture/LICENSE[39m containing the single line [38;2;177;185;249mMIT[39m. Verify by reading the file back; nothing else in the repo changes.
+[38;2;80;80;80m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+[38;2;72;150;140m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [38;2;153;153;153mClaude[39m [38;2;153;153;153mhas[39m [38;2;153;153;153mwritten[39m [38;2;153;153;153mup[39m [38;2;153;153;153ma[39m [38;2;153;153;153mplan[39m [38;2;153;153;153mand[39m [38;2;153;153;153mis[39m [38;2;153;153;153mready[39m [38;2;153;153;153mto[39m [38;2;153;153;153mexecute.[39m [38;2;153;153;153mWould[39m [38;2;153;153;153myou[39m [38;2;153;153;153mlike[39m [38;2;153;153;153mto[39m [38;2;153;153;153mproceed?[39m
+
+ [38;2;177;185;249m❯[39m [38;2;153;153;153m1.[39m [38;2;177;185;249mYes,[39m [38;2;177;185;249mand[39m [38;2;177;185;249mswitch[39m [38;2;177;185;249mto[39m [1m[38;2;177;185;249mBYPASS[0m [1m[38;2;177;185;249mPERMISSIONS[0m [1m[38;2;177;185;249m(no[0m [1m[38;2;177;185;249mfurther[0m [1m[38;2;177;185;249mprompts)[0m[38;2;177;185;249m for[39m [38;2;177;185;249mthis[39m [38;2;177;185;249msession[39m
+   [38;2;153;153;153m2.[39m Yes, manually approve edits
+   [38;2;153;153;153m3.[39m [38;2;153;153;153mTell[39m [38;2;153;153;153mClaude[39m [38;2;153;153;153mwhat[39m [38;2;153;153;153mto[39m [38;2;153;153;153mchange[39m
+      [38;2;153;153;153mshift+tab[39m [38;2;153;153;153mto[39m [38;2;153;153;153mapprove[39m [38;2;153;153;153mwith[39m [38;2;153;153;153mthis[39m [38;2;153;153;153mfeedback[39m
+
+ [38;2;153;153;153mctrl+g[39m [38;2;153;153;153mto[39m [38;2;153;153;153medit[39m [38;2;153;153;153min[39m [38;2;153;153;153mVim[39m [38;2;153;153;153m·[39m [38;2;153;153;153m~/.claude/plans/plan-a-one-line-change-bright-salamander.md[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

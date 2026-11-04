@@ -1846,6 +1846,12 @@ fn agent_output_stream_fingerprint(payload: &serde_json::Value) -> String {
         "activity": payload.get("activity"),
         "activityText": payload.get("activityText"),
         "attention": payload.get("attention"),
+        // The chooser a client renders as controls. Without it a frame whose
+        // only change is WHICH option the cursor is on is suppressed as
+        // unchanged, and the app highlights a row the pane has moved off --
+        // and in chat mode, where `output` and `outputAnsi` are omitted
+        // entirely, this field is the only place that change appears.
+        "paneState": payload.get("paneState"),
     }))
     .unwrap_or_default()
 }
@@ -4104,4 +4110,49 @@ fn now_iso() -> String {
         now.second(),
         now.millisecond()
     )
+}
+
+#[cfg(test)]
+mod stream_fingerprint_tests {
+    use super::agent_output_stream_fingerprint;
+    use serde_json::json;
+
+    #[test]
+    fn a_moved_chooser_cursor_is_a_changed_frame() {
+        // The frame is suppressed when its fingerprint repeats, and a client
+        // renders the chooser's rows as controls. In chat mode `output` and
+        // `outputAnsi` are left out of the payload entirely, so without
+        // `paneState` in here a change confined to WHICH row is selected has
+        // nowhere to show up, and the app goes on highlighting a row the pane
+        // has moved off.
+        let chooser = |selected_first: bool| {
+            json!({
+                "sessionId": "claude-1",
+                "startLine": -200,
+                "messages": [],
+                "paneState": {
+                    "promptVisible": false,
+                    "errorVisible": false,
+                    "interruptedVisible": false,
+                    "updatePromptVisible": false,
+                    "selection": {
+                        "question": "Do you want to create hello.txt?",
+                        "options": [
+                            { "number": 1, "label": "Yes", "selected": selected_first },
+                            { "number": 2, "label": "No", "selected": !selected_first },
+                        ],
+                    },
+                },
+            })
+        };
+
+        assert_ne!(
+            agent_output_stream_fingerprint(&chooser(true)),
+            agent_output_stream_fingerprint(&chooser(false))
+        );
+        assert_eq!(
+            agent_output_stream_fingerprint(&chooser(true)),
+            agent_output_stream_fingerprint(&chooser(true))
+        );
+    }
 }

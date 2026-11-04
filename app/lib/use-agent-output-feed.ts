@@ -142,6 +142,7 @@ export function useAgentOutputFeed({
         activity: result.activity,
         activityText: result.activityText,
         attention: result.attention,
+        paneState: result.paneState,
         tmuxUnavailable: result.tmuxUnavailable,
       });
       return paneOutputSnapshotSettlesInitialTranscript(result);

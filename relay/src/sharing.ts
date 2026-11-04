@@ -372,6 +372,9 @@ export function isSharedRelayRequestAllowed(
   if (
     method === "POST" &&
     (path === "/live-pane/input" ||
+      // Answering the agent's own question, which is the same authority as
+      // typing the option's number into the composer.
+      path === "/live-pane/select" ||
       path === "/attachments" ||
       path === "/live-pane/interrupt" ||
       path === "/agents/interrupt" ||

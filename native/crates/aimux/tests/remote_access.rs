@@ -396,6 +396,30 @@ fn shared_guest_is_scoped_to_shared_session_reads_input_and_attachments() {
         )
         .ok
     );
+    // Answering the agent's own chooser, in the shared session only. Same
+    // authority as typing the option's number into the composer.
+    assert!(
+        allow(
+            Some(&actor),
+            "POST",
+            &port_path(project_routes::live_pane::SELECT),
+            "",
+            Some(&json!({ "sessionId": SESSION, "label": "No", "number": 3 })),
+            None,
+        )
+        .ok
+    );
+    assert!(
+        !allow(
+            Some(&actor),
+            "POST",
+            &port_path(project_routes::live_pane::SELECT),
+            "",
+            Some(&json!({ "sessionId": "other", "label": "No", "number": 3 })),
+            None,
+        )
+        .ok
+    );
     assert!(
         allow(
             Some(&actor),

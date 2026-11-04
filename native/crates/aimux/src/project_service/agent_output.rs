@@ -1,3 +1,8 @@
+use crate::agent_pane_selection::{
+    CommitOutcome, RestoreOutcome, SelectionCommit, SelectionLanding, commit_outcome,
+    plan_selection_answer, restore_outcome, selection_commit_decision, selection_cursor_keys,
+    selection_landing,
+};
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{
     DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS,
@@ -80,6 +85,7 @@ const AGENT_OUTPUT_READ_PURPOSES: &[&str] = &[
     "attach",
     "preview",
     "interrupt",
+    "select",
 ];
 const TMUX_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 const AGENT_INPUT_ROUTE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -144,6 +150,15 @@ pub trait AgentOutputCaptureRuntime {
 
     fn send_key(&mut self, _window_id: &str, _key: &str) -> Result<(), String> {
         Err("agent input not supported by this service".into())
+    }
+
+    /// Wait for the pane to redraw between looks.
+    ///
+    /// Overridden to nothing by test doubles, whose next capture already
+    /// reflects the keys that were sent; the real runtimes have to wait for
+    /// the tool to draw.
+    fn settle(&mut self, millis: u64) {
+        std::thread::sleep(Duration::from_millis(millis));
     }
 
     fn send_carriage_return(&mut self, _window_id: &str) -> Result<(), String> {
@@ -627,6 +642,7 @@ pub fn route_agent_output_request_with_runtime(
         routes::agents::INTERRUPT | routes::live_pane::INTERRUPT => {
             Some(interrupt_live_pane_route(context, body, runtime))
         }
+        routes::live_pane::SELECT => Some(select_live_pane_route(context, body, runtime)),
         routes::agents::INPUT | routes::live_pane::INPUT => {
             Some(input_live_pane_route(context, pathname, body, runtime))
         }
@@ -655,6 +671,9 @@ pub async fn route_agent_output_request_async(
         routes::live_pane::RESIZE => Some(resize_live_pane_route_async(context, body).await),
         routes::agents::INTERRUPT | routes::live_pane::INTERRUPT => {
             Some(interrupt_live_pane_route_async(context, body).await)
+        }
+        routes::live_pane::SELECT => {
+            Some(select_live_pane_route_async(context, body, irreversible_input).await)
         }
         routes::agents::INPUT | routes::live_pane::INPUT => {
             Some(input_live_pane_route_async(context, pathname, body, irreversible_input).await)
@@ -1604,6 +1623,433 @@ fn interrupt_live_pane_route(
     )
 }
 
+/// How much of the pane the chooser is read back from.
+///
+/// The reader only ever looks at the tail, and a chooser is at most a couple
+/// of dozen rows, so this is the window with room to spare rather than a
+/// capture of the whole scrollback on every answered option.
+const SELECTION_CAPTURE_START_LINE: i64 = -60;
+
+const SELECTION_CAPTURE: CapturePaneOptions = CapturePaneOptions {
+    start_line: Some(SELECTION_CAPTURE_START_LINE),
+    end_line: None,
+    include_escapes: true,
+};
+
+/// How long to wait between looks while the cursor move redraws, and how many
+/// looks to take. Short, because this is one TUI redraw and nothing else.
+const SELECTION_SETTLE_MS: u64 = 60;
+const SELECTION_SETTLE_ATTEMPTS: u32 = 8;
+
+/// What the client asked for, as the client read it off its own screen.
+struct SelectionAnswerRequest {
+    session_id: String,
+    label: String,
+    number: Option<u32>,
+    /// The question the client was answering, which is what says WHICH chooser
+    /// it read. An option label alone does not: `Yes` / `No` is the shape of
+    /// nearly every prompt the tool asks.
+    question: Option<String>,
+    /// What the question was ABOUT, echoed back opaquely. The question alone
+    /// is not enough: the Bash permission asks "Do you want to proceed?" over
+    /// the same three labels whether the command is `rm -rf build` or `rm -rf
+    /// /`, and the command itself sits above the question.
+    subject: Option<String>,
+}
+
+fn parse_selection_answer_request(
+    body: Option<&Value>,
+) -> Result<SelectionAnswerRequest, Box<ProjectServiceDispatchResponse>> {
+    let body = body.unwrap_or(&Value::Null);
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return Err(Box::new(json_error(400, "sessionId is required")));
+    };
+    let Some(label) = body_trimmed_string(body, "label").filter(|value| !value.is_empty()) else {
+        return Err(Box::new(json_error(400, "label is required")));
+    };
+    let number = match body.get("number") {
+        None | Some(Value::Null) => None,
+        Some(value) => match value.as_u64().and_then(|number| u32::try_from(number).ok()) {
+            Some(number) => Some(number),
+            None => {
+                return Err(Box::new(json_error(
+                    400,
+                    "number must be a positive integer",
+                )));
+            }
+        },
+    };
+    let question = match body.get("question") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(question)) => Some(question.trim().to_owned()),
+        Some(_) => return Err(Box::new(json_error(400, "question must be a string"))),
+    };
+    let subject = match body.get("subject") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(subject)) => Some(subject.trim().to_owned()),
+        Some(_) => return Err(Box::new(json_error(400, "subject must be a string"))),
+    };
+    Ok(SelectionAnswerRequest {
+        session_id,
+        label,
+        number,
+        question,
+        subject,
+    })
+}
+
+/// A shared guest answering a chooser in the session that was shared with it.
+///
+/// Full trust over that one agent includes answering the questions it asks:
+/// refusing this is how a guest ends up watching a permission prompt it is
+/// allowed to type `2` into but not allowed to press. The scope is the share's
+/// own session and nothing else.
+fn refuse_foreign_selection_guest(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+) -> Option<ProjectServiceDispatchResponse> {
+    let actor = remote_actor_from_headers(&context.request_headers)?;
+    if actor.role != RemoteActorRole::Guest {
+        return None;
+    }
+    if actor.share_session_id.as_deref() == Some(session_id) {
+        return None;
+    }
+    Some(json_error(
+        403,
+        "shared guest cannot access another session",
+    ))
+}
+
+/// Whether the session is still on the window the answer was planned against.
+///
+/// `window_id` is resolved once, before the walk, and the keys go to that id
+/// for the rest of the answer. tmux does not reuse `@N` within a server
+/// lifetime, so a session respawned mid-answer normally fails closed -- but
+/// ids restart at `@0` after a tmux server restart, and then a stale id can
+/// name a different window entirely. Two requests across a rebind would also
+/// claim two different windows for one session, which is what the claim
+/// exists to prevent.
+fn session_window_changed(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    window_id: &str,
+) -> Option<String> {
+    match resolve_live_session_target(context, session_id) {
+        Ok(Some(target)) if target.window_id == window_id => None,
+        Ok(Some(target)) => Some(format!(
+            "the session moved from window {window_id} to {} while the answer was being sent",
+            target.window_id
+        )),
+        // `None` is not only "the session went away": the resolver filters on
+        // starting/running/idle, so a status that transiently leaves that set
+        // refuses a legitimate answer. Naming the status is what makes such a
+        // refusal diagnosable instead of mysterious.
+        Ok(None) => Some(match session_status(context, session_id) {
+            Some(status) => {
+                format!("the session is {status}, so the answer was not sent to window {window_id}")
+            }
+            None => format!(
+                "the session is no longer listed, so the answer was not sent to window {window_id}"
+            ),
+        }),
+        // Errors are not absence: a topology we could not read is not a
+        // session that went away, and neither is grounds for pressing Enter.
+        Err(error) => Some(format!(
+            "the session's window could not be rechecked before committing: {error}"
+        )),
+    }
+}
+
+/// The status the topology records for a session, whatever it is.
+///
+/// Deliberately unfiltered: the point is to report a status the active-session
+/// filter rejected, so filtering here would answer `None` for exactly the case
+/// this exists to explain.
+fn session_status(context: &ProjectServiceRequestContext, session_id: &str) -> Option<String> {
+    let topology =
+        read_runtime_topology(runtime_topology_path(context.project_state_dir())).ok()?;
+    topology
+        .get("sessions")?
+        .as_array()?
+        .iter()
+        .find(|session| string_field(session, "id") == Some(session_id))
+        .and_then(|session| string_field(session, "status"))
+        .map(str::to_owned)
+}
+
+/// What the refusal says about where the cursor was left.
+fn describe_restore(error: String, outcome: Option<RestoreOutcome>) -> String {
+    match outcome {
+        None => format!("{error}; the pane could not be read back to confirm the cursor"),
+        Some(RestoreOutcome::Restored) => format!("{error}; the cursor was put back"),
+        Some(RestoreOutcome::LeftOn { label }) => {
+            format!("{error}; the cursor is left on {label:?}")
+        }
+        Some(RestoreOutcome::PaneChanged) => {
+            format!("{error}; the pane changed before the cursor could be put back")
+        }
+    }
+}
+
+/// The answer's result, with what the pane showed afterwards.
+///
+/// `requestedLabel`, not `label`: the route knows what it asked for and cannot
+/// always know what was taken. A person's own keypress can move the cursor
+/// between the confirming read and the Enter, and no amount of reading closes
+/// that window -- so the honest report is the option requested plus whether
+/// the commit could be confirmed, never a claim about which option landed.
+fn selection_answer_result(
+    session_id: &str,
+    label: &str,
+    outcome: Option<CommitOutcome>,
+    read_failed: bool,
+) -> ProjectServiceDispatchResponse {
+    if let Some(CommitOutcome::StillShowing) = outcome {
+        return ProjectServiceDispatchResponse::json(
+            409,
+            json!({
+                "ok": true,
+                "accepted": false,
+                "requestedLabel": label,
+                "error": "the prompt is still up, so the answer did not land",
+            }),
+        );
+    }
+    let now = now_iso();
+    let committed = match &outcome {
+        Some(CommitOutcome::Confirmed { .. }) => "confirmed",
+        Some(CommitOutcome::StillShowing) | Some(CommitOutcome::Unverified) | None => "unverified",
+    };
+    let mut body = json!({
+        "ok": true,
+        "accepted": true,
+        "requestedLabel": label,
+        "committed": committed,
+        "transition": {
+            "operationId": operation_id("agent.select", session_id),
+            "operation": "agent.select",
+            "targetKind": "agent",
+            "targetId": session_id,
+            "phase": "succeeded",
+            "startedAt": now,
+            "updatedAt": now,
+        }
+    });
+    if let Some(CommitOutcome::Confirmed { taken }) = outcome {
+        body["recorded"] = Value::String(taken);
+    }
+    // "Could not read the pane back" and "read it and the prompt was gone" are
+    // different outcomes, and both used to report the same thing. The Enter
+    // did go out, so the answer is still accepted; what is not known is said.
+    if read_failed {
+        body["readBack"] = Value::String("the pane could not be read back after committing".into());
+    }
+    ProjectServiceDispatchResponse::json(200, body)
+}
+
+/// Answer the chooser a pane is showing, by moving its cursor and committing.
+///
+/// Three reads, not one: plan against the pane as it is now, move, then read
+/// again to confirm the cursor landed before pressing Enter. The commit is the
+/// irreversible half and the options are not interchangeable -- one of the real
+/// ones switches the session to bypassing permissions -- so a cursor that did
+/// not land where it was sent returns the mismatch instead of guessing.
+fn select_live_pane_route(
+    context: &ProjectServiceRequestContext,
+    body: Option<&Value>,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> ProjectServiceDispatchResponse {
+    let request = match parse_selection_answer_request(body) {
+        Ok(request) => request,
+        Err(response) => return *response,
+    };
+    if let Some(refusal) = refuse_foreign_selection_guest(context, &request.session_id) {
+        return refusal;
+    }
+    let target = match resolve_live_session_target(context, &request.session_id) {
+        Ok(Some(target)) => target,
+        Ok(None) => {
+            return json_error(
+                500,
+                format!("Session \"{}\" is not running", request.session_id),
+            );
+        }
+        Err(error) => return json_error(500, error),
+    };
+    let Some(_claim) = ChooserAnswerClaim::acquire(&target.window_id) else {
+        return json_error(
+            409,
+            format!(
+                "another answer is already being sent to pane {}",
+                target.window_id
+            ),
+        );
+    };
+    let pane = match runtime.capture_pane(&target.window_id, SELECTION_CAPTURE) {
+        Ok(pane) => strip_sgr(&pane),
+        Err(error) => return json_error(500, error),
+    };
+    let plan = match plan_selection_answer(
+        &pane,
+        &request.label,
+        request.number,
+        request.question.as_deref(),
+        request.subject.as_deref(),
+    ) {
+        Ok(plan) => plan,
+        Err(error) => return json_error(409, error),
+    };
+    for key in &plan.keys {
+        if let Err(error) = runtime.send_key(&target.window_id, key) {
+            return json_error(500, error);
+        }
+    }
+    // Polled rather than slept once: a cursor move is a local redraw, so the
+    // first look usually has it, and a fixed wait would be both slower in the
+    // common case and still too short on a loaded machine.
+    let mut landing = SelectionLanding::Changed {
+        message: "the pane was never read back after moving the cursor".to_owned(),
+    };
+    let mut moved_pane = String::new();
+    for attempt in 0..SELECTION_SETTLE_ATTEMPTS {
+        if attempt > 0 {
+            runtime.settle(SELECTION_SETTLE_MS);
+        }
+        let moved = match runtime.capture_pane(&target.window_id, SELECTION_CAPTURE) {
+            Ok(pane) => strip_sgr(&pane),
+            Err(error) => return json_error(500, error),
+        };
+        landing = selection_landing(&moved, &plan, &request.label, request.number);
+        moved_pane = moved;
+        if matches!(landing, SelectionLanding::Landed) {
+            break;
+        }
+    }
+    let landed_at = plan
+        .chooser
+        .option_index(&request.label, request.number)
+        .unwrap_or(plan.from);
+    match selection_commit_decision(landing, &plan) {
+        SelectionCommit::Commit => {}
+        SelectionCommit::Refuse {
+            restore,
+            left_at,
+            error,
+        } => {
+            let restoring = !restore.is_empty();
+            let mut error = error;
+            for key in restore {
+                if let Err(failure) = runtime.send_key(&target.window_id, key) {
+                    error = format!("{error}; the cursor could not be put back: {failure}");
+                    break;
+                }
+            }
+            // A key that returns Ok without moving the cursor reads as a
+            // successful restore, and the pane that swallowed the walk is
+            // exactly the pane that swallows this. Polled rather than read
+            // once: an immediate read catches the frame before the redraw and
+            // reports the cursor sitting on a row it has already left, which
+            // sends the user to fix something that is already fine.
+            if restoring {
+                let mut seen = None;
+                let mut repeats = 0u8;
+                for _ in 0..SELECTION_SETTLE_ATTEMPTS {
+                    runtime.settle(SELECTION_SETTLE_MS);
+                    let Ok(pane) = runtime
+                        .capture_pane(&target.window_id, SELECTION_CAPTURE)
+                        .map(|pane| strip_sgr(&pane))
+                    else {
+                        break;
+                    };
+                    let outcome = restore_outcome(&pane, &plan, left_at);
+                    // Two agreeing reads is settled here as well, so a cursor
+                    // that genuinely will not move costs two reads rather than
+                    // the whole budget.
+                    repeats = match (&seen, &outcome) {
+                        (
+                            Some(RestoreOutcome::LeftOn { label }),
+                            RestoreOutcome::LeftOn { label: again },
+                        ) if label == again => repeats + 1,
+                        (Some(RestoreOutcome::PaneChanged), RestoreOutcome::PaneChanged) => {
+                            repeats + 1
+                        }
+                        _ => 0,
+                    };
+                    let settled = matches!(outcome, RestoreOutcome::Restored) || repeats >= 1;
+                    seen = Some(outcome);
+                    if settled {
+                        break;
+                    }
+                }
+                error = describe_restore(error, seen);
+            }
+            return json_error(409, error);
+        }
+    }
+    // Stand down any input submit still waiting to fire its own carriage
+    // return into this window. That waiter's fallback Enter is explicitly
+    // documented as something that "can answer a permission dialog", and the
+    // dialog it would answer is the one being answered deliberately here.
+    let _ = claim_submit_generation(&target.window_id);
+    if let Some(moved) = session_window_changed(context, &request.session_id, &target.window_id) {
+        // Through a restore as well. This was the one refusal that left the
+        // cursor parked on the row it had been walked to and said nothing.
+        let mut error = moved;
+        for key in selection_cursor_keys(landed_at, plan.from) {
+            if let Err(failure) = runtime.send_key(&target.window_id, key) {
+                error = format!("{error}; the cursor could not be put back: {failure}");
+                break;
+            }
+        }
+        return json_error(409, error);
+    }
+    if let Err(error) = runtime.send_carriage_return(&target.window_id) {
+        return json_error(500, error);
+    }
+    // Settled BEFORE the first look, and retried only while the chooser is
+    // still up. `send-keys` returns when the bytes reach the pty and
+    // `capture-pane` is a separate round trip, so the agent's redraw is
+    // routinely slower -- reading immediately reported a good answer as "the
+    // prompt is still up", which the app shows as an error the user answers by
+    // tapping again, into whatever the pane holds by then.
+    // `Unverified` needs two agreeing reads; `Confirmed` is terminal on the
+    // first. A capture that catches the repaint mid-write, or any transient
+    // parse failure, gives a frame with no chooser in it -- and taking that as
+    // "the prompt is gone" accepted an answer that never landed, on a pane
+    // that showed the prompt whole again a frame later. Two agreeing reads is
+    // what settled means here, as it already does for the submit wait.
+    let mut outcome = None;
+    let mut read_failed = false;
+    let mut unverified_runs = 0u8;
+    for _ in 0..SELECTION_SETTLE_ATTEMPTS {
+        runtime.settle(SELECTION_SETTLE_MS);
+        let Ok(pane) = runtime
+            .capture_pane(&target.window_id, SELECTION_CAPTURE)
+            .map(|pane| strip_sgr(&pane))
+        else {
+            read_failed = true;
+            break;
+        };
+        let seen = commit_outcome(&pane, &plan, &moved_pane);
+        unverified_runs = match seen {
+            CommitOutcome::Unverified => unverified_runs + 1,
+            _ => 0,
+        };
+        let settled = match seen {
+            CommitOutcome::Confirmed { .. } => true,
+            CommitOutcome::Unverified => unverified_runs >= 2,
+            CommitOutcome::StillShowing => false,
+        };
+        outcome = Some(seen);
+        if settled {
+            break;
+        }
+    }
+    selection_answer_result(&request.session_id, &request.label, outcome, read_failed)
+}
+
 fn input_live_pane_route(
     context: &ProjectServiceRequestContext,
     pathname: &str,
@@ -2003,6 +2449,213 @@ async fn interrupt_live_pane_route_async(
             }
         }),
     )
+}
+
+async fn select_live_pane_route_async(
+    context: &ProjectServiceRequestContext,
+    body: Option<&Value>,
+    irreversible_input: Option<&AtomicBool>,
+) -> ProjectServiceDispatchResponse {
+    let request = match parse_selection_answer_request(body) {
+        Ok(request) => request,
+        Err(response) => return *response,
+    };
+    if let Some(refusal) = refuse_foreign_selection_guest(context, &request.session_id) {
+        return refusal;
+    }
+    let target = match resolve_live_session_target(context, &request.session_id) {
+        Ok(Some(target)) => target,
+        Ok(None) => {
+            return json_error(
+                500,
+                format!("Session \"{}\" is not running", request.session_id),
+            );
+        }
+        Err(error) => return json_error(500, error),
+    };
+    let Some(_claim) = ChooserAnswerClaim::acquire(&target.window_id) else {
+        return json_error(
+            409,
+            format!(
+                "another answer is already being sent to pane {}",
+                target.window_id
+            ),
+        );
+    };
+    let pane = match capture_pane_async(&target.window_id, SELECTION_CAPTURE, TMUX_COMMAND_TIMEOUT)
+        .await
+    {
+        Ok(pane) => strip_sgr(&pane),
+        Err(error) => return json_error(500, error),
+    };
+    let plan = match plan_selection_answer(
+        &pane,
+        &request.label,
+        request.number,
+        request.question.as_deref(),
+        request.subject.as_deref(),
+    ) {
+        Ok(plan) => plan,
+        Err(error) => return json_error(409, error),
+    };
+    // Before the FIRST key, not before the Enter: the walk is already a
+    // mutation. Without this a client disconnect -- a backgrounded app, a CLI
+    // Ctrl-C -- drops this future between the walk and the commit, leaving the
+    // cursor parked with no restore and no response; or during the Enter,
+    // where the carriage return may already have landed while the caller is
+    // told the request did not complete.
+    if let Some(flag) = irreversible_input {
+        flag.store(true, Ordering::SeqCst);
+    }
+    for key in &plan.keys {
+        if let Err(error) = send_selection_key_async(&target.window_id, key).await {
+            return json_error(500, error);
+        }
+    }
+    let mut landing = SelectionLanding::Changed {
+        message: "the pane was never read back after moving the cursor".to_owned(),
+    };
+    let mut moved_pane = String::new();
+    for attempt in 0..SELECTION_SETTLE_ATTEMPTS {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(SELECTION_SETTLE_MS)).await;
+        }
+        let moved =
+            match capture_pane_async(&target.window_id, SELECTION_CAPTURE, TMUX_COMMAND_TIMEOUT)
+                .await
+            {
+                Ok(pane) => strip_sgr(&pane),
+                Err(error) => return json_error(500, error),
+            };
+        landing = selection_landing(&moved, &plan, &request.label, request.number);
+        moved_pane = moved;
+        if matches!(landing, SelectionLanding::Landed) {
+            break;
+        }
+    }
+    let landed_at = plan
+        .chooser
+        .option_index(&request.label, request.number)
+        .unwrap_or(plan.from);
+    match selection_commit_decision(landing, &plan) {
+        SelectionCommit::Commit => {}
+        SelectionCommit::Refuse {
+            restore,
+            left_at,
+            error,
+        } => {
+            let restoring = !restore.is_empty();
+            let mut error = error;
+            for key in restore {
+                if let Err(failure) = send_selection_key_async(&target.window_id, key).await {
+                    error = format!("{error}; the cursor could not be put back: {failure}");
+                    break;
+                }
+            }
+            if restoring {
+                let mut seen = None;
+                let mut repeats = 0u8;
+                for _ in 0..SELECTION_SETTLE_ATTEMPTS {
+                    tokio::time::sleep(Duration::from_millis(SELECTION_SETTLE_MS)).await;
+                    let Ok(pane) = capture_pane_async(
+                        &target.window_id,
+                        SELECTION_CAPTURE,
+                        TMUX_COMMAND_TIMEOUT,
+                    )
+                    .await
+                    .map(|pane| strip_sgr(&pane)) else {
+                        break;
+                    };
+                    let outcome = restore_outcome(&pane, &plan, left_at);
+                    // Two agreeing reads is settled here as well, so a cursor
+                    // that genuinely will not move costs two reads rather than
+                    // the whole budget.
+                    repeats = match (&seen, &outcome) {
+                        (
+                            Some(RestoreOutcome::LeftOn { label }),
+                            RestoreOutcome::LeftOn { label: again },
+                        ) if label == again => repeats + 1,
+                        (Some(RestoreOutcome::PaneChanged), RestoreOutcome::PaneChanged) => {
+                            repeats + 1
+                        }
+                        _ => 0,
+                    };
+                    let settled = matches!(outcome, RestoreOutcome::Restored) || repeats >= 1;
+                    seen = Some(outcome);
+                    if settled {
+                        break;
+                    }
+                }
+                error = describe_restore(error, seen);
+            }
+            return json_error(409, error);
+        }
+    }
+    if let Some(moved) = session_window_changed(context, &request.session_id, &target.window_id) {
+        let mut error = moved;
+        for key in selection_cursor_keys(landed_at, plan.from) {
+            if let Err(failure) = send_selection_key_async(&target.window_id, key).await {
+                error = format!("{error}; the cursor could not be put back: {failure}");
+                break;
+            }
+        }
+        return json_error(409, error);
+    }
+    let _ = claim_submit_generation(&target.window_id);
+    if let Err(error) = run_tmux_argv_with_timeout_async(
+        send_carriage_return_argv(&target.window_id),
+        format!("tmux send carriage return failed for {}", target.window_id),
+        TMUX_COMMAND_TIMEOUT,
+    )
+    .await
+    {
+        return json_error(500, error);
+    }
+    // `Unverified` needs two agreeing reads; `Confirmed` is terminal on the
+    // first. A capture that catches the repaint mid-write, or any transient
+    // parse failure, gives a frame with no chooser in it -- and taking that as
+    // "the prompt is gone" accepted an answer that never landed, on a pane
+    // that showed the prompt whole again a frame later. Two agreeing reads is
+    // what settled means here, as it already does for the submit wait.
+    let mut outcome = None;
+    let mut read_failed = false;
+    let mut unverified_runs = 0u8;
+    for _ in 0..SELECTION_SETTLE_ATTEMPTS {
+        tokio::time::sleep(Duration::from_millis(SELECTION_SETTLE_MS)).await;
+        let Ok(pane) =
+            capture_pane_async(&target.window_id, SELECTION_CAPTURE, TMUX_COMMAND_TIMEOUT)
+                .await
+                .map(|pane| strip_sgr(&pane))
+        else {
+            read_failed = true;
+            break;
+        };
+        let seen = commit_outcome(&pane, &plan, &moved_pane);
+        unverified_runs = match seen {
+            CommitOutcome::Unverified => unverified_runs + 1,
+            _ => 0,
+        };
+        let settled = match seen {
+            CommitOutcome::Confirmed { .. } => true,
+            CommitOutcome::Unverified => unverified_runs >= 2,
+            CommitOutcome::StillShowing => false,
+        };
+        outcome = Some(seen);
+        if settled {
+            break;
+        }
+    }
+    selection_answer_result(&request.session_id, &request.label, outcome, read_failed)
+}
+
+async fn send_selection_key_async(window_id: &str, key: &str) -> Result<(), String> {
+    run_tmux_argv_with_timeout_async(
+        send_key_argv(window_id, key),
+        format!("tmux send-keys {key} failed for {window_id}"),
+        TMUX_COMMAND_TIMEOUT,
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn input_live_pane_route_async(
@@ -3052,6 +3705,55 @@ fn remaining_until(deadline: Instant) -> Result<Duration, String> {
         Err("agent output request timed out".to_owned())
     } else {
         Ok(deadline.saturating_duration_since(now))
+    }
+}
+
+/// Windows with a chooser answer in flight.
+///
+/// The answer is a cursor walk, a read-back and then an Enter, and two of them
+/// at once interleave into a commit nobody asked for: A walks to "No", A reads
+/// back and sees "No", B's walk moves the cursor on, A sends Enter. A reports
+/// `200 accepted: label "No"` and what committed was B's row -- which in the
+/// real prompts can be "Yes, and switch to BYPASS PERMISSIONS (no further
+/// prompts) for this session". Two clients answering one prompt is an ordinary
+/// path here, not an exotic one: sharing is full trust over the session and
+/// answering is on the guest allowlist, so an owner and a guest both tapping
+/// is exactly the case.
+///
+/// This cannot close the window against a person pressing Down in the TUI at
+/// the same moment; nothing in a pane can. It closes it against ourselves,
+/// which is the part we own.
+static ANSWERING_WINDOWS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::BTreeSet<String>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
+
+struct ChooserAnswerClaim {
+    window_id: String,
+}
+
+impl ChooserAnswerClaim {
+    /// `None` when another answer already holds this window.
+    fn acquire(window_id: &str) -> Option<Self> {
+        let mut answering = match ANSWERING_WINDOWS.lock() {
+            Ok(answering) => answering,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if !answering.insert(window_id.to_owned()) {
+            return None;
+        }
+        Some(Self {
+            window_id: window_id.to_owned(),
+        })
+    }
+}
+
+impl Drop for ChooserAnswerClaim {
+    fn drop(&mut self) {
+        let mut answering = match ANSWERING_WINDOWS.lock() {
+            Ok(answering) => answering,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        answering.remove(&self.window_id);
     }
 }
 
@@ -4602,6 +5304,44 @@ mod tests {
         .expect("large output command should complete");
 
         assert_eq!(result.stdout.len(), 200_000);
+    }
+
+    #[test]
+    fn one_window_takes_one_chooser_answer_at_a_time() {
+        let held = ChooserAnswerClaim::acquire("@selection-claim")
+            .expect("the first answer takes the window");
+        assert!(
+            ChooserAnswerClaim::acquire("@selection-claim").is_none(),
+            "a second answer must not interleave its walk with the first"
+        );
+        // A different window is a different prompt.
+        assert!(ChooserAnswerClaim::acquire("@selection-claim-other").is_some());
+
+        drop(held);
+        assert!(
+            ChooserAnswerClaim::acquire("@selection-claim").is_some(),
+            "the window must be released when the answer finishes"
+        );
+    }
+
+    #[test]
+    fn answering_a_chooser_stands_down_a_pending_input_submit() {
+        // The input waiter's fallback carriage return is documented as
+        // something that "can answer a permission dialog". Bumping the
+        // generation makes it give up, so the only Enter that reaches the pane
+        // is the one for the option the person chose.
+        let generation = claim_submit_generation("@selection-generation");
+        assert!(submit_generation_is_current(
+            "@selection-generation",
+            generation
+        ));
+
+        let _ = claim_submit_generation("@selection-generation");
+
+        assert!(
+            !submit_generation_is_current("@selection-generation", generation),
+            "the older waiter must no longer think it is current"
+        );
     }
 
     #[test]
