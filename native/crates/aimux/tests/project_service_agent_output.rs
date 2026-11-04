@@ -4205,6 +4205,14 @@ struct FakeChooserRuntime {
     /// Set when the chooser ignores the cursor keys, standing in for a pane
     /// that answered or redrew between the plan and the move.
     frozen: bool,
+    /// How far each key actually moves the cursor. Two stands in for a pane
+    /// that redrew under the walk, so the cursor overshoots the row that was
+    /// asked for -- the case where the answer must be refused AND the cursor
+    /// put back.
+    step: usize,
+    /// Options the chooser switches to on the first key, standing in for the
+    /// agent redrawing a different question mid-answer.
+    redraw_to: Option<Vec<String>>,
     actions: Vec<FakeRuntimeAction>,
 }
 
@@ -4214,6 +4222,8 @@ impl FakeChooserRuntime {
             options: options.iter().map(|option| (*option).to_owned()).collect(),
             cursor: 0,
             frozen: false,
+            step: 1,
+            redraw_to: None,
             actions: Vec::new(),
         }
     }
@@ -4221,6 +4231,20 @@ impl FakeChooserRuntime {
     fn frozen(options: &[&str]) -> Self {
         Self {
             frozen: true,
+            ..Self::new(options)
+        }
+    }
+
+    fn overshooting(options: &[&str]) -> Self {
+        Self {
+            step: 2,
+            ..Self::new(options)
+        }
+    }
+
+    fn redrawing(options: &[&str], into: &[&str]) -> Self {
+        Self {
+            redraw_to: Some(into.iter().map(|option| (*option).to_owned()).collect()),
             ..Self::new(options)
         }
     }
@@ -4259,9 +4283,14 @@ impl AgentOutputCaptureRuntime for FakeChooserRuntime {
         if self.frozen {
             return Ok(());
         }
+        if let Some(redrawn) = self.redraw_to.take() {
+            self.options = redrawn;
+            self.cursor = 0;
+            return Ok(());
+        }
         match key {
-            "Down" => self.cursor = (self.cursor + 1).min(self.options.len() - 1),
-            "Up" => self.cursor = self.cursor.saturating_sub(1),
+            "Down" => self.cursor = (self.cursor + self.step).min(self.options.len() - 1),
+            "Up" => self.cursor = self.cursor.saturating_sub(self.step),
             _ => return Err(format!("unexpected key {key}")),
         }
         Ok(())
@@ -4288,7 +4317,12 @@ fn selecting_an_option_walks_the_cursor_onto_it_and_then_commits() {
         &context,
         "POST",
         routes::live_pane::SELECT,
-        Some(&json!({ "sessionId": "codex-1", "label": "No", "number": 3 })),
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "No",
+            "number": 3,
+            "question": "Do you want to create hello.txt?",
+        })),
         &mut runtime,
     )
     .unwrap();
@@ -4328,7 +4362,12 @@ fn selecting_an_option_the_pane_no_longer_offers_commits_nothing() {
         &context,
         "POST",
         routes::live_pane::SELECT,
-        Some(&json!({ "sessionId": "codex-1", "label": "No", "number": 3 })),
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "No",
+            "number": 3,
+            "question": "Do you want to create hello.txt?",
+        })),
         &mut runtime,
     )
     .unwrap();
@@ -4358,7 +4397,12 @@ fn a_cursor_that_will_not_move_is_never_committed() {
         &context,
         "POST",
         routes::live_pane::SELECT,
-        Some(&json!({ "sessionId": "codex-1", "label": "No", "number": 2 })),
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "No",
+            "number": 2,
+            "question": "Do you want to create hello.txt?",
+        })),
         &mut runtime,
     )
     .unwrap();
@@ -4371,6 +4415,84 @@ fn a_cursor_that_will_not_move_is_never_committed() {
         !runtime.committed(),
         "Enter on a cursor that did not land is how \"No\" becomes \"Yes\""
     );
+    cleanup(project);
+}
+
+#[test]
+fn a_cursor_that_overshot_is_put_back_where_it_was() {
+    let project = temp_project("select-overshoot");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // Each key moves two rows, so the walk planned for "Yes, allow all edits"
+    // lands on "No" instead.
+    let mut runtime = FakeChooserRuntime::overshooting(&["Yes", "Yes, allow all edits", "No"]);
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "Yes, allow all edits",
+            "number": 2,
+            "question": "Do you want to create hello.txt?",
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 409);
+    // Refusing is not enough on its own: a cursor left parked on a row nobody
+    // chose is committed by the next Enter from anywhere, and one of the rows
+    // it can be parked on switches the session to bypassing permissions.
+    assert_eq!(runtime.cursor, 0, "the cursor must be put back");
+    assert!(!runtime.committed());
+    cleanup(project);
+}
+
+#[test]
+fn a_chooser_that_redrew_mid_answer_is_neither_committed_nor_tidied() {
+    let project = temp_project("select-redraw");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // The agent answers and asks something else while the keys are in flight.
+    // Its row 2 is a different answer than the row 2 that was planned.
+    let mut runtime = FakeChooserRuntime::redrawing(
+        &["Yes", "No"],
+        &[
+            "Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session",
+            "No",
+        ],
+    );
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "No",
+            "number": 2,
+            "question": "Do you want to create hello.txt?",
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 409);
+    let error = response.body["error"].as_str().unwrap_or_default();
+    assert!(error.contains("chooser changed"), "got {error}");
+    assert!(!runtime.committed());
+    // No tidying either: the pane is not the chooser we walked, so more keys
+    // here would be blind.
+    let keys_after_redraw = runtime
+        .actions
+        .iter()
+        .filter(|action| matches!(action, FakeRuntimeAction::Key(_, _)))
+        .count();
+    assert_eq!(keys_after_redraw, 1, "only the planned key should be sent");
     cleanup(project);
 }
 
@@ -4391,7 +4513,12 @@ fn a_shared_guest_answers_its_own_chooser_and_no_one_elses() {
         &context,
         "POST",
         routes::live_pane::SELECT,
-        Some(&json!({ "sessionId": "codex-1", "label": "No", "number": 2 })),
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "No",
+            "number": 2,
+            "question": "Do you want to create hello.txt?",
+        })),
         &mut own,
     )
     .unwrap();
@@ -4403,7 +4530,12 @@ fn a_shared_guest_answers_its_own_chooser_and_no_one_elses() {
         &context,
         "POST",
         routes::live_pane::SELECT,
-        Some(&json!({ "sessionId": "codex-offline", "label": "No", "number": 2 })),
+        Some(&json!({
+            "sessionId": "codex-offline",
+            "label": "No",
+            "number": 2,
+            "question": "Do you want to create hello.txt?",
+        })),
         &mut other,
     )
     .unwrap();

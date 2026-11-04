@@ -1870,7 +1870,7 @@ export default function ChatScreen() {
   ]);
 
   const handleChoosePromptOption = useCallback(
-    async (option: { label: string; number?: number }) => {
+    async (option: { label: string; number?: number; question?: string }) => {
       if (!endpointHost || !endpointPort || !sessionId) return;
       if (choosingOptionRef.current !== null) return;
       choosingOptionRef.current = option.label;

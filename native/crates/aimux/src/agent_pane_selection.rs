@@ -122,6 +122,39 @@ impl PaneSelection {
             option.label == label && number.is_none_or(|number| option.number == Some(number))
         })
     }
+
+    /// Whether this is the same question, drawn the same way.
+    ///
+    /// The identity of a chooser is its question and its options in order, not
+    /// any one option: `1. Yes / 2. No` is the shape of nearly every prompt
+    /// Claude Code asks, so a label alone says almost nothing about WHICH
+    /// question is on screen. Without this, an answer whose option is already
+    /// selected sends no keys at all and the confirming read has nothing to
+    /// check -- so "Yes" to `create hello.txt?` would commit "Yes" to
+    /// `switch to BYPASS PERMISSIONS?` if the agent redrew in between.
+    pub fn is_same_chooser(&self, other: &Self) -> bool {
+        self.question == other.question
+            && self.options.len() == other.options.len()
+            && self
+                .options
+                .iter()
+                .zip(&other.options)
+                .all(|(mine, theirs)| mine.label == theirs.label && mine.number == theirs.number)
+    }
+
+    /// The chooser as a line, for a refusal that has to say what is on screen.
+    pub fn describe(&self) -> String {
+        let options = self
+            .options
+            .iter()
+            .map(|option| option.label.as_str())
+            .collect::<Vec<_>>()
+            .join(" / ");
+        match &self.question {
+            Some(question) => format!("{question} [{options}]"),
+            None => format!("[{options}]"),
+        }
+    }
 }
 
 /// The cursor keys that walk a chooser from one option to another.
@@ -153,48 +186,138 @@ pub fn plan_selection_answer(
     pane: &str,
     label: &str,
     number: Option<u32>,
-) -> Result<Vec<&'static str>, String> {
-    let Some(selection) = pane_selection(pane) else {
+    question: Option<&str>,
+) -> Result<SelectionAnswerPlan, String> {
+    let Some(chooser) = pane_selection(pane) else {
         return Err("the pane is no longer showing a chooser".to_owned());
     };
-    let Some(target) = selection.option_index(label, number) else {
-        let showing = selection
-            .options
-            .iter()
-            .map(|option| option.label.as_str())
-            .collect::<Vec<_>>()
-            .join(" / ");
+    // The question first, because it says WHICH chooser this is. Compared
+    // strictly, so a caller that sends no question cannot answer a chooser
+    // that has one: refusing is the safe direction when we cannot tell which
+    // question is being answered.
+    if chooser.question.as_deref() != question {
         return Err(format!(
-            "the pane no longer offers {label:?}; it is showing: {showing}"
+            "the pane is asking something else now; it is showing: {}",
+            chooser.describe()
+        ));
+    }
+    let Some(target) = chooser.option_index(label, number) else {
+        return Err(format!(
+            "the pane no longer offers {label:?}; it is showing: {}",
+            chooser.describe()
         ));
     };
-    let Some(from) = selection.selected_index() else {
+    let Some(from) = chooser.selected_index() else {
         return Err("the chooser has no option selected to move from".to_owned());
     };
-    Ok(selection_cursor_keys(from, target))
+    Ok(SelectionAnswerPlan {
+        keys: selection_cursor_keys(from, target),
+        from,
+        chooser,
+    })
 }
 
-/// Whether the cursor ended up on the option that was asked for.
+#[derive(Debug)]
+pub struct SelectionAnswerPlan {
+    pub keys: Vec<&'static str>,
+    /// Where the cursor was before the walk, so a failed walk can be undone.
+    pub from: usize,
+    /// The chooser this plan was made against, to compare the pane to after.
+    pub chooser: PaneSelection,
+}
+
+/// What the pane shows after the cursor was moved.
+pub enum SelectionLanding {
+    /// The cursor is on the option that was asked for. Safe to commit.
+    Landed,
+    /// Still the same chooser, but the cursor is elsewhere. `at` is where it
+    /// actually is, so the caller can walk it back rather than leaving it
+    /// parked on an option nobody chose.
+    WrongRow { at: usize, message: String },
+    /// Not the same chooser any more. Sending more keys here would be blind,
+    /// so the caller must not try to tidy up.
+    Changed { message: String },
+}
+
+/// Where the cursor ended up, checked between moving it and committing.
 ///
-/// Checked between moving the cursor and committing, because the commit is the
-/// irreversible half: one of the real options is "Yes, and switch to BYPASS
-/// PERMISSIONS (no further prompts) for this session", and pressing Enter on a
-/// cursor that did not land where it was sent is how a person who chose "No"
-/// gets that instead.
-pub fn selection_landed_on(pane: &str, label: &str, number: Option<u32>) -> Result<(), String> {
-    let Some(selection) = pane_selection(pane) else {
-        return Err("the chooser went away before the answer was committed".to_owned());
+/// The commit is the irreversible half: one of the real options is "Yes, and
+/// switch to BYPASS PERMISSIONS (no further prompts) for this session", and
+/// pressing Enter on a cursor that did not land where it was sent is how a
+/// person who chose "No" gets that instead.
+pub fn selection_landing(
+    pane: &str,
+    plan: &SelectionAnswerPlan,
+    label: &str,
+    number: Option<u32>,
+) -> SelectionLanding {
+    let Some(chooser) = pane_selection(pane) else {
+        return SelectionLanding::Changed {
+            message: "the chooser went away before the answer was committed".to_owned(),
+        };
     };
-    let Some(selected) = selection.selected_index() else {
-        return Err("the chooser has no option selected after moving the cursor".to_owned());
-    };
-    if selection.option_index(label, number) == Some(selected) {
-        return Ok(());
+    if !chooser.is_same_chooser(&plan.chooser) {
+        return SelectionLanding::Changed {
+            message: format!(
+                "the chooser changed while the answer was being sent; it is showing: {}",
+                chooser.describe()
+            ),
+        };
     }
-    Err(format!(
-        "the cursor is on {:?}, not {label:?}",
-        selection.options[selected].label
-    ))
+    let Some(selected) = chooser.selected_index() else {
+        return SelectionLanding::Changed {
+            message: "the chooser has no option selected after moving the cursor".to_owned(),
+        };
+    };
+    if chooser.option_index(label, number) == Some(selected) {
+        return SelectionLanding::Landed;
+    }
+    SelectionLanding::WrongRow {
+        at: selected,
+        message: format!(
+            "the cursor is on {:?}, not {label:?}",
+            chooser.options[selected].label
+        ),
+    }
+}
+
+/// Whether to press Enter, and what to undo if not.
+pub enum SelectionCommit {
+    Commit,
+    Refuse {
+        /// Keys that put the cursor back where it was. Empty when the pane is
+        /// no longer the chooser we walked, because more keys there would be
+        /// blind.
+        restore: Vec<&'static str>,
+        error: String,
+    },
+}
+
+/// The decision made from a landing, kept out of both route twins.
+///
+/// This route exists twice -- a sync one for the sync router and an async one
+/// for the server -- and the two must not drift, because the step they would
+/// drift on is the one that presses Enter. Everything either twin decides is
+/// decided here, so each is left as the I/O around it.
+pub fn selection_commit_decision(
+    landing: SelectionLanding,
+    plan: &SelectionAnswerPlan,
+) -> SelectionCommit {
+    match landing {
+        SelectionLanding::Landed => SelectionCommit::Commit,
+        // Same chooser, wrong row: put the cursor back. Leaving it parked is
+        // how a refused answer still gets committed, by the next Enter from
+        // anywhere -- and one of the rows it can be parked on switches the
+        // session to bypassing permissions.
+        SelectionLanding::WrongRow { at, message } => SelectionCommit::Refuse {
+            restore: selection_cursor_keys(at, plan.from),
+            error: message,
+        },
+        SelectionLanding::Changed { message } => SelectionCommit::Refuse {
+            restore: Vec::new(),
+            error: message,
+        },
+    }
 }
 
 /// The rows that can hold a live chooser.
@@ -279,7 +402,7 @@ fn cursor_options(tail: &[String]) -> Vec<PaneSelectionOption> {
     else {
         return Vec::new();
     };
-    let Some(first) = tail[cursor_at]
+    let Some(cursor_label) = tail[cursor_at]
         .trim()
         .strip_prefix(CURSOR)
         .map(|label| label.trim().to_owned())
@@ -294,26 +417,48 @@ fn cursor_options(tail: &[String]) -> Vec<PaneSelectionOption> {
     // the person typed, starting with one of the sigils that opens an overlay
     // -- rather than on anything about the rows below, because the rows below
     // are the part that looks identical.
-    if first.starts_with(COMPOSER_OVERLAY_SIGILS) {
+    if cursor_label.starts_with(COMPOSER_OVERLAY_SIGILS) {
         return Vec::new();
     }
-    let mut options = vec![PaneSelectionOption {
-        number: None,
-        label: first,
-        selected: true,
-    }];
-    for line in &tail[cursor_at + 1..] {
-        let text = line.trim();
-        if text.is_empty() || looks_like_border(line) || looks_like_footer(line) {
-            break;
-        }
-        options.push(PaneSelectionOption {
-            number: None,
-            label: text.to_owned(),
-            selected: false,
-        });
+    // The whole contiguous block the cursor sits in, walking UP as well as
+    // down. Collecting only the rows below the cursor made the option list
+    // shrink as the cursor moved: answering the trust prompt's second option
+    // moved the cursor onto it and left one option on screen, which does not
+    // parse as a chooser at all -- so the confirming read reported the prompt
+    // gone while it was still up, and the cursor stayed parked on "Yes, I
+    // trust this folder" for whatever pressed Enter next.
+    let mut first_at = cursor_at;
+    while first_at > 0 && is_cursor_option_row(&tail[first_at - 1]) {
+        first_at -= 1;
     }
-    options
+    let mut last_at = cursor_at;
+    while last_at + 1 < tail.len() && is_cursor_option_row(&tail[last_at + 1]) {
+        last_at += 1;
+    }
+    tail[first_at..=last_at]
+        .iter()
+        .enumerate()
+        .map(|(offset, line)| PaneSelectionOption {
+            number: None,
+            label: line
+                .trim()
+                .strip_prefix(CURSOR)
+                .unwrap_or(line.trim())
+                .trim()
+                .to_owned(),
+            selected: first_at + offset == cursor_at,
+        })
+        .collect()
+}
+
+/// Whether a row next to the cursor is one of its siblings.
+///
+/// The block ends at a blank, a border or a footer, which is what separates a
+/// chooser from the question above it and the key hints below it on every
+/// capture taken.
+fn is_cursor_option_row(line: &str) -> bool {
+    let text = line.trim();
+    !text.is_empty() && !looks_like_border(line) && !looks_like_footer(line)
 }
 
 /// The question the chooser is asking.
@@ -377,8 +522,8 @@ fn looks_like_footer(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        PaneSelection, pane_selection, plan_selection_answer, selection_cursor_keys,
-        selection_landed_on,
+        PaneSelection, SelectionLanding, pane_selection, plan_selection_answer,
+        selection_cursor_keys, selection_landing,
     };
     use crate::project_service::agent_output::strip_sgr;
 
@@ -616,37 +761,52 @@ mod tests {
         assert!(selection(PLAN).is_some());
     }
 
+    /// The plan question for a capture, so a test does not have to restate it.
+    fn question_of(capture: &str) -> Option<String> {
+        selection(capture).and_then(|selection| selection.question)
+    }
+
     #[test]
     fn plans_the_walk_from_where_the_cursor_actually_is() {
         let pane = strip_sgr(PLAN);
+        let question = question_of(PLAN);
 
         // Cursor starts on option 1; "Tell Claude what to change" is the third.
-        assert_eq!(
-            plan_selection_answer(&pane, "Tell Claude what to change", Some(3)),
-            Ok(vec!["Down", "Down"])
-        );
+        let walk = plan_selection_answer(
+            &pane,
+            "Tell Claude what to change",
+            Some(3),
+            question.as_deref(),
+        )
+        .expect("the option is on screen");
+        assert_eq!(walk.keys, vec!["Down", "Down"]);
+        assert_eq!(walk.from, 0);
+
         // Already there is a plan with no keys in it, not a refusal.
-        assert_eq!(
-            plan_selection_answer(
-                &pane,
-                "Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session",
-                Some(1)
-            ),
-            Ok(Vec::new())
-        );
+        let stay = plan_selection_answer(
+            &pane,
+            "Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session",
+            Some(1),
+            question.as_deref(),
+        )
+        .expect("the option is on screen");
+        assert!(stay.keys.is_empty());
     }
 
     #[test]
     fn refuses_to_answer_a_pane_that_moved_on_and_says_what_it_shows() {
         let prose = strip_sgr(PROSE);
         let plan = strip_sgr(PLAN);
+        let question = question_of(PLAN);
 
-        let gone = plan_selection_answer(&prose, "Yes", Some(1)).expect_err("no chooser is up");
+        let gone = plan_selection_answer(&prose, "Yes", Some(1), question.as_deref())
+            .expect_err("no chooser is up");
         assert!(gone.contains("no longer showing a chooser"), "got {gone}");
 
         // The dangerous case: the client was looking at a different question,
         // and its option 1 is not this pane's option 1.
-        let moved = plan_selection_answer(&plan, "Yes", Some(1)).expect_err("label is not there");
+        let moved = plan_selection_answer(&plan, "Yes", Some(1), question.as_deref())
+            .expect_err("label is not there");
         assert!(moved.contains("no longer offers"), "got {moved}");
         assert!(
             moved.contains("Yes, manually approve edits"),
@@ -655,19 +815,127 @@ mod tests {
     }
 
     #[test]
+    fn refuses_when_the_client_was_answering_a_different_question() {
+        // The hazard a label alone cannot catch, and the one that made the
+        // "three reads" design worthless in the zero-key case: `1. Yes / 2. No`
+        // is the shape of nearly every prompt the tool asks, so "Yes" against
+        // the wrong question walks nowhere, confirms nothing and commits.
+        let plan = strip_sgr(PLAN);
+
+        let wrong_question = plan_selection_answer(
+            &plan,
+            "Yes, manually approve edits",
+            Some(2),
+            Some("Do you want to create hello.txt?"),
+        )
+        .expect_err("that is not the question on screen");
+        assert!(
+            wrong_question.contains("asking something else"),
+            "got {wrong_question}"
+        );
+        assert!(
+            wrong_question.contains("Would you like to proceed?"),
+            "the refusal must name the question that IS on screen, got {wrong_question}"
+        );
+
+        // A caller that sends no question at all cannot answer a chooser that
+        // has one: with nothing to compare, refusing is the safe direction.
+        assert!(
+            plan_selection_answer(&plan, "Yes, manually approve edits", Some(2), None).is_err()
+        );
+    }
+
+    #[test]
     fn commits_only_when_the_cursor_landed_where_it_was_sent() {
         let permission = strip_sgr(PERMISSION);
+        let question = question_of(PERMISSION);
+        let plan = plan_selection_answer(&permission, "Yes", Some(1), question.as_deref())
+            .expect("the option is on screen");
 
-        assert_eq!(selection_landed_on(&permission, "Yes", Some(1)), Ok(()));
+        assert!(matches!(
+            selection_landing(&permission, &plan, "Yes", Some(1)),
+            SelectionLanding::Landed
+        ));
 
-        let wrong = selection_landed_on(&permission, "No", Some(3))
-            .expect_err("the cursor is still on option 1");
-        assert!(wrong.contains("The cursor is on") || wrong.contains("cursor is on"));
-        assert!(wrong.contains("\"Yes\""), "got {wrong}");
+        // Wrong row, same chooser: the cursor can be walked back, and the row
+        // it is on has to be named.
+        let SelectionLanding::WrongRow { at, message } =
+            selection_landing(&permission, &plan, "No", Some(3))
+        else {
+            panic!("the cursor is still on option 1");
+        };
+        assert_eq!(at, 0);
+        assert!(message.contains("cursor is on"), "got {message}");
+        assert!(message.contains("\"Yes\""), "got {message}");
 
-        let gone = selection_landed_on(&strip_sgr(PROSE), "Yes", Some(1))
-            .expect_err("the chooser is gone");
-        assert!(gone.contains("went away"), "got {gone}");
+        // Chooser gone: nothing to walk back through.
+        let SelectionLanding::Changed { message } =
+            selection_landing(&strip_sgr(PROSE), &plan, "Yes", Some(1))
+        else {
+            panic!("the chooser is gone");
+        };
+        assert!(message.contains("went away"), "got {message}");
+    }
+
+    #[test]
+    fn a_redrawn_chooser_is_not_the_one_that_was_planned_against() {
+        // Same question text would not save this: the options moved, so row 2
+        // is a different answer than the one that was planned.
+        let permission = strip_sgr(PERMISSION);
+        let question = question_of(PERMISSION);
+        let plan = plan_selection_answer(&permission, "Yes", Some(1), question.as_deref())
+            .expect("the option is on screen");
+        let redrawn = " Do you want to create hello.txt?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel";
+
+        let SelectionLanding::Changed { message } =
+            selection_landing(redrawn, &plan, "Yes", Some(1))
+        else {
+            panic!("the chooser lost an option between the reads");
+        };
+        assert!(message.contains("chooser changed"), "got {message}");
+    }
+
+    #[test]
+    fn an_unnumbered_chooser_can_still_be_read_once_its_cursor_has_moved() {
+        // The trust prompt, as it looks after one Down. Collecting only the
+        // rows BELOW the cursor left one option here, which does not parse as
+        // a chooser at all -- so answering "Yes, I trust this folder" moved the
+        // cursor onto it, then reported the prompt gone while it was on screen,
+        // and left the cursor parked on the trust option for the next Enter.
+        let before = strip_sgr(TRUST);
+        let moved = before.replacen("❯ No, exit", "  No, exit", 1).replacen(
+            "   Yes, I trust this folder",
+            " ❯ Yes, I trust this folder",
+            1,
+        );
+        assert_ne!(before, moved, "the capture no longer has the rows we move");
+
+        let selection = pane_selection(&moved).expect("still a chooser after the cursor moved");
+        assert_eq!(
+            selection
+                .options
+                .iter()
+                .map(|option| option.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["No, exit", "Yes, I trust this folder"]
+        );
+        assert_eq!(selection.selected_index(), Some(1));
+
+        // And the whole answer now goes through: plan against the pane before
+        // the walk, confirm against the pane after it.
+        let question = question_of(TRUST);
+        let plan = plan_selection_answer(
+            &before,
+            "Yes, I trust this folder",
+            None,
+            question.as_deref(),
+        )
+        .expect("the option is on screen");
+        assert_eq!(plan.keys, vec!["Down"]);
+        assert!(matches!(
+            selection_landing(&moved, &plan, "Yes, I trust this folder", None),
+            SelectionLanding::Landed
+        ));
     }
 
     #[test]

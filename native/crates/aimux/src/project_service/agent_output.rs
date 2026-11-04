@@ -1,4 +1,7 @@
-use crate::agent_pane_selection::{plan_selection_answer, selection_landed_on};
+use crate::agent_pane_selection::{
+    SelectionCommit, SelectionLanding, plan_selection_answer, selection_commit_decision,
+    selection_landing,
+};
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{
     DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS,
@@ -1640,6 +1643,10 @@ struct SelectionAnswerRequest {
     session_id: String,
     label: String,
     number: Option<u32>,
+    /// The question the client was answering, which is what says WHICH chooser
+    /// it read. An option label alone does not: `Yes` / `No` is the shape of
+    /// nearly every prompt the tool asks.
+    question: Option<String>,
 }
 
 fn parse_selection_answer_request(
@@ -1665,10 +1672,16 @@ fn parse_selection_answer_request(
             }
         },
     };
+    let question = match body.get("question") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(question)) => Some(question.trim().to_owned()),
+        Some(_) => return Err(Box::new(json_error(400, "question must be a string"))),
+    };
     Ok(SelectionAnswerRequest {
         session_id,
         label,
         number,
+        question,
     })
 }
 
@@ -1749,11 +1762,16 @@ fn select_live_pane_route(
         Ok(pane) => strip_sgr(&pane),
         Err(error) => return json_error(500, error),
     };
-    let keys = match plan_selection_answer(&pane, &request.label, request.number) {
-        Ok(keys) => keys,
+    let plan = match plan_selection_answer(
+        &pane,
+        &request.label,
+        request.number,
+        request.question.as_deref(),
+    ) {
+        Ok(plan) => plan,
         Err(error) => return json_error(409, error),
     };
-    for key in keys {
+    for key in &plan.keys {
         if let Err(error) = runtime.send_key(&target.window_id, key) {
             return json_error(500, error);
         }
@@ -1761,7 +1779,9 @@ fn select_live_pane_route(
     // Polled rather than slept once: a cursor move is a local redraw, so the
     // first look usually has it, and a fixed wait would be both slower in the
     // common case and still too short on a loaded machine.
-    let mut landed = Err("the pane was never read back after moving the cursor".to_owned());
+    let mut landing = SelectionLanding::Changed {
+        message: "the pane was never read back after moving the cursor".to_owned(),
+    };
     for attempt in 0..SELECTION_SETTLE_ATTEMPTS {
         if attempt > 0 {
             runtime.settle(SELECTION_SETTLE_MS);
@@ -1770,13 +1790,23 @@ fn select_live_pane_route(
             Ok(pane) => strip_sgr(&pane),
             Err(error) => return json_error(500, error),
         };
-        landed = selection_landed_on(&moved, &request.label, request.number);
-        if landed.is_ok() {
+        landing = selection_landing(&moved, &plan, &request.label, request.number);
+        if matches!(landing, SelectionLanding::Landed) {
             break;
         }
     }
-    if let Err(error) = landed {
-        return json_error(409, error);
+    match selection_commit_decision(landing, &plan) {
+        SelectionCommit::Commit => {}
+        SelectionCommit::Refuse { restore, error } => {
+            let mut error = error;
+            for key in restore {
+                if let Err(failure) = runtime.send_key(&target.window_id, key) {
+                    error = format!("{error}; the cursor could not be put back: {failure}");
+                    break;
+                }
+            }
+            return json_error(409, error);
+        }
     }
     if let Err(error) = runtime.send_carriage_return(&target.window_id) {
         return json_error(500, error);
@@ -2212,22 +2242,23 @@ async fn select_live_pane_route_async(
         Ok(pane) => strip_sgr(&pane),
         Err(error) => return json_error(500, error),
     };
-    let keys = match plan_selection_answer(&pane, &request.label, request.number) {
-        Ok(keys) => keys,
+    let plan = match plan_selection_answer(
+        &pane,
+        &request.label,
+        request.number,
+        request.question.as_deref(),
+    ) {
+        Ok(plan) => plan,
         Err(error) => return json_error(409, error),
     };
-    for key in keys {
-        if let Err(error) = run_tmux_argv_with_timeout_async(
-            send_key_argv(&target.window_id, key),
-            format!("tmux send-keys {key} failed for {}", target.window_id),
-            TMUX_COMMAND_TIMEOUT,
-        )
-        .await
-        {
+    for key in &plan.keys {
+        if let Err(error) = send_selection_key_async(&target.window_id, key).await {
             return json_error(500, error);
         }
     }
-    let mut landed = Err("the pane was never read back after moving the cursor".to_owned());
+    let mut landing = SelectionLanding::Changed {
+        message: "the pane was never read back after moving the cursor".to_owned(),
+    };
     for attempt in 0..SELECTION_SETTLE_ATTEMPTS {
         if attempt > 0 {
             tokio::time::sleep(Duration::from_millis(SELECTION_SETTLE_MS)).await;
@@ -2239,13 +2270,23 @@ async fn select_live_pane_route_async(
                 Ok(pane) => strip_sgr(&pane),
                 Err(error) => return json_error(500, error),
             };
-        landed = selection_landed_on(&moved, &request.label, request.number);
-        if landed.is_ok() {
+        landing = selection_landing(&moved, &plan, &request.label, request.number);
+        if matches!(landing, SelectionLanding::Landed) {
             break;
         }
     }
-    if let Err(error) = landed {
-        return json_error(409, error);
+    match selection_commit_decision(landing, &plan) {
+        SelectionCommit::Commit => {}
+        SelectionCommit::Refuse { restore, error } => {
+            let mut error = error;
+            for key in restore {
+                if let Err(failure) = send_selection_key_async(&target.window_id, key).await {
+                    error = format!("{error}; the cursor could not be put back: {failure}");
+                    break;
+                }
+            }
+            return json_error(409, error);
+        }
     }
     if let Err(error) = run_tmux_argv_with_timeout_async(
         send_carriage_return_argv(&target.window_id),
@@ -2257,6 +2298,16 @@ async fn select_live_pane_route_async(
         return json_error(500, error);
     }
     selection_answer_accepted(&request.session_id, &request.label)
+}
+
+async fn send_selection_key_async(window_id: &str, key: &str) -> Result<(), String> {
+    run_tmux_argv_with_timeout_async(
+        send_key_argv(window_id, key),
+        format!("tmux send-keys {key} failed for {window_id}"),
+        TMUX_COMMAND_TIMEOUT,
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn input_live_pane_route_async(

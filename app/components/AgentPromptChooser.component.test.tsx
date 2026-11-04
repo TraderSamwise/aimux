@@ -30,10 +30,15 @@ describe("AgentPromptChooser", () => {
     expect(screen.getByText("Do you want to create hello.txt?")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "No" }));
 
-    // The label is the identity. A chooser renumbers from 1 for each question,
-    // so a press that carried only the row would answer whatever is in row 3
-    // by the time the service looks.
-    expect(onChoose).toHaveBeenCalledWith({ label: "No", number: 3 });
+    // The label is the identity within the question, and the question says
+    // which question it was. A press carrying only the row would answer
+    // whatever is in row 3 by the time the service looks; a press carrying
+    // only the label would answer "No" to whatever is being asked by then.
+    expect(onChoose).toHaveBeenCalledWith({
+      label: "No",
+      number: 3,
+      question: "Do you want to create hello.txt?",
+    });
   });
 
   it("offers the unnumbered shape too, without inventing numbers for it", () => {
@@ -42,7 +47,11 @@ describe("AgentPromptChooser", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Yes, I trust this folder" }));
 
-    expect(onChoose).toHaveBeenCalledWith({ label: "Yes, I trust this folder", number: undefined });
+    expect(onChoose).toHaveBeenCalledWith({
+      label: "Yes, I trust this folder",
+      number: undefined,
+      question: "Quick safety check: Is this a project you created or one you trust?",
+    });
   });
 
   it("renders the options in the order the service gave them", () => {

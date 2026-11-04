@@ -23,7 +23,7 @@ export function AgentPromptChooser({
   selection: LivePaneSelection;
   /** The option currently being sent, so the row can say so. */
   busyLabel: string | null;
-  onChoose: (option: { label: string; number?: number }) => void;
+  onChoose: (option: { label: string; number?: number; question?: string }) => void;
 }) {
   const busy = busyLabel !== null;
   return (
@@ -43,7 +43,16 @@ export function AgentPromptChooser({
             accessibilityLabel={option.label}
             accessibilityState={{ disabled: busy, selected: option.selected }}
             disabled={busy}
-            onPress={() => onChoose({ label: option.label, number: option.number })}
+            onPress={() =>
+              onChoose({
+                label: option.label,
+                number: option.number,
+                // Sent with the answer so the service can refuse it if the
+                // pane is asking something else by the time it looks. The
+                // label alone does not say which question this was.
+                question: selection.question,
+              })
+            }
             className={`flex-row items-center gap-2 rounded-md border px-2 py-2 ${
               option.selected ? "border-primary bg-background" : "border-border bg-background"
             } ${busy && !sending ? "opacity-50" : ""}`}
