@@ -67,6 +67,7 @@ import { ChatNewMessagesBadge } from "@/components/ChatNewMessagesBadge";
 import { Button } from "@/components/ui/button";
 import { Input, NO_BROWSER_FOCUS_RING } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
+import { AgentPromptChooser } from "@/components/AgentPromptChooser";
 import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
 import { AttachmentDropZone } from "@/components/AttachmentDropZone";
 import {
@@ -99,6 +100,7 @@ import {
   removeShareParticipant,
   revokeShareInvite,
   interruptLivePane,
+  selectLivePaneOption,
   sendLivePaneInput,
   uploadAttachment,
   type ShareInvite,
@@ -228,6 +230,7 @@ import {
   outputAvailableFamily,
   outputBufferFamily,
   markOutputInterruptedAtom,
+  paneSelectionFamily,
   transcriptFamily,
   transcriptStartLineFamily,
 } from "@/stores/chat";
@@ -551,6 +554,7 @@ export default function ChatScreen() {
   const transcript = useAtomValue(transcriptFamily(agentKey));
   const transcriptLastError = useAtomValue(lastErrorFamily(agentKey));
   const activity = useAtomValue(activityFamily(agentKey));
+  const paneSelection = useAtomValue(paneSelectionFamily(agentKey));
   const activityText = useAtomValue(activityTextFamily(agentKey));
   const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
   const relayConfigured = useAtomValue(relayConfiguredAtom);
@@ -591,6 +595,12 @@ export default function ChatScreen() {
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [composerWidth, setComposerWidth] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
+  // The option whose answer is in flight, so the chooser can say which row is
+  // being sent. The guard against a second press is the ref beside it, not
+  // this state: the send callback would otherwise read state it also sets,
+  // which the React Compiler cannot preserve as a memo.
+  const [choosingOption, setChoosingOption] = useState<string | null>(null);
+  const choosingOptionRef = useRef<string | null>(null);
   const [sendWarning, setSendWarning] = useState<string | null>(null);
   // An accepted send the project service queued rather than delivered. Kept
   // apart from `sendError`: the route returns it with `accepted: true`. The
@@ -1859,6 +1869,53 @@ export default function ChatScreen() {
     token,
   ]);
 
+  const handleChoosePromptOption = useCallback(
+    async (option: { label: string; number?: number }) => {
+      if (!endpointHost || !endpointPort || !sessionId) return;
+      if (choosingOptionRef.current !== null) return;
+      choosingOptionRef.current = option.label;
+      setChoosingOption(option.label);
+      setSendError(null);
+      try {
+        const response = await selectLivePaneOption(
+          {
+            host: endpointHost,
+            port: endpointPort,
+            ...(endpointMachineId ? { machineId: endpointMachineId } : {}),
+          },
+          sessionId,
+          option,
+          { token },
+        );
+        // The service refuses an option the pane no longer offers, and its
+        // refusal names what the pane is showing instead. Surfacing that text
+        // is the point: "could not select that" would leave the user pressing
+        // a stale button again.
+        if (response.accepted !== true) {
+          setSendError(response.error ?? `Could not select ${option.label}.`);
+        }
+        void refreshOutputSnapshot("select").catch((error) => {
+          setSendError(formatPostActionTranscriptRefreshResult("Option sent", error));
+        });
+      } catch (error) {
+        setSendError(error instanceof Error ? error.message : `Could not select ${option.label}.`);
+      } finally {
+        choosingOptionRef.current = null;
+        setChoosingOption(null);
+      }
+    },
+    [
+      endpointHost,
+      endpointMachineId,
+      endpointPort,
+      refreshOutputSnapshot,
+      sessionId,
+      setChoosingOption,
+      setSendError,
+      token,
+    ],
+  );
+
   const handleRetryTranscriptLoad = useCallback(
     (purpose: AgentOutputFeedPurpose = "poll") => {
       void refreshOutputSnapshot(purpose, { surfaceError: true }).catch(() => {});
@@ -2265,6 +2322,18 @@ export default function ChatScreen() {
           paddingBottom: composerFooterBottomPadding,
         }}
       >
+        {/*
+          Above the composer, not instead of it. Every one of these questions
+          can also be answered in words, and one of the real options is "Tell
+          Claude what to change", which exists to be followed by typing.
+        */}
+        {paneSelection ? (
+          <AgentPromptChooser
+            selection={paneSelection}
+            busyLabel={choosingOption}
+            onChoose={(option) => void handleChoosePromptOption(option)}
+          />
+        ) : null}
         {pendingAttachments.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
             <View className="flex-row gap-2">
@@ -2391,8 +2460,11 @@ export default function ChatScreen() {
     ),
     [
       canSendMessageBase,
+      choosingOption,
       composerFooterStateValue,
       composerDraftKey,
+      handleChoosePromptOption,
+      paneSelection,
       composerFooterBottomPadding,
       selectionRestoreToken,
       composerKeyboardProps,

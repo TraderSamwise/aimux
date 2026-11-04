@@ -61,6 +61,7 @@ import {
   type LivePaneOutputInput,
   type LivePaneOutputResponse,
   type LivePaneResizeResponse,
+  type ProjectApiOk,
   type LibraryResponse,
   type InteractionStreamEventName,
   type InteractionPendingResponse,
@@ -1000,6 +1001,34 @@ export async function sendLivePaneInput(
 }
 
 export const sendAgentInput = sendLivePaneInput;
+
+export interface SelectLivePaneOptionResponse extends ProjectApiOk {
+  sessionId?: string;
+  accepted?: boolean;
+  label?: string;
+  error?: string;
+}
+
+/**
+ * Answer the chooser the pane is showing, by the option the user read.
+ *
+ * The label is what identifies the choice, and the number only narrows it: a
+ * chooser renumbers from 1 for each new question, so sending a row alone would
+ * answer whatever now sits in that row. The service re-reads the pane and
+ * refuses when the label is no longer there.
+ */
+export async function selectLivePaneOption(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  option: { label: string; number?: number },
+  opts?: ApiOpts,
+): Promise<SelectLivePaneOptionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.select, opts, {
+    sessionId,
+    label: option.label,
+    ...(option.number === undefined ? {} : { number: option.number }),
+  });
+}
 
 export async function interruptLivePane(
   endpoint: ServiceEndpoint,

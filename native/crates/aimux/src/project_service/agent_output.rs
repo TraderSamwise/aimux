@@ -81,6 +81,7 @@ const AGENT_OUTPUT_READ_PURPOSES: &[&str] = &[
     "attach",
     "preview",
     "interrupt",
+    "select",
 ];
 const TMUX_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 const AGENT_INPUT_ROUTE_TIMEOUT: Duration = Duration::from_secs(10);
