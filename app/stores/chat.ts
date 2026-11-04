@@ -6,6 +6,8 @@ import type {
   AgentAttentionState,
   AgentOutputEvent,
   AgentTranscriptMessage,
+  LivePaneSelection,
+  LivePaneState,
   StreamEvent,
 } from "@/lib/events";
 import { formatTmuxUnavailable } from "@/lib/unavailable-state";
@@ -51,6 +53,17 @@ export const attentionFamily = atomFamily((_agentStateKey: AgentStateKey) =>
   atom<AgentAttentionState | undefined>(undefined),
 );
 /**
+ * The chooser the pane is waiting on, as the project service read it.
+ *
+ * `undefined` means no chooser, which is also what an older service reports by
+ * sending no `paneState` at all — so this is only ever written from a payload
+ * that carried one, and a service that does not project it leaves the last
+ * value alone rather than clearing it on every poll.
+ */
+export const paneSelectionFamily = atomFamily((_agentStateKey: AgentStateKey) =>
+  atom<LivePaneSelection | undefined>(undefined),
+);
+/**
  * The tool's own progress line. Sparse events keep the last value so the footer
  * does not flicker; explicit empty strings still clear finished turns.
  */
@@ -81,6 +94,13 @@ export type AgentOutputPayload = {
   activity?: AgentActivityState;
   activityText?: string;
   attention?: AgentAttentionState;
+  /**
+   * Required, though the value may be undefined, for the same reason
+   * `outputAnsi` is: a chooser that stays on screen after it has been answered
+   * is a control that answers nothing, and an optional key is one a caller can
+   * forget to forward.
+   */
+  paneState: LivePaneState | undefined;
   tmuxUnavailable?: TmuxUnavailableMarker;
 };
 
@@ -312,6 +332,13 @@ function applyAgentOutputPayload(
   if (!options.sparseActivity || payload.attention !== undefined) {
     set(attentionFamily(payload.agentStateKey), payload.attention);
   }
+  // Written only from a payload that carried `paneState`, never on its
+  // absence. The service sends it on every read, so a chooser that has been
+  // answered clears on the next one; a service too old to project it sends
+  // nothing, and clearing on that would mean clearing forever.
+  if (payload.paneState !== undefined) {
+    set(paneSelectionFamily(payload.agentStateKey), payload.paneState.selection);
+  }
   set(
     lastErrorFamily(payload.agentStateKey),
     formatTmuxUnavailable(payload.tmuxUnavailable, "tmux pane output unavailable"),
@@ -330,6 +357,7 @@ export const markOutputInterruptedAtom = atom(null, (_get, set, agentStateKey: A
     activity: "interrupted",
     activityText: "",
     attention: undefined,
+    paneState: undefined,
   });
 });
 
@@ -351,6 +379,7 @@ function agentOutputEventPayload(
     activity: event.activity,
     activityText: event.activityText,
     attention: event.attention,
+    paneState: event.paneState,
     tmuxUnavailable: event.tmuxUnavailable,
   };
 }

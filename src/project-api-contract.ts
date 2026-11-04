@@ -673,7 +673,48 @@ export interface LivePaneOutputResponse extends ProjectApiOk {
    */
   activityText?: string;
   attention?: AgentAttentionState;
+  /**
+   * How the runtime reads the pane's own chrome, projected server-side.
+   *
+   * `selection` is the one clients act on: a pane waiting on a chooser is not
+   * waiting on words, and the service is the only place that fact exists once.
+   * The input verifier reads the same field to stop measuring a composer that
+   * holds no draft, so a client computing its own copy would disagree with the
+   * service about whether the agent is even being asked something.
+   */
+  paneState?: LivePaneState;
   tmuxUnavailable?: TmuxUnavailableMarker;
+}
+
+export interface LivePaneSelectionOption {
+  /** The number the tool showed, when it numbered them at all. */
+  number?: number;
+  label: string;
+  selected: boolean;
+}
+
+export interface LivePaneSelection {
+  question?: string;
+  options: LivePaneSelectionOption[];
+  /** The key hints the tool printed, when it printed any. */
+  footer?: string;
+}
+
+export interface LivePaneState {
+  /** The composer is idle and ready for words. */
+  promptVisible: boolean;
+  errorVisible: boolean;
+  interruptedVisible: boolean;
+  updatePromptVisible: boolean;
+  blockedMessage?: string;
+  /**
+   * The chooser the pane is waiting on, when it is waiting on one.
+   *
+   * Mutually exclusive with `promptVisible` on a real pane: a chooser renders
+   * its selected option on the cursor row, so the composer is never idle while
+   * one is up.
+   */
+  selection?: LivePaneSelection;
 }
 
 export interface AgentOutputStreamInput extends LivePaneOutputInput {
@@ -704,6 +745,7 @@ export interface AgentOutputStreamOutputData {
   outputStartLineClamped?: boolean;
   outputAvailable?: boolean;
   parsed?: unknown;
+  paneState?: LivePaneState;
   tmuxUnavailable?: TmuxUnavailableMarker;
 }
 

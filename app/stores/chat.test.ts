@@ -13,6 +13,7 @@ import {
   outputAnsiFamily,
   outputAvailableFamily,
   outputBufferFamily,
+  paneSelectionFamily,
   activityTextFamily,
   transcriptStartLineFamily,
 } from "@/stores/chat";
@@ -33,6 +34,7 @@ describe("chat output store", () => {
       agentStateKey: agentKey("agent-1"),
       output: "hello",
       outputAnsi: undefined,
+      paneState: undefined,
       messages: [],
     });
 
@@ -46,6 +48,7 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       tmuxUnavailable: { ok: false, error: "tmux capture-pane timed out after 2s" },
     });
 
@@ -57,6 +60,7 @@ describe("chat output store", () => {
       agentStateKey: agentKey("agent-1"),
       output: "",
       outputAnsi: undefined,
+      paneState: undefined,
       messages: [],
     });
 
@@ -72,6 +76,7 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       activity: "running",
       activityText: "Working...",
     });
@@ -90,6 +95,7 @@ describe("chat output store", () => {
       agentStateKey: agentKey("agent-1"),
       output: "stale output",
       outputAnsi: undefined,
+      paneState: undefined,
     });
 
     expect(store.get(outputBufferFamily(agentKey("agent-1")))).toBe("stale output");
@@ -106,6 +112,7 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       activity: "done",
       activityText: "",
     });
@@ -124,6 +131,7 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       activity: "running",
       activityText: "Working...",
     });
@@ -142,6 +150,7 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       activity: "running",
       activityText: "Working...",
     });
@@ -166,6 +175,7 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "Published events: 21",
       outputAnsi: undefined,
+      paneState: undefined,
       messages: [message],
     });
 
@@ -178,12 +188,14 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "one",
       outputAnsi: undefined,
+      paneState: undefined,
       messages: [message],
     });
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       output: "two",
       outputAnsi: undefined,
+      paneState: undefined,
     });
 
     expect(store.get(transcriptFamily(agentKey("agent-1")))).toEqual([]);
@@ -195,6 +207,7 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "plain",
       outputAnsi: "\x1b[31mplain",
+      paneState: undefined,
     });
 
     expect(store.get(outputAnsiFamily(agentKey("agent-1")))).toBe("\x1b[31mplain");
@@ -207,6 +220,7 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "plain",
       outputAnsi: undefined,
+      paneState: undefined,
     });
 
     expect(store.get(outputAnsiFamily(agentKey("agent-1")))).toBe("plain");
@@ -218,10 +232,12 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "plain",
       outputAnsi: "\x1b[32mplain",
+      paneState: undefined,
     });
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       messages: [message],
     });
 
@@ -304,6 +320,7 @@ describe("the projected transcript", () => {
         sessionId: "agent-1",
         output: "work",
         outputAnsi: undefined,
+        paneState: undefined,
         startLine: -120,
         activity: "running",
         activityText: "Working... (3s)",
@@ -331,6 +348,7 @@ describe("the projected transcript", () => {
         sessionId: "agent-1",
         output: "work",
         outputAnsi: undefined,
+        paneState: undefined,
         startLine: -120,
         activity: "running",
         activityText: "Working... (3s)",
@@ -374,6 +392,7 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       outputAvailable: true,
       startLine: -640,
       messages: [older, newer],
@@ -381,6 +400,7 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       outputAvailable: true,
       startLine: -160,
       messages: [newer, newest],
@@ -425,6 +445,7 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       outputAvailable: true,
       startLine: -640,
       messages: [repeatedA, repeatedB],
@@ -432,6 +453,7 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       outputAvailable: true,
       startLine: -160,
       messages: [smallerWindowRepeatedB, newest],
@@ -622,6 +644,7 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       activity: "running",
       activityText: "Perambulating...",
     });
@@ -629,13 +652,94 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       activity: "interrupted",
       activityText: "",
     });
 
     expect(store.get(activityTextFamily(agentKey("agent-1")))).toBe("");
   });
+
+  it("holds the chooser the service read, and drops it once the pane stops showing one", () => {
+    const store = createStore();
+    const selection = {
+      question: "Do you want to create hello.txt?",
+      options: [
+        { number: 1, label: "Yes", selected: true },
+        { number: 3, label: "No", selected: false },
+      ],
+    };
+
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: agentKey("agent-1"),
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection },
+    });
+    expect(store.get(paneSelectionFamily(agentKey("agent-1")))).toEqual(selection);
+
+    // The answered chooser. `paneState` arrives on every read, so the control
+    // has to go away on the one after the answer — a chooser still on screen
+    // is a control that answers nothing.
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: agentKey("agent-1"),
+      outputAnsi: undefined,
+      paneState: IDLE_PANE,
+    });
+    expect(store.get(paneSelectionFamily(agentKey("agent-1")))).toBeUndefined();
+  });
+
+  it("leaves the chooser alone when a service too old to project one sends nothing", () => {
+    const store = createStore();
+    const selection = { options: [{ label: "No, exit", selected: true }] };
+
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: agentKey("agent-1"),
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection },
+    });
+    // Absent `paneState` is "this service does not say", not "no chooser".
+    // Clearing on it would clear on every poll and the control could never
+    // render against an older daemon mid-upgrade.
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: agentKey("agent-1"),
+      outputAnsi: undefined,
+      paneState: undefined,
+    });
+
+    expect(store.get(paneSelectionFamily(agentKey("agent-1")))).toEqual(selection);
+  });
+
+  it("carries the chooser in from the event stream too", () => {
+    const store = createStore();
+    const selection = {
+      options: [
+        { number: 1, label: "Yes", selected: true },
+        { number: 2, label: "No", selected: false },
+      ],
+    };
+
+    store.set(ingestEventAtom, {
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        startLine: 0,
+        output: "pane",
+        messages: [],
+        paneState: { ...IDLE_PANE, selection },
+      },
+    });
+
+    expect(store.get(paneSelectionFamily(agentKey("agent-1")))).toEqual(selection);
+  });
 });
+
+const IDLE_PANE = {
+  promptVisible: true,
+  errorVisible: false,
+  interruptedVisible: false,
+  updatePromptVisible: false,
+};
 
 // One project on one machine, so these tests key an agent the way the app does.
 const TEST_PROJECT_KEY = projectStateKey({ machineId: "mbp", path: "/repo" });

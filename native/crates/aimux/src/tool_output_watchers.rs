@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+use crate::agent_pane_selection::{PaneSelection, pane_selection};
 use crate::agent_prompt_delivery::strip_agent_prompt_marker;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -11,6 +12,14 @@ pub struct ToolPaneState {
     pub update_prompt_visible: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocked_message: Option<String>,
+    /// The chooser the pane is waiting on, when it is waiting on one.
+    ///
+    /// Not the same question as `prompt_visible`, which asks whether the
+    /// composer is idle and ready for words. These are mutually exclusive on a
+    /// real pane: a chooser renders its selected option on the cursor row, so
+    /// the composer is never empty while one is up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<PaneSelection>,
 }
 
 pub fn classify_tool_pane(tool: &str, text: &str) -> ToolPaneState {
@@ -19,6 +28,15 @@ pub fn classify_tool_pane(tool: &str, text: &str) -> ToolPaneState {
     let prompt_visible = !update_prompt_visible
         && tracks_prompt_readiness(tool)
         && has_tool_input_prompt(tool, text);
+    // Gated on the tool the runtime recorded, not on the shape alone. The
+    // shapes read here are an agent TUI's; a shell session running `fzf` draws
+    // a cursored list too, and offering its rows as answers to a question
+    // nobody asked is the failure that gate prevents.
+    let selection = if tracks_prompt_readiness(tool) && !update_prompt_visible {
+        pane_selection(text)
+    } else {
+        None
+    };
 
     ToolPaneState {
         prompt_visible,
@@ -26,6 +44,7 @@ pub fn classify_tool_pane(tool: &str, text: &str) -> ToolPaneState {
         interrupted_visible,
         update_prompt_visible,
         blocked_message,
+        selection,
     }
 }
 
@@ -219,6 +238,46 @@ mod tests {
         let state = classify_tool_pane("claude", pane);
 
         assert!(!state.prompt_visible);
+    }
+
+    #[test]
+    fn a_chooser_pane_carries_its_options_and_is_not_an_idle_composer() {
+        let pane = " Do you want to create hello.txt?\n ❯ 1. Yes\n   2. Yes, and switch to accept edits\n   3. No\n\n Esc to cancel · Tab to amend";
+
+        let state = classify_tool_pane("claude", pane);
+
+        let selection = state.selection.expect("the pane is waiting on a chooser");
+        assert_eq!(selection.options.len(), 3);
+        assert!(selection.options[0].selected);
+        // The two questions are different: a chooser is up, so the composer is
+        // not sitting idle waiting for words.
+        assert!(!state.prompt_visible);
+    }
+
+    #[test]
+    fn a_shell_pane_drawing_a_cursored_list_is_not_a_chooser() {
+        // The inverse of the gate. `fzf` in a shell session draws exactly this
+        // shape, and its rows are not answers to anything.
+        let pane = "❯ 1. src/main.rs\n  2. src/lib.rs\n  3. README.md";
+
+        assert_eq!(classify_tool_pane("shell", pane).selection, None);
+        assert!(
+            classify_tool_pane("claude", pane).selection.is_some(),
+            "the same shape under an agent tool must still read as a chooser"
+        );
+    }
+
+    #[test]
+    fn an_update_prompt_is_not_offered_as_a_chooser() {
+        // `update_prompt_visible` already carries a refusal message telling the
+        // user to exit and update outside aimux. Offering its rows as choices
+        // would invite an answer aimux cannot deliver.
+        let pane = "Update available! Run npm install -g @openai/codex\n❯ 1. Yes\n  2. No";
+
+        let state = classify_tool_pane("codex", pane);
+
+        assert!(state.update_prompt_visible);
+        assert_eq!(state.selection, None);
     }
 
     #[test]
