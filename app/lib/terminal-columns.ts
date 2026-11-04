@@ -19,8 +19,17 @@
  */
 export const TERMINAL_CHAR_WIDTH = 7.2246875;
 
-/** `paddingHorizontal: 12` on the scroll content, both sides. */
-export const TERMINAL_CONTENT_PADDING = 24;
+/**
+ * Everything between the pane's own frame and the first glyph.
+ *
+ * `onLayout` reports the ScrollView's host frame, so every inset inside it
+ * has to come off: `paddingHorizontal: 12` on the scroll content (24), then
+ * the output card's own `px-3` (24) and its 1px border (2).
+ *
+ * The first version counted only the scroll content's 24 and left the card's
+ * 26 unaccounted, which quietly ate three of the columns meant to be slack.
+ */
+export const TERMINAL_CONTENT_PADDING = 50;
 
 /**
  * Columns given away so a rule never reaches the edge.
@@ -30,10 +39,11 @@ export const TERMINAL_CONTENT_PADDING = 24;
  * second row, which is the entire bug. The costs are not symmetric, so this
  * is deliberately generous rather than exact.
  *
- * It also absorbs the one thing the arithmetic cannot know: the advance width
- * above was measured on one Mac with SF Mono available. Where the stack falls
- * back to a wider face, the real column count is lower than the computed one,
- * and without slack that is a wrap.
+ * It also absorbs the two things the arithmetic cannot know: the advance
+ * width above was measured on one Mac with SF Mono available, so a wider
+ * fallback face elsewhere means fewer real columns; and a classic scrollbar,
+ * which `layout.width` includes but the text cannot use, costs about two
+ * more.
  */
 export const TERMINAL_COLUMN_SAFETY = 8;
 
@@ -41,11 +51,20 @@ export const TERMINAL_COLUMN_SAFETY = 8;
 export const MIN_TERMINAL_DIVIDER_WIDTH = 16;
 
 /**
+ * What to truncate to before layout has measured anything.
+ *
+ * Deliberately a small fixed number rather than the chat bubble's width: a
+ * bubble-derived value is up to 72, and a 199-column rule truncated to 72
+ * still wraps in a narrow pane for the frame before `onLayout` lands.
+ */
+export const TERMINAL_DIVIDER_FALLBACK = 48;
+
+/**
  * Columns a rule may occupy in a pane of `paneWidth` device-independent
  * pixels.
  *
- * `fallback` covers the first render, before layout has measured anything:
- * returning 0 there would truncate every rule to nothing.
+ * `fallback` covers an unmeasured pane: returning 0 there would truncate
+ * every rule to nothing.
  */
 export function terminalDividerColumns(paneWidth: number, fallback: number): number {
   if (!Number.isFinite(paneWidth) || paneWidth <= 0) {

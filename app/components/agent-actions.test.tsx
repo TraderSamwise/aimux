@@ -114,8 +114,11 @@ describe("agent action hover labels", () => {
     const setAttribute = vi.fn();
     nativeTooltipRef("Stop claude")({ setAttribute });
     expect(setAttribute).toHaveBeenCalledWith("title", "Stop claude");
-    expect(source).not.toContain("useRef");
+    // Scoped to the tooltip, not the whole 400-line file: banning "useRef"
+    // outright would fail on an unrelated future ref under a test named
+    // "needs no hook".
     expect(source).not.toContain("useNativeTooltip");
+    expect(source).not.toMatch(/useRef[^\n]*[Tt]ooltip/);
   });
 
   it("survives a detached ref and a node that cannot take attributes", () => {

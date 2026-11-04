@@ -9,6 +9,7 @@ import {
   TERMINAL_CHAR_WIDTH,
   TERMINAL_COLUMN_SAFETY,
   TERMINAL_CONTENT_PADDING,
+  TERMINAL_DIVIDER_FALLBACK,
   terminalDividerColumns,
 } from "./terminal-columns";
 import { formatTerminalOutputForDisplay } from "./terminal-output";
@@ -66,9 +67,27 @@ describe("a rule never outgrows its pane", () => {
 
   it("falls back before layout has measured anything", () => {
     // Zero would truncate every rule to nothing on the first render.
-    expect(terminalDividerColumns(0, 72)).toBe(72);
-    expect(terminalDividerColumns(Number.NaN, 72)).toBe(72);
-    expect(terminalDividerColumns(-10, 72)).toBe(72);
+    expect(terminalDividerColumns(0, TERMINAL_DIVIDER_FALLBACK)).toBe(TERMINAL_DIVIDER_FALLBACK);
+    expect(terminalDividerColumns(Number.NaN, 48)).toBe(48);
+    expect(terminalDividerColumns(-10, 48)).toBe(48);
+  });
+
+  it("counts every inset between the pane frame and the glyphs", () => {
+    // `onLayout` reports the ScrollView host frame, so the scroll content's
+    // 24 AND the output card's px-3 plus border must come off. Counting only
+    // the first left 26px unaccounted and ate three columns of the slack.
+    expect(TERMINAL_CONTENT_PADDING).toBe(24 + 24 + 2);
+  });
+
+  it("keeps real slack after the insets are paid", () => {
+    // The point of the safety margin is that it survives contact with the
+    // pane. At 460px the rule must leave room for the scrollbar too.
+    const columns = terminalDividerColumns(460, 48);
+    const glyphWidth = columns * TERMINAL_CHAR_WIDTH;
+    const usable = 460 - TERMINAL_CONTENT_PADDING;
+    expect(usable - glyphWidth).toBeGreaterThanOrEqual(
+      TERMINAL_COLUMN_SAFETY * TERMINAL_CHAR_WIDTH,
+    );
   });
 
   it("stops shrinking before a rule stops reading as one", () => {
@@ -81,11 +100,26 @@ describe("the pane is wired to its own width", () => {
     // The old value was `Math.max(48, dividerWidth * 2)` -- twice the width
     // of a CHAT BUBBLE, capped at 72, so at most 144 columns, a number with
     // nothing to do with this pane. At 144 a 199-column border still wrapped.
-    expect(SCREEN).toContain("terminalDividerColumns(paneWidth, dividerWidth)");
+    expect(SCREEN).toContain("event.nativeEvent.layout.width,");
+    expect(SCREEN).toContain("paneColumns ?? TERMINAL_DIVIDER_FALLBACK");
     expect(SCREEN).not.toContain("Math.max(48, dividerWidth * 2)");
   });
 
   it("measures the pane where it already measures its height", () => {
-    expect(SCREEN).toContain("setPaneWidth(");
+    expect(SCREEN).toContain("setPaneColumns(");
+  });
+
+  it("commits state per COLUMN, not per pixel", () => {
+    // One column is 7.2px, so a pixel-quantised guard commits up to seven
+    // times per column during a resize, and every commit re-parses the whole
+    // output tail.
+    expect(SCREEN).toContain("const measuredColumns = terminalDividerColumns(");
+    expect(SCREEN).not.toContain("Math.abs(current - measured) < 1");
+  });
+
+  it("pins the terminal font against the OS text scale", () => {
+    // `layout.width` is in dp but a scaled glyph is wider, so at Larger Text
+    // the computed column count is ~30% too many and every rule wraps again.
+    expect(SCREEN).toContain("allowFontScaling={false}");
   });
 });

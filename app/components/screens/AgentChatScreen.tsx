@@ -178,7 +178,7 @@ import {
 import { CHAT_PANE_PLACEHOLDER_SHELL } from "@/lib/chat-pane-placeholder";
 import { reportSendTimeout } from "@/lib/send-timeout-report";
 import { formatTerminalOutputForDisplay, terminalOutputTail } from "@/lib/terminal-output";
-import { terminalDividerColumns } from "@/lib/terminal-columns";
+import { TERMINAL_DIVIDER_FALLBACK, terminalDividerColumns } from "@/lib/terminal-columns";
 import {
   terminalScrollStateAfterUserScroll,
   terminalVisibleOutputForLiveChange,
@@ -3026,7 +3026,6 @@ export default function ChatScreen() {
                     <AgentTerminalOutputPane
                       ref={terminalViewportRef}
                       bottomContentInset={chatBottomContentReserve}
-                      dividerWidth={chatDividerWidth}
                       keyboardVisible={keyboardVisible}
                       onChromeVisibleChange={handleChatChromeVisibleChange}
                       onRequestHistoryPage={requestChatHistoryPage}
@@ -3274,7 +3273,6 @@ const TERMINAL_OUTPUT_LINE_STYLE: TextStyle = {
 
 type AgentTerminalOutputPaneProps = {
   bottomContentInset: number;
-  dividerWidth: number;
   keyboardVisible: boolean;
   onChromeVisibleChange: (visible: boolean) => void;
   onRequestHistoryPage: (metrics: ChatScrollMetrics, reason?: "scroll" | "content") => void;
@@ -3287,7 +3285,6 @@ const AgentTerminalOutputPane = React.memo(
     function AgentTerminalOutputPane(
       {
         bottomContentInset,
-        dividerWidth,
         keyboardVisible,
         onChromeVisibleChange,
         onRequestHistoryPage,
@@ -3300,16 +3297,17 @@ const AgentTerminalOutputPane = React.memo(
       const outputAnsi = useAtomValue(outputAnsiFamily(agentKey));
       const outputAvailable = useAtomValue(outputAvailableFamily(agentKey));
       const scrollRef = useRef<ChatScrollHandle | null>(null);
-      // THIS pane's width, not the chat bubble's. The rules being truncated
-      // are drawn in this font at this size, so the column count is this
-      // pane's arithmetic and nothing else's.
-      const [paneWidth, setPaneWidth] = useState(0);
+      // THIS pane's columns, not the chat bubble's. The rules being truncated
+      // are drawn in this font at this size, so the count is this pane's
+      // arithmetic and nothing else's.
+      //
+      // Columns rather than pixels in state on purpose: one column is 7.2px,
+      // so a pixel guard commits state up to seven times per column during a
+      // resize, and each commit re-parses the whole output tail.
+      const [paneColumns, setPaneColumns] = useState<number | null>(null);
       const output = outputAnsi || outputPlain;
       const outputTail = useMemo(() => terminalOutputTail(output), [output]);
-      const terminalDividerWidth = useMemo(
-        () => terminalDividerColumns(paneWidth, dividerWidth),
-        [dividerWidth, paneWidth],
-      );
+      const terminalDividerWidth = paneColumns ?? TERMINAL_DIVIDER_FALLBACK;
       const liveLines = useMemo(
         () =>
           formatTerminalOutputForDisplay(outputTail, {
@@ -3442,10 +3440,14 @@ const AgentTerminalOutputPane = React.memo(
       const handleTerminalLayout = useCallback(
         (event: LayoutChangeEvent) => {
           // Rules are truncated to THIS pane's columns, so its width is read
-          // where its height already is. Ignoring sub-pixel changes keeps a
-          // float width from re-truncating every line on every layout pass.
-          const measured = event.nativeEvent.layout.width;
-          setPaneWidth((current) => (Math.abs(current - measured) < 1 ? current : measured));
+          // where its height already is -- and converted to columns BEFORE it
+          // reaches state, so a drag that changes the width by a few pixels
+          // without changing the column count commits nothing.
+          const measuredColumns = terminalDividerColumns(
+            event.nativeEvent.layout.width,
+            TERMINAL_DIVIDER_FALLBACK,
+          );
+          setPaneColumns((current) => (current === measuredColumns ? current : measuredColumns));
           terminalGeometryRef.current = {
             ...terminalGeometryRef.current,
             viewportHeight: event.nativeEvent.layout.height,
@@ -3535,11 +3537,15 @@ const AgentTerminalOutputPane = React.memo(
       const content = hasOutput ? (
         <View className="rounded-lg border border-border bg-card/80 px-3 py-2">
           {visibleLines.map((line, lineIndex) => (
-            <RNText key={lineIndex} style={TERMINAL_OUTPUT_LINE_STYLE}>
+            // Terminal output is measured in columns, so it cannot follow the
+            // OS text scale: at Larger Text a 12px glyph draws near 9.4px, the
+            // computed column count is ~30% too many, and every rule wraps
+            // again. Column alignment is the point of a monospace pane.
+            <RNText key={lineIndex} allowFontScaling={false} style={TERMINAL_OUTPUT_LINE_STYLE}>
               {line.length === 0
                 ? "\u00a0"
                 : line.map((span, spanIndex) => (
-                    <RNText key={spanIndex} style={span.style}>
+                    <RNText key={spanIndex} allowFontScaling={false} style={span.style}>
                       {span.text}
                     </RNText>
                   ))}
