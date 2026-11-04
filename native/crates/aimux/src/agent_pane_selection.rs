@@ -43,6 +43,11 @@ const TAIL_LINES: usize = 40;
 const QUESTION_SEARCH_LINES: usize = 20;
 const CURSOR: char = '❯';
 
+/// What a person types to open an autocomplete overlay in the composer: a
+/// slash command, a file mention, a memory line, a shell escape. The overlay
+/// draws a cursored list under the composer, which is the chooser's own shape.
+const COMPOSER_OVERLAY_SIGILS: [char; 5] = ['/', '@', '#', '!', '$'];
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaneSelectionOption {
@@ -282,6 +287,16 @@ fn cursor_options(tail: &[String]) -> Vec<PaneSelectionOption> {
     else {
         return Vec::new();
     };
+    // A composer with an autocomplete overlay open is not a chooser, and it
+    // draws the same shape: capture 06 is `❯ /co` with thirty command rows
+    // under it, which read as thirty options whose first is whatever the user
+    // has typed so far. Keyed on the cursor row being COMPOSER CONTENT -- text
+    // the person typed, starting with one of the sigils that opens an overlay
+    // -- rather than on anything about the rows below, because the rows below
+    // are the part that looks identical.
+    if first.starts_with(COMPOSER_OVERLAY_SIGILS) {
+        return Vec::new();
+    }
     let mut options = vec![PaneSelectionOption {
         number: None,
         label: first,
@@ -383,6 +398,8 @@ mod tests {
     const ASK_QUESTION: &str =
         include_str!("../../../../testdata/pane-captures/04-askuserquestion-options.ansi");
     const PLAN: &str = include_str!("../../../../testdata/pane-captures/05-plan-approval.ansi");
+    const SLASH_PALETTE: &str =
+        include_str!("../../../../testdata/pane-captures/06-slash-command-palette.ansi");
 
     #[test]
     fn reads_the_numbered_tool_permission() {
@@ -559,6 +576,44 @@ mod tests {
             selection.option_index("Yes, manually approve edits", Some(3)),
             None
         );
+    }
+
+    #[test]
+    fn a_slash_command_palette_is_the_composer_not_a_chooser() {
+        // Captured from the same live agent by typing `/co` into it. The
+        // overlay draws a cursored list under the composer, so the naive read
+        // is a chooser whose first option is the half-typed command, offered
+        // while the person is still typing it.
+        let palette = strip_sgr(SLASH_PALETTE);
+        assert!(
+            palette.contains("/usage (cost)"),
+            "capture lost its palette"
+        );
+        assert_eq!(pane_selection(&palette), None);
+
+        // The capture's own palette is long enough to push its composer row
+        // out of the tail window, so it would be rejected by position even
+        // without the rule -- which is luck, not a guard. A palette with few
+        // matches keeps the composer in the tail, and that is the case the
+        // rule is for. Built from the capture's own rows rather than invented.
+        let rows = palette
+            .lines()
+            .filter(|line| line.trim_start().starts_with('/'))
+            .take(3)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(rows.lines().count(), 3, "capture lost its command rows");
+        let short_palette = format!("❯ /co\n{rows}");
+
+        assert_eq!(pane_selection(&short_palette), None);
+    }
+
+    #[test]
+    fn the_overlay_rule_does_not_swallow_a_real_chooser() {
+        // The inverse. The trust prompt's cursor row is a label the tool drew,
+        // not something anyone typed, so it still reads as a chooser.
+        assert!(selection(TRUST).is_some());
+        assert!(selection(PLAN).is_some());
     }
 
     #[test]
