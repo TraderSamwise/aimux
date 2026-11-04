@@ -147,11 +147,12 @@ struct OptionBlock {
 /// wrote earlier, which has the agent's own output under it. Both of those
 /// presented a first phantom "option" whose press sent a carriage return.
 fn only_chrome_below(tail: &[String], last_row: usize) -> bool {
-    // Rows a wrapped footer may carry on after its hint row. Measured: at 62
-    // columns the plan approval's footer becomes `ctrl+g to edit in Vim ·`
-    // and then the plan's path on its own row, so one is the real case and two
-    // is the margin.
-    const FOOTER_CONTINUATION_ROWS: u8 = 2;
+    // Rows a wrapped footer may carry on after its hint row. At 62 columns the
+    // plan approval's footer becomes `ctrl+g to edit in Vim ·` and then the
+    // plan's path; a split pane at 40 takes three. The budget is generous
+    // because it is no longer the only thing holding the line -- the veto
+    // below is.
+    const FOOTER_CONTINUATION_ROWS: u8 = 3;
     let mut continuation = 0u8;
     for line in &tail[last_row + 1..] {
         if line.trim().is_empty() || looks_like_border(line) {
@@ -164,6 +165,15 @@ fn only_chrome_below(tail: &[String], last_row: usize) -> bool {
             // had typed there.
             continuation = 0;
             continue;
+        }
+        // The tool's own output, whatever the budget says. `⏺ Create(file)`
+        // followed by `⎿ Wrote 1 line` is what Claude prints for every write,
+        // and that pair fitted inside a continuation budget -- so an answered
+        // prompt whose output started immediately under the hint row, with no
+        // blank to reset it, still read as live. A row the agent wrote to its
+        // transcript is below the options, and that is the end of the matter.
+        if looks_like_transcript_row(line) {
+            return false;
         }
         if looks_like_footer(line) {
             continuation = FOOTER_CONTINUATION_ROWS;
@@ -411,14 +421,15 @@ pub enum CommitOutcome {
 /// `before` is the pane as the confirming read saw it, which is what makes a
 /// receipt evidence of THIS answer rather than of an older one.
 pub fn commit_outcome(pane: &str, plan: &SelectionAnswerPlan, before: &str) -> CommitOutcome {
-    // The chooser still being up vetoes everything.
+    // The chooser still being up vetoes everything, and this order is
+    // LOAD-BEARING -- I had it down as defence in depth and that was wrong.
     //
-    // Checked first because the receipt check used to run ahead of it, and a
-    // pane that swallowed the Enter with an older question's receipt on screen
-    // reported the strongest claim the route makes. The two checks below now
-    // reject that case on their own -- the receipt has to name THIS question
-    // and not have been there before -- so this ordering is defence in depth
-    // rather than the thing that catches it, and no test fails without it.
+    // An agent that records an answer and then asks the same question again
+    // puts a receipt on screen that is new since the last capture AND names
+    // this prompt's question, so both checks below pass it. Only the order
+    // rejects it. What makes that reachable is scoping the subject to the
+    // prompt's frame: a receipt sitting above a blank is no longer part of the
+    // identity, so the chooser still compares as the same one.
     if let Some(chooser) = pane_selection(pane)
         && chooser.is_same_chooser(&plan.chooser)
     {
@@ -1295,6 +1306,69 @@ mod tests {
         // And the whole shape, as a pane really looks minutes later.
         let pane = " Do you want to create hello.txt?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend\n\n⏺ Create(hello.txt)\n  ⎿ Wrote 1 line to hello.txt\n\n⏺ Done. The file is created.\n\n────────────────\n❯ ship the release notes\n────────────────\n  sam@host ~/repo";
         assert_eq!(pane_selection(pane), None);
+    }
+
+    #[test]
+    fn the_agents_own_output_below_the_options_ends_it_whatever_the_footer_said() {
+        // `⏺ Create(file)` then `⎿ Wrote 1 line` is what Claude prints for
+        // every write, and that pair fits inside a continuation budget -- so
+        // an answered prompt whose output started immediately under the hint
+        // row, with no blank to reset the budget, still read as live. A row
+        // the agent wrote to its transcript is below the options, and that is
+        // the end of it.
+        let pane = " Do you want to create hello.txt?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend\n⏺ Create(hello.txt)\n  ⎿ Wrote 1 line to hello.txt";
+
+        assert_eq!(pane_selection(pane), None);
+    }
+
+    #[test]
+    fn a_footer_wrapped_by_a_narrow_split_still_leaves_the_chooser_readable() {
+        // Split panes are the normal case for this product, and a plan path
+        // takes three rows at around forty columns. The budget is wider than
+        // the 62-column measurement because the transcript veto above is what
+        // actually holds the line now.
+        let pane = " Would you like to proceed?\n ❯ 1. Yes\n   2. No\n\n ctrl+g to edit in Vim ·\n ~/.claude/plans/plan-a-one-\n line-change-bright-\n salamander.md";
+
+        assert!(pane_selection(pane).is_some());
+    }
+
+    #[test]
+    fn a_recorded_answer_cannot_certify_the_same_question_asked_again() {
+        // The case that proves the still-showing check is load-bearing rather
+        // than defence in depth, which is what I had written. An agent that
+        // records an answer and then asks the same question again puts a
+        // receipt on screen that is NEW since the last capture and names this
+        // prompt's question -- so both of the other checks pass it.
+        //
+        // Scoping the subject to the prompt's own frame is what makes this
+        // reachable: a receipt above a blank is no longer part of the
+        // identity, so the chooser still compares as the same one.
+        let chooser = " Pick a fruit?\n ❯ 1. Apple\n   2. Banana\n\n Esc to cancel · Tab to amend";
+        let before = chooser.to_owned();
+        let with_receipt = format!(" ⎿ · Pick a fruit? → Apple\n\n{chooser}");
+        let plan = plan_selection_answer(
+            &before,
+            "Apple",
+            Some(1),
+            Some("Pick a fruit?"),
+            pane_selection(&before).and_then(|s| s.subject).as_deref(),
+        )
+        .expect("a chooser");
+
+        // The receipt is absent from `before` and names this question, so only
+        // the order of the checks rejects it.
+        assert_eq!(
+            pane_selection(&with_receipt).and_then(|s| s.subject),
+            plan.chooser.subject,
+            "the receipt must not be in the identity, or this case cannot arise"
+        );
+        assert!(
+            matches!(
+                commit_outcome(&with_receipt, &plan, &before),
+                CommitOutcome::StillShowing
+            ),
+            "a prompt still on screen has not been answered, whatever is recorded above it"
+        );
     }
 
     #[test]

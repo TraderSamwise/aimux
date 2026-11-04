@@ -1778,6 +1778,7 @@ fn selection_answer_result(
     session_id: &str,
     label: &str,
     outcome: Option<CommitOutcome>,
+    read_failed: bool,
 ) -> ProjectServiceDispatchResponse {
     if let Some(CommitOutcome::StillShowing) = outcome {
         return ProjectServiceDispatchResponse::json(
@@ -1812,6 +1813,12 @@ fn selection_answer_result(
     });
     if let Some(CommitOutcome::Confirmed { taken }) = outcome {
         body["recorded"] = Value::String(taken);
+    }
+    // "Could not read the pane back" and "read it and the prompt was gone" are
+    // different outcomes, and both used to report the same thing. The Enter
+    // did go out, so the answer is still accepted; what is not known is said.
+    if read_failed {
+        body["readBack"] = Value::String("the pane could not be read back after committing".into());
     }
     ProjectServiceDispatchResponse::json(200, body)
 }
@@ -1921,6 +1928,7 @@ fn select_live_pane_route(
             // sends the user to fix something that is already fine.
             if restoring {
                 let mut seen = None;
+                let mut repeats = 0u8;
                 for _ in 0..SELECTION_SETTLE_ATTEMPTS {
                     runtime.settle(SELECTION_SETTLE_MS);
                     let Ok(pane) = runtime
@@ -1930,7 +1938,20 @@ fn select_live_pane_route(
                         break;
                     };
                     let outcome = restore_outcome(&pane, &plan, left_at);
-                    let settled = matches!(outcome, RestoreOutcome::Restored);
+                    // Two agreeing reads is settled here as well, so a cursor
+                    // that genuinely will not move costs two reads rather than
+                    // the whole budget.
+                    repeats = match (&seen, &outcome) {
+                        (
+                            Some(RestoreOutcome::LeftOn { label }),
+                            RestoreOutcome::LeftOn { label: again },
+                        ) if label == again => repeats + 1,
+                        (Some(RestoreOutcome::PaneChanged), RestoreOutcome::PaneChanged) => {
+                            repeats + 1
+                        }
+                        _ => 0,
+                    };
+                    let settled = matches!(outcome, RestoreOutcome::Restored) || repeats >= 1;
                     seen = Some(outcome);
                     if settled {
                         break;
@@ -1967,23 +1988,40 @@ fn select_live_pane_route(
     // routinely slower -- reading immediately reported a good answer as "the
     // prompt is still up", which the app shows as an error the user answers by
     // tapping again, into whatever the pane holds by then.
+    // `Unverified` needs two agreeing reads; `Confirmed` is terminal on the
+    // first. A capture that catches the repaint mid-write, or any transient
+    // parse failure, gives a frame with no chooser in it -- and taking that as
+    // "the prompt is gone" accepted an answer that never landed, on a pane
+    // that showed the prompt whole again a frame later. Two agreeing reads is
+    // what settled means here, as it already does for the submit wait.
     let mut outcome = None;
+    let mut read_failed = false;
+    let mut unverified_runs = 0u8;
     for _ in 0..SELECTION_SETTLE_ATTEMPTS {
         runtime.settle(SELECTION_SETTLE_MS);
         let Ok(pane) = runtime
             .capture_pane(&target.window_id, SELECTION_CAPTURE)
             .map(|pane| strip_sgr(&pane))
         else {
+            read_failed = true;
             break;
         };
         let seen = commit_outcome(&pane, &plan, &moved_pane);
-        let retry = matches!(seen, CommitOutcome::StillShowing);
+        unverified_runs = match seen {
+            CommitOutcome::Unverified => unverified_runs + 1,
+            _ => 0,
+        };
+        let settled = match seen {
+            CommitOutcome::Confirmed { .. } => true,
+            CommitOutcome::Unverified => unverified_runs >= 2,
+            CommitOutcome::StillShowing => false,
+        };
         outcome = Some(seen);
-        if !retry {
+        if settled {
             break;
         }
     }
-    selection_answer_result(&request.session_id, &request.label, outcome)
+    selection_answer_result(&request.session_id, &request.label, outcome, read_failed)
 }
 
 fn input_live_pane_route(
@@ -2490,6 +2528,7 @@ async fn select_live_pane_route_async(
             }
             if restoring {
                 let mut seen = None;
+                let mut repeats = 0u8;
                 for _ in 0..SELECTION_SETTLE_ATTEMPTS {
                     tokio::time::sleep(Duration::from_millis(SELECTION_SETTLE_MS)).await;
                     let Ok(pane) = capture_pane_async(
@@ -2502,7 +2541,20 @@ async fn select_live_pane_route_async(
                         break;
                     };
                     let outcome = restore_outcome(&pane, &plan, left_at);
-                    let settled = matches!(outcome, RestoreOutcome::Restored);
+                    // Two agreeing reads is settled here as well, so a cursor
+                    // that genuinely will not move costs two reads rather than
+                    // the whole budget.
+                    repeats = match (&seen, &outcome) {
+                        (
+                            Some(RestoreOutcome::LeftOn { label }),
+                            RestoreOutcome::LeftOn { label: again },
+                        ) if label == again => repeats + 1,
+                        (Some(RestoreOutcome::PaneChanged), RestoreOutcome::PaneChanged) => {
+                            repeats + 1
+                        }
+                        _ => 0,
+                    };
+                    let settled = matches!(outcome, RestoreOutcome::Restored) || repeats >= 1;
                     seen = Some(outcome);
                     if settled {
                         break;
@@ -2533,7 +2585,15 @@ async fn select_live_pane_route_async(
     {
         return json_error(500, error);
     }
+    // `Unverified` needs two agreeing reads; `Confirmed` is terminal on the
+    // first. A capture that catches the repaint mid-write, or any transient
+    // parse failure, gives a frame with no chooser in it -- and taking that as
+    // "the prompt is gone" accepted an answer that never landed, on a pane
+    // that showed the prompt whole again a frame later. Two agreeing reads is
+    // what settled means here, as it already does for the submit wait.
     let mut outcome = None;
+    let mut read_failed = false;
+    let mut unverified_runs = 0u8;
     for _ in 0..SELECTION_SETTLE_ATTEMPTS {
         tokio::time::sleep(Duration::from_millis(SELECTION_SETTLE_MS)).await;
         let Ok(pane) =
@@ -2541,16 +2601,25 @@ async fn select_live_pane_route_async(
                 .await
                 .map(|pane| strip_sgr(&pane))
         else {
+            read_failed = true;
             break;
         };
         let seen = commit_outcome(&pane, &plan, &moved_pane);
-        let retry = matches!(seen, CommitOutcome::StillShowing);
+        unverified_runs = match seen {
+            CommitOutcome::Unverified => unverified_runs + 1,
+            _ => 0,
+        };
+        let settled = match seen {
+            CommitOutcome::Confirmed { .. } => true,
+            CommitOutcome::Unverified => unverified_runs >= 2,
+            CommitOutcome::StillShowing => false,
+        };
         outcome = Some(seen);
-        if !retry {
+        if settled {
             break;
         }
     }
-    selection_answer_result(&request.session_id, &request.label, outcome)
+    selection_answer_result(&request.session_id, &request.label, outcome, read_failed)
 }
 
 async fn send_selection_key_async(window_id: &str, key: &str) -> Result<(), String> {

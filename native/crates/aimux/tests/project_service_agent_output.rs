@@ -4229,10 +4229,17 @@ struct FakeChooserRuntime {
     /// behind -- the default ordering, not a loaded-machine edge.
     redraw_lag: u8,
     lag_left: u8,
+    /// Set once the carriage return has been sent, so a torn capture only
+    /// stands in for the repaint that follows it.
+    answered_once: bool,
     shown_cursor: usize,
     shown_answered: bool,
     /// A receipt from an EARLIER question, already on screen.
     stale_receipt: Option<String>,
+    /// Captures on which the pane does not parse — a repaint caught mid-write,
+    /// or any transient parse failure. The chooser is up; it just cannot be
+    /// read this frame.
+    torn_captures: u8,
     actions: Vec<FakeRuntimeAction>,
 }
 
@@ -4249,10 +4256,22 @@ impl FakeChooserRuntime {
             records: None,
             redraw_lag: 0,
             lag_left: 0,
+            answered_once: false,
             shown_cursor: 0,
             shown_answered: false,
             stale_receipt: None,
+            torn_captures: 0,
             actions: Vec::new(),
+        }
+    }
+
+    /// Swallows the Enter, and the first post-Enter capture catches the pane
+    /// mid-repaint so it does not parse at all.
+    fn swallowing_with_one_torn_capture(options: &[&str]) -> Self {
+        Self {
+            swallows_enter: true,
+            torn_captures: 1,
+            ..Self::new(options)
         }
     }
 
@@ -4369,6 +4388,11 @@ impl AgentOutputCaptureRuntime for FakeChooserRuntime {
         self.actions
             .push(FakeRuntimeAction::Capture(window_id.to_owned()));
         self.advance_frame();
+        if self.answered_once && self.torn_captures > 0 {
+            self.torn_captures -= 1;
+            // The box half-written: the question is there, the options are not.
+            return Ok(" Do you want to create hello.txt?\n".to_owned());
+        }
         Ok(self.pane())
     }
 
@@ -4396,6 +4420,7 @@ impl AgentOutputCaptureRuntime for FakeChooserRuntime {
         self.actions
             .push(FakeRuntimeAction::CarriageReturn(window_id.to_owned()));
         self.changed();
+        self.answered_once = true;
         if !self.swallows_enter {
             self.answered = true;
         }
@@ -4774,6 +4799,41 @@ fn a_restore_read_a_frame_early_does_not_claim_the_cursor_is_parked() {
     let error = response.body["error"].as_str().unwrap_or_default();
     assert!(error.contains("the cursor was put back"), "got {error}");
     assert!(!runtime.committed());
+    cleanup(project);
+}
+
+#[test]
+fn one_unreadable_frame_does_not_accept_an_answer_that_never_landed() {
+    let project = temp_project("select-torn");
+    let state_dir = project.join("state");
+    write_state_with_window(&state_dir, "@select-torn");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // The Enter is swallowed, and the first capture after it catches the
+    // repaint mid-write so the pane does not parse. A frame with no chooser in
+    // it is indistinguishable from a chooser that is gone — and treating one
+    // such read as final accepted an answer that never happened, on a pane
+    // that showed the prompt whole again the next frame. The app clears its
+    // chooser on that, so the user believes it is answered while the agent
+    // sits there waiting.
+    let mut runtime = FakeChooserRuntime::swallowing_with_one_torn_capture(&["Yes", "No"]);
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::SELECT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "label": "No",
+            "number": 2,
+            "question": "Do you want to create hello.txt?",
+            "subject": "Do you want to create hello.txt?",
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 409);
+    assert_eq!(response.body["accepted"], false);
     cleanup(project);
 }
 
