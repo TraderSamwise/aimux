@@ -67,7 +67,11 @@ import { ChatNewMessagesBadge } from "@/components/ChatNewMessagesBadge";
 import { Button } from "@/components/ui/button";
 import { Input, NO_BROWSER_FOCUS_RING } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
-import { AgentPromptChooser } from "@/components/AgentPromptChooser";
+import {
+  AgentPromptChooser,
+  UnreadablePromptNotice,
+  paneIsWaitingOnAnUnreadablePrompt,
+} from "@/components/AgentPromptChooser";
 import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
 import { AttachmentDropZone } from "@/components/AttachmentDropZone";
 import {
@@ -229,8 +233,11 @@ import {
   outputAnsiFamily,
   outputAvailableFamily,
   outputBufferFamily,
+  answerRefusalFamily,
+  answeringOptionFamily,
   markOutputInterruptedAtom,
   paneSelectionFamily,
+  paneStateFamily,
   transcriptFamily,
   transcriptStartLineFamily,
 } from "@/stores/chat";
@@ -276,6 +283,17 @@ const COMPOSER_FOOTER_VERTICAL_PADDING = 12;
 const CHAT_COMPOSER_CONTROL_ROW_HEIGHT = 34;
 const CHAT_COMPOSER_RESERVE_GAP = 8;
 const CHAT_ATTACHMENT_STRIP_RESERVE = 88;
+/**
+ * What the chooser adds above the composer: its question, its rows, its card.
+ *
+ * Measured per row rather than fixed, because a plan approval is three rows and
+ * an AskUserQuestion is five. It has to be in the reserve for the same reason
+ * the attachment strip beside it is: the footer is absolutely positioned and
+ * grows upward, so content the reserve does not know about overlays the last
+ * lines of the transcript — here, the diff and the tool call being approved.
+ */
+const CHAT_CHOOSER_ROW_RESERVE = 40;
+const CHAT_CHOOSER_CARD_RESERVE = 44;
 const CHAT_NEW_MESSAGE_BADGE_DEBOUNCE_MS = 180;
 const CHAT_NEW_MESSAGE_BADGE_VISIBLE_MS = 3200;
 const FOOTER_LABEL_SHIMMER_DURATION_MS = 1700;
@@ -555,6 +573,14 @@ export default function ChatScreen() {
   const transcriptLastError = useAtomValue(lastErrorFamily(agentKey));
   const activity = useAtomValue(activityFamily(agentKey));
   const paneSelection = useAtomValue(paneSelectionFamily(agentKey));
+  const paneState = useAtomValue(paneStateFamily(agentKey));
+  // Per agent, not per mounted screen: this component instance is reused
+  // across route params, so a marker held in it followed the user to another
+  // agent's chooser, and a remount lost it entirely and re-enabled every row
+  // while the first answer was still walking the cursor.
+  const [answeringOption, setAnsweringOption] = useAtom(answeringOptionFamily(agentKey));
+  const [answerRefusal, setAnswerRefusal] = useAtom(answerRefusalFamily(agentKey));
+  const unreadablePrompt = paneIsWaitingOnAnUnreadablePrompt(paneState);
   const activityText = useAtomValue(activityTextFamily(agentKey));
   const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
   const relayConfigured = useAtomValue(relayConfiguredAtom);
@@ -595,12 +621,7 @@ export default function ChatScreen() {
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [composerWidth, setComposerWidth] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
-  // The option whose answer is in flight, so the chooser can say which row is
-  // being sent. The guard against a second press is the ref beside it, not
-  // this state: the send callback would otherwise read state it also sets,
-  // which the React Compiler cannot preserve as a memo.
-  const [choosingOption, setChoosingOption] = useState<string | null>(null);
-  const choosingOptionRef = useRef<string | null>(null);
+
   const [sendWarning, setSendWarning] = useState<string | null>(null);
   // An accepted send the project service queued rather than delivered. Kept
   // apart from `sendError`: the route returns it with `accepted: true`. The
@@ -1063,6 +1084,11 @@ export default function ChatScreen() {
     (serviceDisconnected
       ? chatChromeRowHeight(reconnectingPanelHeight, CHAT_RECONNECTING_PANEL_RESERVE)
       : 0);
+  const chooserReserve = paneSelection
+    ? CHAT_CHOOSER_CARD_RESERVE + paneSelection.options.length * CHAT_CHOOSER_ROW_RESERVE
+    : unreadablePrompt
+      ? CHAT_CHOOSER_CARD_RESERVE
+      : 0;
   const chatTopContentReserve = chatTranscriptTopReserveHeight({
     pairingBannerVisible: showPairingBanner,
     panelReserveHeight: chatOverlayPanelReserve,
@@ -1075,12 +1101,17 @@ export default function ChatScreen() {
     CHAT_COMPOSER_RESERVE_GAP +
     CHAT_COMPOSER_CONTROL_ROW_HEIGHT +
     composerFooterBottomPadding +
-    (pendingAttachments.length > 0 ? CHAT_ATTACHMENT_STRIP_RESERVE : 0);
+    (pendingAttachments.length > 0 ? CHAT_ATTACHMENT_STRIP_RESERVE : 0) +
+    chooserReserve;
   const effectiveChatChromeVisible =
     chatChromeVisible ||
     keyboardVisible ||
     composerFocused ||
     pendingAttachments.length > 0 ||
+    // The agent is blocked on this control. Letting the chrome hide while it
+    // is up takes away the one thing that unblocks it, with nothing on screen
+    // saying anything is waiting.
+    chooserReserve > 0 ||
     sharePanelOpen ||
     managePanelOpen ||
     serviceDisconnected ||
@@ -1872,10 +1903,8 @@ export default function ChatScreen() {
   const handleChoosePromptOption = useCallback(
     async (option: { label: string; number?: number; question?: string }) => {
       if (!endpointHost || !endpointPort || !sessionId) return;
-      if (choosingOptionRef.current !== null) return;
-      choosingOptionRef.current = option.label;
-      setChoosingOption(option.label);
-      setSendError(null);
+      setAnsweringOption(option.label);
+      setAnswerRefusal(null);
       try {
         const response = await selectLivePaneOption(
           {
@@ -1887,22 +1916,31 @@ export default function ChatScreen() {
           option,
           { token },
         );
-        // The service refuses an option the pane no longer offers, and its
-        // refusal names what the pane is showing instead. Surfacing that text
-        // is the point: "could not select that" would leave the user pressing
-        // a stale button again.
+        // Kept beside the chooser rather than in the composer's error line.
+        // The refusal names what the pane is offering instead, and the shared
+        // error slot is cleared by the next keystroke — so the one message that
+        // explains why the buttons did not work disappeared as soon as the user
+        // reached for the composer.
         if (response.accepted !== true) {
-          setSendError(response.error ?? `Could not select ${option.label}.`);
+          setAnswerRefusal(response.error ?? `Could not select ${option.label}.`);
+          setAnsweringOption(null);
         }
         void refreshOutputSnapshot("select").catch((error) => {
-          setSendError(formatPostActionTranscriptRefreshResult("Option sent", error));
+          setAnswerRefusal(formatPostActionTranscriptRefreshResult("Option sent", error));
+          setAnsweringOption(null);
         });
       } catch (error) {
-        setSendError(error instanceof Error ? error.message : `Could not select ${option.label}.`);
-      } finally {
-        choosingOptionRef.current = null;
-        setChoosingOption(null);
+        setAnswerRefusal(
+          error instanceof Error ? error.message : `Could not select ${option.label}.`,
+        );
+        setAnsweringOption(null);
       }
+      // No `finally` that clears the marker: a resolved request is not a
+      // delivered answer. The chooser the person pressed is still on screen
+      // for another round trip, and every one of these prompts offers the same
+      // `Yes` / `No`, so re-enabling the rows here is what let a second press
+      // answer the NEXT question. The store clears it when a pane read shows
+      // the chooser has actually moved on.
     },
     [
       endpointHost,
@@ -1910,8 +1948,8 @@ export default function ChatScreen() {
       endpointPort,
       refreshOutputSnapshot,
       sessionId,
-      setChoosingOption,
-      setSendError,
+      setAnswerRefusal,
+      setAnsweringOption,
       token,
     ],
   );
@@ -2330,9 +2368,12 @@ export default function ChatScreen() {
         {paneSelection ? (
           <AgentPromptChooser
             selection={paneSelection}
-            busyLabel={choosingOption}
+            busyLabel={answeringOption}
+            refusal={answerRefusal}
             onChoose={(option) => void handleChoosePromptOption(option)}
           />
+        ) : unreadablePrompt ? (
+          <UnreadablePromptNotice />
         ) : null}
         {pendingAttachments.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
@@ -2459,12 +2500,14 @@ export default function ChatScreen() {
       </View>
     ),
     [
+      answerRefusal,
+      answeringOption,
       canSendMessageBase,
-      choosingOption,
       composerFooterStateValue,
       composerDraftKey,
       handleChoosePromptOption,
       paneSelection,
+      unreadablePrompt,
       composerFooterBottomPadding,
       selectionRestoreToken,
       composerKeyboardProps,

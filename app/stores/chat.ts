@@ -53,15 +53,53 @@ export const attentionFamily = atomFamily((_agentStateKey: AgentStateKey) =>
   atom<AgentAttentionState | undefined>(undefined),
 );
 /**
- * The chooser the pane is waiting on, as the project service read it.
+ * How the runtime read the pane's own chrome, as the service sent it.
  *
- * `undefined` means no chooser, which is also what an older service reports by
- * sending no `paneState` at all — so this is only ever written from a payload
- * that carried one, and a service that does not project it leaves the last
- * value alone rather than clearing it on every poll.
+ * The whole `paneState`, not just its `selection`, because an absent selection
+ * is three different facts and only the rest of the field tells them apart: the
+ * pane has no chooser; the service is too old to project one; or the pane HAS a
+ * chooser the reader could not make sense of. The last is a real state — the
+ * reader returns nothing when it sees fewer than two options — and showing a
+ * live composer in front of it says the agent is waiting for words when it is
+ * waiting for a choice.
+ *
+ * Only ever written from a payload that carried `paneState`: a service that
+ * does not project it sends nothing, and clearing on absence would clear on
+ * every poll.
  */
-export const paneSelectionFamily = atomFamily((_agentStateKey: AgentStateKey) =>
-  atom<LivePaneSelection | undefined>(undefined),
+export const paneStateFamily = atomFamily((_agentStateKey: AgentStateKey) =>
+  atom<LivePaneState | undefined>(undefined),
+);
+
+/**
+ * The chooser the pane is waiting on.
+ *
+ * Derived, so the chooser and the pane state it came from cannot disagree.
+ */
+export const paneSelectionFamily = atomFamily((agentStateKey: AgentStateKey) =>
+  atom((get) => get(paneStateFamily(agentStateKey))?.selection),
+);
+
+/**
+ * The option whose answer is in flight, per agent.
+ *
+ * Per agent rather than per mounted screen. The screen is one component
+ * instance reused across route params, so a marker held in it followed the
+ * user to another agent's chooser and claimed an answer was being sent there;
+ * and it was lost on remount, which re-enabled every row while the first
+ * answer was still walking the cursor.
+ *
+ * Holds until the pane confirms the chooser moved on, not until the request
+ * resolves: the chooser on screen is the answered one for another round trip
+ * after that, and a second press on it answers whatever the agent asked next.
+ */
+export const answeringOptionFamily = atomFamily((_agentStateKey: AgentStateKey) =>
+  atom<string | null>(null),
+);
+
+/** Why the service refused the last answer, kept beside the chooser. */
+export const answerRefusalFamily = atomFamily((_agentStateKey: AgentStateKey) =>
+  atom<string | null>(null),
 );
 /**
  * The tool's own progress line. Sparse events keep the last value so the footer
@@ -337,11 +375,41 @@ function applyAgentOutputPayload(
   // answered clears on the next one; a service too old to project it sends
   // nothing, and clearing on that would mean clearing forever.
   if (payload.paneState !== undefined) {
-    set(paneSelectionFamily(payload.agentStateKey), payload.paneState.selection);
+    const previous = get(paneStateFamily(payload.agentStateKey));
+    set(paneStateFamily(payload.agentStateKey), payload.paneState);
+    // The answer is in flight until the PANE says the chooser moved on. The
+    // request resolving is not that: the chooser the person pressed is still
+    // on screen for another round trip, and Claude's prompts all offer the
+    // same `Yes` / `No`, so a second press on it answers the next question.
+    if (!sameChooser(previous?.selection, payload.paneState.selection)) {
+      set(answeringOptionFamily(payload.agentStateKey), null);
+      set(answerRefusalFamily(payload.agentStateKey), null);
+    }
   }
   set(
     lastErrorFamily(payload.agentStateKey),
     formatTmuxUnavailable(payload.tmuxUnavailable, "tmux pane output unavailable"),
+  );
+}
+
+/**
+ * Whether two reads of the pane are showing the same question.
+ *
+ * Compared on the question and the ordered labels, the same identity the
+ * service answers by. A chooser renumbers from 1 for each new question, so
+ * neither the numbers nor the count alone would notice the agent moving on.
+ */
+function sameChooser(
+  before: LivePaneSelection | undefined,
+  after: LivePaneSelection | undefined,
+): boolean {
+  if (before === undefined || after === undefined) return before === after;
+  if (before.question !== after.question) return false;
+  if (before.options.length !== after.options.length) return false;
+  return before.options.every(
+    (option, index) =>
+      option.label === after.options[index]?.label &&
+      option.number === after.options[index]?.number,
   );
 }
 

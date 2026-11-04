@@ -1758,6 +1758,9 @@ fn select_live_pane_route(
         }
         Err(error) => return json_error(500, error),
     };
+    let Some(_claim) = ChooserAnswerClaim::acquire(&target.window_id) else {
+        return json_error(409, "another answer is already being sent to this pane");
+    };
     let pane = match runtime.capture_pane(&target.window_id, SELECTION_CAPTURE) {
         Ok(pane) => strip_sgr(&pane),
         Err(error) => return json_error(500, error),
@@ -1808,6 +1811,11 @@ fn select_live_pane_route(
             return json_error(409, error);
         }
     }
+    // Stand down any input submit still waiting to fire its own carriage
+    // return into this window. That waiter's fallback Enter is explicitly
+    // documented as something that "can answer a permission dialog", and the
+    // dialog it would answer is the one being answered deliberately here.
+    let _ = claim_submit_generation(&target.window_id);
     if let Err(error) = runtime.send_carriage_return(&target.window_id) {
         return json_error(500, error);
     }
@@ -2236,6 +2244,9 @@ async fn select_live_pane_route_async(
         }
         Err(error) => return json_error(500, error),
     };
+    let Some(_claim) = ChooserAnswerClaim::acquire(&target.window_id) else {
+        return json_error(409, "another answer is already being sent to this pane");
+    };
     let pane = match capture_pane_async(&target.window_id, SELECTION_CAPTURE, TMUX_COMMAND_TIMEOUT)
         .await
     {
@@ -2288,6 +2299,7 @@ async fn select_live_pane_route_async(
             return json_error(409, error);
         }
     }
+    let _ = claim_submit_generation(&target.window_id);
     if let Err(error) = run_tmux_argv_with_timeout_async(
         send_carriage_return_argv(&target.window_id),
         format!("tmux send carriage return failed for {}", target.window_id),
@@ -3357,6 +3369,55 @@ fn remaining_until(deadline: Instant) -> Result<Duration, String> {
         Err("agent output request timed out".to_owned())
     } else {
         Ok(deadline.saturating_duration_since(now))
+    }
+}
+
+/// Windows with a chooser answer in flight.
+///
+/// The answer is a cursor walk, a read-back and then an Enter, and two of them
+/// at once interleave into a commit nobody asked for: A walks to "No", A reads
+/// back and sees "No", B's walk moves the cursor on, A sends Enter. A reports
+/// `200 accepted: label "No"` and what committed was B's row -- which in the
+/// real prompts can be "Yes, and switch to BYPASS PERMISSIONS (no further
+/// prompts) for this session". Two clients answering one prompt is an ordinary
+/// path here, not an exotic one: sharing is full trust over the session and
+/// answering is on the guest allowlist, so an owner and a guest both tapping
+/// is exactly the case.
+///
+/// This cannot close the window against a person pressing Down in the TUI at
+/// the same moment; nothing in a pane can. It closes it against ourselves,
+/// which is the part we own.
+static ANSWERING_WINDOWS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::BTreeSet<String>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
+
+struct ChooserAnswerClaim {
+    window_id: String,
+}
+
+impl ChooserAnswerClaim {
+    /// `None` when another answer already holds this window.
+    fn acquire(window_id: &str) -> Option<Self> {
+        let mut answering = match ANSWERING_WINDOWS.lock() {
+            Ok(answering) => answering,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if !answering.insert(window_id.to_owned()) {
+            return None;
+        }
+        Some(Self {
+            window_id: window_id.to_owned(),
+        })
+    }
+}
+
+impl Drop for ChooserAnswerClaim {
+    fn drop(&mut self) {
+        let mut answering = match ANSWERING_WINDOWS.lock() {
+            Ok(answering) => answering,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        answering.remove(&self.window_id);
     }
 }
 
@@ -4907,6 +4968,44 @@ mod tests {
         .expect("large output command should complete");
 
         assert_eq!(result.stdout.len(), 200_000);
+    }
+
+    #[test]
+    fn one_window_takes_one_chooser_answer_at_a_time() {
+        let held = ChooserAnswerClaim::acquire("@selection-claim")
+            .expect("the first answer takes the window");
+        assert!(
+            ChooserAnswerClaim::acquire("@selection-claim").is_none(),
+            "a second answer must not interleave its walk with the first"
+        );
+        // A different window is a different prompt.
+        assert!(ChooserAnswerClaim::acquire("@selection-claim-other").is_some());
+
+        drop(held);
+        assert!(
+            ChooserAnswerClaim::acquire("@selection-claim").is_some(),
+            "the window must be released when the answer finishes"
+        );
+    }
+
+    #[test]
+    fn answering_a_chooser_stands_down_a_pending_input_submit() {
+        // The input waiter's fallback carriage return is documented as
+        // something that "can answer a permission dialog". Bumping the
+        // generation makes it give up, so the only Enter that reaches the pane
+        // is the one for the option the person chose.
+        let generation = claim_submit_generation("@selection-generation");
+        assert!(submit_generation_is_current(
+            "@selection-generation",
+            generation
+        ));
+
+        let _ = claim_submit_generation("@selection-generation");
+
+        assert!(
+            !submit_generation_is_current("@selection-generation", generation),
+            "the older waiter must no longer think it is current"
+        );
     }
 
     #[test]

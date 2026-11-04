@@ -13,7 +13,9 @@ import {
   outputAnsiFamily,
   outputAvailableFamily,
   outputBufferFamily,
+  answeringOptionFamily,
   paneSelectionFamily,
+  paneStateFamily,
   activityTextFamily,
   transcriptStartLineFamily,
 } from "@/stores/chat";
@@ -709,6 +711,65 @@ describe("the projected transcript", () => {
     expect(store.get(paneSelectionFamily(agentKey("agent-1")))).toEqual(selection);
   });
 
+  it("holds the answer marker until the pane says the chooser moved on", () => {
+    const store = createStore();
+    const key = agentKey("agent-1");
+
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection: PERMISSION_CHOOSER },
+    });
+    store.set(answeringOptionFamily(key), "Yes");
+
+    // The same chooser arriving again is not confirmation of anything: the
+    // answered question stays on screen for a round trip after the request
+    // resolves, and releasing here is what let a second press answer the next
+    // question instead.
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection: PERMISSION_CHOOSER },
+    });
+    expect(store.get(answeringOptionFamily(key))).toBe("Yes");
+
+    // A different question, with the same labels and numbers, IS the chooser
+    // moving on.
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection: NEXT_CHOOSER },
+    });
+    expect(store.get(answeringOptionFamily(key))).toBeNull();
+  });
+
+  it("keeps one agent's answer marker out of another's chooser", () => {
+    const store = createStore();
+
+    store.set(answeringOptionFamily(agentKey("agent-1")), "Yes");
+
+    // The chat screen is one component instance reused across route params, so
+    // a marker held in the component followed the user to another agent and
+    // claimed an answer was being sent to a chooser it had never touched.
+    expect(store.get(answeringOptionFamily(agentKey("agent-2")))).toBeNull();
+  });
+
+  it("derives the chooser from the pane state it arrived in", () => {
+    const store = createStore();
+    const key = agentKey("agent-1");
+
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection: PERMISSION_CHOOSER },
+    });
+
+    // One source, so the chooser and the rest of the pane state cannot
+    // disagree about whether a prompt is up.
+    expect(store.get(paneStateFamily(key))?.promptVisible).toBe(true);
+    expect(store.get(paneSelectionFamily(key))).toEqual(PERMISSION_CHOOSER);
+  });
+
   it("carries the chooser in from the event stream too", () => {
     const store = createStore();
     const selection = {
@@ -733,6 +794,24 @@ describe("the projected transcript", () => {
     expect(store.get(paneSelectionFamily(agentKey("agent-1")))).toEqual(selection);
   });
 });
+
+const PERMISSION_CHOOSER = {
+  question: "Do you want to create hello.txt?",
+  options: [
+    { number: 1, label: "Yes", selected: true },
+    { number: 2, label: "No", selected: false },
+  ],
+};
+
+const NEXT_CHOOSER = {
+  // The next permission prompt. Same labels, same numbers, different question
+  // — which is exactly why an answer cannot be released on the label alone.
+  question: "Do you want to run rm -rf build?",
+  options: [
+    { number: 1, label: "Yes", selected: true },
+    { number: 2, label: "No", selected: false },
+  ],
+};
 
 const IDLE_PANE = {
   promptVisible: true,

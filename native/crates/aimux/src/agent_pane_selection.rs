@@ -76,31 +76,88 @@ pub struct PaneSelection {
 /// worse than not having the feature.
 pub fn pane_selection(pane: &str) -> Option<PaneSelection> {
     let tail = selection_tail(pane);
-    let numbered = numbered_options(&tail);
-    let options = if numbered.len() >= 2 {
-        numbered
-    } else {
-        cursor_options(&tail)
-    };
-    if options.len() < 2 {
-        return None;
-    }
-    // Something has to be selected, or this is a list in prose rather than a
-    // live chooser.
-    if !options.iter().any(|option| option.selected) {
-        return None;
-    }
-    let question = question_above(&tail, &options[0].label);
+    // The numbered reader first, then the cursored one -- but a numbered block
+    // that is not a live chooser must not SUPPRESS the cursored read. It used
+    // to: any two numbered rows anywhere in the tail won outright, so an agent
+    // that wrote "1. Create the file / 2. Read it back" in its reply hid the
+    // unnumbered trust prompt underneath it for as long as that list stayed on
+    // screen, and the feature silently did not appear.
+    // Every run of option rows the tail holds is a candidate, and the tests
+    // below pick between them rather than vetoing the first guess. That
+    // ordering matters: a stale numbered list ABOVE a live chooser used to be
+    // chosen and then rejected, which lost the real chooser underneath it
+    // instead of falling through to it.
+    let block = live_chooser_block(&tail)?;
     let footer = tail
         .iter()
         .rev()
         .find(|line| looks_like_footer(line))
         .map(|line| line.trim().to_owned());
     Some(PaneSelection {
-        question,
-        options,
+        question: question_above(&tail, block.first_row),
+        options: block.options,
         footer,
     })
+}
+
+/// A run of option rows, and where it sits in the tail.
+///
+/// The rows matter as much as the labels: the question used to be found by
+/// searching the tail for the first row CONTAINING the first option's label,
+/// and option one is routinely labelled `Yes`, so a line of ordinary prose
+/// mentioning "yes" above the prompt became the anchor and a stale question
+/// got bolted onto live buttons.
+struct OptionBlock {
+    options: Vec<PaneSelectionOption>,
+    first_row: usize,
+    last_row: usize,
+}
+
+/// Whether everything below the options is chrome a chooser may legitimately
+/// draw under itself.
+///
+/// A live chooser is the LAST thing the pane is showing. Below it come key
+/// hints and box edges and nothing else -- never agent output, never the
+/// composer's status line. This is what separates a chooser from the two
+/// shapes that otherwise read exactly like one: a multi-row composer draft,
+/// whose continuation rows sit under the cursor inside the same box with a
+/// rule and a status line below it; and a numbered list the agent or the user
+/// wrote earlier, which has the agent's own output under it. Both of those
+/// presented a first phantom "option" whose press sent a carriage return.
+fn only_chrome_below(tail: &[String], last_row: usize) -> bool {
+    tail[last_row + 1..]
+        .iter()
+        .all(|line| line.trim().is_empty() || looks_like_border(line) || looks_like_footer(line))
+}
+
+/// Whether a block of rows could be the chooser the pane is waiting on.
+fn is_live_chooser(tail: &[String], block: &OptionBlock) -> bool {
+    block.options.len() >= 2
+        // Something has to be selected, or this is a list in prose rather than
+        // a live chooser.
+        && block.options.iter().any(|option| option.selected)
+        && only_chrome_below(tail, block.last_row)
+}
+
+/// The run of rows that reads as the chooser being waited on.
+///
+/// Numbered before cursored, because a numbered chooser's rows also satisfy
+/// the cursored reader and would come back with the numbers stuck to the front
+/// of the labels.
+///
+/// `next_back` is a tie-break, not a ranking: only one run can have nothing
+/// but chrome below it, since any run above another has that other run in the
+/// way. Two cursor rows inside one block are the case it settles, and it
+/// settles them towards the lower one.
+fn live_chooser_block(tail: &[String]) -> Option<OptionBlock> {
+    numbered_blocks(tail)
+        .into_iter()
+        .rfind(|block| is_live_chooser(tail, block))
+        .or_else(|| {
+            cursor_blocks(tail)
+                .into_iter()
+                .rfind(|block| is_live_chooser(tail, block))
+        })
 }
 
 impl PaneSelection {
@@ -346,24 +403,50 @@ fn selection_tail(pane: &str) -> Vec<String> {
 /// A line indented past its option is that option's description, not another
 /// option -- that is how AskUserQuestion renders them, and they carry no
 /// number so they never match.
-fn numbered_options(tail: &[String]) -> Vec<PaneSelectionOption> {
-    let mut options = Vec::<PaneSelectionOption>::new();
-    for line in tail {
+fn numbered_blocks(tail: &[String]) -> Vec<OptionBlock> {
+    let mut blocks = Vec::<OptionBlock>::new();
+    let mut open: Option<OptionBlock> = None;
+    for (row, line) in tail.iter().enumerate() {
+        // A blank row ends a block. Nothing else does: AskUserQuestion puts a
+        // description under each option and a box edge between its fourth and
+        // fifth, and both belong to the block they interrupt.
+        if line.trim().is_empty() {
+            blocks.extend(open.take());
+            continue;
+        }
         let Some((number, label)) = numbered_option(line) else {
             continue;
         };
-        // Restart on a repeated 1., so an earlier chooser left in scrollback
-        // cannot merge into the live one.
-        if number == 1 && !options.is_empty() {
-            options.clear();
-        }
-        options.push(PaneSelectionOption {
+        let option = PaneSelectionOption {
             number: Some(number),
             label,
             selected: line.contains(CURSOR),
-        });
+        };
+        match open.as_mut() {
+            // Restart on a repeated 1., so an earlier chooser that was never
+            // separated by a blank cannot merge into the live one.
+            Some(block) if number == 1 => {
+                *block = OptionBlock {
+                    options: vec![option],
+                    first_row: row,
+                    last_row: row,
+                };
+            }
+            Some(block) => {
+                block.options.push(option);
+                block.last_row = row;
+            }
+            None => {
+                open = Some(OptionBlock {
+                    options: vec![option],
+                    first_row: row,
+                    last_row: row,
+                });
+            }
+        }
     }
-    options
+    blocks.extend(open);
+    blocks
 }
 
 /// `1. Yes`, with or without the cursor in front of it.
@@ -395,21 +478,23 @@ fn numbered_option(line: &str) -> Option<(u32, String)> {
 
 /// The unnumbered shape: a cursor line and its siblings, as the workspace
 /// trust prompt draws them.
-fn cursor_options(tail: &[String]) -> Vec<PaneSelectionOption> {
-    let Some(cursor_at) = tail
-        .iter()
-        .position(|line| line.trim_start().starts_with(CURSOR))
-    else {
-        return Vec::new();
-    };
-    let Some(cursor_label) = tail[cursor_at]
+fn cursor_blocks(tail: &[String]) -> Vec<OptionBlock> {
+    // Every cursor row, because the cursor also marks the composer and every
+    // echoed past message: the live chooser's cursor is usually not the only
+    // one, and which of them it is cannot be decided here.
+    tail.iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim_start().starts_with(CURSOR))
+        .filter_map(|(cursor_at, _)| cursor_block_at(tail, cursor_at))
+        .collect()
+}
+
+fn cursor_block_at(tail: &[String], cursor_at: usize) -> Option<OptionBlock> {
+    let cursor_label = tail[cursor_at]
         .trim()
         .strip_prefix(CURSOR)
         .map(|label| label.trim().to_owned())
-        .filter(|label| !label.is_empty())
-    else {
-        return Vec::new();
-    };
+        .filter(|label| !label.is_empty())?;
     // A composer with an autocomplete overlay open is not a chooser, and it
     // draws the same shape: capture 06 is `❯ /co` with thirty command rows
     // under it, which read as thirty options whose first is whatever the user
@@ -418,7 +503,7 @@ fn cursor_options(tail: &[String]) -> Vec<PaneSelectionOption> {
     // -- rather than on anything about the rows below, because the rows below
     // are the part that looks identical.
     if cursor_label.starts_with(COMPOSER_OVERLAY_SIGILS) {
-        return Vec::new();
+        return None;
     }
     // The whole contiguous block the cursor sits in, walking UP as well as
     // down. Collecting only the rows below the cursor made the option list
@@ -435,20 +520,24 @@ fn cursor_options(tail: &[String]) -> Vec<PaneSelectionOption> {
     while last_at + 1 < tail.len() && is_cursor_option_row(&tail[last_at + 1]) {
         last_at += 1;
     }
-    tail[first_at..=last_at]
-        .iter()
-        .enumerate()
-        .map(|(offset, line)| PaneSelectionOption {
-            number: None,
-            label: line
-                .trim()
-                .strip_prefix(CURSOR)
-                .unwrap_or(line.trim())
-                .trim()
-                .to_owned(),
-            selected: first_at + offset == cursor_at,
-        })
-        .collect()
+    Some(OptionBlock {
+        options: tail[first_at..=last_at]
+            .iter()
+            .enumerate()
+            .map(|(offset, line)| PaneSelectionOption {
+                number: None,
+                label: line
+                    .trim()
+                    .strip_prefix(CURSOR)
+                    .unwrap_or(line.trim())
+                    .trim()
+                    .to_owned(),
+                selected: first_at + offset == cursor_at,
+            })
+            .collect(),
+        first_row: first_at,
+        last_row: last_at,
+    })
 }
 
 /// Whether a row next to the cursor is one of its siblings.
@@ -469,10 +558,7 @@ fn is_cursor_option_row(line: &str) -> bool {
 /// would offer that as the question. A wrapped question continues onto the
 /// following lines, so they are joined back on until a blank or a border ends
 /// the paragraph.
-fn question_above(tail: &[String], first_option_label: &str) -> Option<String> {
-    let first_option_at = tail
-        .iter()
-        .position(|line| line.contains(first_option_label))?;
+fn question_above(tail: &[String], first_option_at: usize) -> Option<String> {
     let floor = first_option_at.saturating_sub(QUESTION_SEARCH_LINES);
     let asked_at = tail[floor..first_option_at]
         .iter()
@@ -501,9 +587,35 @@ fn question_above(tail: &[String], first_option_label: &str) -> Option<String> {
 fn looks_like_border(line: &str) -> bool {
     let trimmed = line.trim();
     !trimmed.is_empty()
-        && trimmed
-            .chars()
-            .all(|character| matches!(character, '─' | '━' | '═' | '╌' | '╍' | '⎯' | '_' | '='))
+        && trimmed.chars().all(|character| {
+            matches!(
+                character,
+                // Straight rules, and the corners and sides of the boxes
+                // the same TUI draws. Without the rounded set a `╰────╯`
+                // edge under a cursored row was collected as an option,
+                // and offered as a button made of box-drawing characters.
+                '─' | '━'
+                    | '═'
+                    | '╌'
+                    | '╍'
+                    | '⎯'
+                    | '_'
+                    | '='
+                    | '╭'
+                    | '╮'
+                    | '╰'
+                    | '╯'
+                    | '┌'
+                    | '┐'
+                    | '└'
+                    | '┘'
+                    | '├'
+                    | '┤'
+                    | '│'
+                    | '┃'
+                    | '║'
+            )
+        })
 }
 
 fn looks_like_footer(line: &str) -> bool {
@@ -764,6 +876,160 @@ mod tests {
     /// The plan question for a capture, so a test does not have to restate it.
     fn question_of(capture: &str) -> Option<String> {
         selection(capture).and_then(|selection| selection.question)
+    }
+
+    #[test]
+    fn a_multi_row_composer_draft_is_not_a_chooser() {
+        // The critical one. The composer's own row starts with the cursor, and
+        // a draft of more than one row -- shift+enter, a paste, or any line
+        // that wraps at pane width -- puts its continuation directly under it
+        // inside the same box. Read as a chooser, the person was offered two
+        // buttons made of their own half-typed message, and pressing the top
+        // one sent a carriage return: it submitted the unfinished draft.
+        //
+        // Framed the way capture 06 frames its composer: a rule above, a rule
+        // below, then the status line and the hint row.
+        let rule = "─".repeat(199);
+        let pane = format!(
+            "{rule}\n❯ fix the bug in the parser\n  and add a regression test for it\n{rule}\n  sam@sam-mbp ~/cs/aimux master ██░7% Opus 5.5 (1M context)\n  ⏸ plan mode on (shift+tab to cycle)"
+        );
+
+        assert_eq!(pane_selection(&pane), None);
+    }
+
+    #[test]
+    fn a_numbered_list_in_the_agents_reply_does_not_hide_the_chooser_under_it() {
+        // The false negative. Any two numbered rows in the tail used to win
+        // outright, and a block with nothing selected then failed the
+        // selection check and returned None -- so an agent that wrote a
+        // two-item list in its reply suppressed the unnumbered trust prompt
+        // for as long as the list stayed on screen, and the feature silently
+        // did not appear.
+        let pane = format!(
+            "⏺ Here is what I will do:\n  1. Create the LICENSE file\n  2. Read it back\n{}",
+            strip_sgr(TRUST)
+        );
+
+        let selection = pane_selection(&pane).expect("the trust prompt is still the chooser");
+        assert_eq!(
+            selection
+                .options
+                .iter()
+                .map(|option| option.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["No, exit", "Yes, I trust this folder"]
+        );
+    }
+
+    #[test]
+    fn a_numbered_list_the_agent_is_working_on_is_not_a_chooser() {
+        // The false positive on the same mechanism. `selected` is the cursor
+        // anywhere on the row, and the cursor also marks an echoed user
+        // message -- so a user message that was itself a numbered list read as
+        // a live chooser over an agent that was busy working.
+        let pane =
+            "❯ 1. create the file\n  2. run the tests\n\n⏺ Working on it\n\n✻ Churned for 4s";
+
+        assert_eq!(pane_selection(pane), None);
+    }
+
+    #[test]
+    fn a_numbered_list_filling_the_bottom_of_the_capture_is_not_a_chooser() {
+        // Nothing but the list below it, because a long reply pushed the
+        // composer out of the capture window -- so "is there only chrome
+        // below" cannot reject this one. What rejects it is that no row is
+        // marked: a chooser always shows which option the cursor is on, and a
+        // list with none is prose that happens to be numbered.
+        let pane = "⏺ Here is what I found:\n  1. The parser trims trailing blanks\n  2. The tail window is forty rows\n  3. The border set knows nine characters\n  4. The footer is matched on key hints";
+
+        assert_eq!(pane_selection(pane), None);
+    }
+
+    #[test]
+    fn an_echoed_numbered_list_above_a_live_chooser_is_passed_over_for_it() {
+        // A user message that was itself a numbered list, echoed back with the
+        // cursor on its first row, sitting above the real trust prompt. The
+        // echo satisfies every local test -- two rows, one of them "selected"
+        // -- so choosing a block and then rejecting it returned nothing and
+        // lost the live prompt underneath. The blocks are candidates, and this
+        // one loses because the chooser below it is the bottom-most that has
+        // nothing but chrome under it.
+        let pane = format!(
+            "❯ 1. create the file\n  2. run the tests\n\n{}",
+            strip_sgr(TRUST)
+        );
+
+        let selection = pane_selection(&pane).expect("the trust prompt is the live chooser");
+        assert_eq!(
+            selection
+                .options
+                .iter()
+                .map(|option| option.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["No, exit", "Yes, I trust this folder"]
+        );
+    }
+
+    #[test]
+    fn a_stale_numbered_list_does_not_merge_into_the_chooser_across_a_blank() {
+        // Two numbered runs with a blank between them, and the live one does
+        // not start at 1 -- `5.` and `6.`, as AskUserQuestion's lower rows do.
+        // Merging them offers six options of which four are the agent's prose,
+        // and the walk then counts rows that are not there.
+        let pane = "⏺ Here is the plan:\n  1. Read the file\n  2. Patch it\n  3. Run the tests\n\n Which half do you want?\n ❯ 5. The first half\n   6. The second half\n\n Esc to cancel";
+
+        let selection = pane_selection(pane).expect("the lower run is the chooser");
+        assert_eq!(
+            selection
+                .options
+                .iter()
+                .map(|option| (option.number, option.label.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(Some(5), "The first half"), (Some(6), "The second half")]
+        );
+        assert_eq!(
+            selection.question.as_deref(),
+            Some("Which half do you want?")
+        );
+    }
+
+    #[test]
+    fn the_question_is_the_one_above_the_options_not_the_first_row_mentioning_yes() {
+        // The question used to be anchored by searching for the first row
+        // CONTAINING option one's label, and option one is routinely `Yes`.
+        // So a line of prose mentioning yes above the prompt became the
+        // anchor, the search for a `?` then ran above THAT, and a stale
+        // question got bolted onto live buttons: the person read "force-push
+        // to master?" and pressed Yes to approve a file write.
+        let pane = format!(
+            "⏺ Should I force-push the branch to master?\n  Yes if you want the remote overwritten, otherwise I will open a PR.\n\n{}",
+            strip_sgr(PERMISSION)
+        );
+
+        let selection = pane_selection(&pane).expect("the permission prompt is a chooser");
+        assert_eq!(
+            selection.question.as_deref(),
+            Some("Do you want to create hello.txt?")
+        );
+    }
+
+    #[test]
+    fn a_rounded_box_edge_is_a_border_not_an_option() {
+        // The same TUI draws boxes with ╭ │ ╰ ╮ ╯, and the border set knew
+        // only the straight rules -- so an edge under a cursored row was
+        // collected as a sibling and offered as a button made of box-drawing
+        // characters.
+        let pane = " ❯ No, exit\n   Yes, I trust this folder\n ╰────────────────────╯\n\n Enter to confirm · Esc to cancel";
+
+        let selection = pane_selection(pane).expect("two real options are still there");
+        assert_eq!(
+            selection
+                .options
+                .iter()
+                .map(|option| option.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["No, exit", "Yes, I trust this folder"]
+        );
     }
 
     #[test]
