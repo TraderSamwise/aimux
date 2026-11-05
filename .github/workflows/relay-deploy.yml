@@ -1,0 +1,83 @@
+# Ship the relay with the lane that ships the app.
+#
+# The web app deploys from `release` through Vercel; the relay deployed only
+# when somebody ran `wrangler deploy` by hand, and nothing said so. A relay fix
+# therefore merged, passed CI, and looked finished on its PR while production
+# kept running the old Worker. That is what happened to the socket-identity fix
+# in bbed2aaaa: it landed on 2026-11-03 and reached production two days later,
+# only because the relay was wedged badly enough to go looking.
+#
+# So the relay now follows the same lane as the GUI. `workflow_dispatch` is here
+# too, because the gap was impossible to close by hand when it mattered: this
+# workflow's absence meant there was no way to trigger a deploy from GitHub at
+# all.
+name: relay-deploy
+
+on:
+  push:
+    branches:
+      - release
+    paths:
+      - "relay/**"
+      - ".github/workflows/relay-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy per ref, newest wins: two pushes in quick succession must not race
+# to publish different Worker versions.
+concurrency:
+  group: relay-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    name: Deploy relay worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node from .nvmrc
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install relay dependencies
+        working-directory: relay
+        run: yarn install --frozen-lockfile
+
+      # The same checks the relay's own CI job runs, because a deploy that
+      # cannot typecheck has no business reaching the Worker that every daemon
+      # and client talks through.
+      - name: Typecheck
+        working-directory: relay
+        run: yarn typecheck
+
+      - name: Test
+        run: yarn vitest run relay/src
+
+      - name: Deploy
+        working-directory: relay
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+            echo "CLOUDFLARE_API_TOKEN is not set, so the relay cannot be deployed."
+            echo "Add it under Settings > Secrets and variables > Actions."
+            echo "Until then the relay ships only by a manual 'wrangler deploy --env production'."
+            exit 1
+          fi
+          yarn wrangler deploy --env production
+
+      # Says which version is live, so a stale Worker is visible in the run
+      # rather than something you discover from a broken client.
+      - name: Report deployed version
+        working-directory: relay
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: yarn wrangler deployments list --env production 2>&1 | head -20
