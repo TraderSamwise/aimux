@@ -506,6 +506,51 @@ fn a_project_removed_from_the_registry_is_forgotten() {
 }
 
 #[test]
+fn a_project_whose_endpoint_cannot_be_read_is_not_forgotten() {
+    // The reader distinguishes "no service" from "could not tell" on purpose,
+    // and a project in the second state is absent from the read -- so
+    // forgetting against it would collapse the two one call later, which is
+    // the whole thing the reader refuses to do.
+    let fixture = Fixture::new("unreadable-not-forgotten");
+    fixture.register_project("next-1", "/cs/tealstreet-next");
+    fixture.register_project("next-2", "/cs/other");
+    fixture.bind_service("next-1", 49226);
+    fixture.bind_service("next-2", 43444);
+    let context = fixture.context();
+    let reports = recording_reporter(&context, taken());
+    let mut task = RelayProjectEndpointsTask::new();
+
+    run(&mut task, &context);
+    assert_eq!(reports.lock().expect("reports").len(), 1);
+
+    // One project's endpoint file becomes unreadable: a directory where the
+    // file belongs. The other is untouched.
+    let path = fixture
+        .resolver
+        .global_aimux_dir()
+        .join("projects")
+        .join("next-1")
+        .join("metadata-api.json");
+    fs::remove_file(&path).expect("remove endpoint file");
+    fs::create_dir_all(&path).expect("directory in its place");
+    run(&mut task, &context);
+
+    // Readable again, on the same port it already reported. If the read error
+    // had been taken for a removal, that memory would be gone and this would
+    // be reported all over again.
+    fs::remove_dir_all(&path).expect("remove the directory");
+    fixture.bind_service("next-1", 49226);
+    run(&mut task, &context);
+
+    let reports = reports.lock().expect("reports").clone();
+    assert_eq!(
+        reports.len(),
+        1,
+        "nothing moved, so nothing should have been reported again: {reports:?}"
+    );
+}
+
+#[test]
 fn an_equal_timestamp_keeps_the_first_entry_in_registry_order() {
     // Documented rather than left to chance: two duplicates that bound in the
     // same millisecond have no newest, and the answer has to be the same on

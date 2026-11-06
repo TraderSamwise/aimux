@@ -220,10 +220,13 @@ impl DaemonPeriodicTask for RelayProjectEndpointsTask {
                 return Ok(());
             };
             // Forgotten before recorded, so a root that has left the
-            // registry does not sit in this map for the daemon's life -- and
-            // so a project re-added on the port it used to have is reported
-            // again rather than suppressed by a memory of the old one.
-            forget_unknown_roots(&mut self.last_reported, &report.known);
+            // registry does not sit in this map for the daemon's life. Only
+            // on a complete read: a project whose endpoint file could not be
+            // read is absent from `known`, and dropping it there would be the
+            // same "could not tell means gone" collapse the reader refuses.
+            if report.complete {
+                forget_unknown_roots(&mut self.last_reported, &report.known);
+            }
             for endpoint in report.accepted {
                 self.last_reported
                     .insert(endpoint.project_root, (endpoint.host, endpoint.port));
@@ -261,6 +264,14 @@ pub struct Report {
     pub accepted: Vec<ProjectEndpoint>,
     /// Every root the registry still has, so the caller can forget the rest.
     pub known: Vec<ProjectEndpoint>,
+    /// Whether every registered project could be read.
+    ///
+    /// A project whose endpoint file could not be read is missing from
+    /// `known` -- it is reported as an error instead, which is the whole point
+    /// of distinguishing the two -- so forgetting against an incomplete read
+    /// would treat "could not tell" as "gone", the exact collapse the reader
+    /// refuses to make one call earlier.
+    pub complete: bool,
 }
 
 /// Report what moved, and answer with what the relay took.
@@ -288,6 +299,7 @@ pub fn report_moved_endpoints(
         return Ok(None);
     };
     let (endpoints, read_errors) = read_project_endpoints(resolver)?;
+    let complete = read_errors.is_empty();
     for error in read_errors {
         log_always_at(
             LogLevel::Warn,
@@ -301,6 +313,7 @@ pub fn report_moved_endpoints(
         return Ok(Some(Report {
             accepted: Vec::new(),
             known: endpoints,
+            complete,
         }));
     }
     match push.report(&moved) {
@@ -322,6 +335,7 @@ pub fn report_moved_endpoints(
             Ok(Some(Report {
                 accepted: moved,
                 known: endpoints,
+                complete,
             }))
         }
         // Nothing recorded either way, so the next tick tries again. A machine

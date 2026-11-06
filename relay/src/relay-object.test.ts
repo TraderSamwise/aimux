@@ -1587,6 +1587,68 @@ describe("RelayObject following a project service onto its new port", () => {
     put.mockRestore();
   });
 
+  // Round 3's rule for a share that names no host, through the route rather
+  // than through the helper: hardcoding the caller's flag to either value
+  // used to leave the whole suite green, so the rule was a comment as far as
+  // the tests were concerned -- the un-updated-caller class exactly.
+  it("moves a share with no host when the reporting daemon is the only machine", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+    expect(upserted).toEqual([{ userId: "user_guest", port: 49226 }]);
+  });
+
+  it("leaves a share with no host alone while a second daemon is connected", async () => {
+    // Unroutable either way with two machines up, so moving its endpoint
+    // could only be a guess -- and the two machines would take turns, every
+    // turn a durable write and a push to every guest.
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+    upserted.length = 0;
+
+    const mini = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    const mbp2 = fakeSocket(["daemon", "user:user_owner", "machine:mbp2", "machineName:sam-mbp2"]);
+    storage.sockets = [mini, mbp2];
+    const put = vi.spyOn(storage, "put");
+    await object.webSocketMessage(mini, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    expect(upserted).toEqual([]);
+    expect(put).not.toHaveBeenCalled();
+    put.mockRestore();
+  });
+
+  // One machine connected is not the same fact as "this sender is it". A
+  // socket can be superseded or evicted while a frame it sent is still being
+  // handled, and then the account's one machine is somebody else -- who this
+  // daemon may not speak for.
+  it("will not speak for a share with no host when the one machine is somebody else", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+    upserted.length = 0;
+
+    const mbp2 = fakeSocket(["daemon", "user:user_owner", "machine:mbp2", "machineName:sam-mbp2"]);
+    // Deliberately absent from the socket list: this is the superseded one.
+    const gone = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [mbp2];
+    await object.webSocketMessage(gone, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    expect(upserted).toEqual([]);
+  });
+
   // A daemon that connected without a usable machine id is tagged
   // `unidentified`. Reading that as "claims no machine" let it move every
   // machine-bound share in the account onto its own ports.
@@ -1797,14 +1859,18 @@ describe("RelayObject following a project service onto its new port", () => {
     const upserted: { userId: string; port?: number }[] = [];
     const storage = storageWithSockets([]);
     const object = createObject(storage, envRecording(upserted));
-    // A share bound to no machine on purpose: a client socket carries no
-    // machine tag, so against a bound share the machine rule would refuse it
-    // anyway and this would prove nothing about the daemon check.
+    // Every other rule in the path has to say yes, or this proves nothing
+    // about the daemon check -- which is what it had quietly become. So: a
+    // share that names no host, and one connected daemon as nameless as a
+    // client socket is, which makes the single-machine rule agree that this
+    // sender speaks for the account. The daemon check is then the only thing
+    // between the frame and the write.
     const shareId = await shareBoundTo(object, undefined, 44659);
     upserted.length = 0;
 
+    const nameless = fakeSocket(["daemon", "user:user_owner", "machine:unidentified"]);
     const client = fakeSocket(["client", "user:user_owner", "device:client_1"]);
-    storage.sockets = [client];
+    storage.sockets = [nameless, client];
     await object.webSocketMessage(client, endpointsFrame(49226));
 
     expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
