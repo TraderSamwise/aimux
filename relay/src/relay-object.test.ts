@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_MACHINES_PER_ROOM, UNSEQUENCED_CONNECTION, connectionSequenceFromTags } from "./machines";
-import { RelayObject } from "./relay-object";
+import { MAX_PROJECT_ENDPOINT_REPORTS, RelayObject } from "./relay-object";
+import projectEndpointsContract from "../../testdata/contracts/v1/relay-project-endpoints.json";
 import { deviceProofMessage } from "./security";
 import type { Env } from "./types";
 
@@ -1440,6 +1441,7 @@ describe("RelayObject following a project service onto its new port", () => {
     machineId: string | undefined,
     port: number,
     sessionId = "claude-psmp2r",
+    projectRoot = "/Users/sam/cs/tealstreet-next",
   ): Promise<string> {
     const response = await object.fetch(
       request("https://relay.aimux.app/shares/invite", {
@@ -1448,7 +1450,7 @@ describe("RelayObject following a project service onto its new port", () => {
         name: "Owner",
         email: "owner@example.com",
         body: {
-          projectRoot: "/Users/sam/cs/tealstreet-next",
+          projectRoot,
           serviceEndpoint: { host: "127.0.0.1", port },
           machineId,
           sessionId,
@@ -1507,6 +1509,34 @@ describe("RelayObject following a project service onto its new port", () => {
       .get<{ shares: Record<string, { serviceEndpoint?: { host: string; port: number } }> }>("sharing-state:v1")
       .then((state) => state!.shares[shareId].serviceEndpoint);
   }
+
+  // The daemon builds this frame in Rust and asserts the same file. Neither
+  // side's own tests would notice a renamed field, and the relay answers
+  // nothing, so a mismatch would be silent -- every share would stay on the
+  // port its invite was written with, which is the bug the frame exists to
+  // fix.
+  it("reads the frame shape the daemon actually sends", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const contractProject = projectEndpointsContract.example.projects[0];
+    const shareId = await shareBoundTo(object, "mini", 44659, "claude-psmp2r", contractProject.projectRoot);
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+    await object.webSocketMessage(daemon, JSON.stringify(projectEndpointsContract.example.frame));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({
+      host: contractProject.host,
+      port: contractProject.port,
+    });
+    expect(upserted).toEqual([{ userId: "user_guest", port: contractProject.port }]);
+  });
+
+  it("caps the report where the contract says it is capped", () => {
+    expect(MAX_PROJECT_ENDPOINT_REPORTS).toBe(projectEndpointsContract.maxProjectsPerFrame);
+  });
 
   const endpointsFrame = (port: number) =>
     JSON.stringify({

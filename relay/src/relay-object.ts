@@ -79,7 +79,7 @@ const PENDING_REQUEST_TTL_MS = 60_000;
 /// Each entry is a pass over every share this object holds, so an unbounded
 /// array is unbounded work in one request. A daemon reports one entry per
 /// registered project; this is far above any real fleet.
-const MAX_PROJECT_ENDPOINT_REPORTS = 500;
+export const MAX_PROJECT_ENDPOINT_REPORTS = 500;
 /// How many shares one report may refresh in its guests' objects.
 ///
 /// Each one is a cross-object `fetch` per guest, and the retry means a report
