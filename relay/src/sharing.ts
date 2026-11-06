@@ -74,6 +74,13 @@ export interface SharingState {
   version: 1;
   shares: Record<string, SharedSessionRecord>;
   acceptedShares?: Record<string, SharedSessionSummary>;
+  /// Which project roots each machine last reported a service for.
+  ///
+  /// Written by the endpoint report. It exists so a share that names no host
+  /// can still be routed: the machine that has the checkout is the machine
+  /// that reports it, which is a far better answer than "the only one
+  /// connected" and the only one that survives a second daemon starting.
+  machineProjectRoots?: Record<string, string[]>;
 }
 
 export interface ShareInviteToken {
@@ -119,6 +126,56 @@ export interface AcceptShareInviteInput {
 
 export function emptySharingState(): SharingState {
   return { version: 1, shares: {}, acceptedShares: {} };
+}
+
+/// Note which roots a machine reported, for routing shares that name no host.
+///
+/// Replaces that machine's list rather than merging: a project removed from a
+/// machine has to stop being attributed to it, or a share would be routed to
+/// a host that no longer has the checkout.
+export function rememberMachineProjectRoots(
+  state: SharingState,
+  machineId: string | undefined,
+  projectRoots: readonly string[],
+): SharingState {
+  const machine = sanitizeShareMachineId(machineId);
+  if (!machine) return state;
+  const roots = [...new Set(projectRoots.map((root) => shareProjectRootKey(root)).filter(Boolean))]
+    .sort()
+    .slice(0, MAX_SHARES);
+  const current = state.machineProjectRoots ?? {};
+  const held = current[machine] ?? [];
+  if (held.length === roots.length && held.every((root, index) => root === roots[index])) {
+    return state;
+  }
+  return { ...state, machineProjectRoots: { ...current, [machine]: roots } };
+}
+
+/// The connected machines that could be hosting this share.
+///
+/// A share that names a host is that host's, and this does not second-guess
+/// it. A share that names none used to route only while exactly ONE machine
+/// was connected -- so starting a second daemon anywhere killed it, with an
+/// error saying the host was not connected while it was sitting right there.
+///
+/// Now the reports decide: the machine that has the checkout is the one that
+/// reports a service for it. When nothing has been reported yet -- an older
+/// daemon, or a relay that has just restarted -- every machine stays a
+/// candidate, so this can only ever narrow the old answer, never widen it.
+export function machinesHostingShare<T extends { id: string }>(
+  state: SharingState,
+  share: Pick<SharedSessionRecord, "machineId" | "projectRoot">,
+  machines: readonly T[],
+): readonly T[] {
+  if (sanitizeShareMachineId(share.machineId)) return machines;
+  const reported = state.machineProjectRoots ?? {};
+  if (Object.keys(reported).length === 0) return machines;
+  const wanted = shareProjectRootKey(share.projectRoot);
+  if (!wanted) return machines;
+  const hosting = machines.filter((machine) => (reported[machine.id] ?? []).includes(wanted));
+  // Nobody has claimed it: say what was said before rather than inventing a
+  // refusal out of an absence.
+  return hosting.length === 0 ? machines : hosting;
 }
 
 /// The shares to refresh next: the ones waiting longest for a turn.
@@ -170,7 +227,12 @@ export function normalizeSharingState(state: SharingState): SharingState {
       .slice(0, MAX_SHARES)
       .map((share) => [acceptedShareKey(share.ownerUserId, share.id), share]),
   );
-  return { version: 1, shares, acceptedShares };
+  return {
+    version: 1,
+    shares,
+    acceptedShares,
+    ...(state.machineProjectRoots ? { machineProjectRoots: state.machineProjectRoots } : {}),
+  };
 }
 
 export function getShareChatMode(share: SharedSessionRecord): ShareChatMode {

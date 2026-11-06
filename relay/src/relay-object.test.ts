@@ -1579,6 +1579,9 @@ describe("RelayObject following a project service onto its new port", () => {
 
     const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
     storage.sockets = [daemon];
+    // The first report teaches the object which machine holds this checkout,
+    // which is a real change and is written. Steady state is the second one.
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
     const put = vi.spyOn(storage, "put");
     await object.webSocketMessage(daemon, endpointsFrame(49226));
 
@@ -1619,6 +1622,8 @@ describe("RelayObject following a project service onto its new port", () => {
     const mini = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
     const mbp2 = fakeSocket(["daemon", "user:user_owner", "machine:mbp2", "machineName:sam-mbp2"]);
     storage.sockets = [mini, mbp2];
+    // Once to teach it the roots, as above; the assertion is about the share.
+    await object.webSocketMessage(mini, endpointsFrame(49226));
     const put = vi.spyOn(storage, "put");
     await object.webSocketMessage(mini, endpointsFrame(49226));
 
@@ -1820,6 +1825,44 @@ describe("RelayObject following a project service onto its new port", () => {
     upserted.length = 0;
     await object.webSocketMessage(daemon, endpointsFrame(49226));
     expect(upserted.length).toBe(10);
+  });
+
+  // A share that names no host used to route only while exactly ONE machine
+  // was connected, so starting a second daemon anywhere killed it -- with an
+  // error saying the machine hosting it was not connected, while that machine
+  // was right there. The reports say which machine has the checkout, and this
+  // is the route actually using them.
+  it("routes a share with no host to the machine that reported its checkout", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+
+    const mini = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    const mbp2 = fakeSocket(["daemon", "user:user_owner", "machine:mbp2", "machineName:sam-mbp2"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [mini, mbp2, guest];
+
+    // Only the mini has this checkout, and says so.
+    await object.webSocketMessage(mini, endpointsFrame(44659));
+    mini.send.mockClear();
+
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({
+        id: "req-1",
+        type: "request",
+        method: "GET",
+        path: "/proxy/127.0.0.1/44659/agents/history?sessionId=claude-psmp2r",
+      }),
+    );
+
+    const refusals = guest.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "response" && frame.status >= 400);
+    expect(refusals, `two machines up must not make this unroutable: ${JSON.stringify(refusals)}`).toEqual([]);
+    expect(JSON.parse(String(mini.send.mock.calls.at(-1)?.[0]))).toMatchObject({ type: "request" });
+    expect(mbp2.send).not.toHaveBeenCalled();
   });
 
   // Each entry is a pass over every share this object holds, so an unbounded

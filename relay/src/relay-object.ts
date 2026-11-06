@@ -58,7 +58,9 @@ import {
   sharedRelayRequestAccess,
   summarizeShare,
   stripTrustedAimuxHeaders,
+  machinesHostingShare,
   nextShareRefreshBatch,
+  rememberMachineProjectRoots,
   updateShareServiceEndpoints,
   upsertAcceptedShare,
 } from "./sharing.js";
@@ -433,7 +435,7 @@ export class RelayObject extends DurableObject<Env> {
         return;
       }
       const target = clientResult.share
-        ? resolveSharedDaemonTarget(this.onlineMachines(), clientResult.share.machineId)
+        ? resolveSharedDaemonTarget(await this.machinesHostingShare(clientResult.share), clientResult.share.machineId)
         : resolveDaemonTarget(this.onlineMachines(), parsed.machineId);
       if (!target.ok) {
         this.send(ws, {
@@ -504,7 +506,7 @@ export class RelayObject extends DurableObject<Env> {
       return;
     }
     const target = clientResult.share
-      ? resolveSharedDaemonTarget(this.onlineMachines(), clientResult.share.machineId)
+      ? resolveSharedDaemonTarget(await this.machinesHostingShare(clientResult.share), clientResult.share.machineId)
       : resolveDaemonTarget(this.onlineMachines(), message.machineId);
     if (!target.ok) {
       this.send(ws, {
@@ -627,7 +629,15 @@ export class RelayObject extends DurableObject<Env> {
     const machines = this.onlineMachines();
     const senderIsOnlyMachine = machines.length === 1 && machines[0].id === machineId;
 
-    const loaded = await loadSharingState(this.ctx.storage);
+    const stored = await loadSharingState(this.ctx.storage);
+    const loaded = rememberMachineProjectRoots(
+      stored,
+      machineId,
+      endpoints.map((entry) => entry.projectRoot),
+    );
+    // Same object back when the machine reported the same roots it did last
+    // time, which is the ordinary case and must stay free of a write.
+    const learnedSomething = loaded !== stored;
     const { state, updated, matched } = updateShareServiceEndpoints(loaded, {
       ownerUserId,
       machineId,
@@ -646,7 +656,13 @@ export class RelayObject extends DurableObject<Env> {
     }
     // This arrives on every daemon connect and on a reminder, and the ordinary
     // case is that nothing moved and no receiver is owed anything.
-    if (refresh.size === 0) return;
+    if (refresh.size === 0) {
+      // Nothing moved and nobody is owed a refresh -- but the roots this
+      // report taught us are how a share that names no host gets routed, so
+      // they are worth a write on the rare occasion they changed.
+      if (learnedSomething) await saveSharingState(this.ctx.storage, state);
+      return;
+    }
 
     let changed = updated.length > 0;
     // The ones waiting longest for a turn: taking the first twenty every time
@@ -686,7 +702,7 @@ export class RelayObject extends DurableObject<Env> {
       if (!share) continue;
       if (recordStaleReceivers(share, shareReceivers(share))) changed = true;
     }
-    if (changed) await saveSharingState(this.ctx.storage, state);
+    if (changed || learnedSomething) await saveSharingState(this.ctx.storage, state);
   }
 
   private async handleDaemonNotificationPush(
@@ -854,6 +870,20 @@ export class RelayObject extends DurableObject<Env> {
   }
 
   // Sorted so the list a client renders does not reorder on every reconnect.
+  /// The connected machines that could be hosting this share.
+  ///
+  /// For a share that names a host this is every machine, and the routing
+  /// rule picks it. For one that names none it is the machines that have
+  /// reported a service for its checkout -- which is what keeps such a share
+  /// working when a second daemon connects, instead of dying with an error
+  /// saying its host is not connected while that host is right there.
+  private async machinesHostingShare(share: { machineId?: string; projectRoot: string }): Promise<MachineInfo[]> {
+    const machines = this.onlineMachines();
+    if (share.machineId) return machines;
+    const state = await loadSharingState(this.ctx.storage);
+    return [...machinesHostingShare(state, share, machines)];
+  }
+
   private onlineMachines(): MachineInfo[] {
     return [...this.daemonSockets.keys()].sort().map((id) => ({ id, name: this.daemonMachineNames.get(id) ?? id }));
   }

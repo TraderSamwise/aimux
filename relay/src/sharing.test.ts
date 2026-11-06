@@ -15,7 +15,9 @@ import {
   stripTrustedAimuxHeaders,
   normalizeSharingState,
   summarizeShare,
+  machinesHostingShare,
   nextShareRefreshBatch,
+  rememberMachineProjectRoots,
   updateShareServiceEndpoints,
   upsertAcceptedShare,
   type ShareActor,
@@ -531,6 +533,73 @@ describe("which share a new invite extends", () => {
     };
 
     expect(findShareForSession(state, owner.userId, "claude-1", "strix", "/repo/aimux")).toBeUndefined();
+  });
+});
+
+describe("routing a share that names no host", () => {
+  // Such a share used to route only while exactly ONE machine was connected,
+  // so starting a second daemon anywhere killed it -- with an error saying
+  // the machine hosting it was not connected, while that machine was sitting
+  // right there reporting for duty. Sam's own shared chat is one of these:
+  // the record carries no machineId at all.
+  const machines = [{ id: "mini" }, { id: "mbp2" }];
+  const share = { machineId: undefined, projectRoot: "/Users/sam/cs/tealstreet-next" };
+
+  function stateWithRoots(roots: Record<string, string[]>): SharingState {
+    let state = emptySharingState();
+    for (const [machineId, list] of Object.entries(roots)) {
+      state = rememberMachineProjectRoots(state, machineId, list);
+    }
+    return state;
+  }
+
+  it("routes to the machine that reports the checkout, not to the only one connected", () => {
+    const state = stateWithRoots({
+      mini: ["/Users/sam/cs/tealstreet-next", "/Users/sam/cs/aimux"],
+      mbp2: ["/Users/sam/cs/something-else"],
+    });
+
+    expect(machinesHostingShare(state, share, machines)).toEqual([{ id: "mini" }]);
+  });
+
+  it("leaves a share that names a host entirely alone", () => {
+    const state = stateWithRoots({ mbp2: ["/Users/sam/cs/tealstreet-next"] });
+    const bound = { machineId: "mini", projectRoot: "/Users/sam/cs/tealstreet-next" };
+
+    // Not second-guessed by a report: a bound share is that host's, and the
+    // routing rule refuses it when that host is away rather than silently
+    // sending the guest somewhere else.
+    expect(machinesHostingShare(state, bound, machines)).toEqual(machines);
+  });
+
+  it("says what it said before when nothing has reported yet", () => {
+    // An older daemon, or a relay that has just restarted. This may only ever
+    // narrow the previous answer, never invent a refusal out of an absence.
+    expect(machinesHostingShare(emptySharingState(), share, machines)).toEqual(machines);
+    const elsewhere = stateWithRoots({ mbp2: ["/Users/sam/cs/nothing-to-do-with-it"] });
+    expect(machinesHostingShare(elsewhere, share, machines)).toEqual(machines);
+  });
+
+  it("forgets a root a machine no longer reports", () => {
+    // Replaced, not merged: a checkout removed from a machine has to stop
+    // being attributed to it, or a guest is routed to a host that no longer
+    // has it.
+    let state = stateWithRoots({ mini: ["/Users/sam/cs/tealstreet-next"] });
+    state = rememberMachineProjectRoots(state, "mini", ["/Users/sam/cs/aimux"]);
+
+    expect(machinesHostingShare(state, share, machines)).toEqual(machines);
+  });
+
+  it("records nothing for a machine with no usable id", () => {
+    const state = rememberMachineProjectRoots(emptySharingState(), "unidentified", ["/x"]);
+    expect(state.machineProjectRoots).toBeUndefined();
+  });
+
+  it("does not rewrite the state when a machine reports what it already did", () => {
+    // This arrives every thirty seconds. Re-writing it each time would be a
+    // durable write per tick for ever.
+    const first = rememberMachineProjectRoots(emptySharingState(), "mini", ["/a", "/b"]);
+    expect(rememberMachineProjectRoots(first, "mini", ["/b", "/a"])).toBe(first);
   });
 });
 
