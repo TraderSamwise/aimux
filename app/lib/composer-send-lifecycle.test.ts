@@ -21,8 +21,10 @@ import { looksLikeAgentCommand } from "@/lib/agent-command";
 import {
   COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
   mergeAcceptedComposerEchoes,
+  sameAcceptedComposerEchoes,
   type AcceptedComposerEcho,
 } from "@/lib/composer-echo";
+import { COMPOSER_SEND_TIMEOUT_MESSAGE } from "@/lib/composer-protocol";
 import type { LivePaneInputResponse } from "../../src/project-api-contract";
 
 type Attachment = {
@@ -513,6 +515,86 @@ describe("what a send's echo claims about the transcript", () => {
       ).toHaveLength(1);
     },
   );
+});
+
+describe("settling the echoes the send queued", () => {
+  // The screen's real `settleComposerEchoes`, run against an explicit binding
+  // set. It is the only place the merge's counters become something a user or
+  // Sentry sees, and the two counters must not be treated alike: one is an
+  // error the user is shown, the other is a record nobody is blamed for.
+  function settle(accepted: AcceptedComposerEcho[], parsedMessages: unknown[] = []) {
+    const source = screenAst();
+    const declaration = exactlyOne(
+      source,
+      (node): node is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(node) && node.name?.text === "settleComposerEchoes",
+    );
+    const seen = {
+      timeouts: [] as unknown[],
+      commands: [] as unknown[],
+      errors: [] as unknown[],
+      echoes: [] as unknown[],
+    };
+    const run = compile<(accepted: unknown[], context: Record<string, unknown>) => void>(
+      `${declaration.getText()}\nconst callback = settleComposerEchoes;`,
+      {
+        mergeAcceptedComposerEchoes,
+        sameAcceptedComposerEchoes,
+        COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+        COMPOSER_SEND_TIMEOUT_MESSAGE,
+        reportSendTimeout: (report: unknown) => seen.timeouts.push(report),
+        reportCommandEchoExpired: (context: unknown, count: unknown) =>
+          seen.commands.push({ context, count }),
+      },
+    );
+    run(accepted, {
+      parsedMessages,
+      relayConfigured: true,
+      relayStatus: "connected",
+      routeShareId: "share-1",
+      sessionId: "claude-psmp2r",
+      setAcceptedComposerMessages: (echoes: unknown) => seen.echoes.push(echoes),
+      setSendError: (message: unknown) => seen.errors.push(message),
+    });
+    return seen;
+  }
+
+  const stale = (clientMessageId: string, extra: Partial<AcceptedComposerEcho> = {}) =>
+    ({
+      baselineMessageCount: 0,
+      baselineUserMessageCount: 0,
+      clientMessageId,
+      // Well past the window, whatever the clock says when this runs.
+      createdAtMs: Date.now() - COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS * 10,
+      message: { id: clientMessageId, role: "user", parts: [], text: "" },
+      ...extra,
+    }) as AcceptedComposerEcho;
+
+  it("shows the error for prose and records it", () => {
+    const seen = settle([stale("composer:prose")]);
+
+    expect(seen.errors).toEqual([COMPOSER_SEND_TIMEOUT_MESSAGE]);
+    expect(seen.timeouts).toHaveLength(1);
+    expect(seen.commands).toHaveLength(0);
+  });
+
+  it("records a command's expiry and tells the user nothing", () => {
+    const seen = settle([stale("composer:slash", { expectsTranscriptEcho: false })]);
+
+    expect(seen.errors).toEqual([]);
+    expect(seen.timeouts).toHaveLength(0);
+    expect(seen.commands).toEqual([
+      {
+        context: {
+          relayConfigured: true,
+          relayStatus: "connected",
+          sessionId: "claude-psmp2r",
+          shared: true,
+        },
+        count: 1,
+      },
+    ]);
+  });
 });
 
 describe("composer reservations across screen instances", () => {

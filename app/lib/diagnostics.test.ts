@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
+import ts from "typescript";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -159,6 +160,23 @@ describe("what a diagnostic carries", () => {
     reportSendTimeout({ ...path, droppedExpiredCount: 1, parsedMessageCount: 4 });
 
     const serialized = JSON.stringify(warned);
+    // A password with an `@` in it: the userinfo group has to run to the LAST
+    // `@`, or it stops at the first and the rest of the password rides
+    // through as if it were the host.
+    reportSendFailed(path, new Error("POST https://user:p@55w@rd@relay.aimux.app/x refused"));
+    // Schemes with no authority carry the content itself, so there is no host
+    // to keep and nothing after the scheme that belongs in a diagnostic.
+    reportSendFailed(path, new Error("mailto:sam@tealstreet.io bounced"));
+    reportSendFailed(path, new Error("data:text/plain;base64,c2VjcmV0 rejected"));
+
+    const opaque = JSON.stringify(warned);
+    expect(opaque).not.toContain("55w");
+    expect(opaque).not.toContain("rd@");
+    expect(opaque).not.toContain("sam@tealstreet.io");
+    expect(opaque).not.toContain("c2VjcmV0");
+    expect(opaque).toContain("mailto:<redacted>");
+    expect(opaque).toContain("data:<redacted>");
+
     for (const leaked of [
       "pa55word",
       "sk-live-abcdef",
@@ -177,37 +195,100 @@ describe("what a diagnostic carries", () => {
   });
 
   it("is never handed the draft in the first place", () => {
-    // What makes "no message text" a fact rather than a hope: the screen's
-    // reporter calls take the connection state and an error, and the draft is
-    // in scope at every one of them. Asserting the payload alone passes while
+    // What makes "no message text" a fact rather than a hope: the draft is in
+    // scope at every reporter call site, so the payload being clean is a fact
+    // about the ARGUMENTS. Asserting the built record alone passes while
     // nothing is passed in, which is how this started.
-    const screen = readFileSync(
-      join(__dirname, "..", "components", "screens", "AgentChatScreen.tsx"),
-      "utf8",
-    );
-    const content = ["text", "draft", "acceptedMessage", "parsedMessages", "attachments"];
-    const calls: string[] = [];
-    for (const match of screen.matchAll(/\breport[A-Z][A-Za-z]*\(/g)) {
-      let depth = 0;
-      let index = match.index! + match[0].length - 1;
-      for (; index < screen.length; index += 1) {
-        if (screen[index] === "(") depth += 1;
-        else if (screen[index] === ")") {
-          depth -= 1;
-          if (depth === 0) break;
+    //
+    // Read through the compiler rather than with a regex. The first version
+    // of this gate scanned text, and a review defeated it twice over: a `)`
+    // inside a string argument ended the scan early, and `\btext\b` did not
+    // see `composerDraftTextRef` -- the ref assigned the draft on the line
+    // above the call, and so the likeliest name a future change reaches for.
+    const banned = ["text", "draft", "attachment", "transcript", "message", "parsed"];
+    const calls: Array<{ callee: string; identifiers: string[]; where: string }> = [];
+    const references: Array<{ name: string; called: boolean; where: string }> = [];
+
+    for (const file of reporterCallers()) {
+      const source = ts.createSourceFile(
+        file,
+        readFileSync(file, "utf8"),
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TSX,
+      );
+      const imported = importedReporters(source);
+      const visit = (node: ts.Node): void => {
+        if (
+          ts.isIdentifier(node) &&
+          imported.has(node.text) &&
+          !ts.isImportSpecifier(node.parent)
+        ) {
+          const parent = node.parent;
+          references.push({
+            name: node.text,
+            called: Boolean(parent && ts.isCallExpression(parent) && parent.expression === node),
+            where: basename(file),
+          });
+        }
+        if (ts.isCallExpression(node) && /report/i.test(node.expression.getText(source))) {
+          const identifiers: string[] = [];
+          const collect = (child: ts.Node): void => {
+            // A COUNT of the user's content is not the content:
+            // `parsedMessages.length` is how far the transcript had got,
+            // which is the point of the record. Skipping the whole access
+            // skips the thing being counted too, which is the allowance.
+            if (
+              ts.isPropertyAccessExpression(child) &&
+              (child.name.text === "length" || child.name.text === "size")
+            ) {
+              return;
+            }
+            // A field NAME is not a value. `parsedMessageCount:` says what
+            // the record is called; what it is given is the expression after
+            // the colon, which is scanned. Shorthand (`relayStatus,`) is both
+            // and so is still scanned.
+            if (ts.isPropertyAssignment(child)) {
+              collect(child.initializer);
+              return;
+            }
+            if (ts.isIdentifier(child)) identifiers.push(child.text);
+            ts.forEachChild(child, collect);
+          };
+          for (const argument of node.arguments) collect(argument);
+          calls.push({
+            callee: node.expression.getText(source),
+            identifiers,
+            where: basename(file),
+          });
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
+
+    expect(calls.length, "the reporter call sites must be found at all").toBeGreaterThanOrEqual(5);
+    for (const call of calls) {
+      for (const identifier of call.identifiers) {
+        // By camelCase word, not by substring: `deliveryDiagnosticContext`
+        // ends in "text" and is the one argument every reporter is SUPPOSED
+        // to take, while `composerDraftTextRef` has "text" as a word of its
+        // own. A plural still counts, so the stem matches the start of a word.
+        const words = identifier.split(/(?=[A-Z])|[^A-Za-z]+/).map((word) => word.toLowerCase());
+        for (const stem of banned) {
+          expect(
+            words.some((word) => word.startsWith(stem)),
+            `${call.where}: ${call.callee} is given ${identifier}`,
+          ).toBe(false);
         }
       }
-      calls.push(screen.slice(match.index! + match[0].length, index));
     }
-    expect(calls.length).toBeGreaterThanOrEqual(4);
-    for (const raw of calls) {
-      // A COUNT of the user's content is not the content. `parsedMessages.length`
-      // is how far the transcript had got, which is the whole point of the
-      // record; `parsedMessages` itself would be the transcript.
-      const args = raw.replace(/\b[A-Za-z]\w*\.(?:length|size)\b/g, "COUNT");
-      for (const name of content) {
-        expect(args, `a reporter is given ${name}`).not.toMatch(new RegExp(`\\b${name}\\b`));
-      }
+    // And every reporter is called directly, so the gate above cannot be
+    // stepped around by handing one to something else first.
+    for (const reference of references) {
+      expect(reference.called, `${reference.where}: ${reference.name} is used as a value`).toBe(
+        true,
+      );
     }
   });
 
@@ -248,3 +329,41 @@ describe("what a diagnostic carries", () => {
     );
   });
 });
+
+/** Every app source file that imports a delivery reporter. */
+function reporterCallers(): string[] {
+  const roots = [join(__dirname, ".."), join(__dirname, "..", "components"), join(__dirname)];
+  const seen = new Set<string>();
+  const found: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+        walk(path);
+        continue;
+      }
+      if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) continue;
+      if (seen.has(path)) continue;
+      seen.add(path);
+      if (readFileSync(path, "utf8").includes("@/lib/send-timeout-report")) found.push(path);
+    }
+  };
+  for (const root of roots) walk(root);
+  return found;
+}
+
+/** The reporter names a file imported, so a rename cannot slip the gate. */
+function importedReporters(source: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    if (!statement.moduleSpecifier.getText(source).includes("send-timeout-report")) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      if (/^report/.test(element.name.text)) names.add(element.name.text);
+    }
+  }
+  return names;
+}

@@ -22,6 +22,7 @@ import { buildSentryEnvelope, parseSentryDsn, sentryAuthHeader } from "@/lib/sen
 /** Every diagnostic this app sends. One Sentry issue each. */
 export type DiagnosticName =
   | "composer.send.unconfirmed"
+  | "composer.send.command_unconfirmed"
   | "composer.send.failed"
   | "composer.transcript_refresh.failed"
   | "composer.send.not_accepted";

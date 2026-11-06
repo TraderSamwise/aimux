@@ -132,6 +132,23 @@ describe("composer optimistic echo reconciliation", () => {
     expect(reconciled.echoes).toEqual([]);
     expect(reconciled.droppedUnconfirmedCount).toBe(1);
     expect(reconciled.droppedExpiredCount).toBe(0);
+    // Counted under its own name, though. An unacknowledged command is what a
+    // wedged agent looks like, and suppressing the error without recording
+    // anything left that invisible to the user AND to Sentry at once.
+    expect(reconciled.droppedCommandEchoCount).toBe(1);
+  });
+
+  it("counts a prose timeout and a command timeout separately", () => {
+    const prose = echo("composer:prose", "please run the tests");
+    const command = echo("composer:slash", "/queue", { expectsTranscriptEcho: false });
+
+    const reconciled = mergeAcceptedComposerEchoes([], [prose, command], {
+      nowMs: 1_000 + COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+    });
+
+    expect(reconciled.droppedExpiredCount).toBe(1);
+    expect(reconciled.droppedCommandEchoCount).toBe(1);
+    expect(reconciled.droppedUnconfirmedCount).toBe(2);
   });
 
   it("still shows a command's echo while it waits", () => {

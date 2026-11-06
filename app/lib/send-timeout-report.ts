@@ -113,12 +113,21 @@ export const DIAGNOSTIC_REASON_MAX_CHARS = 300;
  *
  * Also drops `user:password@`, which `host` is not.
  */
-const URL_IN_TEXT = /\b([a-z][a-z0-9+.-]*:\/\/)(?:[^\s/?#@'"<>]*@)?([^\s/?#'"<>]*)[^\s'"<>]*/gi;
+const URL_IN_TEXT = /\b([a-z][a-z0-9+.-]*:\/\/)(?:[^\s/?#'"<>]*@)?([^\s/?#@'"<>)]*)[^\s'"<>)]*/gi;
+
+/// A scheme with no authority at all still carries content.
+///
+/// `data:` holds the payload itself and `mailto:` holds an address, so there
+/// is no host worth keeping and nothing after the scheme that should be in a
+/// diagnostic.
+const OPAQUE_SCHEME_IN_TEXT = /\b(data|mailto|tel|blob|javascript):[^\s'"<>)]+/gi;
 
 export function redactUrls(text: string): string {
-  return text.replace(URL_IN_TEXT, (_match, scheme: string, host: string) =>
-    host ? `${scheme}${host}` : "<url>",
-  );
+  return text
+    .replace(URL_IN_TEXT, (_match, scheme: string, host: string) =>
+      host ? `${scheme}${host}` : "<url>",
+    )
+    .replace(OPAQUE_SCHEME_IN_TEXT, (_match, scheme: string) => `${scheme}:<redacted>`);
 }
 
 export function diagnosticReason(error: unknown): string {
@@ -179,6 +188,37 @@ export function reportTranscriptRefreshFailed(
       shared: context.shared,
       action,
       reason: diagnosticReason(error),
+    },
+  });
+}
+
+/**
+ * A command's echo expired, which is not a failure and not nothing.
+ *
+ * A command need not come back as a user turn, so there is nothing to confirm
+ * it with and no error to raise. But "the agent never acknowledged the
+ * command" is precisely the symptom of a wedged agent, and the user aims
+ * `/clear`, `/model` and `!pkill` at exactly that. Recorded at `info` so it
+ * can be counted and compared against the sends that did confirm, without
+ * telling the user something failed when nothing is known to have.
+ */
+export function reportCommandEchoExpired(
+  context: DeliveryPathContext,
+  droppedCommandEchoCount: number,
+): void {
+  captureDiagnostic({
+    name: "composer.send.command_unconfirmed",
+    message: "A command send was never acknowledged in the transcript",
+    level: "info",
+    tags: { ...deliveryTags(context), expectsTranscriptEcho: "false" },
+    context: {
+      event: "composer.send.command_unconfirmed",
+      sessionId: context.sessionId ?? "unknown",
+      relayConfigured: context.relayConfigured,
+      relayStatus: context.relayStatus,
+      shared: context.shared,
+      droppedCommandEchoCount,
+      timeoutMs: COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
     },
   });
 }

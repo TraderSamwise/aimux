@@ -182,6 +182,7 @@ import { CHAT_PANE_PLACEHOLDER_SHELL } from "@/lib/chat-pane-placeholder";
 import type { InitialAgentOutputFeedStatus } from "@/lib/agent-output-feed-state";
 import { looksLikeAgentCommand } from "@/lib/agent-command";
 import {
+  reportCommandEchoExpired,
   reportSendFailed,
   reportSendNotAccepted,
   reportSendTimeout,
@@ -4375,6 +4376,20 @@ function settleComposerEchoes(
       shared: Boolean(routeShareId),
     });
     setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
+  }
+  if (result.droppedCommandEchoCount > 0) {
+    // No error: a command need not be echoed, so nothing here is known to
+    // have failed. Recorded anyway, because an unacknowledged command is what
+    // a wedged agent looks like and the error path can no longer see it.
+    reportCommandEchoExpired(
+      {
+        relayConfigured,
+        relayStatus,
+        sessionId,
+        shared: Boolean(routeShareId),
+      },
+      result.droppedCommandEchoCount,
+    );
   }
   // By VALUE, not reference. The merge always allocates a fresh array, so a
   // reference check is always unequal -- and this effect depends on the state
