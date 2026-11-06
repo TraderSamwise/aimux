@@ -288,6 +288,29 @@ mod enabled_state {
     use crate::paths::PathResolver;
     use crate::remote::remote_login::LoginFlowWaiter;
 
+    /// The endpoint task's view of this machine's relay.
+    struct SupervisorEndpointReporter {
+        relay: std::sync::Weak<crate::remote::daemon_relay::RelaySupervisor>,
+    }
+
+    impl crate::daemon::scheduler::RelayEndpointReporter for SupervisorEndpointReporter {
+        fn ready(&self) -> bool {
+            self.relay
+                .upgrade()
+                .is_some_and(|relay| relay.is_connected())
+        }
+
+        fn report(
+            &self,
+            projects: &[crate::daemon_projects::ProjectEndpoint],
+        ) -> Result<(), String> {
+            match self.relay.upgrade() {
+                Some(relay) => relay.push_project_endpoints(projects),
+                None => Err("relay_off".to_owned()),
+            }
+        }
+    }
+
     #[derive(Default)]
     pub struct RemoteDaemonState {
         auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
@@ -325,11 +348,9 @@ mod enabled_state {
             &self,
             context: &crate::daemon::scheduler::DaemonSchedulerContext,
         ) {
-            let relay = Arc::downgrade(&self.relay);
             let push: crate::daemon::scheduler::RelayProjectEndpointsPush =
-                Arc::new(move |projects| match relay.upgrade() {
-                    Some(relay) => relay.push_project_endpoints(projects),
-                    None => Err("relay_off".to_owned()),
+                Arc::new(SupervisorEndpointReporter {
+                    relay: Arc::downgrade(&self.relay),
                 });
             if let Err(error) = context.set_relay_project_endpoints_push(push) {
                 crate::debug_logging::log_lifecycle_always(

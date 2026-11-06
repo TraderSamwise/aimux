@@ -7,6 +7,7 @@
 //! only repair was issuing another invite, which emails somebody.
 
 use aimux::async_runtime::block_on_named;
+use aimux::daemon::scheduler::RelayEndpointReporter;
 use aimux::daemon::scheduler::{DaemonPeriodicTask, DaemonSchedulerContext};
 use aimux::daemon_projects::ProjectEndpoint;
 use aimux::daemon_state::AimuxDaemonInfo;
@@ -102,20 +103,46 @@ type Reports = Arc<Mutex<Vec<Vec<ProjectEndpoint>>>>;
 /// What the relay answers: `None` for taken, `Some(error)` for refused.
 type Answer = Arc<Mutex<Option<String>>>;
 
+/// A relay that records what it was handed and answers as told.
+struct FakeRelay {
+    reports: Reports,
+    answer: Answer,
+    connected: Arc<Mutex<bool>>,
+}
+
+impl RelayEndpointReporter for FakeRelay {
+    fn ready(&self) -> bool {
+        *self.connected.lock().expect("connected lock")
+    }
+
+    fn report(&self, projects: &[ProjectEndpoint]) -> Result<(), String> {
+        self.reports
+            .lock()
+            .expect("reports lock")
+            .push(projects.to_vec());
+        match self.answer.lock().expect("answer lock").clone() {
+            None => Ok(()),
+            Some(error) => Err(error),
+        }
+    }
+}
+
 /// Records what the task handed the relay, and whether the relay took it.
 fn recording_reporter(context: &DaemonSchedulerContext, answer: Answer) -> Reports {
+    connected_reporter(context, answer, Arc::new(Mutex::new(true)))
+}
+
+fn connected_reporter(
+    context: &DaemonSchedulerContext,
+    answer: Answer,
+    connected: Arc<Mutex<bool>>,
+) -> Reports {
     let reports: Reports = Arc::new(Mutex::new(Vec::new()));
-    let recorded = Arc::clone(&reports);
     context
-        .set_relay_project_endpoints_push(Arc::new(move |projects| {
-            recorded
-                .lock()
-                .expect("reports lock")
-                .push(projects.to_vec());
-            match answer.lock().expect("answer lock").clone() {
-                None => Ok(()),
-                Some(error) => Err(error),
-            }
+        .set_relay_project_endpoints_push(Arc::new(FakeRelay {
+            reports: Arc::clone(&reports),
+            answer,
+            connected,
         }))
         .expect("register reporter");
     reports
@@ -214,26 +241,60 @@ fn a_report_the_relay_refused_is_sent_again() {
     );
 }
 
+/// The task is useless without the one call that gives it a relay, and
+/// deleting that call left every test in this file passing: they all register
+/// a reporter themselves. Proving it from the daemon's own startup would mean
+/// starting a daemon, so this reads the source instead and says so -- it
+/// catches the deletion and the reordering, and nothing more.
 #[test]
-fn does_not_read_the_registry_before_a_relay_has_been_dialled() {
-    // No reporter means no relay in this build, or none dialled yet. Reading
-    // the registry to find that out would be a disk read per tick on a machine
-    // that has never logged in -- so a registry this task cannot read must
-    // not reach it, and must not fail its tick.
+fn daemon_startup_registers_the_reporter_before_the_scheduler_runs() {
+    let source = include_str!("../src/daemon/runtime.rs");
+    let register = source
+        .find("register_relay_project_endpoints_push(&scheduler_context)")
+        .expect("daemon startup must register the relay endpoint reporter");
+    let spawn = source
+        .find("spawn_daemon_scheduler(")
+        .expect("daemon startup must spawn the scheduler");
+    assert!(
+        register < spawn,
+        "the reporter has to be registered before the scheduler can run the task"
+    );
+}
+
+#[test]
+fn does_not_read_the_registry_while_no_relay_is_connected() {
+    // The reporter is registered at daemon startup whether or not anyone has
+    // ever logged in, so "is a reporter registered" answered the wrong
+    // question: a logged-out machine read the registry every tick for ever --
+    // and `load_registry` saves a normalized copy, so that read can rewrite
+    // the registry too.
+    //
+    // A registry this task cannot read proves it never looked: reading it
+    // would fail the tick.
     let fixture = Fixture::new("no-relay");
     fixture.register_project("next-1", "/cs/tealstreet-next");
     fixture.bind_service("next-1", 49226);
+    let context = fixture.context();
+    let connected = Arc::new(Mutex::new(false));
+    let reports = connected_reporter(&context, taken(), Arc::clone(&connected));
     fs::write(
         fixture.resolver.projects_registry_path(),
         "{\"projects\":5}",
     )
     .expect("bad registry");
-    let context = fixture.context();
     let mut task = RelayProjectEndpointsTask::new();
 
-    run(&mut task, &context);
+    for _ in 0..REMINDER_TICKS + 2 {
+        run(&mut task, &context);
+    }
+    assert!(reports.lock().expect("reports").is_empty());
 
-    assert!(context.relay_project_endpoints_push().is_none());
+    // And once a relay is connected it does look -- which is what makes the
+    // assertion above about the read, and not about a task that never runs.
+    *connected.lock().expect("connected") = true;
+    // aimux-async-seam: test - sync test drives the periodic task body
+    let result = block_on_named("test:relay-endpoints", async { task.run(&context).await });
+    assert!(result.is_err(), "{result:?}");
 }
 
 #[test]
@@ -256,6 +317,55 @@ fn a_registry_that_cannot_be_read_fails_the_tick() {
     let result = block_on_named("test:relay-endpoints", async { task.run(&context).await });
 
     assert!(result.is_err(), "{result:?}");
+}
+
+#[test]
+fn a_poisoned_supervisor_fails_the_tick() {
+    // `relay_unavailable` is a poisoned supervisor mutex. It sat in the list
+    // of ordinary absences beside `relay_off`, so a broken daemon answered Ok
+    // for ever with a green scheduler -- the opposite of what the code said it
+    // did.
+    let fixture = Fixture::new("unavailable");
+    fixture.register_project("next-1", "/cs/tealstreet-next");
+    fixture.bind_service("next-1", 49226);
+    let context = fixture.context();
+    let _reports = recording_reporter(
+        &context,
+        Arc::new(Mutex::new(Some("relay_unavailable".to_owned()))),
+    );
+    let mut task = RelayProjectEndpointsTask::new();
+
+    // aimux-async-seam: test - sync test drives the periodic task body
+    let result = block_on_named("test:relay-endpoints", async { task.run(&context).await });
+
+    assert_eq!(result, Err("relay_unavailable".to_owned()));
+}
+
+#[test]
+fn an_endpoint_that_exists_but_cannot_be_read_is_an_error() {
+    // Only NotFound is an absence. A path that is there but unreadable -- a
+    // directory where the file should be, a mode nobody can open -- used to
+    // read as "this project never had a service", against what the reader
+    // says it does.
+    let fixture = Fixture::new("unreadable-path");
+    fixture.register_project("next-1", "/cs/tealstreet-next");
+    let dir = fixture
+        .resolver
+        .global_aimux_dir()
+        .join("projects")
+        .join("next-1")
+        .join("metadata-api.json");
+    fs::create_dir_all(&dir).expect("directory where the endpoint file belongs");
+
+    let (endpoints, read_errors) =
+        read_project_endpoints(&fixture.resolver).expect("read endpoints");
+
+    assert!(endpoints.is_empty());
+    assert_eq!(read_errors.len(), 1, "{read_errors:?}");
+    assert!(
+        read_errors[0].contains("metadata-api.json"),
+        "{read_errors:?}"
+    );
 }
 
 #[test]
@@ -297,6 +407,39 @@ fn only_the_project_whose_service_moved_is_reported() {
     let reports = reports.lock().expect("reports").clone();
     assert_eq!(reports.len(), 2);
     assert_eq!(reports[1], vec![endpoint("/cs/tealstreet-next", 49226)]);
+}
+
+#[test]
+fn two_registry_entries_for_one_root_do_not_report_for_ever() {
+    // Registry normalization dedupes on the project id and never recomputes
+    // the id from the root, so two entries can share a `repo_root` -- each
+    // with its own endpoint file. Diffing a list against a map keyed by root
+    // then reported one of them on every single tick, alternating the share's
+    // port and pushing every guest each time.
+    let fixture = Fixture::new("same-root");
+    fixture.register_project("next-1", "/cs/tealstreet-next");
+    fixture.register_project("next-2", "/cs/tealstreet-next");
+    fixture.bind_service("next-1", 44659);
+    fixture.bind_service("next-2", 49226);
+    let context = fixture.context();
+    let reports = recording_reporter(&context, taken());
+    let mut task = RelayProjectEndpointsTask::new();
+
+    for _ in 0..REMINDER_TICKS - 1 {
+        run(&mut task, &context);
+    }
+
+    let reports = reports.lock().expect("reports").clone();
+    assert_eq!(
+        reports.len(),
+        1,
+        "one report, not one per tick: {reports:?}"
+    );
+    assert_eq!(
+        reports[0].len(),
+        1,
+        "one endpoint for the root: {reports:?}"
+    );
 }
 
 #[test]

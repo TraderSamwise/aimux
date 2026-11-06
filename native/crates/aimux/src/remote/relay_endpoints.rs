@@ -42,7 +42,23 @@ pub const RELAY_PROJECT_ENDPOINTS_INTERVAL_MS: i64 = 30 * 1_000;
 /// share that did not move, so a reminder costs one frame.
 pub const REMINDER_TICKS: u32 = 10;
 
-pub use crate::daemon::scheduler::RelayProjectEndpointsPush;
+pub use crate::daemon::scheduler::{RelayEndpointReporter, RelayProjectEndpointsPush};
+
+/// Fold a report so each project root appears once.
+///
+/// Two registry entries can share a `repo_root` -- normalization dedupes on
+/// the project id and never recomputes the id from the root -- and each keeps
+/// its own endpoint file. Diffing a list against a map keyed by root then
+/// reported one of them every tick for ever, alternating the share's port and
+/// pushing every guest each time: exactly the per-tick cost the diff exists to
+/// avoid. Later entries win, which is arbitrary but stable.
+fn fold_by_project_root(endpoints: Vec<ProjectEndpoint>) -> Vec<ProjectEndpoint> {
+    let mut by_root = BTreeMap::new();
+    for endpoint in endpoints {
+        by_root.insert(endpoint.project_root.clone(), endpoint);
+    }
+    by_root.into_values().collect()
+}
 
 /// Read where every registered project's service is listening.
 ///
@@ -69,7 +85,7 @@ pub fn read_project_endpoints(
             Err(error) => read_errors.push(error),
         }
     }
-    Ok((endpoints, read_errors))
+    Ok((fold_by_project_root(endpoints), read_errors))
 }
 
 /// What has moved since the last report the relay accepted.
@@ -94,11 +110,11 @@ pub fn endpoints_to_report(
 /// Whether this is "there is no relay to report to right now" rather than a
 /// failure to report. Both leave the report unrecorded, but only one of them
 /// is worth waking somebody over.
+///
+/// `relay_unavailable` is deliberately NOT here: it is a poisoned supervisor
+/// mutex, which is a broken daemon and not a logged-out one.
 fn is_relay_absent(error: &str) -> bool {
-    matches!(
-        error,
-        "relay_off" | "relay_disconnected" | "relay_unavailable"
-    )
+    matches!(error, "relay_off" | "relay_disconnected")
 }
 
 pub struct RelayProjectEndpointsTask {
@@ -145,7 +161,7 @@ impl DaemonPeriodicTask for RelayProjectEndpointsTask {
 
     fn run<'a>(&'a mut self, context: &'a DaemonSchedulerContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
-            let push = context.relay_project_endpoints_push();
+            let push = context.relay_project_endpoints_push()?;
             let resolver = context.resolver.clone();
             let remind = self.ticks_since_full_report + 1 >= REMINDER_TICKS;
             // A reminder diffs against nothing, so every endpoint counts as
@@ -167,7 +183,7 @@ impl DaemonPeriodicTask for RelayProjectEndpointsTask {
                     "report",
                     "daemon",
                 ),
-                move || report_moved_endpoints(push.as_ref(), &resolver, &baseline),
+                move || report_moved_endpoints(push.as_deref(), &resolver, &baseline),
             )
             .await
             .map_err(|error| format!("relay endpoint report did not finish: {error}"))??;
@@ -199,14 +215,16 @@ impl DaemonPeriodicTask for RelayProjectEndpointsTask {
 /// recorded, or the share stays on the dead port until the next time the port
 /// changes.
 pub fn report_moved_endpoints(
-    push: Option<&RelayProjectEndpointsPush>,
+    push: Option<&dyn RelayEndpointReporter>,
     resolver: &PathResolver,
     last_reported: &BTreeMap<String, (String, u16)>,
 ) -> Result<Option<Vec<ProjectEndpoint>>, String> {
-    // No reporter means no relay in this build, or none dialled yet. Reading
-    // the registry to find that out would be a disk read per tick on a machine
-    // that has never logged in.
-    let Some(push) = push else {
+    // Asked before the registry is read, and asked of the relay rather than of
+    // the build: the reporter is registered at startup whether or not anyone
+    // has ever logged in, so "is it registered" answered the wrong question
+    // and a logged-out machine paid a registry read -- and a registry
+    // REWRITE, since `load_registry` saves a normalized copy -- every tick.
+    let Some(push) = push.filter(|push| push.ready()) else {
         return Ok(Some(Vec::new()));
     };
     let (endpoints, read_errors) = read_project_endpoints(resolver)?;
@@ -222,7 +240,7 @@ pub fn report_moved_endpoints(
     if moved.is_empty() {
         return Ok(Some(Vec::new()));
     }
-    match push(&moved) {
+    match push.report(&moved) {
         Ok(()) => {
             log_always_at(
                 LogLevel::Info,
@@ -260,6 +278,37 @@ pub fn report_moved_endpoints(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon::scheduler::DaemonSchedulerContext;
+    use crate::daemon_state::AimuxDaemonInfo;
+
+    /// A poisoned reporter slot is a broken daemon, not a logged-out one. The
+    /// task has to fail its tick on it: answering Ok left a green scheduler
+    /// over every share sitting on a stale port, with nothing saying why.
+    /// Only a test inside the crate can poison that lock.
+    #[test]
+    fn a_poisoned_reporter_slot_fails_the_tick() {
+        let context = DaemonSchedulerContext::new(
+            PathResolver::new("/", "/", None),
+            AimuxDaemonInfo {
+                pid: 1,
+                port: 43190,
+                started_at: "2099-01-01T00:00:00.000Z".to_owned(),
+                updated_at: "2099-01-01T00:00:00.000Z".to_owned(),
+            },
+        );
+        context.poison_relay_reporter_slot();
+        let mut task = RelayProjectEndpointsTask::new();
+
+        // aimux-async-seam: test - sync test drives the periodic task body
+        let result = crate::async_runtime::block_on_named("test:relay-endpoints-poisoned", async {
+            task.run(&context).await
+        });
+
+        assert_eq!(
+            result,
+            Err("daemon scheduler relay endpoints lock poisoned".to_owned())
+        );
+    }
 
     fn endpoint(root: &str, port: u16) -> ProjectEndpoint {
         ProjectEndpoint {

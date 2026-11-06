@@ -19,10 +19,23 @@ pub struct DaemonSchedulerContext {
 }
 
 pub type HostedPruneCallback = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
-/// Hands a project-endpoint report to the live relay, or says why it could
-/// not go. Fallible on purpose: a refusal must not be recorded as reported.
-pub type RelayProjectEndpointsPush =
-    Arc<dyn Fn(&[crate::daemon_projects::ProjectEndpoint]) -> Result<(), String> + Send + Sync>;
+/// The relay, as the endpoint task sees it.
+///
+/// Two questions, not one. "Is there a relay to report to" has to be
+/// answerable without reading the project registry, because a machine that is
+/// logged out would otherwise pay that read every tick for ever -- and
+/// `load_registry` rewrites the registry when normalization differs, so it is
+/// not even a read-only cost.
+pub trait RelayEndpointReporter: Send + Sync {
+    /// Whether a relay is connected right now. Cheap: a status read, no I/O.
+    fn ready(&self) -> bool;
+
+    /// Hand the report over, or say why it could not go. Fallible on purpose:
+    /// a refusal must not be recorded as reported.
+    fn report(&self, projects: &[crate::daemon_projects::ProjectEndpoint]) -> Result<(), String>;
+}
+
+pub type RelayProjectEndpointsPush = Arc<dyn RelayEndpointReporter>;
 pub type HostedOutboxDrainCallback = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 impl DaemonSchedulerContext {
@@ -53,11 +66,34 @@ impl DaemonSchedulerContext {
         Ok(())
     }
 
-    pub fn relay_project_endpoints_push(&self) -> Option<RelayProjectEndpointsPush> {
+    /// The registered reporter, or why it could not be read.
+    ///
+    /// A poisoned lock is not an absent relay. Collapsing the two made a
+    /// broken daemon look like a logged-out one: the task would answer Ok for
+    /// ever, the scheduler would stay green, and every share would sit on a
+    /// stale port with nothing saying why.
+    /// Poison the reporter slot, so a test can prove the difference between a
+    /// broken daemon and a logged-out one. Test-only: nothing in a release
+    /// build can reach it, and a production path that wanted it would be
+    /// asking for the failure rather than handling it.
+    #[cfg(test)]
+    pub(crate) fn poison_relay_reporter_slot(&self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = self
+                .relay_project_endpoints_push
+                .lock()
+                .expect("lock before poisoning");
+            panic!("poison the reporter slot");
+        }));
+    }
+
+    pub fn relay_project_endpoints_push(
+        &self,
+    ) -> Result<Option<RelayProjectEndpointsPush>, String> {
         self.relay_project_endpoints_push
             .lock()
-            .ok()
-            .and_then(|slot| slot.clone())
+            .map(|slot| slot.clone())
+            .map_err(|_| "daemon scheduler relay endpoints lock poisoned".to_owned())
     }
 
     pub fn set_hosted_prune(&self, prune: HostedPruneCallback) -> Result<(), String> {
@@ -245,4 +281,41 @@ fn periodic_tick_multiple_from_interval_ms(interval_ms: i64) -> u64 {
     let ticks =
         interval_ms.saturating_add(periodic::TICK_INTERVAL_MS - 1) / periodic::TICK_INTERVAL_MS;
     u64::try_from(ticks).unwrap_or(1).max(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon_state::AimuxDaemonInfo;
+
+    fn context() -> DaemonSchedulerContext {
+        DaemonSchedulerContext::new(
+            PathResolver::new("/", "/", None),
+            AimuxDaemonInfo {
+                pid: 1,
+                port: 43190,
+                started_at: "2099-01-01T00:00:00.000Z".to_owned(),
+                updated_at: "2099-01-01T00:00:00.000Z".to_owned(),
+            },
+        )
+    }
+
+    /// A poisoned lock is a broken daemon, not a logged-out one. Reading the
+    /// two as the same thing made the endpoint task answer Ok for ever, with a
+    /// green scheduler, while every share sat on a stale port. Only this
+    /// module can poison that lock, so only this module can prove it.
+    #[test]
+    fn a_poisoned_reporter_slot_is_reported_not_read_as_absent() {
+        let context = context();
+        context.poison_relay_reporter_slot();
+
+        let read = context.relay_project_endpoints_push();
+        assert!(read.is_err(), "{:?}", read.map(|value| value.is_some()));
+    }
+
+    #[test]
+    fn an_unset_reporter_slot_is_an_absence_and_not_an_error() {
+        let read = context().relay_project_endpoints_push();
+        assert!(matches!(read, Ok(None)), "{:?}", read.map(|v| v.is_some()));
+    }
 }

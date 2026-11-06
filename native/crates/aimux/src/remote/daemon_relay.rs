@@ -569,6 +569,23 @@ impl RelaySupervisor {
         runner.push_notification(notification)
     }
 
+    /// Whether a relay is connected right now.
+    ///
+    /// A status read, no I/O: the endpoint task asks this before it reads the
+    /// project registry, so a machine that is logged out pays nothing.
+    pub fn is_connected(&self) -> bool {
+        match self.current.lock() {
+            Ok(current) => current.as_ref().is_some_and(|(_, handle)| {
+                handle.status().status == Some(crate::remote::relay_client::RelayStatus::Connected)
+            }),
+            // A poisoned mutex is not a disconnected relay, but it is also not
+            // a reason to go and read the registry: `push_project_endpoints`
+            // answers `relay_unavailable` for it, which fails the tick and
+            // names it.
+            Err(_) => true,
+        }
+    }
+
     /// Report where the project services are listening, or say why it could
     /// not go.
     ///
