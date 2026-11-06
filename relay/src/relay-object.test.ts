@@ -1435,7 +1435,12 @@ describe("RelayObject following a project service onto its new port", () => {
     } as unknown as Env;
   }
 
-  async function shareBoundTo(object: RelayObject, machineId: string | undefined, port: number): Promise<string> {
+  async function shareBoundTo(
+    object: RelayObject,
+    machineId: string | undefined,
+    port: number,
+    sessionId = "claude-psmp2r",
+  ): Promise<string> {
     const response = await object.fetch(
       request("https://relay.aimux.app/shares/invite", {
         method: "POST",
@@ -1446,7 +1451,7 @@ describe("RelayObject following a project service onto its new port", () => {
           projectRoot: "/Users/sam/cs/tealstreet-next",
           serviceEndpoint: { host: "127.0.0.1", port },
           machineId,
-          sessionId: "claude-psmp2r",
+          sessionId,
           email: "guest@example.com",
         },
       }),
@@ -1590,6 +1595,39 @@ describe("RelayObject following a project service onto its new port", () => {
     upserted.length = 0;
     await object.webSocketMessage(daemon, endpointsFrame(49226));
     expect(upserted).toEqual([]);
+  });
+
+  // Each refresh is a cross-object fetch per guest, and the retry means a
+  // report that moves nothing can still owe one on every share it matched.
+  // A machine reports every thirty seconds.
+  it("refreshes a bounded number of shares per report, and carries the rest over", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+
+    // Thirty shares on one root, all bound to the same machine.
+    const shareIds: string[] = [];
+    for (let index = 0; index < 30; index += 1) {
+      shareIds.push(await shareBoundTo(object, "mini", 44659, `claude-${index}`));
+    }
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+
+    expect(upserted.length).toBe(20);
+    // Every share still moved -- the cap is on the guest fan-out, not on the
+    // record, so no share is left pointing at the dead port.
+    for (const shareId of shareIds) {
+      expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+    }
+
+    // The ten left over are owed, and go out on the next report even though
+    // that report moves nothing.
+    upserted.length = 0;
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    expect(upserted.length).toBe(10);
   });
 
   // Each entry is a pass over every share this object holds, so an unbounded

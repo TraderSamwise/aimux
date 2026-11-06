@@ -80,6 +80,15 @@ const PENDING_REQUEST_TTL_MS = 60_000;
 /// array is unbounded work in one request. A daemon reports one entry per
 /// registered project; this is far above any real fleet.
 const MAX_PROJECT_ENDPOINT_REPORTS = 500;
+/// How many shares one report may refresh in its guests' objects.
+///
+/// Each one is a cross-object `fetch` per guest, and the retry means a report
+/// that moves nothing can still owe a refresh on every share it matched. A
+/// machine reports every thirty seconds, so without a cap one account with a
+/// lot of shares and one unreachable guest would spend a report's worth of
+/// subrequests on the same failures for ever. The ones left over are still
+/// recorded as owed and go out on the next report.
+const MAX_SHARE_REFRESHES_PER_REPORT = 20;
 
 interface ClientSocketAttachment {
   pendingRequests?: Record<string, PendingRequestAttachment>;
@@ -631,7 +640,11 @@ export class RelayObject extends DurableObject<Env> {
     if (refresh.size === 0) return;
 
     let changed = updated.length > 0;
-    for (const id of refresh) {
+    // Shares that moved come first because the set was seeded from them, and
+    // a guest holding an endpoint it has never been told about is worse off
+    // than one whose retry waits for the next report.
+    const ordered = [...refresh].slice(0, MAX_SHARE_REFRESHES_PER_REPORT);
+    for (const id of ordered) {
       const share = state.shares[id];
       if (!share) continue;
       let stale: string[];
@@ -639,16 +652,29 @@ export class RelayObject extends DurableObject<Env> {
         stale = await this.refreshShareForItsParticipants(share);
       } catch (error) {
         console.error("share endpoint refresh failed", id, error);
-        stale = Object.values(share.participants)
-          .filter(
-            (participant) =>
-              participant.status === "active" && participant.userId && participant.userId !== share.ownerUserId,
-          )
-          .map((participant) => participant.userId);
+        stale = shareReceivers(share);
       }
+      // Sorted, so the comparison below cannot see a different order as a
+      // change and write storage on every report.
+      stale.sort();
       const held = share.staleReceivers ?? [];
       if (stale.length !== held.length || stale.some((userId, index) => userId !== held[index])) {
         share.staleReceivers = stale.length > 0 ? stale : undefined;
+        changed = true;
+      }
+    }
+    // Past the cap: owed, not forgotten. Recording them is what makes the
+    // next report pick them up -- the endpoint comparison would not, because
+    // the record already matches by then, which is how the original bug
+    // reached a guest in the first place.
+    for (const id of refresh) {
+      if (ordered.includes(id)) continue;
+      const share = state.shares[id];
+      if (!share) continue;
+      const owed = shareReceivers(share);
+      const held = share.staleReceivers ?? [];
+      if (owed.length !== held.length || owed.some((userId, index) => userId !== held[index])) {
+        share.staleReceivers = owed.length > 0 ? owed : undefined;
         changed = true;
       }
     }
@@ -2128,6 +2154,18 @@ const MISSING_SHARE_HOST = "\u0000missing";
 
 function isSharedClientSocket(tags: readonly string[]): boolean {
   return tags.some((tag) => tag.startsWith("share:"));
+}
+
+/// Who holds their own copy of this share. The owner's object holds the
+/// canonical record, so the owner is not a receiver of it.
+function shareReceivers(share: SharedSessionRecord): string[] {
+  return Object.values(share.participants)
+    .filter(
+      (participant) =>
+        participant.status === "active" && participant.userId && participant.userId !== share.ownerUserId,
+    )
+    .map((participant) => participant.userId)
+    .sort();
 }
 
 function shareIdFromTags(tags: readonly string[]): string | undefined {
