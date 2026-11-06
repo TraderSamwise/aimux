@@ -15,9 +15,14 @@ pub struct DaemonSchedulerContext {
     pub info: AimuxDaemonInfo,
     hosted_prune: Mutex<Option<HostedPruneCallback>>,
     hosted_outbox_drain: Mutex<Option<HostedOutboxDrainCallback>>,
+    relay_project_endpoints_push: Mutex<Option<RelayProjectEndpointsPush>>,
 }
 
 pub type HostedPruneCallback = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+/// Hands a project-endpoint report to the live relay, or says why it could
+/// not go. Fallible on purpose: a refusal must not be recorded as reported.
+pub type RelayProjectEndpointsPush =
+    Arc<dyn Fn(&[crate::daemon_projects::ProjectEndpoint]) -> Result<(), String> + Send + Sync>;
 pub type HostedOutboxDrainCallback = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 impl DaemonSchedulerContext {
@@ -27,7 +32,32 @@ impl DaemonSchedulerContext {
             info,
             hosted_prune: Mutex::new(None),
             hosted_outbox_drain: Mutex::new(None),
+            relay_project_endpoints_push: Mutex::new(None),
         }
+    }
+
+    /// Register the reporter the endpoint task pushes through.
+    ///
+    /// Absent until the relay half of the daemon has started, and absent for
+    /// good in a build without it -- which is how the task knows not to read
+    /// the project registry on a machine that has never logged in.
+    pub fn set_relay_project_endpoints_push(
+        &self,
+        push: RelayProjectEndpointsPush,
+    ) -> Result<(), String> {
+        let mut slot = self
+            .relay_project_endpoints_push
+            .lock()
+            .map_err(|_| "daemon scheduler relay endpoints lock poisoned".to_owned())?;
+        *slot = Some(push);
+        Ok(())
+    }
+
+    pub fn relay_project_endpoints_push(&self) -> Option<RelayProjectEndpointsPush> {
+        self.relay_project_endpoints_push
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
     }
 
     pub fn set_hosted_prune(&self, prune: HostedPruneCallback) -> Result<(), String> {

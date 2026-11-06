@@ -584,6 +584,20 @@ impl RelayRunner {
         self.queue(frame)
     }
 
+    /// Queue the project-endpoint report for the relay.
+    ///
+    /// Same outbox as everything else, so it leaves on the next drain. An
+    /// empty report is refused rather than sent: see `project_endpoints_frame`.
+    pub fn push_project_endpoints(
+        &self,
+        projects: &[crate::remote::relay_client::ProjectEndpoint],
+    ) -> Result<(), String> {
+        let Some(frame) = crate::remote::relay_client::project_endpoints_frame(projects) else {
+            return Err("project_endpoints_empty".to_owned());
+        };
+        self.queue(frame)
+    }
+
     fn queue(&self, frame: String) -> Result<(), String> {
         let mut outbox = self
             .outbox

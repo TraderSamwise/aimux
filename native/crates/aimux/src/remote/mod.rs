@@ -18,6 +18,7 @@ pub mod hosted_rate_limit;
 pub mod hosted_server;
 pub mod mobile_push_bridge;
 pub mod relay_client;
+pub mod relay_endpoints;
 pub mod relay_runner;
 pub mod remote_credentials;
 pub mod remote_login;

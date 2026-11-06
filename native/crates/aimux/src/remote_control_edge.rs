@@ -317,6 +317,29 @@ mod enabled_state {
             &self.relay
         }
 
+        /// Let the endpoint task report through this machine's relay.
+        ///
+        /// Weak on purpose: the task outlives nothing, but holding the
+        /// supervisor from the scheduler would keep a stopped relay alive.
+        pub fn register_relay_project_endpoints_push(
+            &self,
+            context: &crate::daemon::scheduler::DaemonSchedulerContext,
+        ) {
+            let relay = Arc::downgrade(&self.relay);
+            let push: crate::daemon::scheduler::RelayProjectEndpointsPush =
+                Arc::new(move |projects| match relay.upgrade() {
+                    Some(relay) => relay.push_project_endpoints(projects),
+                    None => Err("relay_off".to_owned()),
+                });
+            if let Err(error) = context.set_relay_project_endpoints_push(push) {
+                crate::debug_logging::log_lifecycle_always(
+                    "relay endpoint reporter not registered",
+                    "relay",
+                    Some(json!({ "error": error })),
+                );
+            }
+        }
+
         /// Dial the relay if the resolved target says we should.
         pub fn start_relay(&self, resolver: &PathResolver, force: bool) {
             let Some(credentials) = crate::remote::remote_credentials::load_credentials(resolver)
@@ -445,6 +468,7 @@ mod enabled_state {
             vec![
                 Box::new(crate::remote::hosted_server::HostedPruneTask),
                 Box::new(crate::remote::hosted_server::HostedOutboxDrainTask),
+                Box::new(crate::remote::relay_endpoints::RelayProjectEndpointsTask::new()),
             ]
         }
 
@@ -597,6 +621,13 @@ mod disabled_state {
         pub fn daemon_periodic_tasks() -> Vec<Box<dyn crate::daemon::scheduler::DaemonPeriodicTask>>
         {
             Vec::new()
+        }
+
+        /// No relay, so nothing to report endpoints to.
+        pub fn register_relay_project_endpoints_push(
+            &self,
+            _context: &crate::daemon::scheduler::DaemonSchedulerContext,
+        ) {
         }
 
         /// None to load, so none held.

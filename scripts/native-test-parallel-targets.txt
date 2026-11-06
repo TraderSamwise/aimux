@@ -152,6 +152,7 @@ project_service_worktrees
 proxy_project_binding
 registry
 relay_client_protocol
+relay_project_endpoints
 relay_runner
 remote_access
 remote_credentials

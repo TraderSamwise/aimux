@@ -2780,6 +2780,23 @@ fn read_metadata_endpoint_value_for_project_id(
     resolver: &PathResolver,
     project_id: &str,
 ) -> Result<Option<Value>, String> {
+    let Some(endpoint) = read_metadata_endpoint_for_project_id(resolver, project_id)? else {
+        return Ok(None);
+    };
+    serde_json::to_value(endpoint)
+        .map(Some)
+        .map_err(|error| format!("failed to serialize project service endpoint: {error}"))
+}
+
+/// Where one project's service last said it was listening.
+///
+/// `Ok(None)` means the project has never had a service. An unreadable or
+/// unparseable file is an error, not an absence: a share follows this answer,
+/// and "cannot tell" must not route like "no service".
+pub fn read_metadata_endpoint_for_project_id(
+    resolver: &PathResolver,
+    project_id: &str,
+) -> Result<Option<MetadataApiEndpoint>, String> {
     let path = metadata_endpoint_path(
         resolver
             .global_aimux_dir()
@@ -2795,15 +2812,14 @@ fn read_metadata_endpoint_value_for_project_id(
             path.display()
         )
     })?;
-    let endpoint = serde_json::from_str::<MetadataApiEndpoint>(&raw).map_err(|error| {
-        format!(
-            "failed to parse project service endpoint {}: {error}",
-            path.display()
-        )
-    })?;
-    serde_json::to_value(endpoint)
+    serde_json::from_str::<MetadataApiEndpoint>(&raw)
         .map(Some)
-        .map_err(|error| format!("failed to serialize project service endpoint: {error}"))
+        .map_err(|error| {
+            format!(
+                "failed to parse project service endpoint {}: {error}",
+                path.display()
+            )
+        })
 }
 
 fn project_service_info_value() -> Value {
@@ -3311,6 +3327,11 @@ pub fn run_daemon_internal() -> Result<()> {
         Some(Arc::clone(&scheduler_context)),
         Some(daemon_scheduler.clone()),
     )?;
+    if let Ok(runtime) = runtime.lock() {
+        runtime
+            .remote
+            .register_relay_project_endpoints_push(&scheduler_context);
+    }
     spawn_daemon_scheduler(
         Arc::clone(&scheduler_context),
         daemon_periodic_tasks(global_expose_hot_snapshots),

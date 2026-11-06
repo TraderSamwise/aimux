@@ -569,6 +569,28 @@ impl RelaySupervisor {
         runner.push_notification(notification)
     }
 
+    /// Report where the project services are listening, or say why it could
+    /// not go.
+    ///
+    /// The caller records what it pushed, so a refusal has to be an error and
+    /// not a silent no-op: recording a frame that never left would leave the
+    /// share pointing at a dead port until the next time the port changed.
+    pub fn push_project_endpoints(
+        &self,
+        projects: &[crate::remote::relay_client::ProjectEndpoint],
+    ) -> Result<(), String> {
+        let Ok(current) = self.current.lock() else {
+            return Err("relay_unavailable".to_owned());
+        };
+        let Some((runner, handle)) = current.as_ref() else {
+            return Err("relay_off".to_owned());
+        };
+        if handle.status().status != Some(crate::remote::relay_client::RelayStatus::Connected) {
+            return Err("relay_disconnected".to_owned());
+        }
+        runner.push_project_endpoints(projects)
+    }
+
     /// `off` means there is no client at all, which is a different thing from a
     /// client that exists and is disconnected.
     pub fn status(&self) -> Value {
