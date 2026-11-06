@@ -1416,17 +1416,22 @@ describe("RelayObject refreshing a share its guests already hold", () => {
 // the agent working, every request from that share refused -- and the only
 // repair was issuing another invite, which emails somebody.
 describe("RelayObject following a project service onto its new port", () => {
-  function envRecording(upserted: { userId: string; port?: number }[], receiverDown?: { value: boolean }) {
+  function envRecording(
+    upserted: { userId: string; port?: number }[],
+    receiverDown?: { value: boolean },
+    attempted?: string[],
+  ) {
     return {
       RELAY: {
         idFromName: vi.fn((name: string) => ({ name })),
         get: vi.fn((id: { name: string }) => ({
           fetch: vi.fn(async (url: string, init?: RequestInit) => {
             if (String(url).includes("/internal/accepted-shares/upsert")) {
-              if (receiverDown?.value) return new Response("nope", { status: 500 });
               const body = JSON.parse(String(init?.body)) as {
-                share: { serviceEndpoint?: { port?: number } };
+                share: { id: string; serviceEndpoint?: { port?: number } };
               };
+              attempted?.push(body.share.id);
+              if (receiverDown?.value) return new Response("nope", { status: 500 });
               upserted.push({ userId: id.name, port: body.share.serviceEndpoint?.port });
             }
             return new Response("{}", { status: 200 });
@@ -1687,6 +1692,39 @@ describe("RelayObject following a project service onto its new port", () => {
     await object.webSocketMessage(daemon, endpointsFrame(49226));
     expect(put).not.toHaveBeenCalled();
     put.mockRestore();
+  });
+
+  // A bounded budget taken from the front of the list every time is a budget
+  // one permanently unreachable guest owns for ever: the shares behind it are
+  // never attempted at all, which is the original bug for everyone on them.
+  it("works through every owed share rather than retrying the same ones", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const attempted: string[] = [];
+    // Reachable while the shares are made -- accepting an invite writes the
+    // guest's own index, and that has to succeed for the share to exist.
+    const receiverDown = { value: false };
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted, receiverDown, attempted));
+
+    const shareIds: string[] = [];
+    for (let index = 0; index < 30; index += 1) {
+      shareIds.push(await shareBoundTo(object, "mini", 44659, `claude-${index}`));
+    }
+    attempted.length = 0;
+    upserted.length = 0;
+    receiverDown.value = true;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+
+    // Every guest is unreachable, so every share stays owed. Three reports.
+    for (let report = 0; report < 3; report += 1) {
+      await object.webSocketMessage(daemon, endpointsFrame(49226));
+    }
+
+    expect(attempted.length).toBe(60);
+    expect(new Set(attempted).size, "every owed share was attempted").toBe(shareIds.length);
+    expect(upserted).toEqual([]);
   });
 
   // Each refresh is a cross-object fetch per guest, and the retry means a

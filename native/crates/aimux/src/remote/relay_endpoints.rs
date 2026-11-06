@@ -44,20 +44,35 @@ pub const REMINDER_TICKS: u32 = 10;
 
 pub use crate::daemon::scheduler::{RelayEndpointReporter, RelayProjectEndpointsPush};
 
-/// Fold a report so each project root appears once.
+/// Fold a report so each project root appears once, keeping the newest bind.
 ///
 /// Two registry entries can share a `repo_root` -- normalization dedupes on
-/// the project id and never recomputes the id from the root -- and each keeps
+/// the project id and never recomputes the id from the root, and each keeps
 /// its own endpoint file. Diffing a list against a map keyed by root then
 /// reported one of them every tick for ever, alternating the share's port and
 /// pushing every guest each time: exactly the per-tick cost the diff exists to
-/// avoid. Later entries win, which is arbitrary but stable.
-fn fold_by_project_root(endpoints: Vec<ProjectEndpoint>) -> Vec<ProjectEndpoint> {
-    let mut by_root = BTreeMap::new();
-    for endpoint in endpoints {
-        by_root.insert(endpoint.project_root.clone(), endpoint);
+/// avoid.
+///
+/// The one that wins is the one whose service bound most recently. Taking the
+/// last by project id was stable but arbitrary, and arbitrary here means the
+/// share can be pinned to the duplicate whose service is long gone, which is
+/// the stale port this whole change exists to move off.
+fn fold_by_project_root(endpoints: Vec<(ProjectEndpoint, String)>) -> Vec<ProjectEndpoint> {
+    let mut by_root: BTreeMap<String, (ProjectEndpoint, String)> = BTreeMap::new();
+    for (endpoint, bound_at) in endpoints {
+        match by_root.get(&endpoint.project_root) {
+            // `>=` so that with equal or unparseable timestamps this still
+            // settles on one of them rather than depending on iteration order.
+            Some((_, held)) if held.as_str() >= bound_at.as_str() => {}
+            _ => {
+                by_root.insert(endpoint.project_root.clone(), (endpoint, bound_at));
+            }
+        }
     }
-    by_root.into_values().collect()
+    by_root
+        .into_values()
+        .map(|(endpoint, _)| endpoint)
+        .collect()
 }
 
 /// Read where every registered project's service is listening.
@@ -76,11 +91,14 @@ pub fn read_project_endpoints(
     let mut read_errors = Vec::new();
     for entry in entries {
         match crate::daemon::runtime::read_metadata_endpoint_for_project_id(resolver, &entry.id) {
-            Ok(Some(endpoint)) => endpoints.push(ProjectEndpoint {
-                project_root: entry.repo_root,
-                host: endpoint.host,
-                port: endpoint.port,
-            }),
+            Ok(Some(endpoint)) => endpoints.push((
+                ProjectEndpoint {
+                    project_root: entry.repo_root,
+                    host: endpoint.host,
+                    port: endpoint.port,
+                },
+                endpoint.updated_at,
+            )),
             Ok(None) => {}
             Err(error) => read_errors.push(error),
         }
@@ -224,8 +242,12 @@ pub fn report_moved_endpoints(
     // has ever logged in, so "is it registered" answered the wrong question
     // and a logged-out machine paid a registry read -- and a registry
     // REWRITE, since `load_registry` saves a normalized copy -- every tick.
+    // `None`, not an empty report: an empty report reads as "taken, nothing
+    // moved", which resets the reminder -- so a reminder tick that fell while
+    // the machine was logged out was consumed without a frame ever being
+    // sent, and the next one was another five minutes away.
     let Some(push) = push.filter(|push| push.ready()) else {
-        return Ok(Some(Vec::new()));
+        return Ok(None);
     };
     let (endpoints, read_errors) = read_project_endpoints(resolver)?;
     for error in read_errors {

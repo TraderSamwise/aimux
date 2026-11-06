@@ -58,6 +58,7 @@ import {
   sharedRelayRequestAccess,
   summarizeShare,
   stripTrustedAimuxHeaders,
+  nextShareRefreshBatch,
   updateShareServiceEndpoints,
   upsertAcceptedShare,
 } from "./sharing.js";
@@ -640,10 +641,14 @@ export class RelayObject extends DurableObject<Env> {
     if (refresh.size === 0) return;
 
     let changed = updated.length > 0;
-    // Shares that moved come first because the set was seeded from them, and
-    // a guest holding an endpoint it has never been told about is worse off
-    // than one whose retry waits for the next report.
-    const ordered = [...refresh].slice(0, MAX_SHARE_REFRESHES_PER_REPORT);
+    // Round-robin, resuming after the last share a report attempted: taking
+    // the first twenty every time meant a permanently unreachable guest held
+    // the whole budget and the shares behind it were never tried at all.
+    const { batch: ordered, cursor } = nextShareRefreshBatch(state, refresh, MAX_SHARE_REFRESHES_PER_REPORT);
+    if (cursor !== state.endpointRefreshCursor) {
+      state.endpointRefreshCursor = cursor;
+      changed = true;
+    }
     for (const id of ordered) {
       const share = state.shares[id];
       if (!share) continue;

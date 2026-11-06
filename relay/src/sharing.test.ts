@@ -657,9 +657,14 @@ describe("share service endpoints", () => {
     expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
   });
 
-  it("still moves a share written before shares carried a machine id", async () => {
+  it("moves a share written before shares carried a machine id, and binds it", async () => {
     // Owner and project root is all such a share was ever keyed on, and it is
-    // exactly the share old enough to have gone stale.
+    // exactly the share old enough to have gone stale. Leaving it unbound
+    // leaves it with no rule at all: any of the owner's machines could move
+    // it, and two machines holding the same checkout path would flip it back
+    // and forth for ever -- while at request time the guest is sent to
+    // whichever single machine is online, which is then the wrong one at the
+    // other one's port.
     const state = await shareOn({});
     const shareId = Object.keys(state.shares)[0];
     expect(state.shares[shareId].machineId).toBeUndefined();
@@ -677,6 +682,96 @@ describe("share service endpoints", () => {
 
     expect(result.updated).toEqual([shareId]);
     expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+    expect(result.state.shares[shareId].machineId).toBe("mini");
+
+    // And from then on only that machine may move it.
+    const other = updateShareServiceEndpoints(result.state, {
+      ownerUserId: "user_owner",
+      machineId: "mbp2",
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "127.0.0.1", port: 51000 },
+        },
+      ],
+    });
+    expect(other.updated).toEqual([]);
+    expect(endpointOf(other.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+  });
+
+  it("binds a share whose stored host no longer passes validation", async () => {
+    // `normalizeShare` sanitizes a stored machineId, so a share holding one
+    // that fails `isValidMachineId` -- `Sam-MBP.local`, say -- reads as
+    // unbound on every load. That was a second way into the no-rule case.
+    const state = await shareOn({});
+    const shareId = Object.keys(state.shares)[0];
+    state.shares[shareId].machineId = "Sam-MBP.local";
+
+    const result = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+        },
+      ],
+    });
+
+    expect(result.state.shares[shareId].machineId).toBe("mini");
+  });
+
+  it("will not move either share when two roots share the stored root's length", async () => {
+    // The stored root is capped at 600 characters, so a longer one is held
+    // truncated and can only be matched by comparing the report's first 600.
+    // Two roots that agree for 600 characters then collide -- and a wrong
+    // match moves the OTHER project's share, which is worse than the silent
+    // no-match it replaced. Neither moves.
+    const prefix = `/Users/sam/cs/${"nested/".repeat(120)}`;
+    expect(prefix.length).toBeGreaterThan(600);
+    const first = `${prefix}alpha`;
+    const second = `${prefix}beta`;
+    expect(first.slice(0, 600)).toBe(second.slice(0, 600));
+
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: first,
+      serviceEndpoint: { host: "127.0.0.1", port: 44659 },
+      machineId: "mini",
+      sessionId: "claude-abc",
+      email: "alex@example.com",
+      now: activeInviteCreatedAt,
+    });
+    const shareId = Object.keys(created.state.shares)[0];
+
+    const result = updateShareServiceEndpoints(created.state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      endpoints: [
+        { projectRoot: first, serviceEndpoint: { host: "127.0.0.1", port: 49226 } },
+        { projectRoot: second, serviceEndpoint: { host: "127.0.0.1", port: 51000 } },
+      ],
+    });
+
+    expect(result.updated).toEqual([]);
+    expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+  });
+
+  it("refuses an invite carrying a host a guest could not reach", async () => {
+    // The report path is not the only writer of an endpoint. An invite that
+    // stores an unroutable host creates a share that refuses every request
+    // from the person it was made for, and says nothing about why.
+    await expect(
+      createShareInvite(emptySharingState(), {
+        owner,
+        projectRoot: "/Users/sam/cs/example",
+        serviceEndpoint: { host: "127.0.0.1/..", port: 44659 },
+        machineId: "mini",
+        sessionId: "claude-abc",
+        email: "alex@example.com",
+        now: activeInviteCreatedAt,
+      }),
+    ).rejects.toThrow(/not routable/);
   });
 
   it("will not let a daemon with no machine identity move a machine-bound share", async () => {

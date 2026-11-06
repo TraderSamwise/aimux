@@ -65,6 +65,10 @@ impl Fixture {
 
     /// What a project service writes when it binds.
     fn bind_service(&self, id: &str, port: u16) {
+        self.bind_service_at(id, port, "2099-01-01T00:00:00.000Z");
+    }
+
+    fn bind_service_at(&self, id: &str, port: u16, bound_at: &str) {
         let dir = self.resolver.global_aimux_dir().join("projects").join(id);
         fs::create_dir_all(&dir).expect("project state dir");
         fs::write(
@@ -73,7 +77,7 @@ impl Fixture {
                 "host": "127.0.0.1",
                 "port": port,
                 "pid": 4242,
-                "updatedAt": "2099-01-01T00:00:00.000Z",
+                "updatedAt": bound_at,
             })
             .to_string(),
         )
@@ -410,6 +414,25 @@ fn only_the_project_whose_service_moved_is_reported() {
 }
 
 #[test]
+fn the_duplicate_whose_service_bound_most_recently_wins() {
+    // Taking the last by project id was stable but arbitrary, and arbitrary
+    // here means the share can be pinned to the duplicate whose service is
+    // long gone -- the stale port this whole change exists to move off.
+    let fixture = Fixture::new("newest-bind");
+    fixture.register_project("next-1", "/cs/tealstreet-next");
+    fixture.register_project("next-2", "/cs/tealstreet-next");
+    // `next-2` sorts last but bound first.
+    fixture.bind_service_at("next-2", 44659, "2099-01-01T00:00:00.000Z");
+    fixture.bind_service_at("next-1", 49226, "2099-06-01T00:00:00.000Z");
+
+    let (endpoints, read_errors) =
+        read_project_endpoints(&fixture.resolver).expect("read endpoints");
+
+    assert!(read_errors.is_empty());
+    assert_eq!(endpoints, vec![endpoint("/cs/tealstreet-next", 49226)]);
+}
+
+#[test]
 fn two_registry_entries_for_one_root_do_not_report_for_ever() {
     // Registry normalization dedupes on the project id and never recomputes
     // the id from the root, so two entries can share a `repo_root` -- each
@@ -503,6 +526,44 @@ fn the_whole_set_is_reported_again_on_the_reminder_tick() {
         "the first tick and the reminder, nothing in between: {reports:?}"
     );
     assert_eq!(reports[1], vec![endpoint("/cs/tealstreet-next", 49226)]);
+}
+
+#[test]
+fn a_reminder_that_fell_while_logged_out_is_not_spent() {
+    // A tick with no relay to report to used to answer "taken, nothing moved",
+    // which reset the reminder counter -- so the reminder was consumed without
+    // a frame ever leaving, and the next one was another five minutes away.
+    // That is the window in which a share sits on a dead port.
+    let fixture = Fixture::new("reminder-logged-out");
+    fixture.register_project("next-1", "/cs/tealstreet-next");
+    fixture.bind_service("next-1", 49226);
+    let context = fixture.context();
+    let connected = Arc::new(Mutex::new(true));
+    let reports = connected_reporter(&context, taken(), Arc::clone(&connected));
+    let mut task = RelayProjectEndpointsTask::new();
+
+    // Reported once, then the machine goes offline for a whole window.
+    run(&mut task, &context);
+    assert_eq!(reports.lock().expect("reports").len(), 1);
+    *connected.lock().expect("connected") = false;
+    for _ in 0..REMINDER_TICKS * 2 {
+        run(&mut task, &context);
+    }
+    assert_eq!(
+        reports.lock().expect("reports").len(),
+        1,
+        "nothing can be reported with no relay"
+    );
+
+    // Back online: the reminder is still owed, so it goes out now rather than
+    // five more minutes from now.
+    *connected.lock().expect("connected") = true;
+    run(&mut task, &context);
+    assert_eq!(
+        reports.lock().expect("reports").len(),
+        2,
+        "the owed reminder goes out on the first tick with a relay"
+    );
 }
 
 #[test]
