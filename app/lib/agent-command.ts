@@ -17,6 +17,53 @@
  * where it is; this is a port, not a new rule.
  */
 
+/**
+ * The whitespace both sides agree on.
+ *
+ * The two languages disagree at the edges, and each trimming with its own
+ * notion made them disagree about the same message. Rust's
+ * `char::is_whitespace` is the Unicode White_Space property, which includes
+ * U+0085 NEL; JavaScript's `trim` instead includes U+FEFF, which is not
+ * White_Space. So `\u0085/clear` was a command to the daemon and prose here,
+ * and `\ufeff/clear` the other way round -- on an answer that decides whether
+ * a guest's line keeps its attribution.
+ *
+ * This class is the Unicode White_Space property plus U+FEFF, which is what
+ * the Rust predicate is.
+ */
+const SHARED_WHITESPACE =
+  /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/;
+/**
+ * Splitting with the same class.
+ *
+ * Note for anyone simplifying this back to `/\s+/`: that is currently an
+ * equivalent split, because the only character the two classes disagree on
+ * which is not already rejected as a line break is U+0085. Mutating it
+ * therefore proves nothing. It is written this way so the two files read as
+ * the same rule, and because the Rust side's equivalent IS load-bearing --
+ * `split_whitespace` there does not treat U+FEFF as a separator.
+ */
+const SHARED_WHITESPACE_RUN = new RegExp(`${SHARED_WHITESPACE.source}+`, "g");
+
+/**
+ * What counts as starting a new line, which a command may not do.
+ *
+ * `\n` and `\r` were not the whole set. A vertical tab or a form feed renders
+ * as a line break, and U+2028 and U+2029 are the line and paragraph separators
+ * by definition -- so `!ls\u000brm -rf /` passed the single-line test and
+ * reached the agent with its sender stripped.
+ */
+const LINE_BREAK = /[\n\r\u000b\u000c\u0085\u2028\u2029]/;
+
+/** Trim as the daemon trims, rather than as this language happens to. */
+function sharedTrim(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && SHARED_WHITESPACE.test(text[start]!)) start += 1;
+  while (end > start && SHARED_WHITESPACE.test(text[end - 1]!)) end -= 1;
+  return text.slice(start, end);
+}
+
 function isCommandWordStart(character: string): boolean {
   return /^[A-Za-z]$/.test(character);
 }
@@ -31,12 +78,12 @@ function isSingleCommandSegment(name: string): boolean {
 }
 
 export function looksLikeAgentCommand(text: string): boolean {
-  const trimmed = text.trim();
+  const trimmed = sharedTrim(text);
   if (!trimmed) return false;
   // A sigil must not carry following paragraphs through as if they were part
   // of the command.
-  if (trimmed.includes("\n") || trimmed.includes("\r")) return false;
-  const firstToken = trimmed.split(/\s+/)[0] ?? "";
+  if (LINE_BREAK.test(trimmed)) return false;
+  const firstToken = trimmed.split(SHARED_WHITESPACE_RUN)[0] ?? "";
   const first = trimmed[0];
   const second = trimmed[1];
   if (first === "/") return isSingleCommandSegment(firstToken.slice(1));
