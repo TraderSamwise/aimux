@@ -561,8 +561,12 @@ describe("share service endpoints", () => {
     const result = updateShareServiceEndpoints(state, {
       ownerUserId: "user_owner",
       machineId: "mini",
-      projectRoot: "/Users/sam/cs/example",
-      serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+        },
+      ],
       now: "2099-05-25T00:00:00.000Z",
     });
 
@@ -580,8 +584,12 @@ describe("share service endpoints", () => {
     const result = updateShareServiceEndpoints(state, {
       ownerUserId: "user_owner",
       machineId: "mini",
-      projectRoot: "/Users/sam/cs/example",
-      serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+        },
+      ],
     });
 
     expect(result.updated).toEqual([]);
@@ -595,8 +603,12 @@ describe("share service endpoints", () => {
     const result = updateShareServiceEndpoints(state, {
       ownerUserId: "user_owner",
       machineId: "mini",
-      projectRoot: "/Users/sam/cs/example",
-      serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+        },
+      ],
     });
 
     expect(result.updated).toEqual([]);
@@ -610,8 +622,12 @@ describe("share service endpoints", () => {
     const result = updateShareServiceEndpoints(state, {
       ownerUserId: "user_owner",
       machineId: "mini",
-      projectRoot: "/Users/sam/cs/example",
-      serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+        },
+      ],
     });
 
     expect(result.updated).toEqual([]);
@@ -628,8 +644,12 @@ describe("share service endpoints", () => {
     const result = updateShareServiceEndpoints(state, {
       ownerUserId: "user_owner",
       machineId: "mini",
-      projectRoot: "/Users/sam/cs/example",
-      serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+        },
+      ],
     });
 
     expect(result.updated).toEqual([]);
@@ -646,12 +666,170 @@ describe("share service endpoints", () => {
     const result = updateShareServiceEndpoints(state, {
       ownerUserId: "user_owner",
       machineId: "mini",
-      projectRoot: "/Users/sam/cs/example",
-      serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+        },
+      ],
     });
 
     expect(result.updated).toEqual([shareId]);
     expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+  });
+
+  it("will not let a daemon with no machine identity move a machine-bound share", async () => {
+    // A daemon that connected without a usable machine id is tagged
+    // `unidentified`, and that id is deliberately refused as a machine id --
+    // so reading it as "claims no machine" let it move every machine-bound
+    // share in the account onto its own ports, which is the bug this whole
+    // change exists to fix, with a second machine's ports instead of a stale
+    // one.
+    const state = await shareOn({ machineId: "mini" });
+    const shareId = Object.keys(state.shares)[0];
+
+    for (const machineId of ["unidentified", undefined, "", "NOT A MACHINE"]) {
+      const result = updateShareServiceEndpoints(state, {
+        ownerUserId: "user_owner",
+        machineId,
+        endpoints: [
+          {
+            projectRoot: "/Users/sam/cs/example",
+            serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+          },
+        ],
+      });
+      expect(result.updated, `machineId ${String(machineId)}`).toEqual([]);
+      expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    }
+  });
+
+  it("matches a root that differs only by a trailing slash", async () => {
+    // A non-match is silent -- it looks exactly like "nothing moved" -- so a
+    // spelling difference would leave the fix inert with nothing saying so.
+    const state = await shareOn({ machineId: "mini" });
+    const shareId = Object.keys(state.shares)[0];
+
+    const result = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example/",
+          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+        },
+      ],
+    });
+
+    expect(result.updated).toEqual([shareId]);
+    expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+  });
+
+  it("matches when it is the STORED root that carries the trailing slash", async () => {
+    // Both sides have to be folded. Folding only the report still matched
+    // every root in the fixtures, because a stored root is usually canonical
+    // -- it is the share written from a path with a slash on the end that
+    // could never be moved again.
+    const state = await shareOn({ machineId: "mini", projectRoot: "/Users/sam/cs/example/" });
+    const shareId = Object.keys(state.shares)[0];
+    expect(state.shares[shareId].projectRoot).toBe("/Users/sam/cs/example/");
+
+    const result = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+        },
+      ],
+    });
+
+    expect(result.updated).toEqual([shareId]);
+    expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+  });
+
+  it("still matches a root long enough to have been truncated when it was stored", async () => {
+    // The stored copy went through a 600-character cap. Comparing the report
+    // raw meant a deep worktree path could never match its own share.
+    const deepRoot = `/Users/sam/cs/${"nested/".repeat(120)}example`;
+    expect(deepRoot.length).toBeGreaterThan(600);
+    const state = await shareOn({ machineId: "mini", projectRoot: deepRoot });
+    const shareId = Object.keys(state.shares)[0];
+
+    const result = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      endpoints: [{ projectRoot: deepRoot, serviceEndpoint: { host: "127.0.0.1", port: 49226 } }],
+    });
+
+    expect(result.updated).toEqual([shareId]);
+    expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+  });
+
+  it("follows a service that kept its port and changed its host", async () => {
+    const state = await shareOn({ machineId: "mini" });
+    const shareId = Object.keys(state.shares)[0];
+
+    const result = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "::1", port: 44659 },
+        },
+      ],
+    });
+
+    expect(result.updated).toEqual([shareId]);
+    expect(endpointOf(result.state, shareId)).toEqual({ host: "::1", port: 44659 });
+  });
+
+  it("refuses a host a guest could not build a proxy path from", async () => {
+    // A guest sends `/proxy/<host>/<port><path>`, matched by a pattern that
+    // stops at the first slash. A host carrying one produces a path the
+    // share's own allowlist does not recognise, so every request from that
+    // guest is refused -- a share bricked by a value the relay accepted.
+    const state = await shareOn({ machineId: "mini" });
+    const shareId = Object.keys(state.shares)[0];
+
+    for (const host of ["127.0.0.1/..", "evil host", "a?b", "x#y"]) {
+      const result = updateShareServiceEndpoints(state, {
+        ownerUserId: "user_owner",
+        machineId: "mini",
+        endpoints: [
+          {
+            projectRoot: "/Users/sam/cs/example",
+            serviceEndpoint: { host, port: 49226 },
+          },
+        ],
+      });
+      expect(result.updated, `host ${host}`).toEqual([]);
+      expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    }
+  });
+
+  it("reports every share it matched, moved or not", async () => {
+    // The caller retries a receiver whose own copy could not be refreshed, and
+    // by then this record already matches the report -- so "matched" is the
+    // only thing that can find that share again.
+    const state = await shareOn({ machineId: "mini", port: 49226 });
+    const shareId = Object.keys(state.shares)[0];
+
+    const result = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+        },
+      ],
+    });
+
+    expect(result.updated).toEqual([]);
+    expect(result.matched).toEqual([shareId]);
   });
 
   it("refuses an endpoint that is not a port", async () => {
@@ -662,8 +840,12 @@ describe("share service endpoints", () => {
       const result = updateShareServiceEndpoints(state, {
         ownerUserId: "user_owner",
         machineId: "mini",
-        projectRoot: "/Users/sam/cs/example",
-        serviceEndpoint: { host: "127.0.0.1", port },
+        endpoints: [
+          {
+            projectRoot: "/Users/sam/cs/example",
+            serviceEndpoint: { host: "127.0.0.1", port },
+          },
+        ],
       });
       expect(result.updated, `port ${port}`).toEqual([]);
       expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });

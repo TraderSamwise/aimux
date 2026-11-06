@@ -581,10 +581,10 @@ export class RelayObject extends DurableObject<Env> {
 
   /// A daemon telling us where its project services are listening now.
   ///
-  /// Sent on connect and whenever a service binds a different port, which is
-  /// every time one restarts. Without it a share keeps the endpoint it was
-  /// created with and starts refusing connections the moment that service
-  /// comes back on a new port.
+  /// Sent on connect, whenever a service binds a different port, and on a slow
+  /// reminder. Without it a share keeps the endpoint it was created with and
+  /// starts refusing connections the moment that service comes back on a new
+  /// port.
   private async applyDaemonProjectEndpoints(
     tags: string[],
     message: Extract<RelayMessage, { type: "project_endpoints" }>,
@@ -593,46 +593,66 @@ export class RelayObject extends DurableObject<Env> {
     // and which machine they are on, is not something the sender gets to claim.
     const ownerUserId = tagValue(tags, "user:");
     const machineId = machineFromTags(tags).id;
-    // Capped because each entry is a pass over every share this object holds.
+    // Capped because the report is bounded work only if it is bounded in size.
     // A daemon reports one entry per registered project, so the cap is far
     // above any real fleet and only bounds a frame that is not one.
     const projects = (Array.isArray(message.projects) ? message.projects : []).slice(0, MAX_PROJECT_ENDPOINT_REPORTS);
     if (!ownerUserId || projects.length === 0) return;
 
-    let state = await loadSharingState(this.ctx.storage);
-    const updated = new Set<string>();
-    for (const entry of projects) {
-      const projectRoot = typeof entry?.projectRoot === "string" ? entry.projectRoot : "";
-      const host = typeof entry?.host === "string" ? entry.host : "";
-      const port = Number(entry?.port);
-      if (!projectRoot || !host || !Number.isInteger(port)) continue;
-      const result = updateShareServiceEndpoints(state, {
-        ownerUserId,
-        machineId,
-        projectRoot,
-        serviceEndpoint: { host, port },
-      });
-      state = result.state;
-      for (const id of result.updated) updated.add(id);
-    }
-    // Only on a real change: this arrives on every daemon connect, and the
-    // ordinary case is that nothing moved.
-    if (updated.size === 0) return;
-    await saveSharingState(this.ctx.storage, state);
+    const endpoints = projects
+      .map((entry) => ({
+        projectRoot: typeof entry?.projectRoot === "string" ? entry.projectRoot : "",
+        serviceEndpoint: {
+          host: typeof entry?.host === "string" ? entry.host : "",
+          port: Number(entry?.port),
+        },
+      }))
+      .filter((entry) => entry.projectRoot !== "");
+    if (endpoints.length === 0) return;
+
+    const loaded = await loadSharingState(this.ctx.storage);
+    const { state, updated, matched } = updateShareServiceEndpoints(loaded, {
+      ownerUserId,
+      machineId,
+      endpoints,
+    });
 
     // A guest reads its own object's cached copy of the summary, not this one,
-    // so saving the canonical record here only fixes the owner. Without this
-    // the guest keeps proxying to the port the share was created with, which
-    // is the whole bug one hop over.
-    for (const id of updated) {
+    // so moving the canonical record only fixes the owner. The same bug one
+    // hop over -- which is why a receiver whose refresh failed is retried here
+    // even when nothing moved: by then this record is right and the endpoint
+    // comparison alone would never look at that share again.
+    const refresh = new Set(updated);
+    for (const id of matched) {
+      if ((state.shares[id]?.staleReceivers?.length ?? 0) > 0) refresh.add(id);
+    }
+    // This arrives on every daemon connect and on a reminder, and the ordinary
+    // case is that nothing moved and no receiver is owed anything.
+    if (refresh.size === 0) return;
+
+    let changed = updated.length > 0;
+    for (const id of refresh) {
       const share = state.shares[id];
       if (!share) continue;
+      let stale: string[];
       try {
-        await this.refreshShareForItsParticipants(share);
+        stale = await this.refreshShareForItsParticipants(share);
       } catch (error) {
         console.error("share endpoint refresh failed", id, error);
+        stale = Object.values(share.participants)
+          .filter(
+            (participant) =>
+              participant.status === "active" && participant.userId && participant.userId !== share.ownerUserId,
+          )
+          .map((participant) => participant.userId);
+      }
+      const held = share.staleReceivers ?? [];
+      if (stale.length !== held.length || stale.some((userId, index) => userId !== held[index])) {
+        share.staleReceivers = stale.length > 0 ? stale : undefined;
+        changed = true;
       }
     }
+    if (changed) await saveSharingState(this.ctx.storage, state);
   }
 
   private async handleDaemonNotificationPush(

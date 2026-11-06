@@ -3,6 +3,9 @@ import { isValidMachineId } from "./machines.js";
 const SHARING_STATE_KEY = "sharing-state:v1";
 const INVITE_TOKEN_BYTES = 32;
 const MAX_SHARES = 200;
+/// The stored length of a project root. A report has to be folded to the same
+/// length before it is compared, or a longer root can never match its share.
+const MAX_PROJECT_ROOT_CHARS = 600;
 const MAX_INVITES_PER_SHARE = 50;
 export const SHARE_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -51,6 +54,13 @@ export interface SharedSessionRecord {
   version: number;
   participants: Record<string, ShareParticipantRecord>;
   invites: Record<string, ShareInviteRecord>;
+  /// Receivers whose own copy of this share could not be refreshed.
+  ///
+  /// A guest routes on the copy in ITS object, not this record, so a refresh
+  /// that failed leaves that guest on a dead port while this record is right.
+  /// Kept so a later report retries them, which the endpoint comparison alone
+  /// would never do -- by then this record matches and nothing looks stale.
+  staleReceivers?: string[];
 }
 
 export interface SharingState {
@@ -485,7 +495,7 @@ function normalizeAcceptedShare(share: SharedSessionSummary | undefined): Shared
   return {
     id: sanitizeRequiredText(share.id, 160, "shareId"),
     ownerUserId: sanitizeRequiredText(share.ownerUserId, 160, "ownerUserId"),
-    projectRoot: sanitizeRequiredText(share.projectRoot, 600, "projectRoot"),
+    projectRoot: sanitizeRequiredText(share.projectRoot, MAX_PROJECT_ROOT_CHARS, "projectRoot"),
     serviceEndpoint,
     sessionId: sanitizeRequiredText(share.sessionId, 160, "sessionId"),
     createdAt: sanitizeRequiredText(share.createdAt, 80, "createdAt"),
@@ -545,7 +555,7 @@ function normalizeEmail(value: string | undefined): string | undefined {
   return trimmed.slice(0, 254);
 }
 
-/// Point a machine's shares at where its project service is listening NOW.
+/// Point a machine's shares at where its project services are listening NOW.
 ///
 /// A share stored the endpoint once, when the invite was written, and nothing
 /// ever moved it. A project service binds a fresh port every time it starts,
@@ -554,32 +564,48 @@ function normalizeEmail(value: string | undefined): string | undefined {
 /// with the daemon connected and the agent working. The share could only be
 /// repaired by issuing another invite, which emails somebody.
 ///
-/// Scoped to the shares this machine owns for this project root, because a
-/// port number means nothing without the host it is on: another machine's
-/// share for a path of the same name is a different service.
+/// Takes the whole report in one call, because normalizing this state is a
+/// pass over every share and every invite: doing it per project turned a
+/// fifty-project report into a tenth of a second of blocking work in the one
+/// object that answers everything for that account.
 export function updateShareServiceEndpoints(
   state: SharingState,
   input: {
     ownerUserId: string;
     machineId?: string;
-    projectRoot: string;
-    serviceEndpoint: ShareServiceEndpoint;
+    endpoints: Array<{ projectRoot: string; serviceEndpoint: ShareServiceEndpoint }>;
     now?: string;
   },
-): { state: SharingState; updated: string[] } {
+): { state: SharingState; updated: string[]; matched: string[] } {
   const current = normalizeSharingState(state);
-  const endpoint = sanitizeServiceEndpoint(input.serviceEndpoint);
-  const projectRoot = input.projectRoot?.trim();
-  if (!endpoint || !projectRoot || !input.ownerUserId) return { state: current, updated: [] };
+  if (!input.ownerUserId) return { state: current, updated: [], matched: [] };
+  const byRoot = new Map<string, ShareServiceEndpoint>();
+  for (const entry of input.endpoints) {
+    const endpoint = sanitizeServiceEndpoint(entry.serviceEndpoint);
+    const projectRoot = shareProjectRootKey(entry.projectRoot);
+    if (!endpoint || !projectRoot) continue;
+    byRoot.set(projectRoot, endpoint);
+  }
+  if (byRoot.size === 0) return { state: current, updated: [], matched: [] };
   const machineId = sanitizeShareMachineId(input.machineId);
   const now = input.now ?? new Date().toISOString();
   const updated: string[] = [];
+  const matched: string[] = [];
   for (const share of Object.values(current.shares)) {
     if (share.ownerUserId !== input.ownerUserId) continue;
-    if (share.projectRoot !== projectRoot) continue;
-    // A share written before machine ids existed carries none. Matching it on
-    // owner and root alone is right: that is all it was ever keyed on.
-    if (machineId && share.machineId && share.machineId !== machineId) continue;
+    // A share bound to a host is that host's. The sender must BE it -- not
+    // merely fail to say otherwise: a daemon that connected without a usable
+    // machine id is tagged `unidentified`, and treating that as "no claim"
+    // let it move every machine-bound share onto its own ports.
+    //
+    // A share with no machineId at all is from before machines existed, and
+    // `resolveSharedDaemonTarget` only routes it when exactly one machine is
+    // connected -- so on the account where it still works, every report comes
+    // from the same machine anyway.
+    if (share.machineId && share.machineId !== machineId) continue;
+    const endpoint = byRoot.get(shareProjectRootKey(share.projectRoot));
+    if (!endpoint) continue;
+    matched.push(share.id);
     if (share.serviceEndpoint?.host === endpoint.host && share.serviceEndpoint?.port === endpoint.port) {
       continue;
     }
@@ -587,13 +613,33 @@ export function updateShareServiceEndpoints(
     share.updatedAt = now;
     updated.push(share.id);
   }
-  return { state: current, updated };
+  return { state: current, updated, matched };
+}
+
+/// How a project root is compared between a report and a stored share.
+///
+/// The stored copy went through `sanitizeRequiredText(..., 600)`, so comparing
+/// a longer root raw could never match and the share could never be moved. A
+/// trailing slash is the same directory, and a non-match here is silent -- it
+/// looks exactly like "nothing moved" -- so the spellings have to be folded
+/// rather than trusted to agree.
+function shareProjectRootKey(projectRoot: string | undefined): string {
+  const trimmed = projectRoot?.trim().slice(0, MAX_PROJECT_ROOT_CHARS) ?? "";
+  const withoutTrailingSlash = trimmed.replace(/\/+$/, "");
+  return withoutTrailingSlash || trimmed;
 }
 
 function sanitizeServiceEndpoint(endpoint: ShareServiceEndpoint | undefined): ShareServiceEndpoint | undefined {
   const host = endpoint?.host?.trim();
   const port = Number(endpoint?.port);
   if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) return undefined;
+  // A host goes into the `/proxy/<host>/<port><path>` a guest sends, and that
+  // path is matched by `^\/proxy\/[^/]+\/\d+(\/.*)$`. A host carrying a slash
+  // therefore produces a path the share's own allowlist does not recognise,
+  // and every request from that guest is refused as a route it may not use --
+  // a share bricked by a value the relay accepted. The charset admits every
+  // hostname, IPv4 and bracketed IPv6 form.
+  if (!/^[A-Za-z0-9._:[\]-]+$/.test(host)) return undefined;
   return { host: host.slice(0, 253), port };
 }
 

@@ -1415,13 +1415,14 @@ describe("RelayObject refreshing a share its guests already hold", () => {
 // the agent working, every request from that share refused -- and the only
 // repair was issuing another invite, which emails somebody.
 describe("RelayObject following a project service onto its new port", () => {
-  function envRecording(upserted: { userId: string; port?: number }[]) {
+  function envRecording(upserted: { userId: string; port?: number }[], receiverDown?: { value: boolean }) {
     return {
       RELAY: {
         idFromName: vi.fn((name: string) => ({ name })),
         get: vi.fn((id: { name: string }) => ({
           fetch: vi.fn(async (url: string, init?: RequestInit) => {
             if (String(url).includes("/internal/accepted-shares/upsert")) {
+              if (receiverDown?.value) return new Response("nope", { status: 500 });
               const body = JSON.parse(String(init?.body)) as {
                 share: { serviceEndpoint?: { port?: number } };
               };
@@ -1434,7 +1435,7 @@ describe("RelayObject following a project service onto its new port", () => {
     } as unknown as Env;
   }
 
-  async function shareBoundTo(object: RelayObject, machineId: string, port: number): Promise<string> {
+  async function shareBoundTo(object: RelayObject, machineId: string | undefined, port: number): Promise<string> {
     const response = await object.fetch(
       request("https://relay.aimux.app/shares/invite", {
         method: "POST",
@@ -1515,6 +1516,24 @@ describe("RelayObject following a project service onto its new port", () => {
     put.mockRestore();
   });
 
+  // A daemon that connected without a usable machine id is tagged
+  // `unidentified`. Reading that as "claims no machine" let it move every
+  // machine-bound share in the account onto its own ports.
+  it("will not move a machine-bound share for a daemon with no machine identity", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, "mini", 44659);
+    upserted.length = 0;
+
+    const nameless = fakeSocket(["daemon", "user:user_owner", "machine:unidentified"]);
+    storage.sockets = [nameless];
+    await object.webSocketMessage(nameless, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    expect(upserted).toEqual([]);
+  });
+
   // Which shares these are is read from the socket's own tags. A daemon that
   // claims someone else's project in the frame must not move their share.
   it("will not move a share the sending machine does not hold", async () => {
@@ -1529,6 +1548,47 @@ describe("RelayObject following a project service onto its new port", () => {
     await object.webSocketMessage(other, endpointsFrame(49226));
 
     expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    expect(upserted).toEqual([]);
+  });
+
+  // A guest routes on the copy in ITS object, so a refresh that failed leaves
+  // that guest on the dead port while the owner's record is right -- and the
+  // endpoint comparison would then never look at that share again, because by
+  // then it matches every report.
+  it("retries a receiver whose own copy could not be refreshed", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const receiverDown = { value: false };
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted, receiverDown));
+    const shareId = await shareBoundTo(object, "mini", 44659);
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+
+    // The move lands on the owner's record, but the guest's object is down.
+    receiverDown.value = true;
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+    expect(upserted).toEqual([]);
+
+    // While that guest is still down, a repeat report retries it and finds
+    // nothing new to record -- so it must not write storage. This report
+    // arrives every thirty seconds and on every daemon connect.
+    const put = vi.spyOn(storage, "put");
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    expect(put).not.toHaveBeenCalled();
+    put.mockRestore();
+
+    // The guest's object recovers. The next report moves nothing at all, and
+    // has to reach that guest anyway.
+    receiverDown.value = false;
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    expect(upserted).toEqual([{ userId: "user_guest", port: 49226 }]);
+
+    // And once it has landed, the share stops being retried.
+    upserted.length = 0;
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
     expect(upserted).toEqual([]);
   });
 
@@ -1569,7 +1629,10 @@ describe("RelayObject following a project service onto its new port", () => {
     const upserted: { userId: string; port?: number }[] = [];
     const storage = storageWithSockets([]);
     const object = createObject(storage, envRecording(upserted));
-    const shareId = await shareBoundTo(object, "mini", 44659);
+    // A share bound to no machine on purpose: a client socket carries no
+    // machine tag, so against a bound share the machine rule would refuse it
+    // anyway and this would prove nothing about the daemon check.
+    const shareId = await shareBoundTo(object, undefined, 44659);
     upserted.length = 0;
 
     const client = fakeSocket(["client", "user:user_owner", "device:client_1"]);
