@@ -175,9 +175,11 @@ import {
 import {
   agentOutputModeForVisiblePane,
   chatTranscriptPlaceholderState,
+  terminalOutputPlaceholderState,
   type ChatTranscriptPlaceholderState,
 } from "@/lib/chat-loading";
 import { CHAT_PANE_PLACEHOLDER_SHELL } from "@/lib/chat-pane-placeholder";
+import type { InitialAgentOutputFeedStatus } from "@/lib/agent-output-feed-state";
 import { looksLikeAgentCommand } from "@/lib/agent-command";
 import {
   reportSendFailed,
@@ -3170,6 +3172,7 @@ export default function ChatScreen() {
                     <AgentTerminalOutputPane
                       ref={terminalViewportRef}
                       bottomContentInset={chatBottomContentReserve}
+                      initialStatus={initialOutputStatus}
                       keyboardVisible={keyboardVisible}
                       onChromeVisibleChange={handleChatChromeVisibleChange}
                       onRequestHistoryPage={requestChatHistoryPage}
@@ -3417,6 +3420,9 @@ const TERMINAL_OUTPUT_LINE_STYLE: TextStyle = {
 
 type AgentTerminalOutputPaneProps = {
   bottomContentInset: number;
+  /// The same feed status the chat pane renders from, so the two panes cannot
+  /// describe one connection as two different situations.
+  initialStatus: InitialAgentOutputFeedStatus;
   keyboardVisible: boolean;
   onChromeVisibleChange: (visible: boolean) => void;
   onRequestHistoryPage: (metrics: ChatScrollMetrics, reason?: "scroll" | "content") => void;
@@ -3429,6 +3435,7 @@ const AgentTerminalOutputPane = React.memo(
     function AgentTerminalOutputPane(
       {
         bottomContentInset,
+        initialStatus,
         keyboardVisible,
         onChromeVisibleChange,
         onRequestHistoryPage,
@@ -3437,6 +3444,7 @@ const AgentTerminalOutputPane = React.memo(
       },
       ref,
     ) {
+      const lastError = useAtomValue(lastErrorFamily(agentKey));
       const outputPlain = useAtomValue(outputBufferFamily(agentKey));
       const outputAnsi = useAtomValue(outputAnsiFamily(agentKey));
       const outputAvailable = useAtomValue(outputAvailableFamily(agentKey));
@@ -3493,6 +3501,15 @@ const AgentTerminalOutputPane = React.memo(
       const visibleOutputAvailable =
         visibleOutput.sessionKey === agentKey ? visibleOutput.outputAvailable : outputAvailable;
       const hasOutput = visibleOutputText.trim().length > 0 || visibleOutputAvailable;
+      // The same decision the chat pane makes, from the same feed. Rendering
+      // an unconditional spinner here is what let one dead connection read as
+      // "Transcript unavailable, Retry" on the left and "Loading output" for
+      // ever on the right.
+      const terminalPlaceholder = terminalOutputPlaceholderState({
+        hasOutput,
+        initialStatus,
+        lastError,
+      });
 
       const cancelPendingTerminalScroll = useCallback(() => {
         if (terminalScrollFrameRef.current === null) return;
@@ -3703,12 +3720,18 @@ const AgentTerminalOutputPane = React.memo(
             className="max-w-[90%] flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2"
             style={{ minWidth: 220 }}
           >
-            <ActivityIndicator size="small" color="#a1a1aa" />
+            {terminalPlaceholder.kind === "loading" ? (
+              <ActivityIndicator size="small" color="#a1a1aa" />
+            ) : null}
             <View className="min-w-0 shrink">
-              <Text className="text-sm text-muted-foreground">Loading output</Text>
-              <Text className="mt-1 text-xs text-muted-foreground">
-                Waiting for terminal output from the project service.
-              </Text>
+              {terminalPlaceholder.kind === "none" ? null : (
+                <>
+                  <Text className="text-sm text-muted-foreground">{terminalPlaceholder.title}</Text>
+                  <Text className="mt-1 text-xs text-muted-foreground">
+                    {terminalPlaceholder.message}
+                  </Text>
+                </>
+              )}
             </View>
           </View>
         </View>

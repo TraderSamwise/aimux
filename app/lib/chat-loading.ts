@@ -35,6 +35,87 @@ export function paneOutputSnapshotSettlesInitialTranscript(
   );
 }
 
+/** The two panes that render the same session's data side by side. */
+export type AgentPaneSurface = "chat" | "terminal";
+
+const PANE_COPY = {
+  chat: {
+    errorTitle: "Transcript unavailable",
+    loadingTitle: "Loading transcript",
+    loadingMessage: "Waiting for chat history from the project service.",
+    timedOutTitle: "Still loading transcript",
+    timedOutMessage: "The project service has not returned chat history yet.",
+    emptyTitle: "No chat transcript yet",
+    emptyMessage: "New messages will appear here.",
+  },
+  terminal: {
+    errorTitle: "Output unavailable",
+    loadingTitle: "Loading output",
+    loadingMessage: "Waiting for terminal output from the project service.",
+    timedOutTitle: "Still loading output",
+    timedOutMessage: "The project service has not returned terminal output yet.",
+    emptyTitle: "No terminal output yet",
+    emptyMessage: "Output will appear here.",
+  },
+} as const;
+
+/**
+ * What a pane should show, for either pane, from one decision.
+ *
+ * The chat pane and the terminal pane render the same session's data from the
+ * same feed, so when they classify it separately they agree only by luck. They
+ * did not: the chat pane said "Transcript unavailable -- Daemon connection
+ * replaced" with a Retry button while the terminal pane spun "Loading output"
+ * for ever, describing one dead connection as two different situations, and
+ * only one of them was actionable.
+ *
+ * Only the WORDS differ per surface. The kind -- loading, timed out, error,
+ * empty -- is decided once here, which is the part a reader compares.
+ */
+export function agentPanePlaceholderState(
+  surface: AgentPaneSurface,
+  {
+    initialStatus,
+    lastError,
+    hasContent,
+  }: {
+    initialStatus: InitialAgentOutputFeedStatus;
+    lastError: string | null;
+    hasContent: boolean;
+  },
+): ChatTranscriptPlaceholderState {
+  const copy = PANE_COPY[surface];
+  if (hasContent) return { kind: "none" };
+  if (lastError && !(initialStatus === "loading" && isTransientRequestError(lastError))) {
+    return { kind: "error", title: copy.errorTitle, message: lastError, retryLabel: "Retry" };
+  }
+  if (initialStatus === "loading") {
+    return { kind: "loading", title: copy.loadingTitle, message: copy.loadingMessage };
+  }
+  if (initialStatus === "timed-out") {
+    return {
+      kind: "timed-out",
+      title: copy.timedOutTitle,
+      message: copy.timedOutMessage,
+      retryLabel: "Retry",
+    };
+  }
+  return { kind: "empty", title: copy.emptyTitle, message: copy.emptyMessage };
+}
+
+/** The terminal pane's half of the same answer. */
+export function terminalOutputPlaceholderState(input: {
+  initialStatus: InitialAgentOutputFeedStatus;
+  lastError: string | null;
+  hasOutput: boolean;
+}): ChatTranscriptPlaceholderState {
+  return agentPanePlaceholderState("terminal", {
+    initialStatus: input.initialStatus,
+    lastError: input.lastError,
+    hasContent: input.hasOutput,
+  });
+}
+
 export function chatTranscriptPlaceholderState({
   initialStatus,
   lastError,
@@ -59,34 +140,10 @@ export function chatTranscriptPlaceholderState({
   // still shows the moment it arrives rather than hiding behind a spinner,
   // and once the load stops being in flight a transient error surfaces too,
   // because by then it has genuinely failed.
-  if (lastError && !(initialStatus === "loading" && isTransientRequestError(lastError))) {
-    return {
-      kind: "error",
-      title: "Transcript unavailable",
-      message: lastError,
-      retryLabel: "Retry",
-    };
-  }
-  if (initialStatus === "loading") {
-    return {
-      kind: "loading",
-      title: "Loading transcript",
-      message: "Waiting for chat history from the project service.",
-    };
-  }
-  if (initialStatus === "timed-out") {
-    return {
-      kind: "timed-out",
-      title: "Still loading transcript",
-      message: "The project service has not returned chat history yet.",
-      retryLabel: "Retry",
-    };
-  }
-  return {
-    kind: "empty",
-    title: "No chat transcript yet",
-    message: "New messages will appear here.",
-  };
+  //
+  // That reasoning lives in `agentPanePlaceholderState` now, so the terminal
+  // pane gets it too rather than spinning through the same failure.
+  return agentPanePlaceholderState("chat", { initialStatus, lastError, hasContent: false });
 }
 
 export function shouldForceNativePinnedChatOffset({
