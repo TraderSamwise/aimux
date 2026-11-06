@@ -15,6 +15,7 @@ import {
   stripTrustedAimuxHeaders,
   normalizeSharingState,
   summarizeShare,
+  nextShareRefreshBatch,
   updateShareServiceEndpoints,
   upsertAcceptedShare,
   type ShareActor,
@@ -657,68 +658,210 @@ describe("share service endpoints", () => {
     expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
   });
 
-  it("moves a share written before shares carried a machine id, and binds it", async () => {
+  it("moves a share with no host only when the reporter is the owner's only machine", async () => {
     // Owner and project root is all such a share was ever keyed on, and it is
-    // exactly the share old enough to have gone stale. Leaving it unbound
-    // leaves it with no rule at all: any of the owner's machines could move
-    // it, and two machines holding the same checkout path would flip it back
-    // and forth for ever -- while at request time the guest is sent to
-    // whichever single machine is online, which is then the wrong one at the
-    // other one's port.
+    // exactly the share old enough to have gone stale -- but a share that
+    // names no host says nothing about WHICH host made it, and the same
+    // checkout path on two machines is ordinary here. One connected machine is
+    // the only case where `resolveSharedDaemonTarget` routes such a share at
+    // all, so it is the only case where this report describes the service the
+    // guest would actually reach.
     const state = await shareOn({});
     const shareId = Object.keys(state.shares)[0];
     expect(state.shares[shareId].machineId).toBeUndefined();
 
-    const result = updateShareServiceEndpoints(state, {
+    const alone = updateShareServiceEndpoints(state, {
       ownerUserId: "user_owner",
       machineId: "mini",
+      senderIsOnlyMachine: true,
       endpoints: [
         {
           projectRoot: "/Users/sam/cs/example",
           serviceEndpoint: { host: "127.0.0.1", port: 49226 },
         },
+      ],
+    });
+
+    expect(alone.updated).toEqual([shareId]);
+    expect(endpointOf(alone.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+    // Not bound by the move: binding is permanent, and a wrong guess breaks a
+    // share that worked whenever its real host was the only one online.
+    expect(alone.state.shares[shareId].machineId).toBeUndefined();
+  });
+
+  it("leaves a share with no host alone while a second machine is connected", async () => {
+    // With two machines up the share is unroutable anyway, so moving its
+    // endpoint could only be a guess -- and two machines holding the same
+    // checkout path would take turns overwriting it, every turn a durable
+    // write and a push to every guest.
+    const state = await shareOn({});
+    const shareId = Object.keys(state.shares)[0];
+
+    for (const machineId of ["mini", "mbp2"]) {
+      const result = updateShareServiceEndpoints(state, {
+        ownerUserId: "user_owner",
+        machineId,
+        senderIsOnlyMachine: false,
+        endpoints: [
+          {
+            projectRoot: "/Users/sam/cs/example",
+            serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+          },
+        ],
+      });
+      expect(result.updated, `machineId ${machineId}`).toEqual([]);
+      expect(result.matched, `machineId ${machineId}`).toEqual([]);
+      expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    }
+  });
+
+  it("treats a share whose stored host fails validation as having none", async () => {
+    // `normalizeShare` sanitizes a stored machineId, so a share holding one
+    // that fails `isValidMachineId` -- `Sam-MBP.local`, say -- reads as
+    // unbound on every load. It has to land on the unbound rule, not on the
+    // bound one, or it would be movable by any machine on the account.
+    const state = await shareOn({});
+    const shareId = Object.keys(state.shares)[0];
+    state.shares[shareId].machineId = "Sam-MBP.local";
+
+    const crowded = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      senderIsOnlyMachine: false,
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+        },
+      ],
+    });
+    expect(crowded.updated).toEqual([]);
+
+    const alone = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      senderIsOnlyMachine: true,
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+        },
+      ],
+    });
+    expect(alone.updated).toEqual([shareId]);
+  });
+
+  it("will not move a nested project's share onto the project it is nested in", async () => {
+    // The stored root is capped at 600 characters, so the stored root of a
+    // path nested inside a 600-character project IS the outer project's root,
+    // character for character. Nothing in the data can tell the two shares
+    // apart, so moving either one moves the wrong project's share -- the
+    // collision this cap protection exists for, in the shape the first
+    // version of it missed: one exact root and one truncated root, rather
+    // than two truncated ones.
+    const outer = `/Users/sam/cs/${"n".repeat(600 - 14)}`;
+    expect(outer).toHaveLength(600);
+    const inner = `${outer}/app`;
+
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: outer,
+      serviceEndpoint: { host: "127.0.0.1", port: 44659 },
+      machineId: "mini",
+      sessionId: "claude-outer",
+      email: "alex@example.com",
+      now: activeInviteCreatedAt,
+    });
+    const withInner = await createShareInvite(created.state, {
+      owner,
+      projectRoot: inner,
+      serviceEndpoint: { host: "127.0.0.1", port: 44660 },
+      machineId: "mini",
+      sessionId: "claude-inner",
+      email: "alex@example.com",
+      now: activeInviteCreatedAt,
+    });
+    // Both shares hold the same stored root, which is the whole problem.
+    const roots = Object.values(withInner.state.shares).map((share) => share.projectRoot);
+    expect(new Set(roots).size).toBe(1);
+
+    const result = updateShareServiceEndpoints(withInner.state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      senderIsOnlyMachine: true,
+      endpoints: [
+        { projectRoot: outer, serviceEndpoint: { host: "127.0.0.1", port: 10001 } },
+        { projectRoot: inner, serviceEndpoint: { host: "127.0.0.1", port: 20002 } },
+      ],
+    });
+
+    expect(result.updated).toEqual([]);
+    for (const share of Object.values(result.state.shares)) {
+      expect(share.serviceEndpoint?.port).not.toBe(10001);
+      expect(share.serviceEndpoint?.port).not.toBe(20002);
+    }
+  });
+
+  it("matches a root whose 600th character is the slash the cap cut it at", async () => {
+    // The stored copy is truncated at write time and only then loses its
+    // trailing slash. Folding the slash first and truncating after made the
+    // two sides disagree, and such a share could never be moved again.
+    const root = `/${"a".repeat(598)}/project`;
+    expect(root.length).toBeGreaterThan(600);
+    expect(root.charAt(599)).toBe("/");
+
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: root,
+      serviceEndpoint: { host: "127.0.0.1", port: 44659 },
+      machineId: "mini",
+      sessionId: "claude-abc",
+      email: "alex@example.com",
+      now: activeInviteCreatedAt,
+    });
+    const shareId = Object.keys(created.state.shares)[0];
+
+    const result = updateShareServiceEndpoints(created.state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      senderIsOnlyMachine: true,
+      endpoints: [{ projectRoot: root, serviceEndpoint: { host: "127.0.0.1", port: 49226 } }],
+    });
+
+    expect(result.updated).toEqual([shareId]);
+    expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+  });
+
+  it("still moves a share when the same directory is reported twice", async () => {
+    // Two spellings of one directory are not an ambiguity -- they carry the
+    // same endpoint. Treating any repeated key as ambiguous stopped a long
+    // root from following its service whenever the report listed it twice,
+    // and the relay cannot assume the sender deduped.
+    const root = `/Users/sam/cs/${"nested/".repeat(120)}example`;
+    expect(root.length).toBeGreaterThan(600);
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: root,
+      serviceEndpoint: { host: "127.0.0.1", port: 44659 },
+      machineId: "mini",
+      sessionId: "claude-abc",
+      email: "alex@example.com",
+      now: activeInviteCreatedAt,
+    });
+    const shareId = Object.keys(created.state.shares)[0];
+
+    const result = updateShareServiceEndpoints(created.state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      senderIsOnlyMachine: true,
+      endpoints: [
+        { projectRoot: root, serviceEndpoint: { host: "127.0.0.1", port: 49226 } },
+        { projectRoot: `${root}/`, serviceEndpoint: { host: "127.0.0.1", port: 49226 } },
       ],
     });
 
     expect(result.updated).toEqual([shareId]);
     expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
-    expect(result.state.shares[shareId].machineId).toBe("mini");
-
-    // And from then on only that machine may move it.
-    const other = updateShareServiceEndpoints(result.state, {
-      ownerUserId: "user_owner",
-      machineId: "mbp2",
-      endpoints: [
-        {
-          projectRoot: "/Users/sam/cs/example",
-          serviceEndpoint: { host: "127.0.0.1", port: 51000 },
-        },
-      ],
-    });
-    expect(other.updated).toEqual([]);
-    expect(endpointOf(other.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
-  });
-
-  it("binds a share whose stored host no longer passes validation", async () => {
-    // `normalizeShare` sanitizes a stored machineId, so a share holding one
-    // that fails `isValidMachineId` -- `Sam-MBP.local`, say -- reads as
-    // unbound on every load. That was a second way into the no-rule case.
-    const state = await shareOn({});
-    const shareId = Object.keys(state.shares)[0];
-    state.shares[shareId].machineId = "Sam-MBP.local";
-
-    const result = updateShareServiceEndpoints(state, {
-      ownerUserId: "user_owner",
-      machineId: "mini",
-      endpoints: [
-        {
-          projectRoot: "/Users/sam/cs/example",
-          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
-        },
-      ],
-    });
-
-    expect(result.state.shares[shareId].machineId).toBe("mini");
   });
 
   it("will not move either share when two roots share the stored root's length", async () => {
@@ -943,6 +1086,57 @@ describe("share service endpoints", () => {
       expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
     }
   });
+
+  it("lets each machine work through its own shares, whatever the other reports", async () => {
+    // A single cursor over all shares was written by whichever machine
+    // reported last, while each report only ever contains that machine's own
+    // shares -- so one machine with one permanently stale share pinned the
+    // other machine's window and ten of its shares were never attempted
+    // again. Per-share turns cannot be frozen from outside.
+    let state = emptySharingState();
+    const minisShares: string[] = [];
+    for (let index = 0; index < 30; index += 1) {
+      const created = await createShareInvite(state, {
+        owner,
+        projectRoot: "/Users/sam/cs/example",
+        serviceEndpoint: { host: "127.0.0.1", port: 44659 },
+        machineId: "mini",
+        sessionId: `claude-mini-${index}`,
+        email: "alex@example.com",
+        now: activeInviteCreatedAt,
+      });
+      state = created.state;
+      minisShares.push(created.token.share.id);
+    }
+    const other = await createShareInvite(state, {
+      owner,
+      projectRoot: "/Users/sam/cs/other",
+      serviceEndpoint: { host: "127.0.0.1", port: 44659 },
+      machineId: "mbp2",
+      sessionId: "claude-mbp2",
+      email: "alex@example.com",
+      now: activeInviteCreatedAt,
+    });
+    state = other.state;
+
+    // mbp2 reports between every pair of mini reports, taking its own turn
+    // each time -- which is what used to move the shared cursor.
+    const attempted = new Set<string>();
+    for (let round = 0; round < 3; round += 1) {
+      const mbp2Batch = nextShareRefreshBatch(state, [other.token.share.id], 20);
+      stamp(state, mbp2Batch, `2099-06-0${round + 1}T00:00:00.000Z`);
+
+      const miniBatch = nextShareRefreshBatch(state, minisShares, 20);
+      for (const id of miniBatch) attempted.add(id);
+      stamp(state, miniBatch, `2099-06-0${round + 1}T00:00:30.000Z`);
+    }
+
+    expect(attempted.size).toBe(minisShares.length);
+  });
+
+  function stamp(state: SharingState, ids: string[], at: string) {
+    for (const id of ids) state.shares[id].lastReceiverRefreshAt = at;
+  }
 
   it("reports every share it matched, moved or not", async () => {
     // The caller retries a receiver whose own copy could not be refreshed, and

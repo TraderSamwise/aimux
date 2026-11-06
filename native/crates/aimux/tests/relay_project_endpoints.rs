@@ -13,8 +13,8 @@ use aimux::daemon_projects::ProjectEndpoint;
 use aimux::daemon_state::AimuxDaemonInfo;
 use aimux::paths::PathResolver;
 use aimux::remote::relay_endpoints::{
-    RELAY_PROJECT_ENDPOINTS_TASK_NAME, REMINDER_TICKS, RelayProjectEndpointsTask,
-    read_project_endpoints,
+    RELAY_PROJECT_ENDPOINTS_INTERVAL_MS, RELAY_PROJECT_ENDPOINTS_TASK_NAME, REMINDER_TICKS,
+    RelayProjectEndpointsTask, read_project_endpoints,
 };
 use serde_json::json;
 use std::fs;
@@ -61,6 +61,15 @@ impl Fixture {
                 "lastSeen": "2099-01-01T00:00:00.000Z",
             }));
         fs::write(&path, serde_json::to_string(&registry).expect("serialize")).expect("write");
+    }
+
+    /// The registry after every project has been removed from it.
+    fn clear_registry(&self) {
+        fs::write(
+            self.resolver.projects_registry_path(),
+            serde_json::to_string(&json!({ "version": 1, "projects": [] })).expect("serialize"),
+        )
+        .expect("write registry");
     }
 
     /// What a project service writes when it binds.
@@ -462,6 +471,90 @@ fn two_registry_entries_for_one_root_do_not_report_for_ever() {
         reports[0].len(),
         1,
         "one endpoint for the root: {reports:?}"
+    );
+}
+
+#[test]
+fn a_project_removed_from_the_registry_is_forgotten() {
+    // `last_reported` is the memory of what the relay accepted. Keeping a row
+    // for a project that no longer exists is a leak for the daemon's life --
+    // and worse, if that project comes back on the port it used to have, the
+    // stale memory suppresses the very report that tells the relay so.
+    let fixture = Fixture::new("forgotten");
+    fixture.register_project("next-1", "/cs/tealstreet-next");
+    fixture.bind_service("next-1", 49226);
+    let context = fixture.context();
+    let reports = recording_reporter(&context, taken());
+    let mut task = RelayProjectEndpointsTask::new();
+
+    run(&mut task, &context);
+    assert_eq!(reports.lock().expect("reports").len(), 1);
+
+    // The project leaves the registry, and later comes back on the same port.
+    fixture.clear_registry();
+    run(&mut task, &context);
+    fixture.register_project("next-1", "/cs/tealstreet-next");
+    run(&mut task, &context);
+
+    let reports = reports.lock().expect("reports").clone();
+    assert_eq!(
+        reports.len(),
+        2,
+        "the returning project is reported again: {reports:?}"
+    );
+    assert_eq!(reports[1], vec![endpoint("/cs/tealstreet-next", 49226)]);
+}
+
+#[test]
+fn an_equal_timestamp_keeps_the_first_entry_in_registry_order() {
+    // Documented rather than left to chance: two duplicates that bound in the
+    // same millisecond have no newest, and the answer has to be the same on
+    // every read or the share's port would alternate.
+    let fixture = Fixture::new("equal-bind");
+    fixture.register_project("next-1", "/cs/tealstreet-next");
+    fixture.register_project("next-2", "/cs/tealstreet-next");
+    fixture.bind_service_at("next-1", 44659, "2099-06-01T00:00:00.000Z");
+    fixture.bind_service_at("next-2", 49226, "2099-06-01T00:00:00.000Z");
+
+    for _ in 0..3 {
+        let (endpoints, _) = read_project_endpoints(&fixture.resolver).expect("read endpoints");
+        assert_eq!(endpoints, vec![endpoint("/cs/tealstreet-next", 44659)]);
+    }
+}
+
+#[test]
+fn a_logged_out_relay_is_an_ordinary_state_and_not_a_failed_tick() {
+    // `relay_off` is what the reporter answers when the relay supervisor is
+    // gone. Treating it as a failure would name a task failure every thirty
+    // seconds on every machine that is simply not logged in.
+    let fixture = Fixture::new("relay-off");
+    fixture.register_project("next-1", "/cs/tealstreet-next");
+    fixture.bind_service("next-1", 49226);
+    let context = fixture.context();
+    let _reports = recording_reporter(&context, Arc::new(Mutex::new(Some("relay_off".to_owned()))));
+    let mut task = RelayProjectEndpointsTask::new();
+
+    // aimux-async-seam: test - sync test drives the periodic task body
+    let result = block_on_named("test:relay-endpoints", async { task.run(&context).await });
+
+    assert_eq!(result, Ok(()));
+}
+
+#[test]
+fn the_task_declares_the_cadence_the_fix_depends_on() {
+    // A daemon that has just started is the case most likely to be holding a
+    // stale endpoint, because the services came up with it -- so running
+    // immediately is the only thing that heals a divergence at startup, and a
+    // cadence quietly changed to hours would widen the window a share spends
+    // on a dead port without failing anything.
+    let task = RelayProjectEndpointsTask::new();
+
+    assert!(task.run_immediately(), "a fresh daemon must report at once");
+    assert_eq!(task.interval_ms(), RELAY_PROJECT_ENDPOINTS_INTERVAL_MS);
+    assert_eq!(RELAY_PROJECT_ENDPOINTS_INTERVAL_MS, 30 * 1_000);
+    assert!(
+        task.timeout() >= std::time::Duration::from_secs(5),
+        "the body reads a file per project"
     );
 }
 

@@ -620,10 +620,18 @@ export class RelayObject extends DurableObject<Env> {
       .filter((entry) => entry.projectRoot !== "");
     if (endpoints.length === 0) return;
 
+    // A share that names no host can only be spoken for by the owner's one
+    // connected machine, because that is the only case where a guest's request
+    // would reach the service this report describes. `rehydrateSockets` has
+    // already run for this message, so the socket map is current.
+    const machines = this.onlineMachines();
+    const senderIsOnlyMachine = machines.length === 1 && machines[0].id === machineId;
+
     const loaded = await loadSharingState(this.ctx.storage);
     const { state, updated, matched } = updateShareServiceEndpoints(loaded, {
       ownerUserId,
       machineId,
+      senderIsOnlyMachine,
       endpoints,
     });
 
@@ -641,14 +649,14 @@ export class RelayObject extends DurableObject<Env> {
     if (refresh.size === 0) return;
 
     let changed = updated.length > 0;
-    // Round-robin, resuming after the last share a report attempted: taking
-    // the first twenty every time meant a permanently unreachable guest held
-    // the whole budget and the shares behind it were never tried at all.
-    const { batch: ordered, cursor } = nextShareRefreshBatch(state, refresh, MAX_SHARE_REFRESHES_PER_REPORT);
-    if (cursor !== state.endpointRefreshCursor) {
-      state.endpointRefreshCursor = cursor;
-      changed = true;
-    }
+    // The ones waiting longest for a turn: taking the first twenty every time
+    // meant a permanently unreachable guest held the whole budget and the
+    // shares behind it were never tried at all.
+    const ordered = nextShareRefreshBatch(state, refresh, MAX_SHARE_REFRESHES_PER_REPORT);
+    // Only worth recording when the budget actually bit. Everything owed got a
+    // turn otherwise, and stamping anyway would be a durable write on every
+    // report for an account with one guest that is simply down.
+    const refreshedAt = refresh.size > MAX_SHARE_REFRESHES_PER_REPORT ? new Date().toISOString() : undefined;
     for (const id of ordered) {
       const share = state.shares[id];
       if (!share) continue;
@@ -658,6 +666,13 @@ export class RelayObject extends DurableObject<Env> {
       } catch (error) {
         console.error("share endpoint refresh failed", id, error);
         stale = shareReceivers(share);
+      }
+      // Stamped whether or not it landed: the stamp is what gives the next
+      // share a turn, so a share that keeps failing must still take its place
+      // at the back of the queue.
+      if (refreshedAt) {
+        share.lastReceiverRefreshAt = refreshedAt;
+        changed = true;
       }
       if (recordStaleReceivers(share, stale)) changed = true;
     }

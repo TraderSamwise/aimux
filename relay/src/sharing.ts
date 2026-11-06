@@ -54,6 +54,13 @@ export interface SharedSessionRecord {
   version: number;
   participants: Record<string, ShareParticipantRecord>;
   invites: Record<string, ShareInviteRecord>;
+  /// When a report last tried to refresh this share's receivers.
+  ///
+  /// Per share, not a cursor over all of them: a cursor is written by
+  /// whichever machine reported last, and each machine's report only contains
+  /// its own shares -- so a second machine with one stale share froze the
+  /// first machine's window and ten of its shares were never attempted again.
+  lastReceiverRefreshAt?: string;
   /// Receivers whose own copy of this share could not be refreshed.
   ///
   /// A guest routes on the copy in ITS object, not this record, so a refresh
@@ -67,13 +74,6 @@ export interface SharingState {
   version: 1;
   shares: Record<string, SharedSessionRecord>;
   acceptedShares?: Record<string, SharedSessionSummary>;
-  /// The last share whose receivers a report tried to refresh.
-  ///
-  /// A report refreshes a bounded number of shares, so without somewhere to
-  /// resume from it attempted the same ones every time: with more shares owed
-  /// than the cap, a reachable guest on share twenty-one would never be tried
-  /// while the first twenty kept failing.
-  endpointRefreshCursor?: string;
 }
 
 export interface ShareInviteToken {
@@ -121,24 +121,27 @@ export function emptySharingState(): SharingState {
   return { version: 1, shares: {}, acceptedShares: {} };
 }
 
-/// The shares to refresh next, resuming after the last one attempted.
+/// The shares to refresh next: the ones waiting longest for a turn.
 ///
-/// Round-robin rather than "the first N": a permanently unreachable guest
-/// would otherwise hold the whole budget for ever and nothing else would be
-/// retried. Sorted so the order is the same on every object and every load,
-/// which is what makes resuming mean anything.
-export function nextShareRefreshBatch(
-  state: SharingState,
-  candidates: Iterable<string>,
-  limit: number,
-): { batch: string[]; cursor: string | undefined } {
-  const ordered = [...new Set(candidates)].sort();
-  if (ordered.length === 0 || limit <= 0) return { batch: [], cursor: state.endpointRefreshCursor };
-  const cursor = state.endpointRefreshCursor;
-  const start = cursor === undefined ? 0 : ordered.findIndex((id) => id > cursor);
-  const from = start < 0 ? 0 : start;
-  const batch = [...ordered.slice(from), ...ordered.slice(0, from)].slice(0, limit);
-  return { batch, cursor: batch.at(-1) };
+/// Least-recently-attempted rather than "the first N", because a permanently
+/// unreachable guest would otherwise hold the whole budget for ever and
+/// nothing else would be retried. Each share carries its own last-attempted
+/// time, so a machine can only ever delay its OWN shares -- a shared cursor
+/// let one machine's stale share freeze another machine's window, since every
+/// report writes the cursor but each sees only its own candidates.
+///
+/// Ties break on the share id, so the order is the same on every object and
+/// every load.
+export function nextShareRefreshBatch(state: SharingState, candidates: Iterable<string>, limit: number): string[] {
+  if (limit <= 0) return [];
+  return [...new Set(candidates)]
+    .filter((id) => state.shares[id])
+    .sort((left, right) => {
+      const leftAt = state.shares[left].lastReceiverRefreshAt ?? "";
+      const rightAt = state.shares[right].lastReceiverRefreshAt ?? "";
+      return leftAt === rightAt ? left.localeCompare(right) : leftAt.localeCompare(rightAt);
+    })
+    .slice(0, limit);
 }
 
 export async function loadSharingState(storage: DurableObjectStorage): Promise<SharingState> {
@@ -167,12 +170,7 @@ export function normalizeSharingState(state: SharingState): SharingState {
       .slice(0, MAX_SHARES)
       .map((share) => [acceptedShareKey(share.ownerUserId, share.id), share]),
   );
-  return {
-    version: 1,
-    shares,
-    acceptedShares,
-    ...(state.endpointRefreshCursor ? { endpointRefreshCursor: state.endpointRefreshCursor } : {}),
-  };
+  return { version: 1, shares, acceptedShares };
 }
 
 export function getShareChatMode(share: SharedSessionRecord): ShareChatMode {
@@ -612,6 +610,10 @@ export function updateShareServiceEndpoints(
   input: {
     ownerUserId: string;
     machineId?: string;
+    /// Whether the reporting machine is the only one the owner has connected.
+    ///
+    /// Decides what may be done with a share that names no host: see below.
+    senderIsOnlyMachine?: boolean;
     endpoints: Array<{ projectRoot: string; serviceEndpoint: ShareServiceEndpoint }>;
     now?: string;
   },
@@ -631,23 +633,26 @@ export function updateShareServiceEndpoints(
     // machine id is tagged `unidentified`, and treating that as "no claim"
     // let it move every machine-bound share onto its own ports.
     if (share.machineId && share.machineId !== machineId) continue;
+    // A share that names no host says nothing about WHICH host made it, and
+    // the same checkout path on two machines is ordinary here. So the reporter
+    // is only allowed to speak for it when it is the owner's only connected
+    // machine -- which is exactly when `resolveSharedDaemonTarget` routes such
+    // a share, and therefore exactly when this report describes the service
+    // the guest would actually reach.
+    //
+    // With more than one machine connected the share is unroutable anyway
+    // (that function refuses it), so moving its endpoint could only be a
+    // guess: two machines would take turns overwriting it, every turn a
+    // durable write and a push to every guest. Binding it to the first
+    // reporter was worse still -- it is permanent, and a wrong guess breaks a
+    // share that worked whenever its real host was the only one online.
+    if (!share.machineId && input.senderIsOnlyMachine !== true) continue;
     const endpoint = byRoot.get(shareProjectRootKey(share.projectRoot));
     if (!endpoint) continue;
     matched.push(share.id);
-    // A share with no host at all is from before machines existed, or had one
-    // that no longer passes validation. Leaving it unbound leaves it with no
-    // rule: any of the owner's machines could move it, and two machines
-    // holding the same checkout path would flip it back and forth for ever --
-    // while at request time `resolveSharedDaemonTarget` sends the guest to
-    // whichever single machine is online, which is then the wrong one at the
-    // other one's port. Binding it to the machine that reports its project
-    // root settles it: that machine has the checkout, and from then on this
-    // rule is the one above.
-    const bind = !share.machineId && machineId ? machineId : undefined;
-    if (!bind && share.serviceEndpoint?.host === endpoint.host && share.serviceEndpoint?.port === endpoint.port) {
+    if (share.serviceEndpoint?.host === endpoint.host && share.serviceEndpoint?.port === endpoint.port) {
       continue;
     }
-    if (bind) share.machineId = bind;
     share.serviceEndpoint = { ...endpoint };
     share.updatedAt = now;
     updated.push(share.id);
@@ -657,45 +662,57 @@ export function updateShareServiceEndpoints(
 
 /// How a project root is compared between a report and a stored share.
 ///
+/// The same function for both sides, and the ORDER matters: the stored copy
+/// went through `sanitizeRequiredText(..., 600)` at write time, so truncation
+/// happens before anything else. Folding the slash first and truncating after
+/// made a root whose 600th character is a slash unmatchable for ever, because
+/// the stored copy had already lost that slash to the cap.
+///
 /// A trailing slash is the same directory, and a non-match here is silent --
 /// it looks exactly like "nothing moved" -- so the spellings have to be folded
 /// rather than trusted to agree.
 function shareProjectRootKey(projectRoot: string | undefined): string {
-  const trimmed = projectRoot?.trim() ?? "";
-  const withoutTrailingSlash = trimmed.replace(/\/+$/, "");
-  return withoutTrailingSlash || trimmed;
+  const stored = projectRoot?.trim().slice(0, MAX_PROJECT_ROOT_CHARS) ?? "";
+  const withoutTrailingSlash = stored.replace(/\/+$/, "");
+  return withoutTrailingSlash || stored;
 }
 
-/// A report, indexed by the keys a stored share can be compared against.
+/// A report, indexed by exactly what a stored share can be compared against.
 ///
-/// Two keys per entry, because the stored root went through
-/// `sanitizeRequiredText(..., 600)`: a root longer than that is held
-/// truncated, and comparing the report raw could never match it, so the share
-/// could never be moved. But truncating every comparison is worse than a
-/// no-match -- two roots that share a 600-character prefix would collide and
-/// one project's report would move the OTHER project's share. So the truncated
-/// key is only usable when exactly one reported root produces it; when two do,
-/// neither moves anything and the ambiguity stays visible as a project that
-/// never follows its service.
+/// One key per entry, produced by the same function the stored root went
+/// through, so the two sides cannot drift: truncate to the stored cap, THEN
+/// fold the trailing slash. Doing it in the other order made a root whose
+/// 600th character is a slash unmatchable -- the stored copy had already lost
+/// the slash to truncation while the report still carried it.
+///
+/// A key two different endpoints claim is dropped rather than guessed at. The
+/// stored root of a long path and the stored root of a shorter path that is
+/// its 600-character prefix are the SAME STRING, so nothing in the data can
+/// tell those two shares apart; moving either one would move the wrong
+/// project's share, which is worse than the no-match it replaced. Reporting
+/// one directory twice -- say once with a trailing slash -- is not that case,
+/// because both carry the same endpoint.
 function buildReportIndex(
   endpoints: Array<{ projectRoot: string; serviceEndpoint: ShareServiceEndpoint }>,
 ): Map<string, ShareServiceEndpoint> {
-  const byRoot = new Map<string, ShareServiceEndpoint>();
-  const truncated = new Map<string, ShareServiceEndpoint | "ambiguous">();
+  const byKey = new Map<string, ShareServiceEndpoint | "ambiguous">();
   for (const entry of endpoints) {
     const endpoint = sanitizeServiceEndpoint(entry.serviceEndpoint);
-    const projectRoot = shareProjectRootKey(entry.projectRoot);
-    if (!endpoint || !projectRoot || !isRoutableShareHost(endpoint.host)) continue;
-    byRoot.set(projectRoot, endpoint);
-    if (projectRoot.length <= MAX_PROJECT_ROOT_CHARS) continue;
-    const key = projectRoot.slice(0, MAX_PROJECT_ROOT_CHARS);
-    truncated.set(key, truncated.has(key) ? "ambiguous" : endpoint);
+    const key = shareProjectRootKey(entry.projectRoot);
+    if (!endpoint || !key || !isRoutableShareHost(endpoint.host)) continue;
+    const held = byKey.get(key);
+    if (!held) {
+      byKey.set(key, endpoint);
+      continue;
+    }
+    if (held === "ambiguous") continue;
+    if (held.host !== endpoint.host || held.port !== endpoint.port) byKey.set(key, "ambiguous");
   }
-  for (const [key, endpoint] of truncated) {
-    if (endpoint === "ambiguous" || byRoot.has(key)) continue;
-    byRoot.set(key, endpoint);
+  const resolved = new Map<string, ShareServiceEndpoint>();
+  for (const [key, endpoint] of byKey) {
+    if (endpoint !== "ambiguous") resolved.set(key, endpoint);
   }
-  return byRoot;
+  return resolved;
 }
 
 function sanitizeServiceEndpoint(endpoint: ShareServiceEndpoint | undefined): ShareServiceEndpoint | undefined {

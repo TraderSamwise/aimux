@@ -61,8 +61,16 @@ fn fold_by_project_root(endpoints: Vec<(ProjectEndpoint, String)>) -> Vec<Projec
     let mut by_root: BTreeMap<String, (ProjectEndpoint, String)> = BTreeMap::new();
     for (endpoint, bound_at) in endpoints {
         match by_root.get(&endpoint.project_root) {
-            // `>=` so that with equal or unparseable timestamps this still
-            // settles on one of them rather than depending on iteration order.
+            // On an equal timestamp the first entry in registry order keeps
+            // it. That IS an iteration-order dependency -- a documented one,
+            // and the alternative is a different arbitrary answer rather than
+            // a better one.
+            //
+            // Lexical on purpose: every writer goes through `now_iso()`, which
+            // is fixed-width `YYYY-MM-DDTHH:MM:SS.mmmZ`, so lexical order IS
+            // chronological. Which is also the limit of what this knows -- the
+            // newest endpoint file is not necessarily the live service, since
+            // the file is only removed on a clean exit.
             Some((_, held)) if held.as_str() >= bound_at.as_str() => {}
             _ => {
                 by_root.insert(endpoint.project_root.clone(), (endpoint, bound_at));
@@ -195,7 +203,7 @@ impl DaemonPeriodicTask for RelayProjectEndpointsTask {
             // watchdog then reads the unanswered `/health` as a wedge and ends
             // the process -- and a future that never yields is never
             // cancelled, so its own `timeout()` stops applying too.
-            let accepted = crate::async_runtime::spawn_blocking_named(
+            let report = crate::async_runtime::spawn_blocking_named(
                 crate::async_runtime::scoped_task_name(
                     RELAY_PROJECT_ENDPOINTS_TASK_NAME,
                     "report",
@@ -205,13 +213,18 @@ impl DaemonPeriodicTask for RelayProjectEndpointsTask {
             )
             .await
             .map_err(|error| format!("relay endpoint report did not finish: {error}"))??;
-            let Some(accepted) = accepted else {
+            let Some(report) = report else {
                 // Refused, so the reminder is still owed and the next tick
                 // tries again rather than waiting out another five minutes.
                 self.ticks_since_full_report = self.ticks_since_full_report.saturating_add(1);
                 return Ok(());
             };
-            for endpoint in accepted {
+            // Forgotten before recorded, so a root that has left the
+            // registry does not sit in this map for the daemon's life -- and
+            // so a project re-added on the port it used to have is reported
+            // again rather than suppressed by a memory of the old one.
+            forget_unknown_roots(&mut self.last_reported, &report.known);
+            for endpoint in report.accepted {
                 self.last_reported
                     .insert(endpoint.project_root, (endpoint.host, endpoint.port));
             }
@@ -225,6 +238,31 @@ impl DaemonPeriodicTask for RelayProjectEndpointsTask {
     }
 }
 
+/// Forget roots the registry no longer has.
+///
+/// `last_reported` is this daemon's memory of what the relay accepted, so an
+/// entry for a project that has been removed is a row nothing will consult
+/// again -- and if that project is re-added on the port it used to have, the
+/// stale memory would suppress the very report that tells the relay so.
+fn forget_unknown_roots(
+    last_reported: &mut BTreeMap<String, (String, u16)>,
+    known: &[ProjectEndpoint],
+) {
+    let roots: std::collections::BTreeSet<&str> = known
+        .iter()
+        .map(|known| known.project_root.as_str())
+        .collect();
+    last_reported.retain(|root, _| roots.contains(root.as_str()));
+}
+
+/// What one report found: what the relay took, and every root it read.
+pub struct Report {
+    /// Only what the relay accepted; see `report_moved_endpoints`.
+    pub accepted: Vec<ProjectEndpoint>,
+    /// Every root the registry still has, so the caller can forget the rest.
+    pub known: Vec<ProjectEndpoint>,
+}
+
 /// Report what moved, and answer with what the relay took.
 ///
 /// `None` means there was no relay to take it -- logged out, or between
@@ -236,7 +274,7 @@ pub fn report_moved_endpoints(
     push: Option<&dyn RelayEndpointReporter>,
     resolver: &PathResolver,
     last_reported: &BTreeMap<String, (String, u16)>,
-) -> Result<Option<Vec<ProjectEndpoint>>, String> {
+) -> Result<Option<Report>, String> {
     // Asked before the registry is read, and asked of the relay rather than of
     // the build: the reporter is registered at startup whether or not anyone
     // has ever logged in, so "is it registered" answered the wrong question
@@ -260,7 +298,10 @@ pub fn report_moved_endpoints(
     }
     let moved = endpoints_to_report(last_reported, &endpoints);
     if moved.is_empty() {
-        return Ok(Some(Vec::new()));
+        return Ok(Some(Report {
+            accepted: Vec::new(),
+            known: endpoints,
+        }));
     }
     match push.report(&moved) {
         Ok(()) => {
@@ -278,7 +319,10 @@ pub fn report_moved_endpoints(
                         .collect::<Vec<_>>(),
                 })),
             );
-            Ok(Some(moved))
+            Ok(Some(Report {
+                accepted: moved,
+                known: endpoints,
+            }))
         }
         // Nothing recorded either way, so the next tick tries again. A machine
         // that is logged out or between sockets is an ordinary state and not a
