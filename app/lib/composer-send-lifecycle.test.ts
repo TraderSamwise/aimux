@@ -17,6 +17,12 @@ import {
 } from "@/lib/input-delivery";
 import { attachmentTooLargeMessage, firstOversizedAttachment } from "@/lib/attachment-limits";
 import { isTransientRequestError } from "@/lib/request-errors";
+import { looksLikeAgentCommand } from "@/lib/agent-command";
+import {
+  COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+  mergeAcceptedComposerEchoes,
+  type AcceptedComposerEcho,
+} from "@/lib/composer-echo";
 import type { LivePaneInputResponse } from "../../src/project-api-contract";
 
 type Attachment = {
@@ -164,6 +170,22 @@ function harness(
     releasePickedAttachment,
     EMPTY_COMPOSER_SELECTION: { start: 0, end: 0 },
     setSelectionRestoreToken: vi.fn(),
+    // The send asks whether the text is a command before deciding what its
+    // echo means, and reports its own failures. This harness runs the real
+    // source against an explicit binding set, so an unbound name throws
+    // inside the send -- and because the catch reports too, it surfaced as
+    // "reportSendFailed is not defined" rather than as the name that was
+    // actually missing.
+    looksLikeAgentCommand,
+    deliveryDiagnosticContext: () => ({
+      sessionId: "session",
+      relayConfigured: false,
+      relayStatus: "off",
+      shared: false,
+    }),
+    reportSendFailed: vi.fn(),
+    reportSendNotAccepted: vi.fn(),
+    reportTranscriptRefreshFailed: vi.fn(),
   };
   const helperNames = [
     "readComposerDraft",
@@ -288,6 +310,7 @@ function harness(
         { ...context(), useAtomValue: (atom: typeof composerSendOperationAtom) => store.get(atom) },
       )(),
     shared,
+    base,
     refs,
     composerSendOperationAtom,
     clearLocalInterruptHold,
@@ -450,6 +473,46 @@ describe("the screen's composer send lifecycle without a renderer", () => {
     expect(h.state.ack).toBeNull();
     expect(h.state.error).toBe("Send failed: permission denied");
   });
+});
+
+describe("what a send's echo claims about the transcript", () => {
+  // Confirmation is echo-based, and a command is consumed by the agent
+  // without necessarily writing a user turn -- so waiting for an echo of one
+  // guaranteed a "Send not confirmed yet" ten seconds later for a command
+  // that ran perfectly. `/queue` over the shared chat is how it was found.
+  //
+  // This runs the screen's real send, so it is the call site being asked, not
+  // the rule. A guard that is correct in a helper and missing at the one
+  // place that matters is the class this file exists to catch.
+  it.each([
+    { draft: "/queue", expectsTranscriptEcho: false, expiredIsAFailure: 0 },
+    { draft: "queue up the next task", expectsTranscriptEcho: true, expiredIsAFailure: 1 },
+  ])(
+    "sending $draft records expectsTranscriptEcho=$expectsTranscriptEcho",
+    async ({ draft, expectsTranscriptEcho, expiredIsAFailure }) => {
+      const h = harness();
+      h.setDraft(draft);
+      await h.send();
+
+      expect(h.base.reportSendFailed).not.toHaveBeenCalled();
+      expect(h.sendLivePaneInput).toHaveBeenCalledOnce();
+      expect(h.state.accepted).toHaveLength(1);
+      expect(h.state.accepted[0]).toMatchObject({ expectsTranscriptEcho });
+
+      // And what that costs when the echo never arrives, through the merge
+      // the screen actually reports from: `droppedExpiredCount` is what
+      // raises the error and the Sentry event.
+      const echoes = h.state.accepted as AcceptedComposerEcho[];
+      const expired = mergeAcceptedComposerEchoes([], echoes, {
+        nowMs: echoes[0]!.createdAtMs + COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+      });
+      expect(expired.droppedExpiredCount).toBe(expiredIsAFailure);
+      // Either way the optimistic bubble existed first.
+      expect(
+        mergeAcceptedComposerEchoes([], echoes, { nowMs: echoes[0]!.createdAtMs }).messages,
+      ).toHaveLength(1);
+    },
+  );
 });
 
 describe("composer reservations across screen instances", () => {

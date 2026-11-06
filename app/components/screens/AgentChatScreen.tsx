@@ -1677,24 +1677,27 @@ export default function ChatScreen() {
           return;
         }
         // A command is consumed by the agent and need not come back as a
-        // user turn, so there may be no echo to wait for. Queueing one anyway
-        // guaranteed a "Send not confirmed yet" ten seconds later for a
-        // command that ran perfectly -- the daemon decides what a command is
-        // with this same rule, from the same contract file.
-        if (!looksLikeAgentCommand(text)) {
-          setAcceptedComposerMessages((current) =>
-            [
-              ...current,
-              {
-                baselineMessageCount: baselineParsedMessageCount,
-                baselineUserMessageCount: baselineParsedUserMessageCount,
-                clientMessageId,
-                createdAtMs: Date.now(),
-                message: acceptedMessage,
-              },
-            ].slice(-20),
-          );
-        }
+        // user turn, so waiting for an echo of one guaranteed a "Send not
+        // confirmed yet" ten seconds later for a command that ran perfectly.
+        // The daemon decides what a command is with this same rule, from the
+        // same contract file.
+        //
+        // The echo is still queued. It is also what draws the bubble and, in
+        // terminal mode, the only confirmation the composer has -- skipping
+        // it outright traded a wrong warning for no feedback at all.
+        setAcceptedComposerMessages((current) =>
+          [
+            ...current,
+            {
+              baselineMessageCount: baselineParsedMessageCount,
+              baselineUserMessageCount: baselineParsedUserMessageCount,
+              clientMessageId,
+              createdAtMs: Date.now(),
+              expectsTranscriptEcho: !looksLikeAgentCommand(text),
+              message: acceptedMessage,
+            },
+          ].slice(-20),
+        );
         writeComposerDraft(jotaiStore, sendComposerDraftKey, "");
         composerDraftTextRef.current = "";
         composerSelectionRef.current = EMPTY_COMPOSER_SELECTION;

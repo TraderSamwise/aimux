@@ -114,6 +114,51 @@ describe("composer optimistic echo reconciliation", () => {
     expect(reconciled.droppedTranscriptAdvancedCount).toBe(0);
   });
 
+  it("lets a command's echo expire without calling it an unconfirmed send", () => {
+    // Confirmation is echo-based: a send is confirmed by its text turning up
+    // in the parsed transcript. A command is consumed by the agent and need
+    // not come back as a user turn, so its echo expiring is the expected
+    // ending -- `droppedExpiredCount` is what raises "Send not confirmed
+    // yet", and raising it here blamed the connection for a command that ran.
+    const command = echo("composer:slash", "/queue", { expectsTranscriptEcho: false });
+
+    const reconciled = mergeAcceptedComposerEchoes([], [command], {
+      nowMs: 1_000 + COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+    });
+
+    // Still dropped, so no phantom bubble is left behind. Only the meaning of
+    // the drop differs.
+    expect(reconciled.messages).toEqual([]);
+    expect(reconciled.echoes).toEqual([]);
+    expect(reconciled.droppedUnconfirmedCount).toBe(1);
+    expect(reconciled.droppedExpiredCount).toBe(0);
+  });
+
+  it("still shows a command's echo while it waits", () => {
+    // The flag is about what the expiry MEANS, not about skipping the echo.
+    // Skipping it outright left a command with no optimistic bubble and, in
+    // terminal mode, no confirmation at all.
+    const command = echo("composer:slash", "/queue", { expectsTranscriptEcho: false });
+
+    const reconciled = mergeAcceptedComposerEchoes([], [command], { nowMs: 1_500 });
+
+    expect(reconciled.messages.map((message) => message.id)).toEqual(["composer:slash"]);
+    expect(reconciled.echoes).toEqual([command]);
+  });
+
+  it("treats an echo that says nothing as one that expects its echo", () => {
+    // An echo built without the flag keeps the old meaning, which is the safe
+    // direction: a missing field must not silence a real failed send.
+    const pending = echo("composer:missing", "lost");
+    expect(pending.expectsTranscriptEcho).toBeUndefined();
+
+    expect(
+      mergeAcceptedComposerEchoes([], [pending], {
+        nowMs: 1_000 + COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+      }).droppedExpiredCount,
+    ).toBe(1);
+  });
+
   it("shows the server transcript without treating an agent answer as retryable", () => {
     const pending = echo("composer:missing", "lost");
     const assistant: ChatMessage = {

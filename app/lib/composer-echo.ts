@@ -7,6 +7,13 @@ export interface AcceptedComposerEcho {
   createdAtMs: number;
   message: ChatMessage;
   settled?: boolean;
+  /// Whether this send should ever appear in the PARSED transcript.
+  ///
+  /// False for a command: the agent consumes it and need not write a user
+  /// turn, so its echo expiring says nothing about delivery. The echo is
+  /// still queued -- it is what draws the bubble and the awaiting-echo footer
+  /// -- it just does not become "Send not confirmed yet" when it times out.
+  expectsTranscriptEcho?: boolean;
 }
 
 export interface ComposerEchoMergeResult {
@@ -108,7 +115,8 @@ export function mergeAcceptedComposerEchoes(
       droppedUnconfirmedCount += 1;
       if (transcriptAdvanced) {
         droppedTranscriptAdvancedCount += 1;
-      } else if (expired) {
+      } else if (expired && accepted.expectsTranscriptEcho !== false) {
+        // A command's echo expiring is the expected ending, not a failure.
         droppedExpiredCount += 1;
       }
       continue;
