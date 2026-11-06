@@ -1409,6 +1409,147 @@ describe("RelayObject refreshing a share its guests already hold", () => {
   });
 });
 
+// A project service binds a fresh port on every start, and a share stored the
+// endpoint it was created with. So the first restart after a share was made
+// left it proxying to a port nothing was listening on -- the daemon connected,
+// the agent working, every request from that share refused -- and the only
+// repair was issuing another invite, which emails somebody.
+describe("RelayObject following a project service onto its new port", () => {
+  function envRecording(upserted: { userId: string; port?: number }[]) {
+    return {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn((id: { name: string }) => ({
+          fetch: vi.fn(async (url: string, init?: RequestInit) => {
+            if (String(url).includes("/internal/accepted-shares/upsert")) {
+              const body = JSON.parse(String(init?.body)) as {
+                share: { serviceEndpoint?: { port?: number } };
+              };
+              upserted.push({ userId: id.name, port: body.share.serviceEndpoint?.port });
+            }
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env;
+  }
+
+  async function shareBoundTo(object: RelayObject, machineId: string, port: number): Promise<string> {
+    const response = await object.fetch(
+      request("https://relay.aimux.app/shares/invite", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+        body: {
+          projectRoot: "/Users/sam/cs/tealstreet-next",
+          serviceEndpoint: { host: "127.0.0.1", port },
+          machineId,
+          sessionId: "claude-psmp2r",
+          email: "guest@example.com",
+        },
+      }),
+    );
+    expect(response.status).toBe(201);
+    const accepted = await object.fetch(
+      request(
+        `https://relay.aimux.app/shares/invite/user_owner/${new URL(
+          ((await response.json()) as { acceptUrl: string }).acceptUrl,
+        ).pathname
+          .split("/")
+          .at(-2)!}/accept`,
+        { method: "POST", userId: "user_guest", name: "Guest", email: "guest@example.com" },
+      ),
+    );
+    expect(accepted.status).toBe(200);
+    return ((await accepted.json()) as { share: { id: string } }).share.id;
+  }
+
+  function storedEndpoint(storage: MemoryStorage, shareId: string) {
+    return storage
+      .get<{ shares: Record<string, { serviceEndpoint?: { host: string; port: number } }> }>("sharing-state:v1")
+      .then((state) => state!.shares[shareId].serviceEndpoint);
+  }
+
+  const endpointsFrame = (port: number) =>
+    JSON.stringify({
+      type: "project_endpoints",
+      projects: [{ projectRoot: "/Users/sam/cs/tealstreet-next", host: "127.0.0.1", port }],
+    });
+
+  it("moves the stored endpoint and pushes it to the guests holding a copy", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, "mini", 44659);
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+    // A guest reads its own object's cached copy, so saving the canonical
+    // record here only fixes the owner -- without the push the guest keeps
+    // proxying to the dead port, which is the same bug one hop over.
+    expect(upserted).toEqual([{ userId: "user_guest", port: 49226 }]);
+  });
+
+  it("writes nothing when the service is still on the port the share has", async () => {
+    // This frame arrives on every daemon connect. Saving storage and fanning
+    // out to every guest each time would be a write per reconnect, and the
+    // relay's edge reconnects tens of times a day.
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    await shareBoundTo(object, "mini", 49226);
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+    const put = vi.spyOn(storage, "put");
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+
+    expect(put).not.toHaveBeenCalled();
+    expect(upserted).toEqual([]);
+    put.mockRestore();
+  });
+
+  // Which shares these are is read from the socket's own tags. A daemon that
+  // claims someone else's project in the frame must not move their share.
+  it("will not move a share the sending machine does not hold", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, "mini", 44659);
+    upserted.length = 0;
+
+    const other = fakeSocket(["daemon", "user:user_owner", "machine:mbp2", "machineName:sam-mbp2"]);
+    storage.sockets = [other];
+    await object.webSocketMessage(other, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    expect(upserted).toEqual([]);
+  });
+
+  // Anything a client sends is a claim about itself, and this frame rewrites
+  // where every share for a project points.
+  it("ignores the frame from a client socket", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, "mini", 44659);
+    upserted.length = 0;
+
+    const client = fakeSocket(["client", "user:user_owner", "device:client_1"]);
+    storage.sockets = [client];
+    await object.webSocketMessage(client, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    expect(upserted).toEqual([]);
+  });
+});
+
 async function createAcceptedShareInOwnerObject(object: RelayObject): Promise<string> {
   const invite = await createInvite(object);
   const accepted = await object.fetch(

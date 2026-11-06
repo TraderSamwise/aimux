@@ -58,6 +58,7 @@ import {
   sharedRelayRequestAccess,
   summarizeShare,
   stripTrustedAimuxHeaders,
+  updateShareServiceEndpoints,
   upsertAcceptedShare,
 } from "./sharing.js";
 import type { ShareParticipantRecord, SharedSessionRecord, SharedSessionSummary } from "./sharing.js";
@@ -339,6 +340,11 @@ export class RelayObject extends DurableObject<Env> {
       return;
     }
 
+    if (isDaemon && parsed.type === "project_endpoints") {
+      await this.applyDaemonProjectEndpoints(tags, parsed);
+      return;
+    }
+
     if (isDaemon && parsed.type === "project_event") {
       this.forwardProjectEvent(parsed, machineFromTags(tags).id);
       return;
@@ -564,6 +570,59 @@ export class RelayObject extends DurableObject<Env> {
       this.eventSubscriptions.delete(message.id);
       this.detachClientProjectEventSubscription(subscription.client, message.id);
       this.sendDaemonProjectEventsUnsubscribe(message.id, subscription.machineId);
+    }
+  }
+
+  /// A daemon telling us where its project services are listening now.
+  ///
+  /// Sent on connect and whenever a service binds a different port, which is
+  /// every time one restarts. Without it a share keeps the endpoint it was
+  /// created with and starts refusing connections the moment that service
+  /// comes back on a new port.
+  private async applyDaemonProjectEndpoints(
+    tags: string[],
+    message: Extract<RelayMessage, { type: "project_endpoints" }>,
+  ): Promise<void> {
+    // From the socket's own tags, not from the frame: whose shares these are,
+    // and which machine they are on, is not something the sender gets to claim.
+    const ownerUserId = tagValue(tags, "user:");
+    const machineId = machineFromTags(tags).id;
+    const projects = Array.isArray(message.projects) ? message.projects : [];
+    if (!ownerUserId || projects.length === 0) return;
+
+    let state = await loadSharingState(this.ctx.storage);
+    const updated = new Set<string>();
+    for (const entry of projects) {
+      const projectRoot = typeof entry?.projectRoot === "string" ? entry.projectRoot : "";
+      const host = typeof entry?.host === "string" ? entry.host : "";
+      const port = Number(entry?.port);
+      if (!projectRoot || !host || !Number.isInteger(port)) continue;
+      const result = updateShareServiceEndpoints(state, {
+        ownerUserId,
+        machineId,
+        projectRoot,
+        serviceEndpoint: { host, port },
+      });
+      state = result.state;
+      for (const id of result.updated) updated.add(id);
+    }
+    // Only on a real change: this arrives on every daemon connect, and the
+    // ordinary case is that nothing moved.
+    if (updated.size === 0) return;
+    await saveSharingState(this.ctx.storage, state);
+
+    // A guest reads its own object's cached copy of the summary, not this one,
+    // so saving the canonical record here only fixes the owner. Without this
+    // the guest keeps proxying to the port the share was created with, which
+    // is the whole bug one hop over.
+    for (const id of updated) {
+      const share = state.shares[id];
+      if (!share) continue;
+      try {
+        await this.refreshShareForItsParticipants(share);
+      } catch (error) {
+        console.error("share endpoint refresh failed", id, error);
+      }
     }
   }
 

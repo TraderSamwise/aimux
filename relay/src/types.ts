@@ -114,6 +114,20 @@ export interface RelayNotificationPushControl {
   };
 }
 
+/// Where a daemon's project services are listening right now.
+///
+/// A project service binds a fresh port on every start, and a share stores the
+/// endpoint it was created with. Without this frame the first restart after a
+/// share was made leaves that share proxying to a port nothing is on.
+export interface RelayProjectEndpointsControl {
+  type: "project_endpoints";
+  projects: Array<{
+    projectRoot: string;
+    host: string;
+    port: number;
+  }>;
+}
+
 export type RelayMessage =
   | RelayRequest
   | RelayProjectEventsSubscribe
@@ -124,4 +138,5 @@ export type RelayMessage =
   | RelayResponse
   | RelayControl
   | RelaySecurityEventControl
-  | RelayNotificationPushControl;
+  | RelayNotificationPushControl
+  | RelayProjectEndpointsControl;

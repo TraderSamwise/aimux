@@ -14,6 +14,7 @@ import {
   sharedRelayRequestAccess,
   stripTrustedAimuxHeaders,
   summarizeShare,
+  updateShareServiceEndpoints,
   upsertAcceptedShare,
   type ShareActor,
   type SharedSessionRecord,
@@ -528,5 +529,144 @@ describe("which share a new invite extends", () => {
     };
 
     expect(findShareForSession(state, owner.userId, "claude-1", "strix", "/repo/aimux")).toBeUndefined();
+  });
+});
+
+describe("share service endpoints", () => {
+  // A project service binds a fresh port on every start. The share stored the
+  // endpoint once, when the invite was written, and nothing moved it -- so the
+  // first restart after a share was created left it proxying to a port nothing
+  // was listening on, with the daemon connected and the agent working.
+  async function shareOn(input: { ownerUserId?: string; projectRoot?: string; machineId?: string; port?: number }) {
+    const created = await createShareInvite(emptySharingState(), {
+      owner: { ...owner, userId: input.ownerUserId ?? owner.userId },
+      projectRoot: input.projectRoot ?? "/Users/sam/cs/example",
+      serviceEndpoint: { host: "127.0.0.1", port: input.port ?? 44659 },
+      machineId: input.machineId,
+      sessionId: "claude-abc",
+      email: "alex@example.com",
+      now: activeInviteCreatedAt,
+    });
+    return created.state;
+  }
+
+  function endpointOf(state: SharingState, shareId: string) {
+    return state.shares[shareId].serviceEndpoint;
+  }
+
+  it("moves a share onto the port its project service is listening on now", async () => {
+    const state = await shareOn({ machineId: "mini" });
+    const shareId = Object.keys(state.shares)[0];
+
+    const result = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      projectRoot: "/Users/sam/cs/example",
+      serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+      now: "2099-05-25T00:00:00.000Z",
+    });
+
+    expect(result.updated).toEqual([shareId]);
+    expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+    expect(result.state.shares[shareId].updatedAt).toBe("2099-05-25T00:00:00.000Z");
+  });
+
+  it("reports no update when the service is still on the port the share has", async () => {
+    // This frame arrives on every daemon connect, and the ordinary case is
+    // that nothing moved. Writing storage anyway would be a write per connect.
+    const state = await shareOn({ machineId: "mini", port: 49226 });
+    const shareId = Object.keys(state.shares)[0];
+
+    const result = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      projectRoot: "/Users/sam/cs/example",
+      serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+    });
+
+    expect(result.updated).toEqual([]);
+    expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+  });
+
+  it("leaves a share for another project root where it is", async () => {
+    const state = await shareOn({ projectRoot: "/Users/sam/cs/other", machineId: "mini" });
+    const shareId = Object.keys(state.shares)[0];
+
+    const result = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      projectRoot: "/Users/sam/cs/example",
+      serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+    });
+
+    expect(result.updated).toEqual([]);
+    expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+  });
+
+  it("leaves another owner's share where it is", async () => {
+    const state = await shareOn({ ownerUserId: "user_someone_else", machineId: "mini" });
+    const shareId = Object.keys(state.shares)[0];
+
+    const result = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      projectRoot: "/Users/sam/cs/example",
+      serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+    });
+
+    expect(result.updated).toEqual([]);
+    expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+  });
+
+  it("leaves a share on another machine where it is", async () => {
+    // A port number means nothing without the host it is on: the same path on
+    // a second machine is a different service, and moving it there would break
+    // a share that was working.
+    const state = await shareOn({ machineId: "mbp2" });
+    const shareId = Object.keys(state.shares)[0];
+
+    const result = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      projectRoot: "/Users/sam/cs/example",
+      serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+    });
+
+    expect(result.updated).toEqual([]);
+    expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+  });
+
+  it("still moves a share written before shares carried a machine id", async () => {
+    // Owner and project root is all such a share was ever keyed on, and it is
+    // exactly the share old enough to have gone stale.
+    const state = await shareOn({});
+    const shareId = Object.keys(state.shares)[0];
+    expect(state.shares[shareId].machineId).toBeUndefined();
+
+    const result = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      projectRoot: "/Users/sam/cs/example",
+      serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+    });
+
+    expect(result.updated).toEqual([shareId]);
+    expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+  });
+
+  it("refuses an endpoint that is not a port", async () => {
+    const state = await shareOn({ machineId: "mini" });
+    const shareId = Object.keys(state.shares)[0];
+
+    for (const port of [0, 70000, Number.NaN]) {
+      const result = updateShareServiceEndpoints(state, {
+        ownerUserId: "user_owner",
+        machineId: "mini",
+        projectRoot: "/Users/sam/cs/example",
+        serviceEndpoint: { host: "127.0.0.1", port },
+      });
+      expect(result.updated, `port ${port}`).toEqual([]);
+      expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    }
   });
 });

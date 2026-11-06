@@ -545,6 +545,51 @@ function normalizeEmail(value: string | undefined): string | undefined {
   return trimmed.slice(0, 254);
 }
 
+/// Point a machine's shares at where its project service is listening NOW.
+///
+/// A share stored the endpoint once, when the invite was written, and nothing
+/// ever moved it. A project service binds a fresh port every time it starts,
+/// so the first restart after a share was created left every request from that
+/// share going to a port nothing was on -- `Connection refused`, for ever,
+/// with the daemon connected and the agent working. The share could only be
+/// repaired by issuing another invite, which emails somebody.
+///
+/// Scoped to the shares this machine owns for this project root, because a
+/// port number means nothing without the host it is on: another machine's
+/// share for a path of the same name is a different service.
+export function updateShareServiceEndpoints(
+  state: SharingState,
+  input: {
+    ownerUserId: string;
+    machineId?: string;
+    projectRoot: string;
+    serviceEndpoint: ShareServiceEndpoint;
+    now?: string;
+  },
+): { state: SharingState; updated: string[] } {
+  const current = normalizeSharingState(state);
+  const endpoint = sanitizeServiceEndpoint(input.serviceEndpoint);
+  const projectRoot = input.projectRoot?.trim();
+  if (!endpoint || !projectRoot || !input.ownerUserId) return { state: current, updated: [] };
+  const machineId = sanitizeShareMachineId(input.machineId);
+  const now = input.now ?? new Date().toISOString();
+  const updated: string[] = [];
+  for (const share of Object.values(current.shares)) {
+    if (share.ownerUserId !== input.ownerUserId) continue;
+    if (share.projectRoot !== projectRoot) continue;
+    // A share written before machine ids existed carries none. Matching it on
+    // owner and root alone is right: that is all it was ever keyed on.
+    if (machineId && share.machineId && share.machineId !== machineId) continue;
+    if (share.serviceEndpoint?.host === endpoint.host && share.serviceEndpoint?.port === endpoint.port) {
+      continue;
+    }
+    share.serviceEndpoint = { ...endpoint };
+    share.updatedAt = now;
+    updated.push(share.id);
+  }
+  return { state: current, updated };
+}
+
 function sanitizeServiceEndpoint(endpoint: ShareServiceEndpoint | undefined): ShareServiceEndpoint | undefined {
   const host = endpoint?.host?.trim();
   const port = Number(endpoint?.port);
