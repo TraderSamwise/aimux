@@ -101,6 +101,26 @@ export function deliveryTags(context: DeliveryPathContext): Record<string, strin
  */
 export const DIAGNOSTIC_REASON_MAX_CHARS = 300;
 
+/**
+ * A URL in an error message, reduced to the part worth having.
+ *
+ * Transport errors quote the request they failed on, and an Aimux request URL
+ * carries the session id, the share id and a token in its path and query --
+ * so the free-form half of these diagnostics was the one place the rest of
+ * the module's care could be undone. The host answers the question these
+ * events exist for (relay, loopback, or a service port), and nothing after it
+ * does.
+ *
+ * Also drops `user:password@`, which `host` is not.
+ */
+const URL_IN_TEXT = /\b([a-z][a-z0-9+.-]*:\/\/)(?:[^\s/?#@'"<>]*@)?([^\s/?#'"<>]*)[^\s'"<>]*/gi;
+
+export function redactUrls(text: string): string {
+  return text.replace(URL_IN_TEXT, (_match, scheme: string, host: string) =>
+    host ? `${scheme}${host}` : "<url>",
+  );
+}
+
 export function diagnosticReason(error: unknown): string {
   const raw =
     error instanceof Error
@@ -110,7 +130,10 @@ export function diagnosticReason(error: unknown): string {
         : error == null
           ? ""
           : String(error);
-  return raw.slice(0, DIAGNOSTIC_REASON_MAX_CHARS);
+  // Redacted before the cap, so the cap spends its 300 characters on the
+  // message rather than on a path that is about to be thrown away. Either
+  // order redacts; this one keeps more of what is worth reading.
+  return redactUrls(raw).slice(0, DIAGNOSTIC_REASON_MAX_CHARS);
 }
 
 /** The send itself was refused: a real failure, and the useful contrast. */
