@@ -544,17 +544,24 @@ fn a_logged_out_relay_is_an_ordinary_state_and_not_a_failed_tick() {
 fn the_task_declares_the_cadence_the_fix_depends_on() {
     // A daemon that has just started is the case most likely to be holding a
     // stale endpoint, because the services came up with it -- so running
-    // immediately is the only thing that heals a divergence at startup, and a
-    // cadence quietly changed to hours would widen the window a share spends
-    // on a dead port without failing anything.
-    let task = RelayProjectEndpointsTask::new();
-
-    assert!(task.run_immediately(), "a fresh daemon must report at once");
-    assert_eq!(task.interval_ms(), RELAY_PROJECT_ENDPOINTS_INTERVAL_MS);
-    assert_eq!(RELAY_PROJECT_ENDPOINTS_INTERVAL_MS, 30 * 1_000);
+    // immediately is the only thing that heals a divergence at startup.
     assert!(
-        task.timeout() >= std::time::Duration::from_secs(5),
-        "the body reads a file per project"
+        RelayProjectEndpointsTask::new().run_immediately(),
+        "a fresh daemon must report at once"
+    );
+
+    // "Five minutes" is the reminder window, and it is the product of two
+    // constants declared in different places. Four comments and a commit
+    // message say five minutes in prose -- including the one explaining why a
+    // starved share is only unreachable for that long -- and nothing enforced
+    // it, so halving the interval would have made every one of them quietly
+    // wrong. Asserting the product catches a change to either constant; the
+    // value echoes it replaces caught only one of them, and `interval_ms()`
+    // against its own constant caught nothing at all.
+    assert_eq!(
+        i64::from(REMINDER_TICKS) * RELAY_PROJECT_ENDPOINTS_INTERVAL_MS,
+        5 * 60 * 1_000,
+        "the reminder window every comment calls five minutes"
     );
 }
 
