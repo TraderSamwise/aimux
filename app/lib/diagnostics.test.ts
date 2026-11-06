@@ -218,6 +218,12 @@ describe("what a diagnostic carries", () => {
         ts.ScriptKind.TSX,
       );
       const imported = importedReporters(source);
+      // Names are not dataflow, and a review proved it: assigning the draft to
+      // `composerLine` first and passing THAT was invisible to a gate that
+      // only reads argument names. So any local whose initializer mentions
+      // the content becomes content itself, and the pass repeats so a chain
+      // of renames does not launder it either.
+      const tainted = taintedLocals(source, banned);
       const visit = (node: ts.Node): void => {
         if (
           ts.isIdentifier(node) &&
@@ -252,7 +258,10 @@ describe("what a diagnostic carries", () => {
               collect(child.initializer);
               return;
             }
-            if (ts.isIdentifier(child)) identifiers.push(child.text);
+            if (ts.isIdentifier(child)) {
+              identifiers.push(child.text);
+              if (tainted.has(child.text)) identifiers.push(`draft-via-${child.text}`);
+            }
             ts.forEachChild(child, collect);
           };
           for (const argument of node.arguments) collect(argument);
@@ -268,6 +277,10 @@ describe("what a diagnostic carries", () => {
     }
 
     expect(calls.length, "the reporter call sites must be found at all").toBeGreaterThanOrEqual(5);
+    // One production file imports a reporter today. Stated as a number so
+    // that a second one appearing is a decision somebody makes, not a file
+    // this gate quietly never looked at.
+    expect(reporterCallers().map((file) => basename(file))).toEqual(["AgentChatScreen.tsx"]);
     for (const call of calls) {
       for (const identifier of call.identifiers) {
         // By camelCase word, not by substring: `deliveryDiagnosticContext`
@@ -346,7 +359,12 @@ function reporterCallers(): string[] {
       if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) continue;
       if (seen.has(path)) continue;
       seen.add(path);
-      if (readFileSync(path, "utf8").includes("@/lib/send-timeout-report")) found.push(path);
+      // By module, not by one spelling of its path: a sibling in `lib/`
+      // imports it as `./send-timeout-report`, and a gate that matched only
+      // the `@/lib/...` form never looked at that file at all.
+      if (/from\s+["'][^"']*send-timeout-report["']/.test(readFileSync(path, "utf8"))) {
+        found.push(path);
+      }
     }
   };
   for (const root of roots) walk(root);
@@ -360,10 +378,80 @@ function importedReporters(source: ts.SourceFile): Set<string> {
     if (!ts.isImportDeclaration(statement)) continue;
     if (!statement.moduleSpecifier.getText(source).includes("send-timeout-report")) continue;
     const bindings = statement.importClause?.namedBindings;
+    // A namespace import (`import * as reports from ...`) gives this nothing
+    // to track, so the reference check below would be vacuous. Refuse the
+    // shape rather than report a gate that is no longer checking anything.
+    if (bindings && ts.isNamespaceImport(bindings)) {
+      throw new Error(
+        `${source.fileName}: import the reporters by name; a namespace import defeats this gate`,
+      );
+    }
+    if (statement.importClause?.name) {
+      throw new Error(
+        `${source.fileName}: import the reporters by name; a default import defeats this gate`,
+      );
+    }
     if (!bindings || !ts.isNamedImports(bindings)) continue;
     for (const element of bindings.elements) {
       if (/^report/.test(element.name.text)) names.add(element.name.text);
     }
   }
   return names;
+}
+
+/**
+ * Locals that hold the user's content, by one step of assignment at a time.
+ *
+ * A banned NAME is easy to avoid; what matters is whether the value reaches a
+ * reporter. `const composerLine = composerDraftTextRef.current` launders the
+ * draft past a name check in one line, so every local whose initializer
+ * mentions tainted content is tainted too, and the sweep repeats until it
+ * stops growing so a chain of renames does not launder it either.
+ */
+function taintedLocals(source: ts.SourceFile, banned: readonly string[]): Set<string> {
+  const declarations: Array<{ name: string; initializer: string }> = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      // Aliases and property reads only. A CALL's result is a different
+      // value -- `sendLivePaneInput(..., text, ...)` returns the server's
+      // answer, not the draft -- and treating it as the draft made this
+      // reject `deliveryState.kind`, which is an enum the record needs.
+      let callsSomething = false;
+      const scan = (child: ts.Node): void => {
+        if (ts.isCallExpression(child) || ts.isNewExpression(child)) callsSomething = true;
+        ts.forEachChild(child, scan);
+      };
+      scan(node.initializer);
+      if (!callsSomething) {
+        declarations.push({ name: node.name.text, initializer: node.initializer.getText(source) });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+
+  const isContent = (identifier: string, tainted: ReadonlySet<string>): boolean => {
+    if (tainted.has(identifier)) return true;
+    const words = identifier.split(/(?=[A-Z])|[^A-Za-z]+/).map((word) => word.toLowerCase());
+    return banned.some((stem) => words.some((word) => word.startsWith(stem)));
+  };
+
+  const tainted = new Set<string>();
+  for (let pass = 0; pass < declarations.length + 1; pass += 1) {
+    const before = tainted.size;
+    for (const declaration of declarations) {
+      if (tainted.has(declaration.name)) continue;
+      // `.length` of the content is a count, which is allowed to be reported.
+      const initializer = declaration.initializer.replace(
+        /\b[A-Za-z]\w*\.(?:length|size)\b/g,
+        "COUNT",
+      );
+      const identifiers = initializer.match(/[A-Za-z_$][\w$]*/g) ?? [];
+      if (identifiers.some((identifier) => isContent(identifier, tainted))) {
+        tainted.add(declaration.name);
+      }
+    }
+    if (tainted.size === before) break;
+  }
+  return tainted;
 }

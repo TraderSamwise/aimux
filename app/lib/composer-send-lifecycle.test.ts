@@ -543,8 +543,8 @@ describe("settling the echoes the send queued", () => {
         COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
         COMPOSER_SEND_TIMEOUT_MESSAGE,
         reportSendTimeout: (report: unknown) => seen.timeouts.push(report),
-        reportCommandEchoExpired: (context: unknown, count: unknown) =>
-          seen.commands.push({ context, count }),
+        reportCommandEchoExpired: (context: unknown, count: unknown, parsedMessageCount: unknown) =>
+          seen.commands.push({ context, count, parsedMessageCount }),
       },
     );
     run(accepted, {
@@ -579,7 +579,21 @@ describe("settling the echoes the send queued", () => {
   });
 
   it("records a command's expiry and tells the user nothing", () => {
-    const seen = settle([stale("composer:slash", { expectsTranscriptEcho: false })]);
+    // Two messages still on screen, which is the field that separates a
+    // transcript sitting there with content and no answer from one a
+    // `/clear` emptied -- the only discriminating fact this record carries,
+    // since a command that worked emits nothing at all.
+    // The baseline matches what is on screen, so the transcript did not
+    // advance -- which is the ONLY way an echo reaches its expiry. Any new
+    // message drops it as "the transcript advanced" instead, which is why
+    // this record means "nothing came back for the whole window".
+    const seen = settle(
+      [stale("composer:slash", { expectsTranscriptEcho: false, baselineMessageCount: 2 })],
+      [
+        { id: "a", role: "assistant", parts: [], text: "" },
+        { id: "b", role: "assistant", parts: [], text: "" },
+      ],
+    );
 
     expect(seen.errors).toEqual([]);
     expect(seen.timeouts).toHaveLength(0);
@@ -592,6 +606,7 @@ describe("settling the echoes the send queued", () => {
           shared: true,
         },
         count: 1,
+        parsedMessageCount: 2,
       },
     ]);
   });

@@ -56,7 +56,7 @@ const SHARED_WHITESPACE_RUN = new RegExp(`${SHARED_WHITESPACE.source}+`, "g");
 const LINE_BREAK = /[\n\r\u000b\u000c\u0085\u2028\u2029]/;
 
 /** Trim as the daemon trims, rather than as this language happens to. */
-function sharedTrim(text: string): string {
+export function sharedWhitespaceTrim(text: string): string {
   let start = 0;
   let end = text.length;
   while (start < end && SHARED_WHITESPACE.test(text[start]!)) start += 1;
@@ -78,7 +78,7 @@ function isSingleCommandSegment(name: string): boolean {
 }
 
 export function looksLikeAgentCommand(text: string): boolean {
-  const trimmed = sharedTrim(text);
+  const trimmed = sharedWhitespaceTrim(text);
   if (!trimmed) return false;
   // A sigil must not carry following paragraphs through as if they were part
   // of the command.

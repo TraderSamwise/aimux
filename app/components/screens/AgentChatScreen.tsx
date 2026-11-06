@@ -4389,6 +4389,7 @@ function settleComposerEchoes(
         shared: Boolean(routeShareId),
       },
       result.droppedCommandEchoCount,
+      parsedMessages.length,
     );
   }
   // By VALUE, not reference. The merge always allocates a fresh array, so a

@@ -1895,6 +1895,59 @@ describe("RelayObject following a project service onto its new port", () => {
     expect(storage.reads.get("sharing-state:v1")).toBe(1);
   });
 
+  // The eviction rule proved through the REPORT ROUTE, not by calling the
+  // helper with the option. Deleting the wiring that tells it who is
+  // connected left the helper's own tests green -- the un-updated-caller
+  // class, on the commit that said it had closed exactly that.
+  it("keeps a reporting host that a full index would otherwise evict", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+
+    // A hundred ids nothing is connected to any more -- what `ephemeral`
+    // leaves behind, one per restart that could not read its identity file.
+    const stored = await storage.get<Record<string, unknown>>("sharing-state:v1");
+    const machineProjectRoots: Record<string, string[]> = {};
+    for (let index = 0; index < 100; index += 1) {
+      machineProjectRoots[`zz-stale-${String(index).padStart(3, "0")}`] = [`/Users/sam/cs/old-${index}`];
+    }
+    await storage.put("sharing-state:v1", { ...stored, machineProjectRoots });
+
+    // Both live ids sort BEFORE every stale one, so eviction by id alone
+    // takes the host as soon as it is not the machine reporting.
+    const host = fakeSocket(["daemon", "user:user_owner", "machine:aaa-host", "machineName:sam-host"]);
+    const other = fakeSocket(["daemon", "user:user_owner", "machine:aab-other", "machineName:sam-other"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [host, other, guest];
+    await object.webSocketMessage(host, endpointsFrame(44659));
+    await object.webSocketMessage(
+      other,
+      JSON.stringify({
+        type: "project_endpoints",
+        projects: [{ projectRoot: "/Users/sam/cs/aimux", host: "127.0.0.1", port: 43001 }],
+      }),
+    );
+    host.send.mockClear();
+    other.send.mockClear();
+
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({
+        id: "req-1",
+        type: "request",
+        method: "GET",
+        path: "/proxy/127.0.0.1/44659/agents/history?sessionId=claude-psmp2r",
+      }),
+    );
+
+    const refusals = guest.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "response" && frame.status >= 400);
+    expect(refusals, `a full index must not refuse the host that reported: ${JSON.stringify(refusals)}`).toEqual([]);
+    expect(JSON.parse(String(host.send.mock.calls.at(-1)?.[0]))).toMatchObject({ type: "request" });
+    expect(other.send).not.toHaveBeenCalled();
+  });
+
   // What the "widened" answer actually does, stated rather than assumed. An
   // unreadable report index, or a machine the ceiling evicted, puts every
   // connected machine back in the running -- and that is the PRE-report

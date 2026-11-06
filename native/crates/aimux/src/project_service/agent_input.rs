@@ -204,10 +204,14 @@ pub fn format_agent_input_with_attachments(text: &str, attachments: &[Value]) ->
     if attachments.is_empty() {
         return text.to_owned();
     }
-    let body = if text.trim().is_empty() {
+    // The same trim the rest of this module uses. On Rust's own `trim`,
+    // `"\u{feff}"` is not empty, so a message that is only an invisible
+    // character plus an attachment reached the agent as a blank first line
+    // and LOST the instruction to look at the file.
+    let body = if shared_chat_trim(text).is_empty() {
         "Please review the attached file(s).".to_owned()
     } else {
-        text.trim().to_owned()
+        shared_chat_trim(text).to_owned()
     };
     let attachment_lines = attachments
         .iter()
@@ -440,6 +444,34 @@ mod tests {
         assert_eq!(
             format_shared_chat_agent_input("look at /etc/hosts", &guest()),
             "[sam@example.com] look at /etc/hosts"
+        );
+    }
+
+    #[test]
+    fn an_invisible_message_with_an_attachment_still_asks_for_a_review() {
+        // On Rust's own `trim`, `"\u{feff}"` is not empty, so the body became
+        // that invisible character and the instruction to look at the file
+        // was lost -- the agent got a blank first line and a list.
+        let attachment = json!({
+            "filename": "shot.png",
+            "mimeType": "image/png",
+            "sizeBytes": 12,
+            "contentUrl": "/attachments/att_1/content"
+        });
+        for blank in ["", "   ", "\u{85}", "\u{feff}", "\u{2028}"] {
+            assert!(
+                format_agent_input_with_attachments(blank, std::slice::from_ref(&attachment))
+                    .starts_with("Please review the attached file(s)."),
+                "{blank:?} is an empty message, so the review instruction stands"
+            );
+        }
+        assert!(
+            format_agent_input_with_attachments(
+                "\u{feff}look at this",
+                std::slice::from_ref(&attachment)
+            )
+            .starts_with("look at this"),
+            "and real text keeps its own words, trimmed the same way"
         );
     }
 

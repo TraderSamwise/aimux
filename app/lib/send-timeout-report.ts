@@ -196,15 +196,24 @@ export function reportTranscriptRefreshFailed(
  * A command's echo expired, which is not a failure and not nothing.
  *
  * A command need not come back as a user turn, so there is nothing to confirm
- * it with and no error to raise. But "the agent never acknowledged the
- * command" is precisely the symptom of a wedged agent, and the user aims
- * `/clear`, `/model` and `!pkill` at exactly that. Recorded at `info` so it
- * can be counted and compared against the sends that did confirm, without
- * telling the user something failed when nothing is known to have.
+ * it with and no error to raise. What this records is narrower than it first
+ * looks, and worth stating exactly: the echo is dropped as "the transcript
+ * advanced" the moment ANY new message arrives, so reaching the expiry at all
+ * means nothing came back for the whole window. That is the wedged-agent
+ * symptom, and `/clear`, `/model` and `!pkill` are what a user aims at one.
+ *
+ * It is NOT a rate that can be compared against the commands that worked,
+ * because a command that worked emits nothing here. And it fires on the
+ * healthy path for a command that empties the transcript -- `/clear` leaves
+ * fewer messages than the baseline, so the transcript never "advanced".
+ * `parsedMessageCount` is carried for exactly that reason: it is what
+ * separates a cleared transcript from one sitting there with content and no
+ * answer.
  */
 export function reportCommandEchoExpired(
   context: DeliveryPathContext,
   droppedCommandEchoCount: number,
+  parsedMessageCount: number,
 ): void {
   captureDiagnostic({
     name: "composer.send.command_unconfirmed",
@@ -218,6 +227,7 @@ export function reportCommandEchoExpired(
       relayStatus: context.relayStatus,
       shared: context.shared,
       droppedCommandEchoCount,
+      parsedMessageCount,
       timeoutMs: COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
     },
   });
