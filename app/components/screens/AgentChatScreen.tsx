@@ -1569,7 +1569,8 @@ export default function ChatScreen() {
   const handleSendMessage = useCallback(
     async (options?: { preserveFocus?: boolean }) => {
       const preserveFocus = options?.preserveFocus === true;
-      const text = normalizeComposerDraft(readComposerDraft(jotaiStore, composerDraftKey)) ?? "";
+      const rawDraft = readComposerDraft(jotaiStore, composerDraftKey);
+      const text = normalizeComposerDraft(rawDraft) ?? "";
       const attachments = [...pendingAttachments];
       if (
         !serviceEndpoint ||
@@ -1580,6 +1581,17 @@ export default function ChatScreen() {
         jotaiStore.get(composerSendOperationAtom) !== null ||
         (!text && attachments.length === 0)
       ) {
+        // A draft of only invisible characters -- a NEL or a BOM that came in
+        // on a paste -- is not a message, so pressing Enter does nothing, as
+        // it does on an empty composer. But leaving those characters in the
+        // box is a composer that LOOKS empty with Send greyed out and nothing
+        // to explain it. Drop them, and the state the user can see matches
+        // the state the send is in.
+        if (!text && attachments.length === 0 && rawDraft !== "") {
+          writeComposerDraft(jotaiStore, composerDraftKey, "");
+          composerDraftTextRef.current = "";
+          composerSelectionRef.current = EMPTY_COMPOSER_SELECTION;
+        }
         return;
       }
       // Checked over the whole set before anything is uploaded or the draft is

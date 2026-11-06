@@ -107,7 +107,9 @@ export function captureDiagnostic(event: DiagnosticEvent): void {
   // and the tags are the half that says which connection it happened on --
   // logging only the context made them unobservable, including to a test
   // asserting what the event carries.
-  console.warn(`[aimux] ${event.name}`, { level: event.level, tags: event.tags, ...payload });
+  // The event's own level and tags last, so a context field that one day
+  // happens to be called `level` cannot quietly take their place.
+  console.warn(`[aimux] ${event.name}`, { ...payload, level: event.level, tags: event.tags });
   if (!decision.send) return;
   void postToSentry(event, payload);
 }

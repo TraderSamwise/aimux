@@ -352,6 +352,25 @@ describe("what a diagnostic carries", () => {
     expect(tags).toMatchObject({ relayStatus: "connected", shared: "true" });
   });
 
+  it("keeps its own level and tags when a context field is named like them", () => {
+    // The console line is the whole record until a DSN is set, and the
+    // event's level and tags are half of it. Spread order decided which one
+    // won, which is a trap for whoever one day adds a context field called
+    // `level`.
+    captureDiagnostic({
+      name: "composer.send.failed",
+      message: "m",
+      level: "error",
+      tags: { relayStatus: "connected" },
+      context: { level: "nonsense", tags: "nonsense" },
+    });
+
+    expect(warned.at(-1)?.[1]).toMatchObject({
+      level: "error",
+      tags: { relayStatus: "connected" },
+    });
+  });
+
   it("records to the console even with nowhere to send it", () => {
     captureDiagnostic({
       name: "composer.send.failed",

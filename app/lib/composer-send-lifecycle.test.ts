@@ -517,6 +517,46 @@ describe("what a send's echo claims about the transcript", () => {
   );
 });
 
+describe("a draft nobody can see", () => {
+  // The keyboard reaches `handleSendMessage` without consulting the Send
+  // button, so Enter on a draft of only invisible characters took the guard
+  // and returned. Doing nothing is right -- the composer LOOKS empty, and
+  // Enter on an empty composer does nothing -- but leaving the characters
+  // there is a composer that looks empty with Send greyed out and no way to
+  // tell why.
+  it("clears an invisible-only draft instead of sitting on it", async () => {
+    const h = harness();
+    h.setDraft("\u0085");
+    await h.send();
+
+    expect(h.sendLivePaneInput).not.toHaveBeenCalled();
+    expect(h.state.error).toBeNull();
+    expect(h.draft()).toBe("");
+    expect(h.refs.composerDraftTextRef.current).toBe("");
+  });
+
+  it("leaves a real draft alone when the send cannot run", async () => {
+    // Same guard, a different reason to be in it: a send already in flight
+    // must not destroy what the user typed.
+    const h = harness();
+    h.setDraft("hello");
+    h.refs.sendBusyRef.current = true;
+    await h.send();
+
+    expect(h.sendLivePaneInput).not.toHaveBeenCalled();
+    expect(h.draft()).toBe("hello");
+  });
+
+  it("does not touch an empty composer", async () => {
+    const h = harness();
+    h.setDraft("");
+    await h.send();
+
+    expect(h.sendLivePaneInput).not.toHaveBeenCalled();
+    expect(h.draft()).toBe("");
+  });
+});
+
 describe("the Send button and the send agree on an empty draft", () => {
   // `/\S/` does not match U+0085, so a draft of only that left the button
   // ENABLED while the send's own gate returned null -- the press reached the
