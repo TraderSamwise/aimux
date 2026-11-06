@@ -12,7 +12,8 @@ use aimux::daemon_projects::ProjectEndpoint;
 use aimux::daemon_state::AimuxDaemonInfo;
 use aimux::paths::PathResolver;
 use aimux::remote::relay_endpoints::{
-    RELAY_PROJECT_ENDPOINTS_TASK_NAME, RelayProjectEndpointsTask, read_project_endpoints,
+    RELAY_PROJECT_ENDPOINTS_TASK_NAME, REMINDER_TICKS, RelayProjectEndpointsTask,
+    read_project_endpoints,
 };
 use serde_json::json;
 use std::fs;
@@ -165,7 +166,10 @@ fn reports_a_service_that_rebound_and_stays_quiet_until_it_moves_again() {
 
     // Nothing moved, so nothing is reported. This runs on a timer, and the
     // relay writes durable storage and pushes every guest for each report.
-    run(&mut task, &context);
+    // (Up to the reminder tick, which the next test covers.)
+    for _ in 0..5 {
+        run(&mut task, &context);
+    }
     assert_eq!(reports.lock().expect("reports").len(), 1);
 
     // The service restarts onto a new port -- the case that broke the share.
@@ -329,5 +333,64 @@ fn an_unreadable_endpoint_is_reported_rather_than_read_as_absent() {
     assert!(
         read_errors[0].contains("metadata-api.json"),
         "{read_errors:?}"
+    );
+}
+
+#[test]
+fn the_whole_set_is_reported_again_on_the_reminder_tick() {
+    // `queue()` answering Ok means the frame reached the daemon's outbox, not
+    // the relay. A socket that closes before the drain loses it, and it is
+    // recorded as reported -- so without a reminder nothing would correct the
+    // share until its port happened to change again.
+    let fixture = Fixture::new("reminder");
+    fixture.register_project("next-1", "/cs/tealstreet-next");
+    fixture.bind_service("next-1", 49226);
+    let context = fixture.context();
+    let reports = recording_reporter(&context, taken());
+    let mut task = RelayProjectEndpointsTask::new();
+
+    for _ in 0..REMINDER_TICKS {
+        run(&mut task, &context);
+    }
+
+    let reports = reports.lock().expect("reports").clone();
+    assert_eq!(
+        reports.len(),
+        2,
+        "the first tick and the reminder, nothing in between: {reports:?}"
+    );
+    assert_eq!(reports[1], vec![endpoint("/cs/tealstreet-next", 49226)]);
+}
+
+#[test]
+fn a_refused_reminder_is_tried_again_on_the_next_tick() {
+    // Not in another five minutes. The reminder exists because a frame can be
+    // lost, and a lost reminder is the same problem.
+    let fixture = Fixture::new("reminder-refused");
+    fixture.register_project("next-1", "/cs/tealstreet-next");
+    fixture.bind_service("next-1", 49226);
+    let context = fixture.context();
+    let answer: Answer = Arc::new(Mutex::new(None));
+    let reports = recording_reporter(&context, Arc::clone(&answer));
+    let mut task = RelayProjectEndpointsTask::new();
+
+    // First tick reports and is taken; then the relay goes away.
+    run(&mut task, &context);
+    *answer.lock().expect("answer") = Some("relay_disconnected".to_owned());
+    for _ in 1..REMINDER_TICKS {
+        run(&mut task, &context);
+    }
+    assert_eq!(
+        reports.lock().expect("reports").len(),
+        2,
+        "the reminder was attempted and refused"
+    );
+
+    *answer.lock().expect("answer") = None;
+    run(&mut task, &context);
+    assert_eq!(
+        reports.lock().expect("reports").len(),
+        3,
+        "and is retried on the very next tick, not five minutes later"
     );
 }

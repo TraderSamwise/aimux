@@ -32,6 +32,16 @@ pub const RELAY_PROJECT_ENDPOINTS_INTERVAL_MS: i64 = 30 * 1_000;
 ///
 /// Fallible on purpose. A refusal must not be recorded as pushed, or the share
 /// stays on the dead port until the next time the port happens to change.
+/// How many unchanged ticks before the whole set is reported again.
+///
+/// A level, not only an edge. `queue()` answering Ok means the frame reached
+/// the outbox, not the relay: a socket that closes before the drain, or a
+/// runner replaced by a re-dial, loses it -- and it is recorded here as
+/// reported, so nothing would correct the share until its port happened to
+/// change again. Ten ticks is five minutes, and the relay writes nothing for a
+/// share that did not move, so a reminder costs one frame.
+pub const REMINDER_TICKS: u32 = 10;
+
 pub use crate::daemon::scheduler::RelayProjectEndpointsPush;
 
 /// Read where every registered project's service is listening.
@@ -95,12 +105,15 @@ pub struct RelayProjectEndpointsTask {
     /// What the relay has accepted, so an unchanged fleet reports nothing.
     /// Written only after a push succeeded.
     last_reported: BTreeMap<String, (String, u16)>,
+    /// Ticks since the whole set was last reported. See `REMINDER_TICKS`.
+    ticks_since_full_report: u32,
 }
 
 impl RelayProjectEndpointsTask {
     pub fn new() -> Self {
         Self {
             last_reported: BTreeMap::new(),
+            ticks_since_full_report: 0,
         }
     }
 }
@@ -134,7 +147,14 @@ impl DaemonPeriodicTask for RelayProjectEndpointsTask {
         Box::pin(async move {
             let push = context.relay_project_endpoints_push();
             let resolver = context.resolver.clone();
-            let last_reported = self.last_reported.clone();
+            let remind = self.ticks_since_full_report + 1 >= REMINDER_TICKS;
+            // A reminder diffs against nothing, so every endpoint counts as
+            // moved and the relay hears the whole set again.
+            let baseline = if remind {
+                BTreeMap::new()
+            } else {
+                self.last_reported.clone()
+            };
             // Disk reads and a queue onto the relay socket, so the body goes
             // to the blocking pool. A periodic task that works on an async
             // worker holds the daemon's accept loop with it -- the health
@@ -147,14 +167,25 @@ impl DaemonPeriodicTask for RelayProjectEndpointsTask {
                     "report",
                     "daemon",
                 ),
-                move || report_moved_endpoints(push.as_ref(), &resolver, &last_reported),
+                move || report_moved_endpoints(push.as_ref(), &resolver, &baseline),
             )
             .await
             .map_err(|error| format!("relay endpoint report did not finish: {error}"))??;
+            let Some(accepted) = accepted else {
+                // Refused, so the reminder is still owed and the next tick
+                // tries again rather than waiting out another five minutes.
+                self.ticks_since_full_report = self.ticks_since_full_report.saturating_add(1);
+                return Ok(());
+            };
             for endpoint in accepted {
                 self.last_reported
                     .insert(endpoint.project_root, (endpoint.host, endpoint.port));
             }
+            self.ticks_since_full_report = if remind {
+                0
+            } else {
+                self.ticks_since_full_report.saturating_add(1)
+            };
             Ok(())
         })
     }
@@ -162,18 +193,21 @@ impl DaemonPeriodicTask for RelayProjectEndpointsTask {
 
 /// Report what moved, and answer with what the relay took.
 ///
-/// Only what it took: a report the relay refused must not be recorded, or the
-/// share stays on the dead port until the next time the port changes.
+/// `None` means there was no relay to take it -- logged out, or between
+/// sockets. `Some` carries what it took, which is empty when nothing moved.
+/// The three are different answers: a report the relay refused must not be
+/// recorded, or the share stays on the dead port until the next time the port
+/// changes.
 pub fn report_moved_endpoints(
     push: Option<&RelayProjectEndpointsPush>,
     resolver: &PathResolver,
     last_reported: &BTreeMap<String, (String, u16)>,
-) -> Result<Vec<ProjectEndpoint>, String> {
+) -> Result<Option<Vec<ProjectEndpoint>>, String> {
     // No reporter means no relay in this build, or none dialled yet. Reading
     // the registry to find that out would be a disk read per tick on a machine
     // that has never logged in.
     let Some(push) = push else {
-        return Ok(Vec::new());
+        return Ok(Some(Vec::new()));
     };
     let (endpoints, read_errors) = read_project_endpoints(resolver)?;
     for error in read_errors {
@@ -186,7 +220,7 @@ pub fn report_moved_endpoints(
     }
     let moved = endpoints_to_report(last_reported, &endpoints);
     if moved.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Some(Vec::new()));
     }
     match push(&moved) {
         Ok(()) => {
@@ -204,7 +238,7 @@ pub fn report_moved_endpoints(
                         .collect::<Vec<_>>(),
                 })),
             );
-            Ok(moved)
+            Ok(Some(moved))
         }
         // Nothing recorded either way, so the next tick tries again. A machine
         // that is logged out or between sockets is an ordinary state and not a
@@ -217,7 +251,7 @@ pub fn report_moved_endpoints(
                 "relay",
                 Some(json!({ "error": error, "projectCount": moved.len() })),
             );
-            Ok(Vec::new())
+            Ok(None)
         }
         Err(error) => Err(error),
     }
