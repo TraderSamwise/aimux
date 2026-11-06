@@ -15,6 +15,7 @@ import {
   diagnosticReason,
   DIAGNOSTIC_REASON_MAX_CHARS,
   deliveryTags,
+  reportCommandEchoExpired,
   reportSendFailed,
   reportSendTimeout,
   reportTranscriptRefreshFailed,
@@ -194,6 +195,21 @@ describe("what a diagnostic carries", () => {
     expect(serialized).toContain("relayStatus");
   });
 
+  it("records what the command event is for, not just that it fired", () => {
+    // The field the doc comment calls the only discriminating fact. It was
+    // proved as an ARGUMENT -- the harness that runs the screen's settle
+    // stubs the reporter -- so dropping it from the emitted record was
+    // silent. This asserts the record.
+    reportCommandEchoExpired(path, 2, 7);
+
+    const recorded = JSON.stringify(warned);
+    expect(recorded).toContain("composer.send.command_unconfirmed");
+    expect(recorded).toContain('"droppedCommandEchoCount":2');
+    expect(recorded).toContain('"parsedMessageCount":7');
+    // At info, and tagged so it can be separated from the errors.
+    expect(recorded).toContain('"expectsTranscriptEcho":"false"');
+  });
+
   it("is never handed the draft in the first place", () => {
     // What makes "no message text" a fact rather than a hope: the draft is in
     // scope at every reporter call site, so the payload being clean is a fact
@@ -238,6 +254,15 @@ describe("what a diagnostic carries", () => {
           });
         }
         if (ts.isCallExpression(node) && /report/i.test(node.expression.getText(source))) {
+          for (const argument of node.arguments) {
+            const refusal = disallowedArgument(argument, source);
+            expect(
+              refusal,
+              `${basename(file)}: ${node.expression.getText(source)} is given ${argument
+                .getText(source)
+                .slice(0, 80)} -- ${refusal}`,
+            ).toBeNull();
+          }
           const identifiers: string[] = [];
           const collect = (child: ts.Node): void => {
             // A COUNT of the user's content is not the content:
@@ -454,4 +479,77 @@ function taintedLocals(source: ts.SourceFile, banned: readonly string[]): Set<st
     if (tainted.size === before) break;
   }
   return tainted;
+}
+
+/**
+ * Why an argument is not allowed to be given to a reporter, or null.
+ *
+ * An allowlist, not a denylist, because a denylist is a guess about the names
+ * a future change will use and three of those guesses were defeated in one
+ * review: a reassigned `let`, a destructured `{ current: composerSnippet }`,
+ * and a lambda parameter. What a reporter takes is small and stable -- the
+ * delivery context, counts, short literals, and an error -- so the gate says
+ * THAT, and anything else has to be argued for here rather than slipped past.
+ */
+function disallowedArgument(node: ts.Node, source: ts.SourceFile): string | null {
+  const unwrapped =
+    ts.isAsExpression(node) || ts.isParenthesizedExpression(node) ? node.expression : node;
+
+  // `deliveryDiagnosticContext()` and `Boolean(x)`: the two calls a reporter
+  // is given. `Boolean` of a tainted name is still caught by the name sweep.
+  if (ts.isCallExpression(unwrapped)) {
+    const callee = unwrapped.expression.getText(source);
+    if (callee === "deliveryDiagnosticContext" && unwrapped.arguments.length === 0) return null;
+    if (callee === "Boolean" && unwrapped.arguments.length === 1) {
+      return disallowedArgument(unwrapped.arguments[0]!, source);
+    }
+    return `a call to ${callee} is not one of the shapes a reporter takes`;
+  }
+
+  if (
+    ts.isStringLiteral(unwrapped) ||
+    ts.isNumericLiteral(unwrapped) ||
+    unwrapped.kind === ts.SyntaxKind.TrueKeyword ||
+    unwrapped.kind === ts.SyntaxKind.FalseKeyword
+  ) {
+    return null;
+  }
+
+  // The context object, built inline. Its VALUES go back through this.
+  if (ts.isObjectLiteralExpression(unwrapped)) {
+    for (const property of unwrapped.properties) {
+      if (ts.isShorthandPropertyAssignment(property)) continue;
+      if (!ts.isPropertyAssignment(property)) {
+        return `${property.getText(source)} is not a plain field`;
+      }
+      const refusal = disallowedArgument(property.initializer, source);
+      if (refusal) return refusal;
+    }
+    return null;
+  }
+
+  if (ts.isPropertyAccessExpression(unwrapped)) {
+    const name = unwrapped.name.text;
+    // A count of the user's content is not the content, and `kind` is the
+    // server's own enum.
+    if (name === "length" || name === "size" || name === "kind" || /Count$/.test(name)) return null;
+    return `the field ${name} is not a count, a kind, or a length`;
+  }
+
+  if (ts.isIdentifier(unwrapped)) {
+    // The fields of the delivery context, passed by name, and the error.
+    const allowed = [
+      "err",
+      "error",
+      "relayConfigured",
+      "relayStatus",
+      "sessionId",
+      "routeShareId",
+      "action",
+    ];
+    if (allowed.includes(unwrapped.text)) return null;
+    return `${unwrapped.text} is not one of ${allowed.join(", ")}`;
+  }
+
+  return `${ts.SyntaxKind[unwrapped.kind]} is not a shape a reporter takes`;
 }

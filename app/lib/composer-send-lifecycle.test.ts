@@ -517,6 +517,37 @@ describe("what a send's echo claims about the transcript", () => {
   );
 });
 
+describe("the Send button and the send agree on an empty draft", () => {
+  // `/\S/` does not match U+0085, so a draft of only that left the button
+  // ENABLED while the send's own gate returned null -- the press reached the
+  // guard inside `handleSendMessage` and returned, with no request, no error
+  // and the draft still sitting there. Tapping Send and having nothing happen
+  // at all is worse than the refusal it replaced.
+  const declaration = exactlyOne(
+    screenAst(),
+    (node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === "hasComposerDraftContent",
+  );
+  const hasContent = compile<(text: string) => boolean>(
+    `${declaration.getText()}\nconst callback = hasComposerDraftContent;`,
+    { normalizeComposerDraft },
+  );
+
+  it("disables Send for anything the send itself would refuse", () => {
+    for (const blank of ["", "   ", "\u0085", "﻿", " 　", " ", "\t\n"]) {
+      expect(hasContent(blank), JSON.stringify(blank)).toBe(false);
+      expect(normalizeComposerDraft(blank), JSON.stringify(blank)).toBeNull();
+    }
+  });
+
+  it("enables Send for a draft the send would accept", () => {
+    for (const text of ["hi", "  hi  ", "﻿/clear", "#"]) {
+      expect(hasContent(text), JSON.stringify(text)).toBe(true);
+      expect(normalizeComposerDraft(text), JSON.stringify(text)).not.toBeNull();
+    }
+  });
+});
+
 describe("settling the echoes the send queued", () => {
   // The screen's real `settleComposerEchoes`, run against an explicit binding
   // set. It is the only place the merge's counters become something a user or

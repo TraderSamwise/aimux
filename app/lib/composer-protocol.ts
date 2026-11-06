@@ -10,13 +10,6 @@ export interface ComposerKeyEventLike {
   altKey?: boolean;
 }
 
-export interface ComposerSendState {
-  draft: string;
-  hasServiceEndpoint: boolean;
-  hasSessionId: boolean;
-  sendBusy: boolean;
-}
-
 export interface ComposerAckMessageLike {
   parts?: readonly {
     attachmentId?: string;
@@ -66,11 +59,6 @@ export function shouldSubmitComposerKey(
     !event.altKey &&
     (event.ctrlKey === true || hasHardwareKeyboard)
   );
-}
-
-export function getComposerSendText(state: ComposerSendState): string | null {
-  if (state.sendBusy || !state.hasServiceEndpoint || !state.hasSessionId) return null;
-  return normalizeComposerDraft(state.draft);
 }
 
 export function formatComposerSendFailure(error: unknown): string {

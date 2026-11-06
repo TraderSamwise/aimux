@@ -423,7 +423,13 @@ type JotaiStore = ReturnType<typeof useStore>;
 const EMPTY_COMPOSER_SELECTION: ComposerTextSelection = { start: 0, end: 0 };
 
 function hasComposerDraftContent(text: string): boolean {
-  return /\S/.test(text);
+  // The same answer the send itself gives. `/\S/` does not match U+0085, so
+  // a draft of only that left Send ENABLED while `normalizeComposerDraft`
+  // returned null -- the press reached the guard inside `handleSendMessage`
+  // and returned, with no request, no error and the draft still sitting
+  // there. Tapping Send and having nothing at all happen is worse than the
+  // refusal it replaced.
+  return normalizeComposerDraft(text) !== null;
 }
 
 function readComposerDraft(store: JotaiStore, key: string | null): string {

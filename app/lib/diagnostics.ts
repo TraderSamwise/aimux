@@ -103,7 +103,11 @@ function randomEventId(): string {
 export function captureDiagnostic(event: DiagnosticEvent): void {
   const decision = decideDiagnosticThrottle(event.name, Date.now());
   const payload = { ...event.context, occurrences: decision.occurrences };
-  console.warn(`[aimux] ${event.name}`, payload);
+  // The tags go to the console too. Until a DSN is set this IS the record,
+  // and the tags are the half that says which connection it happened on --
+  // logging only the context made them unobservable, including to a test
+  // asserting what the event carries.
+  console.warn(`[aimux] ${event.name}`, { level: event.level, tags: event.tags, ...payload });
   if (!decision.send) return;
   void postToSentry(event, payload);
 }

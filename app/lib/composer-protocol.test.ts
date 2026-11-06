@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   COMPOSER_SEND_TIMEOUT_MESSAGE,
   formatComposerSendFailure,
-  getComposerSendText,
   normalizeComposerDraft,
   userMessageAcknowledgesComposerSend,
   shouldSubmitComposerKey,
@@ -73,41 +72,6 @@ describe("composer protocol", () => {
     expect(shouldSubmitComposerKey({ key: "Enter", ctrlKey: true, metaKey: true }, false)).toBe(
       false,
     );
-  });
-
-  it("blocks sends without a target or while a send is in flight", () => {
-    expect(
-      getComposerSendText({
-        draft: "hello",
-        hasServiceEndpoint: true,
-        hasSessionId: true,
-        sendBusy: false,
-      }),
-    ).toBe("hello");
-    expect(
-      getComposerSendText({
-        draft: "hello",
-        hasServiceEndpoint: false,
-        hasSessionId: true,
-        sendBusy: false,
-      }),
-    ).toBeNull();
-    expect(
-      getComposerSendText({
-        draft: "hello",
-        hasServiceEndpoint: true,
-        hasSessionId: false,
-        sendBusy: false,
-      }),
-    ).toBeNull();
-    expect(
-      getComposerSendText({
-        draft: "hello",
-        hasServiceEndpoint: true,
-        hasSessionId: true,
-        sendBusy: true,
-      }),
-    ).toBeNull();
   });
 
   it("formats send failure states for the composer", () => {
