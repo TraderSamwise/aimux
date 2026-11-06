@@ -19,8 +19,12 @@ vi.mock("cloudflare:workers", () => ({
 
 class MemoryStorage {
   private values = new Map<string, unknown>();
+  /// How many times each key was read, so a route can be asked whether it
+  /// reads the same record twice to answer one question.
+  readonly reads = new Map<string, number>();
 
   async get<T>(key: string): Promise<T | undefined> {
+    this.reads.set(key, (this.reads.get(key) ?? 0) + 1);
     return this.values.get(key) as T | undefined;
   }
 
@@ -1825,6 +1829,38 @@ describe("RelayObject following a project service onto its new port", () => {
     upserted.length = 0;
     await object.webSocketMessage(daemon, endpointsFrame(49226));
     expect(upserted.length).toBe(10);
+  });
+
+  // Routing a guest's request needs the sharing state, and so does deciding
+  // whether the guest may make it. Loading it twice is two reads of the same
+  // record inside one request, on the hot path of every poll a shared chat
+  // makes -- and the two reads could disagree, since a write can land between
+  // them.
+  it("reads the sharing state once to answer one guest request", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [daemon, guest];
+    await object.webSocketMessage(daemon, endpointsFrame(44659));
+
+    storage.reads.clear();
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({
+        id: "req-1",
+        type: "request",
+        method: "GET",
+        path: "/proxy/127.0.0.1/44659/agents/history?sessionId=claude-psmp2r",
+      }),
+    );
+
+    expect(JSON.parse(String(daemon.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      type: "request",
+    });
+    expect(storage.reads.get("sharing-state:v1")).toBe(1);
   });
 
   // A share that names no host used to route only while exactly ONE machine

@@ -7,6 +7,11 @@ const MAX_SHARES = 200;
 /// length before it is compared, or a longer root can never match its share.
 const MAX_PROJECT_ROOT_CHARS = 600;
 const MAX_INVITES_PER_SHARE = 50;
+/// How many machines may have reported roots. An account has a handful; this
+/// is the ceiling that keeps a record written by every machine that ever
+/// connects from growing without end, and a machine dropped by it only widens
+/// the routing candidates back to what they were before anything reported.
+const MAX_REPORTING_MACHINES = 100;
 export const SHARE_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type ShareParticipantRole = "owner" | "guest";
@@ -140,15 +145,55 @@ export function rememberMachineProjectRoots(
 ): SharingState {
   const machine = sanitizeShareMachineId(machineId);
   if (!machine) return state;
-  const roots = [...new Set(projectRoots.map((root) => shareProjectRootKey(root)).filter(Boolean))]
-    .sort()
-    .slice(0, MAX_SHARES);
+  const roots = normalizeReportedRoots(projectRoots);
   const current = state.machineProjectRoots ?? {};
   const held = current[machine] ?? [];
   if (held.length === roots.length && held.every((root, index) => root === roots[index])) {
     return state;
   }
-  return { ...state, machineProjectRoots: { ...current, [machine]: roots } };
+  const next = { ...current, [machine]: roots };
+  // The reporting machine is never the one evicted -- it is the one whose
+  // answer is current. Eviction is by machine id so every object and every
+  // load agrees on who went.
+  const machines = Object.keys(next).sort();
+  for (const evicted of machines.slice(0, Math.max(0, machines.length - MAX_REPORTING_MACHINES))) {
+    if (evicted !== machine) delete next[evicted];
+  }
+  return { ...state, machineProjectRoots: next };
+}
+
+function normalizeReportedRoots(roots: unknown): string[] {
+  if (!Array.isArray(roots)) return [];
+  return [
+    ...new Set(
+      roots
+        .filter((root): root is string => typeof root === "string")
+        .map(shareProjectRootKey)
+        .filter(Boolean),
+    ),
+  ]
+    .sort()
+    .slice(0, MAX_SHARES);
+}
+
+/// What a stored report index is allowed to be.
+///
+/// It is read back from durable storage and routes guests, so it is not
+/// trusted to still be the shape it was written in: a machine id that is no
+/// longer valid, a value that is not a list of strings, or a record grown past
+/// its ceiling all have to resolve to "nothing reported for that machine",
+/// which is the answer that widens the candidates instead of refusing a
+/// guest.
+function normalizeMachineProjectRoots(
+  reported: SharingState["machineProjectRoots"],
+): SharingState["machineProjectRoots"] {
+  if (!reported || typeof reported !== "object") return undefined;
+  const entries = Object.entries(reported)
+    .map(([machineId, roots]) => [sanitizeShareMachineId(machineId), normalizeReportedRoots(roots)] as const)
+    .filter((entry): entry is readonly [string, string[]] => Boolean(entry[0]) && entry[1].length > 0)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .slice(0, MAX_REPORTING_MACHINES);
+  return entries.length === 0 ? undefined : Object.fromEntries(entries);
 }
 
 /// The connected machines that could be hosting this share.
@@ -231,7 +276,10 @@ export function normalizeSharingState(state: SharingState): SharingState {
     version: 1,
     shares,
     acceptedShares,
-    ...(state.machineProjectRoots ? { machineProjectRoots: state.machineProjectRoots } : {}),
+    ...(() => {
+      const machineProjectRoots = normalizeMachineProjectRoots(state.machineProjectRoots);
+      return machineProjectRoots ? { machineProjectRoots } : {};
+    })(),
   };
 }
 

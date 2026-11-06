@@ -435,7 +435,10 @@ export class RelayObject extends DurableObject<Env> {
         return;
       }
       const target = clientResult.share
-        ? resolveSharedDaemonTarget(await this.machinesHostingShare(clientResult.share), clientResult.share.machineId)
+        ? resolveSharedDaemonTarget(
+            this.machinesHostingShare(clientResult.sharingState, clientResult.share),
+            clientResult.share.machineId,
+          )
         : resolveDaemonTarget(this.onlineMachines(), parsed.machineId);
       if (!target.ok) {
         this.send(ws, {
@@ -506,7 +509,10 @@ export class RelayObject extends DurableObject<Env> {
       return;
     }
     const target = clientResult.share
-      ? resolveSharedDaemonTarget(await this.machinesHostingShare(clientResult.share), clientResult.share.machineId)
+      ? resolveSharedDaemonTarget(
+          this.machinesHostingShare(clientResult.sharingState, clientResult.share),
+          clientResult.share.machineId,
+        )
       : resolveDaemonTarget(this.onlineMachines(), message.machineId);
     if (!target.ok) {
       this.send(ws, {
@@ -877,10 +883,9 @@ export class RelayObject extends DurableObject<Env> {
   /// reported a service for its checkout -- which is what keeps such a share
   /// working when a second daemon connects, instead of dying with an error
   /// saying its host is not connected while that host is right there.
-  private async machinesHostingShare(share: { machineId?: string; projectRoot: string }): Promise<MachineInfo[]> {
+  private machinesHostingShare(state: SharingState, share: { machineId?: string; projectRoot: string }): MachineInfo[] {
     const machines = this.onlineMachines();
     if (share.machineId) return machines;
-    const state = await loadSharingState(this.ctx.storage);
     return [...machinesHostingShare(state, share, machines)];
   }
 
@@ -1343,7 +1348,17 @@ export class RelayObject extends DurableObject<Env> {
   ): Promise<
     | {
         ok: true;
-        share?: SharedSessionRecord;
+        share?: undefined;
+        sharingState?: undefined;
+        requestPatch?: { headers?: Record<string, string>; body?: unknown };
+      }
+    // A share is routed from the sharing state, and this is the one place
+    // that reads it per request. Handing it back instead of letting the
+    // routing load it again keeps a guest request to a single storage read.
+    | {
+        ok: true;
+        share: SharedSessionRecord;
+        sharingState: SharingState;
         requestPatch?: { headers?: Record<string, string>; body?: unknown };
       }
     | { ok: false; status: number; error: string }
@@ -1387,6 +1402,7 @@ export class RelayObject extends DurableObject<Env> {
     return {
       ok: true,
       share,
+      sharingState: state,
       requestPatch: {
         headers: {
           ...stripTrustedAimuxHeaders(request.headers),

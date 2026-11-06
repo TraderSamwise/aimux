@@ -595,6 +595,63 @@ describe("routing a share that names no host", () => {
     expect(state.machineProjectRoots).toBeUndefined();
   });
 
+  it("keeps the report index bounded, and never evicts the machine reporting", () => {
+    // Written by every machine that ever connects, and read on the routing
+    // path. Without a ceiling it grows for the life of the account.
+    let state = emptySharingState();
+    for (let index = 0; index < 140; index += 1) {
+      state = rememberMachineProjectRoots(state, `machine-${String(index).padStart(3, "0")}`, [
+        `/Users/sam/cs/project-${index}`,
+      ]);
+    }
+
+    const held = Object.keys(state.machineProjectRoots ?? {});
+    expect(held.length).toBeLessThanOrEqual(100);
+    // The newest reporter is the one whose answer is current, so it stays.
+    expect(held).toContain("machine-139");
+  });
+
+  it("caps the roots one machine may claim", () => {
+    const state = rememberMachineProjectRoots(
+      emptySharingState(),
+      "mini",
+      Array.from({ length: 260 }, (_, index) => `/Users/sam/cs/p${index}`),
+    );
+
+    expect(state.machineProjectRoots?.mini?.length).toBe(200);
+  });
+
+  it("reads a stored index back as roots or as nothing, never as junk", () => {
+    // It comes back from durable storage and decides where a guest is sent.
+    // Anything that is not a machine with a list of roots has to resolve to
+    // "nothing reported", which WIDENS the candidates rather than refusing.
+    const normalized = normalizeSharingState({
+      ...emptySharingState(),
+      machineProjectRoots: {
+        mini: ["/Users/sam/cs/tealstreet-next", "/Users/sam/cs/tealstreet-next/"],
+        mbp2: [] as string[],
+        "not a machine id!": ["/Users/sam/cs/tealstreet-next"],
+        broken: 7 as unknown as string[],
+        mixed: [12 as unknown as string, "/Users/sam/cs/aimux"],
+      },
+    });
+
+    expect(normalized.machineProjectRoots).toEqual({
+      mini: ["/Users/sam/cs/tealstreet-next"],
+      mixed: ["/Users/sam/cs/aimux"],
+    });
+    expect(machinesHostingShare(normalized, share, [{ id: "mini" }, { id: "broken" }])).toEqual([{ id: "mini" }]);
+  });
+
+  it("stores no index at all when nothing survives normalizing", () => {
+    const normalized = normalizeSharingState({
+      ...emptySharingState(),
+      machineProjectRoots: { mbp2: [], "!": ["/x"] },
+    });
+
+    expect(normalized.machineProjectRoots).toBeUndefined();
+  });
+
   it("does not rewrite the state when a machine reports what it already did", () => {
     // This arrives every thirty seconds. Re-writing it each time would be a
     // durable write per tick for ever.
