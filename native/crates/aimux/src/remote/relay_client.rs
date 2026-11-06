@@ -161,6 +161,38 @@ pub fn response_frame(id: &str, status: u16, body: Value) -> String {
     json!({ "id": id, "type": "response", "status": status, "body": body }).to_string()
 }
 
+pub use crate::daemon_projects::ProjectEndpoint;
+
+/// Tell the relay where this machine's project services are listening now.
+///
+/// A share stores the endpoint it was created with, and a project service
+/// binds a fresh port on every start -- so the first restart after a share was
+/// made left that share proxying to a port nothing was on, with the daemon
+/// connected and the agent working. The relay moves the share when this says
+/// the port changed.
+pub fn project_endpoints_frame(projects: &[ProjectEndpoint]) -> Option<String> {
+    // Nothing to report is not a frame. The relay fans a change out to every
+    // guest on the share, so an empty list would be a round trip to say
+    // nothing moved.
+    if projects.is_empty() {
+        return None;
+    }
+    Some(
+        json!({
+            "type": "project_endpoints",
+            "projects": projects
+                .iter()
+                .map(|project| json!({
+                    "projectRoot": project.project_root,
+                    "host": project.host,
+                    "port": project.port,
+                }))
+                .collect::<Vec<_>>(),
+        })
+        .to_string(),
+    )
+}
+
 pub fn notification_push_frame(notification: &Value) -> Option<String> {
     // Node dropped a titleless push on the floor rather than sending a blank one.
     let title = notification.get("title").and_then(Value::as_str)?;
@@ -168,6 +200,53 @@ pub fn notification_push_frame(notification: &Value) -> Option<String> {
         return None;
     }
     Some(json!({ "type": "notification_push", "notification": notification }).to_string())
+}
+
+#[cfg(test)]
+mod project_endpoint_frame_tests {
+    use super::*;
+
+    const CONTRACT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../testdata/contracts/v1/relay-project-endpoints.json"
+    ));
+
+    /// The relay parses this frame in TypeScript and answers nothing, so a
+    /// renamed field would leave both suites green and every share on the port
+    /// its invite was written with -- the bug the frame exists to fix. Both
+    /// sides assert this one file.
+    #[test]
+    fn the_report_frame_matches_the_contract_both_sides_read() {
+        let contract: Value = serde_json::from_str(CONTRACT).expect("contract json");
+        let projects = contract["example"]["projects"]
+            .as_array()
+            .expect("example projects")
+            .iter()
+            .map(|project| ProjectEndpoint {
+                project_root: project["projectRoot"]
+                    .as_str()
+                    .expect("projectRoot")
+                    .to_owned(),
+                host: project["host"].as_str().expect("host").to_owned(),
+                port: u16::try_from(project["port"].as_u64().expect("port")).expect("port range"),
+            })
+            .collect::<Vec<_>>();
+
+        let frame = project_endpoints_frame(&projects).expect("a non-empty report is a frame");
+
+        assert_eq!(
+            serde_json::from_str::<Value>(&frame).expect("frame json"),
+            contract["example"]["frame"]
+        );
+    }
+
+    /// Nothing to report is not a frame: the relay fans a change out to every
+    /// guest on the share, so an empty list would be a round trip to say
+    /// nothing moved.
+    #[test]
+    fn an_empty_report_is_not_a_frame() {
+        assert_eq!(project_endpoints_frame(&[]), None);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -1,0 +1,21 @@
+{
+  "note": "The frame a daemon sends to say where its project services are listening, asserted by both sides. The Rust daemon builds it and the TypeScript relay parses it; neither side's own tests would notice a renamed field, and the relay answers nothing, so a mismatch would be silent: every share would stay on the port its invite was written with, which is the bug this frame exists to fix.",
+  "type": "project_endpoints",
+  "projectRootField": "projectRoot",
+  "hostField": "host",
+  "portField": "port",
+  "maxProjectsPerFrame": 500,
+  "example": {
+    "projects": [
+      { "projectRoot": "/Users/sam/cs/tealstreet-next", "host": "127.0.0.1", "port": 49226 },
+      { "projectRoot": "/Users/sam/cs/aimux", "host": "127.0.0.1", "port": 43444 }
+    ],
+    "frame": {
+      "type": "project_endpoints",
+      "projects": [
+        { "projectRoot": "/Users/sam/cs/tealstreet-next", "host": "127.0.0.1", "port": 49226 },
+        { "projectRoot": "/Users/sam/cs/aimux", "host": "127.0.0.1", "port": 43444 }
+      ]
+    }
+  }
+}

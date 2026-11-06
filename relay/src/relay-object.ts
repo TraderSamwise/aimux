@@ -58,6 +58,8 @@ import {
   sharedRelayRequestAccess,
   summarizeShare,
   stripTrustedAimuxHeaders,
+  nextShareRefreshBatch,
+  updateShareServiceEndpoints,
   upsertAcceptedShare,
 } from "./sharing.js";
 import type { ShareParticipantRecord, SharedSessionRecord, SharedSessionSummary } from "./sharing.js";
@@ -73,6 +75,21 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 // requesting client only. Entries are cleared on response, client close, or
 // after this TTL — bounds memory if a request never completes.
 const PENDING_REQUEST_TTL_MS = 60_000;
+/// How many project endpoints one `project_endpoints` frame may report.
+///
+/// Each entry is a pass over every share this object holds, so an unbounded
+/// array is unbounded work in one request. A daemon reports one entry per
+/// registered project; this is far above any real fleet.
+export const MAX_PROJECT_ENDPOINT_REPORTS = 500;
+/// How many shares one report may refresh in its guests' objects.
+///
+/// Each one is a cross-object `fetch` per guest, and the retry means a report
+/// that moves nothing can still owe a refresh on every share it matched. A
+/// machine reports every thirty seconds, so without a cap one account with a
+/// lot of shares and one unreachable guest would spend a report's worth of
+/// subrequests on the same failures for ever. The ones left over are still
+/// recorded as owed and go out on the next report.
+const MAX_SHARE_REFRESHES_PER_REPORT = 20;
 
 interface ClientSocketAttachment {
   pendingRequests?: Record<string, PendingRequestAttachment>;
@@ -339,6 +356,11 @@ export class RelayObject extends DurableObject<Env> {
       return;
     }
 
+    if (isDaemon && parsed.type === "project_endpoints") {
+      await this.applyDaemonProjectEndpoints(tags, parsed);
+      return;
+    }
+
     if (isDaemon && parsed.type === "project_event") {
       this.forwardProjectEvent(parsed, machineFromTags(tags).id);
       return;
@@ -565,6 +587,106 @@ export class RelayObject extends DurableObject<Env> {
       this.detachClientProjectEventSubscription(subscription.client, message.id);
       this.sendDaemonProjectEventsUnsubscribe(message.id, subscription.machineId);
     }
+  }
+
+  /// A daemon telling us where its project services are listening now.
+  ///
+  /// Sent on connect, whenever a service binds a different port, and on a slow
+  /// reminder. Without it a share keeps the endpoint it was created with and
+  /// starts refusing connections the moment that service comes back on a new
+  /// port.
+  private async applyDaemonProjectEndpoints(
+    tags: string[],
+    message: Extract<RelayMessage, { type: "project_endpoints" }>,
+  ): Promise<void> {
+    // From the socket's own tags, not from the frame: whose shares these are,
+    // and which machine they are on, is not something the sender gets to claim.
+    const ownerUserId = tagValue(tags, "user:");
+    const machineId = machineFromTags(tags).id;
+    // Capped because the report is bounded work only if it is bounded in size.
+    // A daemon reports one entry per registered project, so the cap is far
+    // above any real fleet and only bounds a frame that is not one.
+    const projects = (Array.isArray(message.projects) ? message.projects : []).slice(0, MAX_PROJECT_ENDPOINT_REPORTS);
+    if (!ownerUserId || projects.length === 0) return;
+
+    const endpoints = projects
+      .map((entry) => ({
+        projectRoot: typeof entry?.projectRoot === "string" ? entry.projectRoot : "",
+        serviceEndpoint: {
+          host: typeof entry?.host === "string" ? entry.host : "",
+          port: Number(entry?.port),
+        },
+      }))
+      .filter((entry) => entry.projectRoot !== "");
+    if (endpoints.length === 0) return;
+
+    // A share that names no host can only be spoken for by the owner's one
+    // connected machine, because that is the only case where a guest's request
+    // would reach the service this report describes. `rehydrateSockets` has
+    // already run for this message, so the socket map is current.
+    const machines = this.onlineMachines();
+    const senderIsOnlyMachine = machines.length === 1 && machines[0].id === machineId;
+
+    const loaded = await loadSharingState(this.ctx.storage);
+    const { state, updated, matched } = updateShareServiceEndpoints(loaded, {
+      ownerUserId,
+      machineId,
+      senderIsOnlyMachine,
+      endpoints,
+    });
+
+    // A guest reads its own object's cached copy of the summary, not this one,
+    // so moving the canonical record only fixes the owner. The same bug one
+    // hop over -- which is why a receiver whose refresh failed is retried here
+    // even when nothing moved: by then this record is right and the endpoint
+    // comparison alone would never look at that share again.
+    const refresh = new Set(updated);
+    for (const id of matched) {
+      if ((state.shares[id]?.staleReceivers?.length ?? 0) > 0) refresh.add(id);
+    }
+    // This arrives on every daemon connect and on a reminder, and the ordinary
+    // case is that nothing moved and no receiver is owed anything.
+    if (refresh.size === 0) return;
+
+    let changed = updated.length > 0;
+    // The ones waiting longest for a turn: taking the first twenty every time
+    // meant a permanently unreachable guest held the whole budget and the
+    // shares behind it were never tried at all.
+    const ordered = nextShareRefreshBatch(state, refresh, MAX_SHARE_REFRESHES_PER_REPORT);
+    // Only worth recording when the budget actually bit. Everything owed got a
+    // turn otherwise, and stamping anyway would be a durable write on every
+    // report for an account with one guest that is simply down.
+    const refreshedAt = refresh.size > MAX_SHARE_REFRESHES_PER_REPORT ? new Date().toISOString() : undefined;
+    for (const id of ordered) {
+      const share = state.shares[id];
+      if (!share) continue;
+      let stale: string[];
+      try {
+        stale = await this.refreshShareForItsParticipants(share);
+      } catch (error) {
+        console.error("share endpoint refresh failed", id, error);
+        stale = shareReceivers(share);
+      }
+      // Stamped whether or not it landed: the stamp is what gives the next
+      // share a turn, so a share that keeps failing must still take its place
+      // at the back of the queue.
+      if (refreshedAt) {
+        share.lastReceiverRefreshAt = refreshedAt;
+        changed = true;
+      }
+      if (recordStaleReceivers(share, stale)) changed = true;
+    }
+    // Past the cap: owed, not forgotten. Recording them is what makes the
+    // next report pick them up -- the endpoint comparison would not, because
+    // the record already matches by then, which is how the original bug
+    // reached a guest in the first place.
+    for (const id of refresh) {
+      if (ordered.includes(id)) continue;
+      const share = state.shares[id];
+      if (!share) continue;
+      if (recordStaleReceivers(share, shareReceivers(share))) changed = true;
+    }
+    if (changed) await saveSharingState(this.ctx.storage, state);
   }
 
   private async handleDaemonNotificationPush(
@@ -2040,6 +2162,32 @@ const MISSING_SHARE_HOST = "\u0000missing";
 
 function isSharedClientSocket(tags: readonly string[]): boolean {
   return tags.some((tag) => tag.startsWith("share:"));
+}
+
+/// Who holds their own copy of this share. The owner's object holds the
+/// canonical record, so the owner is not a receiver of it.
+function shareReceivers(share: SharedSessionRecord): string[] {
+  return Object.values(share.participants)
+    .filter(
+      (participant) =>
+        participant.status === "active" && participant.userId && participant.userId !== share.ownerUserId,
+    )
+    .map((participant) => participant.userId);
+}
+
+/// Note which receivers still hold a stale copy, and answer whether that
+/// changed. One place, and it sorts: participants come back in acceptance
+/// order, so on a share whose guests were accepted out of alphabetical order
+/// an unsorted comparison reads as a change every time -- a storage write
+/// every thirty seconds, for ever, recording the same failures.
+function recordStaleReceivers(share: SharedSessionRecord, receivers: string[]): boolean {
+  const stale = [...receivers].sort();
+  const held = share.staleReceivers ?? [];
+  if (stale.length === held.length && stale.every((userId, index) => userId === held[index])) {
+    return false;
+  }
+  share.staleReceivers = stale.length > 0 ? stale : undefined;
+  return true;
 }
 
 function shareIdFromTags(tags: readonly string[]): string | undefined {
