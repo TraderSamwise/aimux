@@ -1471,6 +1471,37 @@ describe("RelayObject following a project service onto its new port", () => {
     return ((await accepted.json()) as { share: { id: string } }).share.id;
   }
 
+  /// Invite and accept one more participant onto an existing share.
+  async function addGuest(object: RelayObject, userId: string, email: string): Promise<void> {
+    const invited = await object.fetch(
+      request("https://relay.aimux.app/shares/invite", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+        body: {
+          projectRoot: "/Users/sam/cs/tealstreet-next",
+          serviceEndpoint: { host: "127.0.0.1", port: 44659 },
+          machineId: "mini",
+          sessionId: "claude-psmp2r",
+          email,
+        },
+      }),
+    );
+    expect(invited.status).toBe(201);
+    const accepted = await object.fetch(
+      request(
+        `https://relay.aimux.app/shares/invite/user_owner/${new URL(
+          ((await invited.json()) as { acceptUrl: string }).acceptUrl,
+        ).pathname
+          .split("/")
+          .at(-2)!}/accept`,
+        { method: "POST", userId, name: userId, email },
+      ),
+    );
+    expect(accepted.status).toBe(200);
+  }
+
   function storedEndpoint(storage: MemoryStorage, shareId: string) {
     return storage
       .get<{ shares: Record<string, { serviceEndpoint?: { host: string; port: number } }> }>("sharing-state:v1")
@@ -1595,6 +1626,37 @@ describe("RelayObject following a project service onto its new port", () => {
     upserted.length = 0;
     await object.webSocketMessage(daemon, endpointsFrame(49226));
     expect(upserted).toEqual([]);
+  });
+
+  // The owed list is compared with the one on the record to decide whether
+  // anything changed. Participants come back in acceptance order, so on a
+  // share whose guests were accepted out of alphabetical order an unsorted
+  // list reads as a change every time -- a storage write every thirty
+  // seconds, for ever, recording the same two failures.
+  it("does not write storage again when the same guests fail in a different order", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const receiverDown = { value: false };
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted, receiverDown));
+    const shareId = await shareBoundTo(object, "mini", 44659);
+    // Accepted second, sorts first.
+    await addGuest(object, "user_aaa", "aaa@example.com");
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+
+    receiverDown.value = true;
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    const stored = await storage.get<{
+      shares: Record<string, { staleReceivers?: string[] }>;
+    }>("sharing-state:v1");
+    expect(stored!.shares[shareId].staleReceivers).toEqual(["user_aaa", "user_guest"]);
+
+    // Same two guests, same failure, nothing new to record.
+    const put = vi.spyOn(storage, "put");
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    expect(put).not.toHaveBeenCalled();
+    put.mockRestore();
   });
 
   // Each refresh is a cross-object fetch per guest, and the retry means a

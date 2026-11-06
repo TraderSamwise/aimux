@@ -654,14 +654,7 @@ export class RelayObject extends DurableObject<Env> {
         console.error("share endpoint refresh failed", id, error);
         stale = shareReceivers(share);
       }
-      // Sorted, so the comparison below cannot see a different order as a
-      // change and write storage on every report.
-      stale.sort();
-      const held = share.staleReceivers ?? [];
-      if (stale.length !== held.length || stale.some((userId, index) => userId !== held[index])) {
-        share.staleReceivers = stale.length > 0 ? stale : undefined;
-        changed = true;
-      }
+      if (recordStaleReceivers(share, stale)) changed = true;
     }
     // Past the cap: owed, not forgotten. Recording them is what makes the
     // next report pick them up -- the endpoint comparison would not, because
@@ -671,12 +664,7 @@ export class RelayObject extends DurableObject<Env> {
       if (ordered.includes(id)) continue;
       const share = state.shares[id];
       if (!share) continue;
-      const owed = shareReceivers(share);
-      const held = share.staleReceivers ?? [];
-      if (owed.length !== held.length || owed.some((userId, index) => userId !== held[index])) {
-        share.staleReceivers = owed.length > 0 ? owed : undefined;
-        changed = true;
-      }
+      if (recordStaleReceivers(share, shareReceivers(share))) changed = true;
     }
     if (changed) await saveSharingState(this.ctx.storage, state);
   }
@@ -2164,8 +2152,22 @@ function shareReceivers(share: SharedSessionRecord): string[] {
       (participant) =>
         participant.status === "active" && participant.userId && participant.userId !== share.ownerUserId,
     )
-    .map((participant) => participant.userId)
-    .sort();
+    .map((participant) => participant.userId);
+}
+
+/// Note which receivers still hold a stale copy, and answer whether that
+/// changed. One place, and it sorts: participants come back in acceptance
+/// order, so on a share whose guests were accepted out of alphabetical order
+/// an unsorted comparison reads as a change every time -- a storage write
+/// every thirty seconds, for ever, recording the same failures.
+function recordStaleReceivers(share: SharedSessionRecord, receivers: string[]): boolean {
+  const stale = [...receivers].sort();
+  const held = share.staleReceivers ?? [];
+  if (stale.length === held.length && stale.every((userId, index) => userId === held[index])) {
+    return false;
+  }
+  share.staleReceivers = stale.length > 0 ? stale : undefined;
+  return true;
 }
 
 function shareIdFromTags(tags: readonly string[]): string | undefined {
