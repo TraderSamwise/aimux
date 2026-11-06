@@ -1,0 +1,30 @@
+{
+  "note": "Whether an input is a command the agent parses rather than prose, asserted by both sides. The daemon uses it to decide whether a shared-chat message keeps its `[sender]` attribution; the app uses it to decide whether to expect that message back in the transcript, because a command may produce no user turn to find. Each side used to own its own answer, and a command the app thought was prose produced a 'Send not confirmed yet' for a message that was delivered perfectly.",
+  "rule": "Single line only. The first token decides: a slash followed by ONE segment of word characters, a bang followed by a word character, or a dollar followed by a space or word character. `#` is prose, because it is a markdown heading far more often than a command.",
+  "commands": [
+    "/clear",
+    "/model opus",
+    "/queue",
+    "/compact-now",
+    "!ls -la",
+    "$ echo hi",
+    "$echo",
+    "  /clear  "
+  ],
+  "prose": [
+    "Help us make a document.",
+    "/home/sam is broken",
+    "/etc/hosts",
+    "# note",
+    "# note\nparagraph",
+    "!ls\nrm -rf /",
+    "/clear\nand here is a long unattributed paragraph",
+    "!!!",
+    "$500",
+    "",
+    "   ",
+    "look at /tmp",
+    "/9lives",
+    "/-dash"
+  ]
+}

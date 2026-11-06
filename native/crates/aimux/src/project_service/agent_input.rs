@@ -228,6 +228,35 @@ mod tests {
         json!({ "role": "guest", "displayName": "sam@example.com" })
     }
 
+    const COMMAND_CONTRACT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../testdata/contracts/v1/agent-command-input.json"
+    ));
+
+    /// The app asks this same question, to decide whether to expect the text
+    /// back in the parsed transcript -- a command is consumed by the agent
+    /// and need not appear as a user turn. When each side owned its own
+    /// answer the two could disagree, and a command the app read as prose
+    /// produced "Send not confirmed yet" for a message that was delivered.
+    #[test]
+    fn the_command_rule_matches_the_contract_both_sides_read() {
+        let contract: Value = serde_json::from_str(COMMAND_CONTRACT).expect("contract json");
+        let commands = contract["commands"].as_array().expect("commands");
+        let prose = contract["prose"].as_array().expect("prose");
+        assert!(
+            commands.len() > 4 && prose.len() > 4,
+            "both answers covered"
+        );
+        for case in commands {
+            let text = case.as_str().expect("command string");
+            assert!(looks_like_agent_command(text), "{text:?} must be a command");
+        }
+        for case in prose {
+            let text = case.as_str().expect("prose string");
+            assert!(!looks_like_agent_command(text), "{text:?} must be prose");
+        }
+    }
+
     #[test]
     fn prose_keeps_its_attribution() {
         assert_eq!(

@@ -178,7 +178,13 @@ import {
   type ChatTranscriptPlaceholderState,
 } from "@/lib/chat-loading";
 import { CHAT_PANE_PLACEHOLDER_SHELL } from "@/lib/chat-pane-placeholder";
-import { reportSendTimeout } from "@/lib/send-timeout-report";
+import { looksLikeAgentCommand } from "@/lib/agent-command";
+import {
+  reportSendFailed,
+  reportSendNotAccepted,
+  reportSendTimeout,
+  reportTranscriptRefreshFailed,
+} from "@/lib/send-timeout-report";
 import { formatTerminalOutputForDisplay, terminalOutputTail } from "@/lib/terminal-output";
 import { TERMINAL_DIVIDER_FALLBACK, terminalDividerColumns } from "@/lib/terminal-columns";
 import {
@@ -569,6 +575,17 @@ export default function ChatScreen() {
   const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
+  // One place the delivery diagnostics read their context from, so every one
+  // of them describes the same connection in the same words.
+  const deliveryDiagnosticContext = useCallback(
+    () => ({
+      sessionId,
+      relayConfigured,
+      relayStatus,
+      shared: Boolean(routeShareId),
+    }),
+    [relayConfigured, relayStatus, routeShareId, sessionId],
+  );
   const activeShare = useRouteShare();
   const setLegacyActiveShare = useSetAtom(activeSharedSessionAtom);
   const setAcceptedShares = useSetAtom(acceptedSharedSessionsAtom);
@@ -1647,6 +1664,7 @@ export default function ChatScreen() {
           } else if (deliveryState.kind === "warning") {
             setSendWarning(deliveryState.notice);
           } else {
+            reportSendNotAccepted(deliveryDiagnosticContext(), deliveryState.kind);
             setSendError(deliveryState.text);
           }
           composerSelectionRef.current = EMPTY_COMPOSER_SELECTION;
@@ -1656,18 +1674,25 @@ export default function ChatScreen() {
           void refreshOutputSnapshot().catch(() => {});
           return;
         }
-        setAcceptedComposerMessages((current) =>
-          [
-            ...current,
-            {
-              baselineMessageCount: baselineParsedMessageCount,
-              baselineUserMessageCount: baselineParsedUserMessageCount,
-              clientMessageId,
-              createdAtMs: Date.now(),
-              message: acceptedMessage,
-            },
-          ].slice(-20),
-        );
+        // A command is consumed by the agent and need not come back as a
+        // user turn, so there may be no echo to wait for. Queueing one anyway
+        // guaranteed a "Send not confirmed yet" ten seconds later for a
+        // command that ran perfectly -- the daemon decides what a command is
+        // with this same rule, from the same contract file.
+        if (!looksLikeAgentCommand(text)) {
+          setAcceptedComposerMessages((current) =>
+            [
+              ...current,
+              {
+                baselineMessageCount: baselineParsedMessageCount,
+                baselineUserMessageCount: baselineParsedUserMessageCount,
+                clientMessageId,
+                createdAtMs: Date.now(),
+                message: acceptedMessage,
+              },
+            ].slice(-20),
+          );
+        }
         writeComposerDraft(jotaiStore, sendComposerDraftKey, "");
         composerDraftTextRef.current = "";
         composerSelectionRef.current = EMPTY_COMPOSER_SELECTION;
@@ -1675,6 +1700,7 @@ export default function ChatScreen() {
         setPendingComposerAck(null);
         if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
         void refreshOutputSnapshot().catch((error) => {
+          reportTranscriptRefreshFailed(deliveryDiagnosticContext(), "input", error);
           setSendError(formatPostActionTranscriptRefreshResult("Input sent", error));
         });
       } catch (err) {
@@ -1707,6 +1733,7 @@ export default function ChatScreen() {
         writeComposerDraft(jotaiStore, sendComposerDraftKey, text);
         composerDraftTextRef.current = text;
         setPendingAttachments(attachments);
+        reportSendFailed(deliveryDiagnosticContext(), err);
         setSendError(formatComposerSendFailure(err));
       } finally {
         if (jotaiStore.get(composerSendOperationAtom) === sendOperation) {
@@ -1727,6 +1754,7 @@ export default function ChatScreen() {
     [
       agentKey,
       clearLocalInterruptHold,
+      deliveryDiagnosticContext,
       composerDraftKey,
       composerSendOperationAtom,
       jotaiStore,
@@ -1867,6 +1895,7 @@ export default function ChatScreen() {
         { token },
       );
       void refreshOutputSnapshot("interrupt").catch((error) => {
+        reportTranscriptRefreshFailed(deliveryDiagnosticContext(), "interrupt", error);
         setSendError(formatPostActionTranscriptRefreshResult("Interrupt sent", error));
       });
     } catch (error) {
@@ -1875,6 +1904,7 @@ export default function ChatScreen() {
       interruptInFlightRef.current = false;
     }
   }, [
+    deliveryDiagnosticContext,
     endpointHost,
     endpointMachineId,
     endpointPort,
