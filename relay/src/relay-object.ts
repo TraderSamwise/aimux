@@ -640,6 +640,9 @@ export class RelayObject extends DurableObject<Env> {
       stored,
       machineId,
       endpoints.map((entry) => entry.projectRoot),
+      // So that a full index evicts an id nothing can be routed to, rather
+      // than a machine that is hosting a share right now.
+      { connectedMachineIds: machines.map((machine) => machine.id) },
     );
     // Same object back when the machine reported the same roots it did last
     // time, which is the ordinary case and must stay free of a write.

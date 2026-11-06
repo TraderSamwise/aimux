@@ -1863,6 +1863,78 @@ describe("RelayObject following a project service onto its new port", () => {
     expect(storage.reads.get("sharing-state:v1")).toBe(1);
   });
 
+  // The SECOND route that resolves a shared target. The first version of the
+  // gate above covered only the request route, so reverting this one to load
+  // the state again left the suite green -- the un-updated-caller class, on
+  // the gate written to catch it.
+  it("reads the sharing state once to answer a guest's event subscription", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [daemon, guest];
+    await object.webSocketMessage(daemon, endpointsFrame(44659));
+    daemon.send.mockClear();
+
+    storage.reads.clear();
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({
+        id: "sub-1",
+        type: "project_events_subscribe",
+        path: "/proxy/127.0.0.1/44659/events?sessionId=claude-psmp2r",
+      }),
+    );
+
+    const errors = guest.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "project_events_error");
+    expect(errors, `the subscription must route: ${JSON.stringify(errors)}`).toEqual([]);
+    expect(storage.reads.get("sharing-state:v1")).toBe(1);
+  });
+
+  // What the "widened" answer actually does, stated rather than assumed. An
+  // unreadable report index, or a machine the ceiling evicted, puts every
+  // connected machine back in the running -- and that is the PRE-report
+  // behaviour, which refuses as soon as there is more than one candidate. So
+  // widening is the safe direction only in the sense that it cannot send a
+  // guest to the wrong host; it is not harmless.
+  it("routes a widened share with one machine up and refuses it with two", async () => {
+    for (const machines of [["mini"], ["mini", "mbp2"]]) {
+      const storage = storageWithSockets([]);
+      const object = createObject(storage, envRecording([]));
+      const shareId = await shareBoundTo(object, undefined, 44659);
+      const sockets = machines.map((id) =>
+        fakeSocket(["daemon", `user:user_owner`, `machine:${id}`, `machineName:sam-${id}`]),
+      );
+      const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+      storage.sockets = [...sockets, guest];
+      // No endpoint report at all, so nothing has claimed the root.
+
+      await object.webSocketMessage(
+        guest,
+        JSON.stringify({
+          id: "req-1",
+          type: "request",
+          method: "GET",
+          path: "/proxy/127.0.0.1/44659/agents/history?sessionId=claude-psmp2r",
+        }),
+      );
+
+      const refusals = guest.send.mock.calls
+        .map((call) => JSON.parse(String(call[0])))
+        .filter((frame) => frame.type === "response" && frame.status >= 400);
+      if (machines.length === 1) {
+        expect(refusals, `one machine up must route: ${JSON.stringify(refusals)}`).toEqual([]);
+      } else {
+        expect(refusals).toHaveLength(1);
+        expect(refusals[0].status).toBe(503);
+      }
+    }
+  });
+
   // A share that names no host used to route only while exactly ONE machine
   // was connected, so starting a second daemon anywhere killed it -- with an
   // error saying the machine hosting it was not connected, while that machine

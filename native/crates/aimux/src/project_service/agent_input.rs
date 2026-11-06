@@ -167,7 +167,13 @@ pub fn format_shared_chat_agent_input(text: &str, actor: &Value) -> String {
 }
 
 pub fn shared_chat_body_actor_prompt(body: &Value, text: &str) -> Option<String> {
-    if text.trim().is_empty() {
+    // The same trim the formatter three lines below uses. Leaving this gate on
+    // Rust's own `trim` made the two disagree about whether a message was
+    // empty at all: U+0085 is Unicode White_Space, so `"\u{85}"` was empty
+    // here and NOT empty to the app, which then waited ten seconds for an
+    // echo of a line that had been delivered -- without its sender, because
+    // the empty gate is also what decides whether anything is prefixed.
+    if shared_chat_trim(text).is_empty() {
         return None;
     }
     let actor = body_shared_chat_actor(body)?;
@@ -180,7 +186,7 @@ pub fn shared_chat_remote_actor_prompt(actor: &RemoteActor, text: &str) -> Optio
         RemoteActorRole::Guest => "guest",
         RemoteActorRole::Operator => "operator",
     };
-    if role != "owner" && role != "guest" || text.trim().is_empty() {
+    if role != "owner" && role != "guest" || shared_chat_trim(text).is_empty() {
         return None;
     }
     let mut value = Map::new();
@@ -254,6 +260,7 @@ fn string_field<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::request_actor::{RemoteActor, RemoteActorRole};
     use serde_json::json;
 
     fn guest() -> Value {
@@ -437,13 +444,81 @@ mod tests {
     }
 
     #[test]
+    fn the_empty_gate_trims_what_the_prefix_trims() {
+        // The gate decides whether anything is attributed at all, so it has to
+        // agree with the formatter about what an empty message is. While it
+        // did not: `"\u{85}"` was empty here (Unicode White_Space) and not
+        // empty to the app, so the app waited for an echo of a delivered
+        // line -- and `"\u{feff}"` passed the gate and then trimmed away,
+        // sending a bare `"[sam@example.com] "`.
+        let actor = json!({ "role": "guest", "displayName": "sam@example.com" });
+        for blank in [
+            "",
+            "   ",
+            "\u{85}",
+            "\u{feff}",
+            "\u{a0}\u{3000}",
+            "\u{2028}",
+        ] {
+            assert_eq!(
+                shared_chat_body_actor_prompt(&json!({ "sharedChatActor": actor.clone() }), blank),
+                None,
+                "{blank:?} is an empty message on both sides"
+            );
+        }
+        // And a message that is only invisible padding around a command is
+        // still that command, not an empty message.
+        assert_eq!(
+            shared_chat_body_actor_prompt(
+                &json!({ "sharedChatActor": actor.clone() }),
+                "\u{feff}/clear"
+            ),
+            Some("/clear".to_owned())
+        );
+    }
+
+    #[test]
     fn the_remote_path_agrees_with_the_body_path() {
         // Both callers go through `format_shared_chat_agent_input`, so a
         // command sent over the relay must be treated the same as one sent
         // through the project service body.
+        //
+        // This used to call the BODY path twice and claim to have compared
+        // them, which is how the remote path's own empty gate went on
+        // trimming differently from the formatter beside it.
         let body = json!({
             "sharedChatActor": { "role": "guest", "displayName": "sam@example.com" }
         });
+        let remote = RemoteActor {
+            role: RemoteActorRole::Guest,
+            declared_role: Some("guest".to_owned()),
+            user_id: Some("user_guest".to_owned()),
+            display_name: Some("sam@example.com".to_owned()),
+            email: None,
+            share_id: Some("share-1".to_owned()),
+            share_session_id: Some("claude-psmp2r".to_owned()),
+            principal: None,
+        };
+        for text in [
+            "/clear",
+            "hello",
+            "\u{feff}/clear",
+            // The blanks, which is where the two gates disagreed: U+0085 is
+            // Unicode White_Space and U+FEFF is not, so each language's own
+            // `trim` gave a different answer about whether there was anything
+            // to attribute at all.
+            "",
+            "   ",
+            "\u{85}",
+            "\u{feff}",
+            "\u{2028}",
+        ] {
+            assert_eq!(
+                shared_chat_remote_actor_prompt(&remote, text),
+                shared_chat_body_actor_prompt(&body, text),
+                "{text:?} must be read the same over the relay and in a body"
+            );
+        }
         assert_eq!(
             shared_chat_body_actor_prompt(&body, "/clear").as_deref(),
             Some("/clear")

@@ -7,11 +7,28 @@ const MAX_SHARES = 200;
 /// length before it is compared, or a longer root can never match its share.
 const MAX_PROJECT_ROOT_CHARS = 600;
 const MAX_INVITES_PER_SHARE = 50;
-/// How many machines may have reported roots. An account has a handful; this
-/// is the ceiling that keeps a record written by every machine that ever
-/// connects from growing without end, and a machine dropped by it only widens
-/// the routing candidates back to what they were before anything reported.
+/// How many machines may have reported roots.
+///
+/// An account has a handful, but `MachineIdentity::ephemeral` mints a fresh id
+/// whenever the identity file cannot be read or written, so ids accumulate
+/// without machines accumulating. The ceiling is what stops that growing for
+/// ever -- and eviction prefers the ids that are NOT connected, which is
+/// exactly what a stale ephemeral id is. A connected machine is only ever
+/// dropped when more than this many are connected at once.
+///
+/// Dropping a machine is not free: it widens the routing candidates, and a
+/// share that names no host is REFUSED when there is more than one candidate.
+/// So this is a bound on storage paid for with a refusal, and the eviction
+/// order is chosen to spend it on machines that cannot be routed to anyway.
 const MAX_REPORTING_MACHINES = 100;
+/// The floor applied when a stored record is read back.
+///
+/// Higher than the report-time ceiling on purpose: pruning at report time can
+/// see which machines are connected and this cannot, so a record that somehow
+/// grew past the ceiling is trimmed here only once it is absurd, and the
+/// connectivity-aware rule gets the first say. Both keep the same end of the
+/// sorted ids, so which machines survive does not depend on which path ran.
+const MAX_STORED_REPORTING_MACHINES = 2 * MAX_REPORTING_MACHINES;
 export const SHARE_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type ShareParticipantRole = "owner" | "guest";
@@ -142,24 +159,65 @@ export function rememberMachineProjectRoots(
   state: SharingState,
   machineId: string | undefined,
   projectRoots: readonly string[],
+  options?: {
+    /// The machines connected right now, so eviction can prefer the ids that
+    /// cannot be routed to. Omitted means "nothing is known to be connected",
+    /// which falls back to the id order alone.
+    connectedMachineIds?: readonly string[];
+  },
 ): SharingState {
   const machine = sanitizeShareMachineId(machineId);
   if (!machine) return state;
   const roots = normalizeReportedRoots(projectRoots);
   const current = state.machineProjectRoots ?? {};
-  const held = current[machine] ?? [];
+  const held = claimedProjectRoots(current, machine);
   if (held.length === roots.length && held.every((root, index) => root === roots[index])) {
     return state;
   }
   const next = { ...current, [machine]: roots };
-  // The reporting machine is never the one evicted -- it is the one whose
-  // answer is current. Eviction is by machine id so every object and every
-  // load agrees on who went.
-  const machines = Object.keys(next).sort();
-  for (const evicted of machines.slice(0, Math.max(0, machines.length - MAX_REPORTING_MACHINES))) {
-    if (evicted !== machine) delete next[evicted];
+  const excess = Object.keys(next).length - MAX_REPORTING_MACHINES;
+  if (excess > 0) {
+    for (const evicted of evictionOrder(Object.keys(next), options?.connectedMachineIds).slice(
+      0,
+      // One more than the excess, because the reporter may be in this list and
+      // is always skipped.
+      excess + 1,
+    )) {
+      if (evicted === machine) continue;
+      delete next[evicted];
+      if (Object.keys(next).length <= MAX_REPORTING_MACHINES) break;
+    }
   }
   return { ...state, machineProjectRoots: next };
+}
+
+/// Who to drop first when the report index is full.
+///
+/// A machine that is not connected cannot be routed to at all, and re-reports
+/// within one tick of reconnecting, so it costs nothing to forget. A stale
+/// ephemeral id -- the realistic reason this list ever gets long -- is never
+/// connected again, so it is always at the front of this order and a live
+/// host is never evicted in its place. Ties break on the id, so every object
+/// and every load agrees on who went.
+function evictionOrder(machines: readonly string[], connected: readonly string[] | undefined): string[] {
+  const live = new Set(connected ?? []);
+  return [...machines].sort((left, right) => {
+    const leftLive = live.has(left) ? 1 : 0;
+    const rightLive = live.has(right) ? 1 : 0;
+    return leftLive === rightLive ? left.localeCompare(right) : leftLive - rightLive;
+  });
+}
+
+/// The roots a machine has claimed, for a record that came back from storage.
+///
+/// `isValidMachineId` admits `constructor`, so a plain property read on this
+/// object can return a function rather than a list and `.includes` then throws
+/// inside a guest's request. The key has to be the machine's OWN, and the
+/// value has to be a list, before either is believed.
+function claimedProjectRoots(reported: Record<string, string[]> | undefined, machineId: string): readonly string[] {
+  if (!reported || !Object.hasOwn(reported, machineId)) return [];
+  const roots = reported[machineId];
+  return Array.isArray(roots) ? roots : [];
 }
 
 function normalizeReportedRoots(roots: unknown): string[] {
@@ -192,7 +250,9 @@ function normalizeMachineProjectRoots(
     .map(([machineId, roots]) => [sanitizeShareMachineId(machineId), normalizeReportedRoots(roots)] as const)
     .filter((entry): entry is readonly [string, string[]] => Boolean(entry[0]) && entry[1].length > 0)
     .sort(([left], [right]) => left.localeCompare(right))
-    .slice(0, MAX_REPORTING_MACHINES);
+    // The same end the report-time eviction keeps: that drops the lowest ids
+    // first, so a record trimmed on load must keep the highest.
+    .slice(-MAX_STORED_REPORTING_MACHINES);
   return entries.length === 0 ? undefined : Object.fromEntries(entries);
 }
 
@@ -217,7 +277,7 @@ export function machinesHostingShare<T extends { id: string }>(
   if (Object.keys(reported).length === 0) return machines;
   const wanted = shareProjectRootKey(share.projectRoot);
   if (!wanted) return machines;
-  const hosting = machines.filter((machine) => (reported[machine.id] ?? []).includes(wanted));
+  const hosting = machines.filter((machine) => claimedProjectRoots(reported, machine.id).includes(wanted));
   // Nobody has claimed it: say what was said before rather than inventing a
   // refusal out of an absence.
   return hosting.length === 0 ? machines : hosting;
