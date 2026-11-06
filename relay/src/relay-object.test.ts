@@ -1532,6 +1532,37 @@ describe("RelayObject following a project service onto its new port", () => {
     expect(upserted).toEqual([]);
   });
 
+  // Each entry is a pass over every share this object holds, so an unbounded
+  // array is unbounded work inside one request.
+  it("reads at most a fleet's worth of endpoints from one frame", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, "mini", 44659);
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+    // The real entry sits past the cap, behind a thousand decoys.
+    await object.webSocketMessage(
+      daemon,
+      JSON.stringify({
+        type: "project_endpoints",
+        projects: [
+          ...Array.from({ length: 1_000 }, (_, index) => ({
+            projectRoot: `/decoy/${index}`,
+            host: "127.0.0.1",
+            port: 1_024 + index,
+          })),
+          { projectRoot: "/Users/sam/cs/tealstreet-next", host: "127.0.0.1", port: 49226 },
+        ],
+      }),
+    );
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    expect(upserted).toEqual([]);
+  });
+
   // Anything a client sends is a claim about itself, and this frame rewrites
   // where every share for a project points.
   it("ignores the frame from a client socket", async () => {

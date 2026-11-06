@@ -74,6 +74,12 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 // requesting client only. Entries are cleared on response, client close, or
 // after this TTL — bounds memory if a request never completes.
 const PENDING_REQUEST_TTL_MS = 60_000;
+/// How many project endpoints one `project_endpoints` frame may report.
+///
+/// Each entry is a pass over every share this object holds, so an unbounded
+/// array is unbounded work in one request. A daemon reports one entry per
+/// registered project; this is far above any real fleet.
+const MAX_PROJECT_ENDPOINT_REPORTS = 500;
 
 interface ClientSocketAttachment {
   pendingRequests?: Record<string, PendingRequestAttachment>;
@@ -587,7 +593,10 @@ export class RelayObject extends DurableObject<Env> {
     // and which machine they are on, is not something the sender gets to claim.
     const ownerUserId = tagValue(tags, "user:");
     const machineId = machineFromTags(tags).id;
-    const projects = Array.isArray(message.projects) ? message.projects : [];
+    // Capped because each entry is a pass over every share this object holds.
+    // A daemon reports one entry per registered project, so the cap is far
+    // above any real fleet and only bounds a frame that is not one.
+    const projects = (Array.isArray(message.projects) ? message.projects : []).slice(0, MAX_PROJECT_ENDPOINT_REPORTS);
     if (!ownerUserId || projects.length === 0) return;
 
     let state = await loadSharingState(this.ctx.storage);
