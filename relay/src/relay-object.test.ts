@@ -2123,6 +2123,67 @@ describe("RelayObject machines", () => {
     }
   });
 
+  // A socket whose peer vanished can sit in `getWebSockets()` long after it is
+  // useless, and every message rebuilds these maps from that list. Closing
+  // that corpse was marking the machine superseded on EVERY message and
+  // failing the work registered in the same pass -- so the daemon stayed
+  // connected and reported `online: true` while every request through it came
+  // back 502 "Daemon connection replaced", for ever. That is what sam-mini
+  // looked like from the browser: one disconnect in the daemon log, a healthy
+  // relay, and a shared chat that could not load a single thing.
+  it("does not fail work for a machine that still has a live socket", async () => {
+    const stale = daemonSocket("mini", "sam-mini", 1);
+    const live = daemonSocket("mini", "sam-mini", 2);
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([stale, live, client]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects", machineId: "mini" }),
+    );
+    expect(JSON.parse(String(live.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      type: "request",
+      path: "/projects",
+    });
+    client.send.mockClear();
+
+    // The second message is where this bit: the request is no longer a local
+    // variable, it is rebuilt from the socket's attachment by the rebuild
+    // that the message triggers -- and was then failed by that same rebuild,
+    // before the daemon it was sent to ever had a chance to answer.
+    await object.webSocketMessage(client, JSON.stringify({ type: "ping" }));
+
+    const answers = client.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "response");
+    expect(answers, `the live socket can still answer: ${JSON.stringify(answers)}`).toEqual([]);
+    expect(stale.close).toHaveBeenCalledWith(1000, "Replaced");
+  });
+
+  // The other direction, where a replacement really is a loss: a NEW daemon
+  // socket arrives for a machine that already had one. That socket never had
+  // the old one's work, so the connect path fails it rather than leaving the
+  // client to wait out the request TTL.
+  it("fails work when a new daemon connection replaces the old one", async () => {
+    const original = daemonSocket("mini", "sam-mini", 1);
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([original, client]);
+    const object = createObject(storage, {} as unknown as Env);
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects", machineId: "mini" }),
+    );
+    client.send.mockClear();
+
+    await connectDaemon(object, "?machineId=mini&machineName=sam-mini");
+
+    const answers = client.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "response" && frame.status === 502);
+    expect(answers.length, "the client is told, not left to time out").toBeGreaterThan(0);
+  });
+
   // The rule above reads recency off a tag, so the connect path has to write
   // one. Without this the sockets in production all tie as unsequenced and the
   // decision silently falls back to `getWebSockets()` order -- the exact bug,

@@ -1853,7 +1853,6 @@ export class RelayObject extends DurableObject<Env> {
     // failed after the maps are whole, so the client is told to ask again
     // rather than having its request answered by whichever daemon is alone.
     const unroutable: { client: WebSocket; id: string; kind: "request" | "subscription"; clientId: string }[] = [];
-    const supersededMachineIds = new Set<string>();
     for (const ws of this.ctx.getWebSockets()) {
       if (ws === exclude) continue;
       const tags = this.ctx.getTags(ws);
@@ -1872,10 +1871,6 @@ export class RelayObject extends DurableObject<Env> {
           connectionSequenceFromTags(this.ctx.getTags(incumbent)) >= connectionSequenceFromTags(tags);
         const superseded = keepsIncumbent ? ws : incumbent;
         if (superseded) {
-          // Its in-flight work goes with it, rather than waiting out the
-          // request TTL: the socket that was going to answer is gone, and the
-          // replacement never had those requests.
-          supersededMachineIds.add(machine.id);
           try {
             superseded.close(1000, "Replaced");
           } catch {}
@@ -1941,10 +1936,21 @@ export class RelayObject extends DurableObject<Env> {
       }
     }
     this.failUnroutableRebuiltWork(unroutable);
-    for (const machineId of supersededMachineIds) {
-      this.failPendingRequests("Daemon connection replaced", 502, machineId);
-      this.failProjectEventSubscriptions("Daemon connection replaced", 502, machineId);
-    }
+    // Nothing is failed for a superseded socket HERE, on purpose. Superseding
+    // during a rebuild is de-duplication, never a loss: whichever of the two
+    // wins is left in `daemonSockets`, so the machine still has a socket that
+    // can answer.
+    //
+    // Failing here instead meant this: a socket whose peer vanished can sit in
+    // `getWebSockets()` long after it is useless, every message rebuilds these
+    // maps from that list, so the corpse was superseded on EVERY message and
+    // took with it the request registered in the same pass. The daemon stayed
+    // connected and the relay kept reporting `online: true` while every single
+    // request through it came back 502 for ever -- one disconnect in the
+    // daemon log, a healthy relay, and a shared chat that could not load.
+    //
+    // A real replacement is failed where it happens: the daemon connect path
+    // knows the old socket is going and that the new one never had its work.
   }
 
   private failUnroutableRebuiltWork(
