@@ -13,6 +13,7 @@ import {
   revokeShareInvite,
   sharedRelayRequestAccess,
   stripTrustedAimuxHeaders,
+  normalizeSharingState,
   summarizeShare,
   updateShareServiceEndpoints,
   upsertAcceptedShare,
@@ -784,6 +785,44 @@ describe("share service endpoints", () => {
 
     expect(result.updated).toEqual([shareId]);
     expect(endpointOf(result.state, shareId)).toEqual({ host: "::1", port: 44659 });
+  });
+
+  it("does not delete a guest's share because its stored host predates the host rule", async () => {
+    // The endpoint sanitizer runs on EVERY read of sharing state, and
+    // `normalizeAcceptedShare` drops an entry whose endpoint comes back
+    // undefined. So a new host rule put in that sanitizer would not refuse an
+    // old host -- it would delete the guest's share, and the share would
+    // vanish from their list on the next read with nothing saying why. The
+    // rule belongs on the writer that is new.
+    const state = await shareOn({ machineId: "mini" });
+    const share = Object.values(state.shares)[0];
+    const indexed = upsertAcceptedShare(emptySharingState(), {
+      ...summarizeShare(share),
+      serviceEndpoint: { host: "legacy host/weird", port: 44659 },
+    });
+
+    expect(listAcceptedShares(indexed)).toHaveLength(1);
+    expect(listAcceptedShares(normalizeSharingState(indexed))).toHaveLength(1);
+  });
+
+  it("moves a share whose stored host predates the host rule onto a reachable one", async () => {
+    const state = await shareOn({ machineId: "mini" });
+    const shareId = Object.keys(state.shares)[0];
+    state.shares[shareId].serviceEndpoint = { host: "legacy host/weird", port: 44659 };
+
+    const result = updateShareServiceEndpoints(state, {
+      ownerUserId: "user_owner",
+      machineId: "mini",
+      endpoints: [
+        {
+          projectRoot: "/Users/sam/cs/example",
+          serviceEndpoint: { host: "127.0.0.1", port: 49226 },
+        },
+      ],
+    });
+
+    expect(result.state.shares[shareId]).toBeDefined();
+    expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
   });
 
   it("refuses a host a guest could not build a proxy path from", async () => {

@@ -583,7 +583,7 @@ export function updateShareServiceEndpoints(
   for (const entry of input.endpoints) {
     const endpoint = sanitizeServiceEndpoint(entry.serviceEndpoint);
     const projectRoot = shareProjectRootKey(entry.projectRoot);
-    if (!endpoint || !projectRoot) continue;
+    if (!endpoint || !projectRoot || !isRoutableShareHost(endpoint.host)) continue;
     byRoot.set(projectRoot, endpoint);
   }
   if (byRoot.size === 0) return { state: current, updated: [], matched: [] };
@@ -633,14 +633,24 @@ function sanitizeServiceEndpoint(endpoint: ShareServiceEndpoint | undefined): Sh
   const host = endpoint?.host?.trim();
   const port = Number(endpoint?.port);
   if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) return undefined;
-  // A host goes into the `/proxy/<host>/<port><path>` a guest sends, and that
-  // path is matched by `^\/proxy\/[^/]+\/\d+(\/.*)$`. A host carrying a slash
-  // therefore produces a path the share's own allowlist does not recognise,
-  // and every request from that guest is refused as a route it may not use --
-  // a share bricked by a value the relay accepted. The charset admits every
-  // hostname, IPv4 and bracketed IPv6 form.
-  if (!/^[A-Za-z0-9._:[\]-]+$/.test(host)) return undefined;
   return { host: host.slice(0, 253), port };
+}
+
+/// Whether a guest could build its proxy path from this host.
+///
+/// A guest sends `/proxy/<host>/<port><path>`, matched by
+/// `^\/proxy\/[^/]+\/\d+(\/.*)$`. A host carrying a slash produces a path the
+/// share's own allowlist does not recognise, so every request from that guest
+/// is refused as a route it may not use -- a share bricked by a value the
+/// relay accepted. The charset admits every hostname, IPv4 and bracketed IPv6
+/// form.
+///
+/// Deliberately NOT part of `sanitizeServiceEndpoint`: that runs on every read
+/// of sharing state, and `normalizeAcceptedShare` drops an entry whose
+/// endpoint is undefined -- so applying a new rule there would not refuse an
+/// old host, it would delete the share that holds it.
+function isRoutableShareHost(host: string): boolean {
+  return /^[A-Za-z0-9._:[\]-]+$/.test(host);
 }
 
 function normalizePath(path: string): string {
