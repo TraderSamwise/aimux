@@ -629,3 +629,136 @@ describe("RelayTransport machines", () => {
     restore();
   });
 });
+
+describe("RelayTransport across a dropped connection", () => {
+  // The relay's edge resets this socket tens of times a day -- Cloudflare
+  // rotates its WebSocket proxy, and one close reason says exactly that --
+  // and the daemon is back inside a couple of seconds. Failing every in-flight
+  // read at that moment is what a user sees: the daemon is up, the agent is
+  // working, and the GUI says it could not load the projects.
+  async function connected(sockets: MockWebSocket[]) {
+    const transport = new RelayTransport(
+      "wss://relay.example.test",
+      async () => "token",
+      async () => ({ deviceId: "client_1", deviceKind: "web" }) as never,
+      testProofOptions,
+    );
+    await transport.connect();
+    const socket = sockets.at(-1)!;
+    socket.onopen?.();
+    socket.onmessage?.({ data: JSON.stringify({ type: "connected", role: "client" }) });
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: "daemon_status",
+        online: true,
+        machines: [{ id: "mini", name: "sam-mini" }],
+      }),
+    });
+    return transport;
+  }
+
+  function stubSockets(sockets: MockWebSocket[]) {
+    vi.stubGlobal(
+      "WebSocket",
+      class extends MockWebSocket {
+        constructor(url: string, protocols: string[]) {
+          super(url, protocols);
+          sockets.push(this);
+        }
+      },
+    );
+  }
+
+  it("sends a read again instead of failing it when the socket drops", async () => {
+    vi.useFakeTimers();
+    const originalWebSocket = globalThis.WebSocket;
+    const sockets: MockWebSocket[] = [];
+    try {
+      stubSockets(sockets);
+      const transport = await connected(sockets);
+
+      const pending = transport.request("GET", "/projects", undefined, "mini");
+      const settled = { done: false };
+      void pending.then(
+        () => (settled.done = true),
+        () => (settled.done = true),
+      );
+      const first = sockets.at(-1)!;
+      expect(JSON.parse(first.sent.at(-1)!)).toMatchObject({ method: "GET", path: "/projects" });
+
+      // The edge resets the socket mid-request.
+      first.close(1006);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled.done, "the caller must not be told the read failed").toBe(false);
+
+      // The transport reconnects and the daemon is reachable again.
+      await vi.advanceTimersByTimeAsync(5_000);
+      const second = sockets.at(-1)!;
+      expect(second, "a new socket was opened").not.toBe(first);
+      second.onopen?.();
+      second.onmessage?.({ data: JSON.stringify({ type: "connected", role: "client" }) });
+      second.onmessage?.({
+        data: JSON.stringify({
+          type: "daemon_status",
+          online: true,
+          machines: [{ id: "mini", name: "sam-mini" }],
+        }),
+      });
+
+      const resent = second.sent.map((raw) => JSON.parse(raw)).filter((f) => f.type === "request");
+      expect(resent, "the read is sent again on the new socket").toHaveLength(1);
+      expect(resent[0]).toMatchObject({ method: "GET", path: "/projects", machineId: "mini" });
+
+      // And the answer reaches the original caller.
+      second.onmessage?.({
+        data: JSON.stringify({
+          id: resent[0].id,
+          type: "response",
+          status: 200,
+          body: { ok: true, projects: [] },
+        }),
+      });
+      await expect(pending).resolves.toMatchObject({ status: 200 });
+    } finally {
+      vi.stubGlobal("WebSocket", originalWebSocket);
+      vi.useRealTimers();
+    }
+  });
+
+  it("never replays a write, because it may already have been delivered", async () => {
+    vi.useFakeTimers();
+    const originalWebSocket = globalThis.WebSocket;
+    const sockets: MockWebSocket[] = [];
+    try {
+      stubSockets(sockets);
+      const transport = await connected(sockets);
+
+      // Agent input, answering a prompt, killing a session: the relay cannot
+      // tell us whether the first copy landed before the socket went.
+      const pending = transport.request("POST", "/live-pane/input", { text: "hi" }, "mini");
+      const rejected = pending.then(
+        () => "resolved",
+        (error: Error) => error.message,
+      );
+      const first = sockets.at(-1)!;
+
+      first.close(1006);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(await rejected).toBe("Connection lost");
+      const second = sockets.at(-1)!;
+      second.onopen?.();
+      second.onmessage?.({ data: JSON.stringify({ type: "connected", role: "client" }) });
+      second.onmessage?.({
+        data: JSON.stringify({ type: "daemon_status", online: true, machines: [] }),
+      });
+      const replayed = second.sent
+        .map((raw) => JSON.parse(raw))
+        .filter((f) => f.type === "request");
+      expect(replayed, "a write must not be sent twice").toHaveLength(0);
+    } finally {
+      vi.stubGlobal("WebSocket", originalWebSocket);
+      vi.useRealTimers();
+    }
+  });
+});
