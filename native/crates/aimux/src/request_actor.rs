@@ -492,9 +492,13 @@ fn body_session_id(body: Option<&Value>) -> Option<String> {
 }
 
 fn body_text(body: Option<&Value>) -> bool {
+    // The same trim the route that refuses this applies. Its deny set was a
+    // strict subset, so nothing diverged yet -- but two gates answering "is
+    // there any text here" with two definitions is how the last four of
+    // these started.
     body.and_then(|body| body.get("text"))
         .and_then(Value::as_str)
-        .map(str::trim)
+        .map(crate::project_service::agent_input::shared_chat_trim)
         .is_some_and(|value| !value.is_empty())
 }
 

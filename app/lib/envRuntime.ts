@@ -28,6 +28,15 @@ export const rawEnv = {
   get EXPO_PUBLIC_AIMUX_CONNECTION_MODE(): string | undefined {
     return runtimeConfig()?.connectionMode ?? process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
   },
+  get EXPO_PUBLIC_SENTRY_DSN(): string | undefined {
+    return process.env.EXPO_PUBLIC_SENTRY_DSN;
+  },
+  get EXPO_PUBLIC_SENTRY_ENVIRONMENT(): string | undefined {
+    return process.env.EXPO_PUBLIC_SENTRY_ENVIRONMENT;
+  },
+  get EXPO_PUBLIC_SENTRY_RELEASE(): string | undefined {
+    return process.env.EXPO_PUBLIC_SENTRY_RELEASE;
+  },
   get NODE_ENV(): string | undefined {
     return process.env.NODE_ENV;
   },

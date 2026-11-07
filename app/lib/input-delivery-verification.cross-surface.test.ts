@@ -12,6 +12,7 @@ import {
   livePaneInputDeliveryOutcome,
   sendDeliveryStateAfterResponse,
 } from "@/lib/input-delivery";
+import { looksLikeAgentCommand } from "@/lib/agent-command";
 import { AGENT_OUTPUT_VIEW_MODES } from "@/stores/settings";
 import { chatComposerSendOperationFamily } from "@/stores/ui";
 
@@ -125,7 +126,15 @@ function chatBindings(delivery: LivePaneInputDelivery) {
     setPendingComposerAck: vi.fn(),
     composerDraftsByKey: new Map(),
     refreshOutputSnapshot: vi.fn(async () => {}),
-    setAcceptedComposerMessages: vi.fn(),
+    // React hands `setState` an updater, and running it is what evaluates
+    // the echo the send built. A mock that pockets the function instead
+    // leaves everything inside it unevaluated -- which is how an unbound
+    // name in the echo went unnoticed here while it failed loudly in
+    // `composer-send-lifecycle.test.ts`.
+    setAcceptedComposerMessages: vi.fn((update: unknown) =>
+      typeof update === "function" ? (update as (old: unknown[]) => unknown[])([]) : update,
+    ),
+    looksLikeAgentCommand,
     isTransientRequestError: () => false,
     formatComposerSendFailure: String,
     // The send clears the remembered caret alongside the draft. Declared here
@@ -207,6 +216,11 @@ describe("submission receipts stay consistent across app surfaces", () => {
     const bindings = chatBindings({ state: "delivered", verified: true });
     await callback(chat, "handleSendMessage", bindings)();
     expect(bindings.setAcceptedComposerMessages).toHaveBeenCalledOnce();
+    // The echo itself, not just the call: this prompt is prose, so the send
+    // is confirmed by finding it in the parsed transcript.
+    expect(bindings.setAcceptedComposerMessages.mock.results[0]?.value).toMatchObject([
+      { expectsTranscriptEcho: true },
+    ]);
     expect(bindings.setSendWarning).toHaveBeenLastCalledWith(null);
   });
 

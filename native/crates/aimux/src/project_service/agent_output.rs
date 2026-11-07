@@ -47,7 +47,7 @@ use std::time::{Duration, Instant};
 
 use super::agent_input::{
     format_agent_input_with_attachments, shared_chat_body_actor_prompt,
-    shared_chat_remote_actor_prompt,
+    shared_chat_remote_actor_prompt, shared_chat_trim,
 };
 use super::agent_input_delivery::{
     AGENT_INPUT_DELIVERY_TASK_NAME, AgentInputDeliveryDecision, AgentInputWindowActivity,
@@ -2088,10 +2088,14 @@ fn input_live_pane_route(
         {
             return json_error(403, "shared guest cannot access another session");
         }
-        if text.trim().is_empty() && attachment_ids.is_empty() {
+        if shared_chat_trim(&text).is_empty() && attachment_ids.is_empty() {
             return json_error(403, "shared guest input requires text or attachments");
         }
-    } else if text.trim().is_empty() && attachment_ids.is_empty() {
+    } else if shared_chat_trim(&text).is_empty() && attachment_ids.is_empty() {
+        // One definition of an empty message, shared with the attribution
+        // gate below and with the composer. On Rust's own `trim` this route
+        // refused a `"\u{85}"`-only line that the app had accepted, so the
+        // user saw a hard 400 for something the composer let them send.
         return json_error(400, "text is required");
     }
     let mut attachments = Vec::new();
@@ -2696,10 +2700,14 @@ async fn input_live_pane_route_async(
         {
             return json_error(403, "shared guest cannot access another session");
         }
-        if text.trim().is_empty() && attachment_ids.is_empty() {
+        if shared_chat_trim(&text).is_empty() && attachment_ids.is_empty() {
             return json_error(403, "shared guest input requires text or attachments");
         }
-    } else if text.trim().is_empty() && attachment_ids.is_empty() {
+    } else if shared_chat_trim(&text).is_empty() && attachment_ids.is_empty() {
+        // One definition of an empty message, shared with the attribution
+        // gate below and with the composer. On Rust's own `trim` this route
+        // refused a `"\u{85}"`-only line that the app had accepted, so the
+        // user saw a hard 400 for something the composer let them send.
         return json_error(400, "text is required");
     }
     let mut attachments = Vec::new();

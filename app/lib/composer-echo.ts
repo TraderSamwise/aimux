@@ -7,6 +7,13 @@ export interface AcceptedComposerEcho {
   createdAtMs: number;
   message: ChatMessage;
   settled?: boolean;
+  /// Whether this send should ever appear in the PARSED transcript.
+  ///
+  /// False for a command: the agent consumes it and need not write a user
+  /// turn, so its echo expiring says nothing about delivery. The echo is
+  /// still queued -- it is what draws the bubble and the awaiting-echo footer
+  /// -- it just does not become "Send not confirmed yet" when it times out.
+  expectsTranscriptEcho?: boolean;
 }
 
 export interface ComposerEchoMergeResult {
@@ -15,6 +22,14 @@ export interface ComposerEchoMergeResult {
   droppedUnconfirmedCount: number;
   droppedExpiredCount: number;
   droppedTranscriptAdvancedCount: number;
+  /// Echoes that expired and were never going to be echoed anyway.
+  ///
+  /// Separated from `droppedExpiredCount` rather than merged into it: this one
+  /// must not raise an error, and must still be COUNTED. A command aimed at a
+  /// wedged agent is exactly the send worth measuring, and suppressing the
+  /// error without recording anything left it invisible to the user and to
+  /// Sentry at the same time.
+  droppedCommandEchoCount: number;
 }
 
 export const COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS = 10_000;
@@ -78,6 +93,7 @@ export function mergeAcceptedComposerEchoes(
     return {
       messages: [...parsedMessages],
       echoes: [],
+      droppedCommandEchoCount: 0,
       droppedExpiredCount: 0,
       droppedTranscriptAdvancedCount: 0,
       droppedUnconfirmedCount: 0,
@@ -92,6 +108,7 @@ export function mergeAcceptedComposerEchoes(
   let droppedUnconfirmedCount = 0;
   let droppedExpiredCount = 0;
   let droppedTranscriptAdvancedCount = 0;
+  let droppedCommandEchoCount = 0;
 
   for (const accepted of acceptedEchoes) {
     const matchIndex = confirmationSlotIndex(parsedMessages, accepted, claimedParsedIndexes);
@@ -109,7 +126,13 @@ export function mergeAcceptedComposerEchoes(
       if (transcriptAdvanced) {
         droppedTranscriptAdvancedCount += 1;
       } else if (expired) {
-        droppedExpiredCount += 1;
+        // A command's echo expiring is the expected ending, not a failure --
+        // but it is still worth counting, under its own name.
+        if (accepted.expectsTranscriptEcho === false) {
+          droppedCommandEchoCount += 1;
+        } else {
+          droppedExpiredCount += 1;
+        }
       }
       continue;
     }
@@ -129,6 +152,7 @@ export function mergeAcceptedComposerEchoes(
   return {
     messages,
     echoes: retainedEchoes,
+    droppedCommandEchoCount,
     droppedExpiredCount,
     droppedTranscriptAdvancedCount,
     droppedUnconfirmedCount,

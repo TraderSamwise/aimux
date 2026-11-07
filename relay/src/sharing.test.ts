@@ -15,7 +15,9 @@ import {
   stripTrustedAimuxHeaders,
   normalizeSharingState,
   summarizeShare,
+  machinesHostingShare,
   nextShareRefreshBatch,
+  rememberMachineProjectRoots,
   updateShareServiceEndpoints,
   upsertAcceptedShare,
   type ShareActor,
@@ -531,6 +533,202 @@ describe("which share a new invite extends", () => {
     };
 
     expect(findShareForSession(state, owner.userId, "claude-1", "strix", "/repo/aimux")).toBeUndefined();
+  });
+});
+
+describe("routing a share that names no host", () => {
+  // Such a share used to route only while exactly ONE machine was connected,
+  // so starting a second daemon anywhere killed it -- with an error saying
+  // the machine hosting it was not connected, while that machine was sitting
+  // right there reporting for duty. Sam's own shared chat is one of these:
+  // the record carries no machineId at all.
+  const machines = [{ id: "mini" }, { id: "mbp2" }];
+  const share = { machineId: undefined, projectRoot: "/Users/sam/cs/tealstreet-next" };
+
+  function stateWithRoots(roots: Record<string, string[]>): SharingState {
+    let state = emptySharingState();
+    for (const [machineId, list] of Object.entries(roots)) {
+      state = rememberMachineProjectRoots(state, machineId, list);
+    }
+    return state;
+  }
+
+  it("routes to the machine that reports the checkout, not to the only one connected", () => {
+    const state = stateWithRoots({
+      mini: ["/Users/sam/cs/tealstreet-next", "/Users/sam/cs/aimux"],
+      mbp2: ["/Users/sam/cs/something-else"],
+    });
+
+    expect(machinesHostingShare(state, share, machines)).toEqual([{ id: "mini" }]);
+  });
+
+  it("leaves a share that names a host entirely alone", () => {
+    const state = stateWithRoots({ mbp2: ["/Users/sam/cs/tealstreet-next"] });
+    const bound = { machineId: "mini", projectRoot: "/Users/sam/cs/tealstreet-next" };
+
+    // Not second-guessed by a report: a bound share is that host's, and the
+    // routing rule refuses it when that host is away rather than silently
+    // sending the guest somewhere else.
+    expect(machinesHostingShare(state, bound, machines)).toEqual(machines);
+  });
+
+  it("says what it said before when nothing has reported yet", () => {
+    // An older daemon, or a relay that has just restarted. This may only ever
+    // narrow the previous answer, never invent a refusal out of an absence.
+    expect(machinesHostingShare(emptySharingState(), share, machines)).toEqual(machines);
+    const elsewhere = stateWithRoots({ mbp2: ["/Users/sam/cs/nothing-to-do-with-it"] });
+    expect(machinesHostingShare(elsewhere, share, machines)).toEqual(machines);
+  });
+
+  it("forgets a root a machine no longer reports", () => {
+    // Replaced, not merged: a checkout removed from a machine has to stop
+    // being attributed to it, or a guest is routed to a host that no longer
+    // has it.
+    let state = stateWithRoots({ mini: ["/Users/sam/cs/tealstreet-next"] });
+    state = rememberMachineProjectRoots(state, "mini", ["/Users/sam/cs/aimux"]);
+
+    expect(machinesHostingShare(state, share, machines)).toEqual(machines);
+  });
+
+  it("records nothing for a machine with no usable id", () => {
+    const state = rememberMachineProjectRoots(emptySharingState(), "unidentified", ["/x"]);
+    expect(state.machineProjectRoots).toBeUndefined();
+  });
+
+  it("keeps the report index bounded, and never evicts the machine reporting", () => {
+    // Written by every machine that ever connects, and read on the routing
+    // path. Without a ceiling it grows for the life of the account.
+    //
+    // The reporter is named so that it sorts FIRST, because an earlier
+    // version of this test used a reporter that sorted last and therefore
+    // proved the sort order rather than the guard -- deleting the guard left
+    // it green.
+    let state = emptySharingState();
+    for (let index = 0; index < 140; index += 1) {
+      state = rememberMachineProjectRoots(state, `zz-${String(index).padStart(3, "0")}`, [
+        `/Users/sam/cs/project-${index}`,
+      ]);
+    }
+    state = rememberMachineProjectRoots(state, "aaa-reporter", ["/Users/sam/cs/tealstreet-next"]);
+
+    const held = Object.keys(state.machineProjectRoots ?? {});
+    expect(held.length).toBeLessThanOrEqual(100);
+    // The machine whose answer is current is the one that must stay, however
+    // its id sorts.
+    expect(held).toContain("aaa-reporter");
+    expect(state.machineProjectRoots?.["aaa-reporter"]).toEqual(["/Users/sam/cs/tealstreet-next"]);
+  });
+
+  it("evicts an id nothing is connected to before a machine that is", () => {
+    // The realistic reason this index ever gets long is `ephemeral` minting a
+    // fresh id on every restart that cannot read its identity file. Those ids
+    // are never connected again, so they cost nothing to forget -- and a live
+    // host evicted in their place would be REFUSED a route while it sat there
+    // connected, which is the bug the index was added to fix.
+    const connectedMachineIds = ["aaa-live-host", "aaa-other"];
+    let state = emptySharingState();
+    for (let index = 0; index < 100; index += 1) {
+      state = rememberMachineProjectRoots(state, `zz-stale-${String(index).padStart(3, "0")}`, [
+        `/Users/sam/cs/old-${index}`,
+      ]);
+    }
+    // The live ids sort BEFORE every stale one, so eviction by id alone takes
+    // the host as soon as it is not the machine currently reporting. That is
+    // what makes this test able to fail.
+    state = rememberMachineProjectRoots(state, "aaa-live-host", ["/Users/sam/cs/tealstreet-next"], {
+      connectedMachineIds,
+    });
+    state = rememberMachineProjectRoots(state, "aaa-other", ["/Users/sam/cs/aimux"], {
+      connectedMachineIds,
+    });
+
+    const held = Object.keys(state.machineProjectRoots ?? {});
+    expect(held.length).toBeLessThanOrEqual(100);
+    expect(held).toContain("aaa-live-host");
+    expect(held).toContain("aaa-other");
+    expect(machinesHostingShare(state, share, [{ id: "aaa-live-host" }, { id: "aaa-other" }])).toEqual([
+      { id: "aaa-live-host" },
+    ]);
+  });
+
+  it("trims a stored index that is already over the ceiling", () => {
+    // A record written by an older build, or grown some other way. The load
+    // path cannot see who is connected, so it only trims once the record is
+    // absurd -- and it keeps the same end of the sorted ids that report-time
+    // eviction keeps, so which machines survive does not depend on which path
+    // ran.
+    const machineProjectRoots: Record<string, string[]> = {};
+    for (let index = 0; index < 500; index += 1) {
+      machineProjectRoots[`m-${String(index).padStart(4, "0")}`] = [`/Users/sam/cs/p${index}`];
+    }
+
+    const normalized = normalizeSharingState({ ...emptySharingState(), machineProjectRoots });
+
+    const held = Object.keys(normalized.machineProjectRoots ?? {});
+    expect(held.length).toBe(200);
+    expect(held).toContain("m-0499");
+    expect(held).not.toContain("m-0000");
+  });
+
+  it("does not crash on a machine id that is also a property of Object", () => {
+    // `isValidMachineId` admits `constructor`, and a plain property read then
+    // returns a function rather than a list. `.includes` on that threw inside
+    // a guest's request handling, which is a 500 for a chat that works.
+    let state = rememberMachineProjectRoots(emptySharingState(), "constructor", ["/Users/sam/cs/tealstreet-next"]);
+    state = rememberMachineProjectRoots(state, "mini", ["/Users/sam/cs/tealstreet-next"]);
+
+    expect(() =>
+      machinesHostingShare(state, share, [{ id: "constructor" }, { id: "mini" }, { id: "toString" }]),
+    ).not.toThrow();
+    expect(machinesHostingShare(state, share, [{ id: "toString" }, { id: "mini" }])).toEqual([{ id: "mini" }]);
+  });
+
+  it("caps the roots one machine may claim", () => {
+    const state = rememberMachineProjectRoots(
+      emptySharingState(),
+      "mini",
+      Array.from({ length: 260 }, (_, index) => `/Users/sam/cs/p${index}`),
+    );
+
+    expect(state.machineProjectRoots?.mini?.length).toBe(200);
+  });
+
+  it("reads a stored index back as roots or as nothing, never as junk", () => {
+    // It comes back from durable storage and decides where a guest is sent.
+    // Anything that is not a machine with a list of roots has to resolve to
+    // "nothing reported", which WIDENS the candidates rather than refusing.
+    const normalized = normalizeSharingState({
+      ...emptySharingState(),
+      machineProjectRoots: {
+        mini: ["/Users/sam/cs/tealstreet-next", "/Users/sam/cs/tealstreet-next/"],
+        mbp2: [] as string[],
+        "not a machine id!": ["/Users/sam/cs/tealstreet-next"],
+        broken: 7 as unknown as string[],
+        mixed: [12 as unknown as string, "/Users/sam/cs/aimux"],
+      },
+    });
+
+    expect(normalized.machineProjectRoots).toEqual({
+      mini: ["/Users/sam/cs/tealstreet-next"],
+      mixed: ["/Users/sam/cs/aimux"],
+    });
+    expect(machinesHostingShare(normalized, share, [{ id: "mini" }, { id: "broken" }])).toEqual([{ id: "mini" }]);
+  });
+
+  it("stores no index at all when nothing survives normalizing", () => {
+    const normalized = normalizeSharingState({
+      ...emptySharingState(),
+      machineProjectRoots: { mbp2: [], "!": ["/x"] },
+    });
+
+    expect(normalized.machineProjectRoots).toBeUndefined();
+  });
+
+  it("does not rewrite the state when a machine reports what it already did", () => {
+    // This arrives every thirty seconds. Re-writing it each time would be a
+    // durable write per tick for ever.
+    const first = rememberMachineProjectRoots(emptySharingState(), "mini", ["/a", "/b"]);
+    expect(rememberMachineProjectRoots(first, "mini", ["/b", "/a"])).toBe(first);
   });
 });
 

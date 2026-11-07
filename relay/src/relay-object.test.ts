@@ -19,8 +19,12 @@ vi.mock("cloudflare:workers", () => ({
 
 class MemoryStorage {
   private values = new Map<string, unknown>();
+  /// How many times each key was read, so a route can be asked whether it
+  /// reads the same record twice to answer one question.
+  readonly reads = new Map<string, number>();
 
   async get<T>(key: string): Promise<T | undefined> {
+    this.reads.set(key, (this.reads.get(key) ?? 0) + 1);
     return this.values.get(key) as T | undefined;
   }
 
@@ -1579,6 +1583,9 @@ describe("RelayObject following a project service onto its new port", () => {
 
     const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
     storage.sockets = [daemon];
+    // The first report teaches the object which machine holds this checkout,
+    // which is a real change and is written. Steady state is the second one.
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
     const put = vi.spyOn(storage, "put");
     await object.webSocketMessage(daemon, endpointsFrame(49226));
 
@@ -1619,6 +1626,8 @@ describe("RelayObject following a project service onto its new port", () => {
     const mini = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
     const mbp2 = fakeSocket(["daemon", "user:user_owner", "machine:mbp2", "machineName:sam-mbp2"]);
     storage.sockets = [mini, mbp2];
+    // Once to teach it the roots, as above; the assertion is about the share.
+    await object.webSocketMessage(mini, endpointsFrame(49226));
     const put = vi.spyOn(storage, "put");
     await object.webSocketMessage(mini, endpointsFrame(49226));
 
@@ -1820,6 +1829,201 @@ describe("RelayObject following a project service onto its new port", () => {
     upserted.length = 0;
     await object.webSocketMessage(daemon, endpointsFrame(49226));
     expect(upserted.length).toBe(10);
+  });
+
+  // Routing a guest's request needs the sharing state, and so does deciding
+  // whether the guest may make it. Loading it twice is two reads of the same
+  // record inside one request, on the hot path of every poll a shared chat
+  // makes -- and the two reads could disagree, since a write can land between
+  // them.
+  it("reads the sharing state once to answer one guest request", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [daemon, guest];
+    await object.webSocketMessage(daemon, endpointsFrame(44659));
+
+    storage.reads.clear();
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({
+        id: "req-1",
+        type: "request",
+        method: "GET",
+        path: "/proxy/127.0.0.1/44659/agents/history?sessionId=claude-psmp2r",
+      }),
+    );
+
+    expect(JSON.parse(String(daemon.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      type: "request",
+    });
+    expect(storage.reads.get("sharing-state:v1")).toBe(1);
+  });
+
+  // The SECOND route that resolves a shared target. The first version of the
+  // gate above covered only the request route, so reverting this one to load
+  // the state again left the suite green -- the un-updated-caller class, on
+  // the gate written to catch it.
+  it("reads the sharing state once to answer a guest's event subscription", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [daemon, guest];
+    await object.webSocketMessage(daemon, endpointsFrame(44659));
+    daemon.send.mockClear();
+
+    storage.reads.clear();
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({
+        id: "sub-1",
+        type: "project_events_subscribe",
+        path: "/proxy/127.0.0.1/44659/events?sessionId=claude-psmp2r",
+      }),
+    );
+
+    const errors = guest.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "project_events_error");
+    expect(errors, `the subscription must route: ${JSON.stringify(errors)}`).toEqual([]);
+    expect(storage.reads.get("sharing-state:v1")).toBe(1);
+  });
+
+  // The eviction rule proved through the REPORT ROUTE, not by calling the
+  // helper with the option. Deleting the wiring that tells it who is
+  // connected left the helper's own tests green -- the un-updated-caller
+  // class, on the commit that said it had closed exactly that.
+  it("keeps a reporting host that a full index would otherwise evict", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+
+    // A hundred ids nothing is connected to any more -- what `ephemeral`
+    // leaves behind, one per restart that could not read its identity file.
+    const stored = await storage.get<Record<string, unknown>>("sharing-state:v1");
+    const machineProjectRoots: Record<string, string[]> = {};
+    for (let index = 0; index < 100; index += 1) {
+      machineProjectRoots[`zz-stale-${String(index).padStart(3, "0")}`] = [`/Users/sam/cs/old-${index}`];
+    }
+    await storage.put("sharing-state:v1", { ...stored, machineProjectRoots });
+
+    // Both live ids sort BEFORE every stale one, so eviction by id alone
+    // takes the host as soon as it is not the machine reporting.
+    const host = fakeSocket(["daemon", "user:user_owner", "machine:aaa-host", "machineName:sam-host"]);
+    const other = fakeSocket(["daemon", "user:user_owner", "machine:aab-other", "machineName:sam-other"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [host, other, guest];
+    await object.webSocketMessage(host, endpointsFrame(44659));
+    await object.webSocketMessage(
+      other,
+      JSON.stringify({
+        type: "project_endpoints",
+        projects: [{ projectRoot: "/Users/sam/cs/aimux", host: "127.0.0.1", port: 43001 }],
+      }),
+    );
+    host.send.mockClear();
+    other.send.mockClear();
+
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({
+        id: "req-1",
+        type: "request",
+        method: "GET",
+        path: "/proxy/127.0.0.1/44659/agents/history?sessionId=claude-psmp2r",
+      }),
+    );
+
+    const refusals = guest.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "response" && frame.status >= 400);
+    expect(refusals, `a full index must not refuse the host that reported: ${JSON.stringify(refusals)}`).toEqual([]);
+    expect(JSON.parse(String(host.send.mock.calls.at(-1)?.[0]))).toMatchObject({ type: "request" });
+    expect(other.send).not.toHaveBeenCalled();
+  });
+
+  // What the "widened" answer actually does, stated rather than assumed. An
+  // unreadable report index, or a machine the ceiling evicted, puts every
+  // connected machine back in the running -- and that is the PRE-report
+  // behaviour, which refuses as soon as there is more than one candidate. So
+  // widening is the safe direction only in the sense that it cannot send a
+  // guest to the wrong host; it is not harmless.
+  it("routes a widened share with one machine up and refuses it with two", async () => {
+    for (const machines of [["mini"], ["mini", "mbp2"]]) {
+      const storage = storageWithSockets([]);
+      const object = createObject(storage, envRecording([]));
+      const shareId = await shareBoundTo(object, undefined, 44659);
+      const sockets = machines.map((id) =>
+        fakeSocket(["daemon", `user:user_owner`, `machine:${id}`, `machineName:sam-${id}`]),
+      );
+      const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+      storage.sockets = [...sockets, guest];
+      // No endpoint report at all, so nothing has claimed the root.
+
+      await object.webSocketMessage(
+        guest,
+        JSON.stringify({
+          id: "req-1",
+          type: "request",
+          method: "GET",
+          path: "/proxy/127.0.0.1/44659/agents/history?sessionId=claude-psmp2r",
+        }),
+      );
+
+      const refusals = guest.send.mock.calls
+        .map((call) => JSON.parse(String(call[0])))
+        .filter((frame) => frame.type === "response" && frame.status >= 400);
+      if (machines.length === 1) {
+        expect(refusals, `one machine up must route: ${JSON.stringify(refusals)}`).toEqual([]);
+      } else {
+        expect(refusals).toHaveLength(1);
+        expect(refusals[0].status).toBe(503);
+      }
+    }
+  });
+
+  // A share that names no host used to route only while exactly ONE machine
+  // was connected, so starting a second daemon anywhere killed it -- with an
+  // error saying the machine hosting it was not connected, while that machine
+  // was right there. The reports say which machine has the checkout, and this
+  // is the route actually using them.
+  it("routes a share with no host to the machine that reported its checkout", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+
+    const mini = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    const mbp2 = fakeSocket(["daemon", "user:user_owner", "machine:mbp2", "machineName:sam-mbp2"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [mini, mbp2, guest];
+
+    // Only the mini has this checkout, and says so.
+    await object.webSocketMessage(mini, endpointsFrame(44659));
+    mini.send.mockClear();
+
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({
+        id: "req-1",
+        type: "request",
+        method: "GET",
+        path: "/proxy/127.0.0.1/44659/agents/history?sessionId=claude-psmp2r",
+      }),
+    );
+
+    const refusals = guest.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "response" && frame.status >= 400);
+    expect(refusals, `two machines up must not make this unroutable: ${JSON.stringify(refusals)}`).toEqual([]);
+    expect(JSON.parse(String(mini.send.mock.calls.at(-1)?.[0]))).toMatchObject({ type: "request" });
+    expect(mbp2.send).not.toHaveBeenCalled();
   });
 
   // Each entry is a pass over every share this object holds, so an unbounded
@@ -2121,6 +2325,67 @@ describe("RelayObject machines", () => {
       expect(live.close, `live socket closed when rebuilt in ${order} order`).not.toHaveBeenCalled();
       expect(stale.close, `stale socket survived in ${order} order`).toHaveBeenCalledWith(1000, "Replaced");
     }
+  });
+
+  // A socket whose peer vanished can sit in `getWebSockets()` long after it is
+  // useless, and every message rebuilds these maps from that list. Closing
+  // that corpse was marking the machine superseded on EVERY message and
+  // failing the work registered in the same pass -- so the daemon stayed
+  // connected and reported `online: true` while every request through it came
+  // back 502 "Daemon connection replaced", for ever. That is what sam-mini
+  // looked like from the browser: one disconnect in the daemon log, a healthy
+  // relay, and a shared chat that could not load a single thing.
+  it("does not fail work for a machine that still has a live socket", async () => {
+    const stale = daemonSocket("mini", "sam-mini", 1);
+    const live = daemonSocket("mini", "sam-mini", 2);
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([stale, live, client]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects", machineId: "mini" }),
+    );
+    expect(JSON.parse(String(live.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      type: "request",
+      path: "/projects",
+    });
+    client.send.mockClear();
+
+    // The second message is where this bit: the request is no longer a local
+    // variable, it is rebuilt from the socket's attachment by the rebuild
+    // that the message triggers -- and was then failed by that same rebuild,
+    // before the daemon it was sent to ever had a chance to answer.
+    await object.webSocketMessage(client, JSON.stringify({ type: "ping" }));
+
+    const answers = client.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "response");
+    expect(answers, `the live socket can still answer: ${JSON.stringify(answers)}`).toEqual([]);
+    expect(stale.close).toHaveBeenCalledWith(1000, "Replaced");
+  });
+
+  // The other direction, where a replacement really is a loss: a NEW daemon
+  // socket arrives for a machine that already had one. That socket never had
+  // the old one's work, so the connect path fails it rather than leaving the
+  // client to wait out the request TTL.
+  it("fails work when a new daemon connection replaces the old one", async () => {
+    const original = daemonSocket("mini", "sam-mini", 1);
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([original, client]);
+    const object = createObject(storage, {} as unknown as Env);
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects", machineId: "mini" }),
+    );
+    client.send.mockClear();
+
+    await connectDaemon(object, "?machineId=mini&machineName=sam-mini");
+
+    const answers = client.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "response" && frame.status === 502);
+    expect(answers.length, "the client is told, not left to time out").toBeGreaterThan(0);
   });
 
   // The rule above reads recency off a tag, so the connect path has to write

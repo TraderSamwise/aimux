@@ -94,11 +94,11 @@ pub fn safe_shared_chat_actor_name(actor: &Value) -> String {
 /// genuinely cannot be told from a command. As prose that is written "look at
 /// /tmp", which does not start with the sigil at all.
 pub fn looks_like_agent_command(text: &str) -> bool {
-    let trimmed = text.trim();
-    if trimmed.contains('\n') || trimmed.contains('\r') {
+    let trimmed = shared_chat_trim(text);
+    if trimmed.contains(is_line_break) {
         return false;
     }
-    let first_token = trimmed.split_whitespace().next().unwrap_or("");
+    let first_token = trimmed.split(is_shared_whitespace).next().unwrap_or("");
     let mut characters = trimmed.chars();
     match characters.next() {
         Some('/') => is_single_command_segment(&first_token[1..]),
@@ -108,6 +108,38 @@ pub fn looks_like_agent_command(text: &str) -> bool {
             .is_some_and(|next| next == ' ' || is_command_word_start(next)),
         _ => false,
     }
+}
+
+/// The whitespace both sides agree on.
+///
+/// The two languages disagree at the edges, and each trimming with its own
+/// notion made them disagree about the same message. Rust's
+/// `char::is_whitespace` is the Unicode White_Space property, which includes
+/// U+0085 NEL; JavaScript's `trim` instead includes U+FEFF, which is not
+/// White_Space. So `\u{85}/clear` was a command here and prose in the app,
+/// and `\u{feff}/clear` was a command there and prose here -- on an answer
+/// that decides whether a guest's line keeps its attribution.
+fn is_shared_whitespace(character: char) -> bool {
+    character.is_whitespace() || character == '\u{feff}'
+}
+
+/// What counts as starting a new line, which a command may not do.
+///
+/// `\n` and `\r` were not the whole set. A vertical tab or a form feed
+/// renders as a line break, and U+2028 and U+2029 are the line and paragraph
+/// separators by definition -- so `!ls\u{b}rm -rf /` passed the single-line
+/// test and reached the agent with its sender stripped, which is the bypass
+/// the single-line rule exists to close.
+fn is_line_break(character: char) -> bool {
+    matches!(
+        character,
+        '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+    )
+}
+
+/// Trim as the app trims, so both sides see the same message.
+pub fn shared_chat_trim(text: &str) -> &str {
+    text.trim_matches(is_shared_whitespace)
 }
 
 /// One segment of a slash command's name: letters, digits, `-` and `_`, and
@@ -124,7 +156,7 @@ fn is_command_word_start(character: char) -> bool {
 }
 
 pub fn format_shared_chat_agent_input(text: &str, actor: &Value) -> String {
-    let trimmed = text.trim();
+    let trimmed = shared_chat_trim(text);
     // A prefixed command is not a command. `[sam@example.com] /clear` is a
     // message beginning with a bracket, so the agent takes it as prose and
     // the thing the sender asked for never happens.
@@ -135,7 +167,13 @@ pub fn format_shared_chat_agent_input(text: &str, actor: &Value) -> String {
 }
 
 pub fn shared_chat_body_actor_prompt(body: &Value, text: &str) -> Option<String> {
-    if text.trim().is_empty() {
+    // The same trim the formatter three lines below uses. Leaving this gate on
+    // Rust's own `trim` made the two disagree about whether a message was
+    // empty at all: U+0085 is Unicode White_Space, so `"\u{85}"` was empty
+    // here and NOT empty to the app, which then waited ten seconds for an
+    // echo of a line that had been delivered -- without its sender, because
+    // the empty gate is also what decides whether anything is prefixed.
+    if shared_chat_trim(text).is_empty() {
         return None;
     }
     let actor = body_shared_chat_actor(body)?;
@@ -148,7 +186,7 @@ pub fn shared_chat_remote_actor_prompt(actor: &RemoteActor, text: &str) -> Optio
         RemoteActorRole::Guest => "guest",
         RemoteActorRole::Operator => "operator",
     };
-    if role != "owner" && role != "guest" || text.trim().is_empty() {
+    if role != "owner" && role != "guest" || shared_chat_trim(text).is_empty() {
         return None;
     }
     let mut value = Map::new();
@@ -166,10 +204,14 @@ pub fn format_agent_input_with_attachments(text: &str, attachments: &[Value]) ->
     if attachments.is_empty() {
         return text.to_owned();
     }
-    let body = if text.trim().is_empty() {
+    // The same trim the rest of this module uses. On Rust's own `trim`,
+    // `"\u{feff}"` is not empty, so a message that is only an invisible
+    // character plus an attachment reached the agent as a blank first line
+    // and LOST the instruction to look at the file.
+    let body = if shared_chat_trim(text).is_empty() {
         "Please review the attached file(s).".to_owned()
     } else {
-        text.trim().to_owned()
+        shared_chat_trim(text).to_owned()
     };
     let attachment_lines = attachments
         .iter()
@@ -222,10 +264,40 @@ fn string_field<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::request_actor::{RemoteActor, RemoteActorRole};
     use serde_json::json;
 
     fn guest() -> Value {
         json!({ "role": "guest", "displayName": "sam@example.com" })
+    }
+
+    const COMMAND_CONTRACT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../testdata/contracts/v1/agent-command-input.json"
+    ));
+
+    /// The app asks this same question, to decide whether to expect the text
+    /// back in the parsed transcript -- a command is consumed by the agent
+    /// and need not appear as a user turn. When each side owned its own
+    /// answer the two could disagree, and a command the app read as prose
+    /// produced "Send not confirmed yet" for a message that was delivered.
+    #[test]
+    fn the_command_rule_matches_the_contract_both_sides_read() {
+        let contract: Value = serde_json::from_str(COMMAND_CONTRACT).expect("contract json");
+        let commands = contract["commands"].as_array().expect("commands");
+        let prose = contract["prose"].as_array().expect("prose");
+        assert!(
+            commands.len() > 4 && prose.len() > 4,
+            "both answers covered"
+        );
+        for case in commands {
+            let text = case.as_str().expect("command string");
+            assert!(looks_like_agent_command(text), "{text:?} must be a command");
+        }
+        for case in prose {
+            let text = case.as_str().expect("prose string");
+            assert!(!looks_like_agent_command(text), "{text:?} must be prose");
+        }
     }
 
     #[test]
@@ -261,6 +333,58 @@ mod tests {
         );
         assert!(!looks_like_agent_command("# note\nparagraph"));
         assert!(!looks_like_agent_command("!ls\nrm -rf /"));
+    }
+
+    #[test]
+    fn a_line_break_that_is_not_a_newline_still_ends_the_command() {
+        // `\n` and `\r` were not the whole set, so these reached the agent
+        // with the sender stripped: a vertical tab and a form feed render as
+        // line breaks, and U+2028/U+2029 are the line and paragraph
+        // separators by definition.
+        for smuggled in [
+            "/clear\u{b}rm -rf /",
+            "!ls\u{c}rm -rf /",
+            "$ echo hi\u{85}and a paragraph",
+            "/clear\u{2028}rm -rf /",
+            "!ls\u{2029}rm -rf /",
+        ] {
+            assert!(
+                !looks_like_agent_command(smuggled),
+                "{smuggled:?} carries a second line"
+            );
+            assert_eq!(
+                format_shared_chat_agent_input(smuggled, &guest()),
+                format!("[sam@example.com] {smuggled}"),
+                "{smuggled:?} keeps its sender"
+            );
+        }
+    }
+
+    #[test]
+    fn the_two_sides_trim_the_same_characters() {
+        // Each language trimming with its own notion of whitespace made them
+        // disagree about the same message: U+0085 is Unicode White_Space and
+        // so trimmed here but not by JavaScript's `trim`, and U+FEFF is the
+        // reverse. Both now trim White_Space plus U+FEFF.
+        for wrapped in [
+            "\u{feff}/clear",
+            "\u{85}/clear",
+            "/clear\u{feff}",
+            "\u{a0}/clear\u{a0}",
+        ] {
+            assert!(
+                looks_like_agent_command(wrapped),
+                "{wrapped:?} is a command with invisible padding"
+            );
+            assert_eq!(
+                format_shared_chat_agent_input(wrapped, &guest()),
+                "/clear",
+                "{wrapped:?} is sent as the bare command"
+            );
+        }
+        // Padding alone is not a command, and is not an empty prefix either.
+        assert!(!looks_like_agent_command("\u{feff}"));
+        assert!(!looks_like_agent_command("\u{85}"));
     }
 
     #[test]
@@ -324,13 +448,109 @@ mod tests {
     }
 
     #[test]
+    fn an_invisible_message_with_an_attachment_still_asks_for_a_review() {
+        // On Rust's own `trim`, `"\u{feff}"` is not empty, so the body became
+        // that invisible character and the instruction to look at the file
+        // was lost -- the agent got a blank first line and a list.
+        let attachment = json!({
+            "filename": "shot.png",
+            "mimeType": "image/png",
+            "sizeBytes": 12,
+            "contentUrl": "/attachments/att_1/content"
+        });
+        for blank in ["", "   ", "\u{85}", "\u{feff}", "\u{2028}"] {
+            assert!(
+                format_agent_input_with_attachments(blank, std::slice::from_ref(&attachment))
+                    .starts_with("Please review the attached file(s)."),
+                "{blank:?} is an empty message, so the review instruction stands"
+            );
+        }
+        assert!(
+            format_agent_input_with_attachments(
+                "\u{feff}look at this",
+                std::slice::from_ref(&attachment)
+            )
+            .starts_with("look at this"),
+            "and real text keeps its own words, trimmed the same way"
+        );
+    }
+
+    #[test]
+    fn the_empty_gate_trims_what_the_prefix_trims() {
+        // The gate decides whether anything is attributed at all, so it has to
+        // agree with the formatter about what an empty message is. While it
+        // did not: `"\u{85}"` was empty here (Unicode White_Space) and not
+        // empty to the app, so the app waited for an echo of a delivered
+        // line -- and `"\u{feff}"` passed the gate and then trimmed away,
+        // sending a bare `"[sam@example.com] "`.
+        let actor = json!({ "role": "guest", "displayName": "sam@example.com" });
+        for blank in [
+            "",
+            "   ",
+            "\u{85}",
+            "\u{feff}",
+            "\u{a0}\u{3000}",
+            "\u{2028}",
+        ] {
+            assert_eq!(
+                shared_chat_body_actor_prompt(&json!({ "sharedChatActor": actor.clone() }), blank),
+                None,
+                "{blank:?} is an empty message on both sides"
+            );
+        }
+        // And a message that is only invisible padding around a command is
+        // still that command, not an empty message.
+        assert_eq!(
+            shared_chat_body_actor_prompt(
+                &json!({ "sharedChatActor": actor.clone() }),
+                "\u{feff}/clear"
+            ),
+            Some("/clear".to_owned())
+        );
+    }
+
+    #[test]
     fn the_remote_path_agrees_with_the_body_path() {
         // Both callers go through `format_shared_chat_agent_input`, so a
         // command sent over the relay must be treated the same as one sent
         // through the project service body.
+        //
+        // This used to call the BODY path twice and claim to have compared
+        // them, which is how the remote path's own empty gate went on
+        // trimming differently from the formatter beside it.
         let body = json!({
             "sharedChatActor": { "role": "guest", "displayName": "sam@example.com" }
         });
+        let remote = RemoteActor {
+            role: RemoteActorRole::Guest,
+            declared_role: Some("guest".to_owned()),
+            user_id: Some("user_guest".to_owned()),
+            display_name: Some("sam@example.com".to_owned()),
+            email: None,
+            share_id: Some("share-1".to_owned()),
+            share_session_id: Some("claude-psmp2r".to_owned()),
+            principal: None,
+        };
+        for text in [
+            "/clear",
+            "hello",
+            "\u{feff}/clear",
+            // The blanks, which is where the two gates disagreed: U+0085 is
+            // Unicode White_Space and U+FEFF is not, so each language's own
+            // `trim` gave a different answer about whether there was anything
+            // to attribute at all.
+            "",
+            "   ",
+            "\u{85}",
+            "\u{feff}",
+            "\u{2028}",
+        ] {
+            assert_eq!(
+                shared_chat_remote_actor_prompt(&remote, text),
+                shared_chat_body_actor_prompt(&body, text),
+                "{text:?} must be read the same over the relay and in a body"
+            );
+        }
         assert_eq!(
             shared_chat_body_actor_prompt(&body, "/clear").as_deref(),
             Some("/clear")

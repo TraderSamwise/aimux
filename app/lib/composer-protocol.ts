@@ -1,3 +1,5 @@
+import { sharedWhitespaceTrim } from "@/lib/agent-command";
+
 export interface ComposerKeyEventLike {
   key?: string;
   /// The physical key, which a virtual keyboard does not have.
@@ -6,13 +8,6 @@ export interface ComposerKeyEventLike {
   ctrlKey?: boolean;
   metaKey?: boolean;
   altKey?: boolean;
-}
-
-export interface ComposerSendState {
-  draft: string;
-  hasServiceEndpoint: boolean;
-  hasSessionId: boolean;
-  sendBusy: boolean;
 }
 
 export interface ComposerAckMessageLike {
@@ -41,7 +36,11 @@ const LONG_COMPOSER_ACK_MIN_SENT_CHARS = 240;
 const LONG_COMPOSER_ACK_FRAGMENT_CHARS = 96;
 
 export function normalizeComposerDraft(draft: string): string | null {
-  const text = draft.trim();
+  // Trimmed the way the daemon trims, not the way JavaScript happens to.
+  // `"\u0085"` is whitespace to the daemon and not to JS `trim`, so a line
+  // that was only that passed this gate and was then refused by the route
+  // with a 400 -- a hard error for something the composer had accepted.
+  const text = sharedWhitespaceTrim(draft);
   return text ? text : null;
 }
 
@@ -60,11 +59,6 @@ export function shouldSubmitComposerKey(
     !event.altKey &&
     (event.ctrlKey === true || hasHardwareKeyboard)
   );
-}
-
-export function getComposerSendText(state: ComposerSendState): string | null {
-  if (state.sendBusy || !state.hasServiceEndpoint || !state.hasSessionId) return null;
-  return normalizeComposerDraft(state.draft);
 }
 
 export function formatComposerSendFailure(error: unknown): string {

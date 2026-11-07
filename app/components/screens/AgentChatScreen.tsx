@@ -175,10 +175,19 @@ import {
 import {
   agentOutputModeForVisiblePane,
   chatTranscriptPlaceholderState,
+  terminalOutputPlaceholderState,
   type ChatTranscriptPlaceholderState,
 } from "@/lib/chat-loading";
 import { CHAT_PANE_PLACEHOLDER_SHELL } from "@/lib/chat-pane-placeholder";
-import { reportSendTimeout } from "@/lib/send-timeout-report";
+import type { InitialAgentOutputFeedStatus } from "@/lib/agent-output-feed-state";
+import { looksLikeAgentCommand } from "@/lib/agent-command";
+import {
+  reportCommandEchoExpired,
+  reportSendFailed,
+  reportSendNotAccepted,
+  reportSendTimeout,
+  reportTranscriptRefreshFailed,
+} from "@/lib/send-timeout-report";
 import { formatTerminalOutputForDisplay, terminalOutputTail } from "@/lib/terminal-output";
 import { TERMINAL_DIVIDER_FALLBACK, terminalDividerColumns } from "@/lib/terminal-columns";
 import {
@@ -414,7 +423,13 @@ type JotaiStore = ReturnType<typeof useStore>;
 const EMPTY_COMPOSER_SELECTION: ComposerTextSelection = { start: 0, end: 0 };
 
 function hasComposerDraftContent(text: string): boolean {
-  return /\S/.test(text);
+  // The same answer the send itself gives. `/\S/` does not match U+0085, so
+  // a draft of only that left Send ENABLED while `normalizeComposerDraft`
+  // returned null -- the press reached the guard inside `handleSendMessage`
+  // and returned, with no request, no error and the draft still sitting
+  // there. Tapping Send and having nothing at all happen is worse than the
+  // refusal it replaced.
+  return normalizeComposerDraft(text) !== null;
 }
 
 function readComposerDraft(store: JotaiStore, key: string | null): string {
@@ -569,6 +584,17 @@ export default function ChatScreen() {
   const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
+  // One place the delivery diagnostics read their context from, so every one
+  // of them describes the same connection in the same words.
+  const deliveryDiagnosticContext = useCallback(
+    () => ({
+      sessionId,
+      relayConfigured,
+      relayStatus,
+      shared: Boolean(routeShareId),
+    }),
+    [relayConfigured, relayStatus, routeShareId, sessionId],
+  );
   const activeShare = useRouteShare();
   const setLegacyActiveShare = useSetAtom(activeSharedSessionAtom);
   const setAcceptedShares = useSetAtom(acceptedSharedSessionsAtom);
@@ -1543,7 +1569,8 @@ export default function ChatScreen() {
   const handleSendMessage = useCallback(
     async (options?: { preserveFocus?: boolean }) => {
       const preserveFocus = options?.preserveFocus === true;
-      const text = normalizeComposerDraft(readComposerDraft(jotaiStore, composerDraftKey)) ?? "";
+      const rawDraft = readComposerDraft(jotaiStore, composerDraftKey);
+      const text = normalizeComposerDraft(rawDraft) ?? "";
       const attachments = [...pendingAttachments];
       if (
         !serviceEndpoint ||
@@ -1554,6 +1581,17 @@ export default function ChatScreen() {
         jotaiStore.get(composerSendOperationAtom) !== null ||
         (!text && attachments.length === 0)
       ) {
+        // A draft of only invisible characters -- a NEL or a BOM that came in
+        // on a paste -- is not a message, so pressing Enter does nothing, as
+        // it does on an empty composer. But leaving those characters in the
+        // box is a composer that LOOKS empty with Send greyed out and nothing
+        // to explain it. Drop them, and the state the user can see matches
+        // the state the send is in.
+        if (!text && attachments.length === 0 && rawDraft !== "") {
+          writeComposerDraft(jotaiStore, composerDraftKey, "");
+          composerDraftTextRef.current = "";
+          composerSelectionRef.current = EMPTY_COMPOSER_SELECTION;
+        }
         return;
       }
       // Checked over the whole set before anything is uploaded or the draft is
@@ -1647,6 +1685,7 @@ export default function ChatScreen() {
           } else if (deliveryState.kind === "warning") {
             setSendWarning(deliveryState.notice);
           } else {
+            reportSendNotAccepted(deliveryDiagnosticContext(), deliveryState.kind);
             setSendError(deliveryState.text);
           }
           composerSelectionRef.current = EMPTY_COMPOSER_SELECTION;
@@ -1656,6 +1695,15 @@ export default function ChatScreen() {
           void refreshOutputSnapshot().catch(() => {});
           return;
         }
+        // A command is consumed by the agent and need not come back as a
+        // user turn, so waiting for an echo of one guaranteed a "Send not
+        // confirmed yet" ten seconds later for a command that ran perfectly.
+        // The daemon decides what a command is with this same rule, from the
+        // same contract file.
+        //
+        // The echo is still queued. It is also what draws the bubble and, in
+        // terminal mode, the only confirmation the composer has -- skipping
+        // it outright traded a wrong warning for no feedback at all.
         setAcceptedComposerMessages((current) =>
           [
             ...current,
@@ -1664,6 +1712,7 @@ export default function ChatScreen() {
               baselineUserMessageCount: baselineParsedUserMessageCount,
               clientMessageId,
               createdAtMs: Date.now(),
+              expectsTranscriptEcho: !looksLikeAgentCommand(text),
               message: acceptedMessage,
             },
           ].slice(-20),
@@ -1675,6 +1724,7 @@ export default function ChatScreen() {
         setPendingComposerAck(null);
         if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
         void refreshOutputSnapshot().catch((error) => {
+          reportTranscriptRefreshFailed(deliveryDiagnosticContext(), "input", error);
           setSendError(formatPostActionTranscriptRefreshResult("Input sent", error));
         });
       } catch (err) {
@@ -1707,6 +1757,7 @@ export default function ChatScreen() {
         writeComposerDraft(jotaiStore, sendComposerDraftKey, text);
         composerDraftTextRef.current = text;
         setPendingAttachments(attachments);
+        reportSendFailed(deliveryDiagnosticContext(), err);
         setSendError(formatComposerSendFailure(err));
       } finally {
         if (jotaiStore.get(composerSendOperationAtom) === sendOperation) {
@@ -1727,6 +1778,7 @@ export default function ChatScreen() {
     [
       agentKey,
       clearLocalInterruptHold,
+      deliveryDiagnosticContext,
       composerDraftKey,
       composerSendOperationAtom,
       jotaiStore,
@@ -1867,6 +1919,7 @@ export default function ChatScreen() {
         { token },
       );
       void refreshOutputSnapshot("interrupt").catch((error) => {
+        reportTranscriptRefreshFailed(deliveryDiagnosticContext(), "interrupt", error);
         setSendError(formatPostActionTranscriptRefreshResult("Interrupt sent", error));
       });
     } catch (error) {
@@ -1875,6 +1928,7 @@ export default function ChatScreen() {
       interruptInFlightRef.current = false;
     }
   }, [
+    deliveryDiagnosticContext,
     endpointHost,
     endpointMachineId,
     endpointPort,
@@ -3140,6 +3194,7 @@ export default function ChatScreen() {
                     <AgentTerminalOutputPane
                       ref={terminalViewportRef}
                       bottomContentInset={chatBottomContentReserve}
+                      initialStatus={initialOutputStatus}
                       keyboardVisible={keyboardVisible}
                       onChromeVisibleChange={handleChatChromeVisibleChange}
                       onRequestHistoryPage={requestChatHistoryPage}
@@ -3387,6 +3442,9 @@ const TERMINAL_OUTPUT_LINE_STYLE: TextStyle = {
 
 type AgentTerminalOutputPaneProps = {
   bottomContentInset: number;
+  /// The same feed status the chat pane renders from, so the two panes cannot
+  /// describe one connection as two different situations.
+  initialStatus: InitialAgentOutputFeedStatus;
   keyboardVisible: boolean;
   onChromeVisibleChange: (visible: boolean) => void;
   onRequestHistoryPage: (metrics: ChatScrollMetrics, reason?: "scroll" | "content") => void;
@@ -3399,6 +3457,7 @@ const AgentTerminalOutputPane = React.memo(
     function AgentTerminalOutputPane(
       {
         bottomContentInset,
+        initialStatus,
         keyboardVisible,
         onChromeVisibleChange,
         onRequestHistoryPage,
@@ -3407,6 +3466,7 @@ const AgentTerminalOutputPane = React.memo(
       },
       ref,
     ) {
+      const lastError = useAtomValue(lastErrorFamily(agentKey));
       const outputPlain = useAtomValue(outputBufferFamily(agentKey));
       const outputAnsi = useAtomValue(outputAnsiFamily(agentKey));
       const outputAvailable = useAtomValue(outputAvailableFamily(agentKey));
@@ -3463,6 +3523,15 @@ const AgentTerminalOutputPane = React.memo(
       const visibleOutputAvailable =
         visibleOutput.sessionKey === agentKey ? visibleOutput.outputAvailable : outputAvailable;
       const hasOutput = visibleOutputText.trim().length > 0 || visibleOutputAvailable;
+      // The same decision the chat pane makes, from the same feed. Rendering
+      // an unconditional spinner here is what let one dead connection read as
+      // "Transcript unavailable, Retry" on the left and "Loading output" for
+      // ever on the right.
+      const terminalPlaceholder = terminalOutputPlaceholderState({
+        hasOutput,
+        initialStatus,
+        lastError,
+      });
 
       const cancelPendingTerminalScroll = useCallback(() => {
         if (terminalScrollFrameRef.current === null) return;
@@ -3673,12 +3742,18 @@ const AgentTerminalOutputPane = React.memo(
             className="max-w-[90%] flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2"
             style={{ minWidth: 220 }}
           >
-            <ActivityIndicator size="small" color="#a1a1aa" />
+            {terminalPlaceholder.kind === "loading" ? (
+              <ActivityIndicator size="small" color="#a1a1aa" />
+            ) : null}
             <View className="min-w-0 shrink">
-              <Text className="text-sm text-muted-foreground">Loading output</Text>
-              <Text className="mt-1 text-xs text-muted-foreground">
-                Waiting for terminal output from the project service.
-              </Text>
+              {terminalPlaceholder.kind === "none" ? null : (
+                <>
+                  <Text className="text-sm text-muted-foreground">{terminalPlaceholder.title}</Text>
+                  <Text className="mt-1 text-xs text-muted-foreground">
+                    {terminalPlaceholder.message}
+                  </Text>
+                </>
+              )}
             </View>
           </View>
         </View>
@@ -4319,6 +4394,21 @@ function settleComposerEchoes(
       shared: Boolean(routeShareId),
     });
     setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
+  }
+  if (result.droppedCommandEchoCount > 0) {
+    // No error: a command need not be echoed, so nothing here is known to
+    // have failed. Recorded anyway, because an unacknowledged command is what
+    // a wedged agent looks like and the error path can no longer see it.
+    reportCommandEchoExpired(
+      {
+        relayConfigured,
+        relayStatus,
+        sessionId,
+        shared: Boolean(routeShareId),
+      },
+      result.droppedCommandEchoCount,
+      parsedMessages.length,
+    );
   }
   // By VALUE, not reference. The merge always allocates a fresh array, so a
   // reference check is always unequal -- and this effect depends on the state

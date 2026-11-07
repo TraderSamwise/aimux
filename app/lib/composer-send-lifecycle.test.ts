@@ -17,6 +17,14 @@ import {
 } from "@/lib/input-delivery";
 import { attachmentTooLargeMessage, firstOversizedAttachment } from "@/lib/attachment-limits";
 import { isTransientRequestError } from "@/lib/request-errors";
+import { looksLikeAgentCommand } from "@/lib/agent-command";
+import {
+  COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+  mergeAcceptedComposerEchoes,
+  sameAcceptedComposerEchoes,
+  type AcceptedComposerEcho,
+} from "@/lib/composer-echo";
+import { COMPOSER_SEND_TIMEOUT_MESSAGE } from "@/lib/composer-protocol";
 import type { LivePaneInputResponse } from "../../src/project-api-contract";
 
 type Attachment = {
@@ -164,6 +172,22 @@ function harness(
     releasePickedAttachment,
     EMPTY_COMPOSER_SELECTION: { start: 0, end: 0 },
     setSelectionRestoreToken: vi.fn(),
+    // The send asks whether the text is a command before deciding what its
+    // echo means, and reports its own failures. This harness runs the real
+    // source against an explicit binding set, so an unbound name throws
+    // inside the send -- and because the catch reports too, it surfaced as
+    // "reportSendFailed is not defined" rather than as the name that was
+    // actually missing.
+    looksLikeAgentCommand,
+    deliveryDiagnosticContext: () => ({
+      sessionId: "session",
+      relayConfigured: false,
+      relayStatus: "off",
+      shared: false,
+    }),
+    reportSendFailed: vi.fn(),
+    reportSendNotAccepted: vi.fn(),
+    reportTranscriptRefreshFailed: vi.fn(),
   };
   const helperNames = [
     "readComposerDraft",
@@ -288,6 +312,7 @@ function harness(
         { ...context(), useAtomValue: (atom: typeof composerSendOperationAtom) => store.get(atom) },
       )(),
     shared,
+    base,
     refs,
     composerSendOperationAtom,
     clearLocalInterruptHold,
@@ -449,6 +474,212 @@ describe("the screen's composer send lifecycle without a renderer", () => {
     expect(h.state.attachments[0]?.uploadedAttachmentId).toBe("uploaded-one");
     expect(h.state.ack).toBeNull();
     expect(h.state.error).toBe("Send failed: permission denied");
+  });
+});
+
+describe("what a send's echo claims about the transcript", () => {
+  // Confirmation is echo-based, and a command is consumed by the agent
+  // without necessarily writing a user turn -- so waiting for an echo of one
+  // guaranteed a "Send not confirmed yet" ten seconds later for a command
+  // that ran perfectly. `/queue` over the shared chat is how it was found.
+  //
+  // This runs the screen's real send, so it is the call site being asked, not
+  // the rule. A guard that is correct in a helper and missing at the one
+  // place that matters is the class this file exists to catch.
+  it.each([
+    { draft: "/queue", expectsTranscriptEcho: false, expiredIsAFailure: 0 },
+    { draft: "queue up the next task", expectsTranscriptEcho: true, expiredIsAFailure: 1 },
+  ])(
+    "sending $draft records expectsTranscriptEcho=$expectsTranscriptEcho",
+    async ({ draft, expectsTranscriptEcho, expiredIsAFailure }) => {
+      const h = harness();
+      h.setDraft(draft);
+      await h.send();
+
+      expect(h.base.reportSendFailed).not.toHaveBeenCalled();
+      expect(h.sendLivePaneInput).toHaveBeenCalledOnce();
+      expect(h.state.accepted).toHaveLength(1);
+      expect(h.state.accepted[0]).toMatchObject({ expectsTranscriptEcho });
+
+      // And what that costs when the echo never arrives, through the merge
+      // the screen actually reports from: `droppedExpiredCount` is what
+      // raises the error and the Sentry event.
+      const echoes = h.state.accepted as AcceptedComposerEcho[];
+      const expired = mergeAcceptedComposerEchoes([], echoes, {
+        nowMs: echoes[0]!.createdAtMs + COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+      });
+      expect(expired.droppedExpiredCount).toBe(expiredIsAFailure);
+      // Either way the optimistic bubble existed first.
+      expect(
+        mergeAcceptedComposerEchoes([], echoes, { nowMs: echoes[0]!.createdAtMs }).messages,
+      ).toHaveLength(1);
+    },
+  );
+});
+
+describe("a draft nobody can see", () => {
+  // The keyboard reaches `handleSendMessage` without consulting the Send
+  // button, so Enter on a draft of only invisible characters took the guard
+  // and returned. Doing nothing is right -- the composer LOOKS empty, and
+  // Enter on an empty composer does nothing -- but leaving the characters
+  // there is a composer that looks empty with Send greyed out and no way to
+  // tell why.
+  it("clears an invisible-only draft instead of sitting on it", async () => {
+    const h = harness();
+    h.setDraft("\u0085");
+    await h.send();
+
+    expect(h.sendLivePaneInput).not.toHaveBeenCalled();
+    expect(h.state.error).toBeNull();
+    expect(h.draft()).toBe("");
+    expect(h.refs.composerDraftTextRef.current).toBe("");
+  });
+
+  it("leaves a real draft alone when the send cannot run", async () => {
+    // Same guard, a different reason to be in it: a send already in flight
+    // must not destroy what the user typed.
+    const h = harness();
+    h.setDraft("hello");
+    h.refs.sendBusyRef.current = true;
+    await h.send();
+
+    expect(h.sendLivePaneInput).not.toHaveBeenCalled();
+    expect(h.draft()).toBe("hello");
+  });
+
+  it("does not touch an empty composer", async () => {
+    const h = harness();
+    h.setDraft("");
+    await h.send();
+
+    expect(h.sendLivePaneInput).not.toHaveBeenCalled();
+    expect(h.draft()).toBe("");
+  });
+});
+
+describe("the Send button and the send agree on an empty draft", () => {
+  // `/\S/` does not match U+0085, so a draft of only that left the button
+  // ENABLED while the send's own gate returned null -- the press reached the
+  // guard inside `handleSendMessage` and returned, with no request, no error
+  // and the draft still sitting there. Tapping Send and having nothing happen
+  // at all is worse than the refusal it replaced.
+  const declaration = exactlyOne(
+    screenAst(),
+    (node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === "hasComposerDraftContent",
+  );
+  const hasContent = compile<(text: string) => boolean>(
+    `${declaration.getText()}\nconst callback = hasComposerDraftContent;`,
+    { normalizeComposerDraft },
+  );
+
+  it("disables Send for anything the send itself would refuse", () => {
+    for (const blank of ["", "   ", "\u0085", "﻿", " 　", " ", "\t\n"]) {
+      expect(hasContent(blank), JSON.stringify(blank)).toBe(false);
+      expect(normalizeComposerDraft(blank), JSON.stringify(blank)).toBeNull();
+    }
+  });
+
+  it("enables Send for a draft the send would accept", () => {
+    for (const text of ["hi", "  hi  ", "﻿/clear", "#"]) {
+      expect(hasContent(text), JSON.stringify(text)).toBe(true);
+      expect(normalizeComposerDraft(text), JSON.stringify(text)).not.toBeNull();
+    }
+  });
+});
+
+describe("settling the echoes the send queued", () => {
+  // The screen's real `settleComposerEchoes`, run against an explicit binding
+  // set. It is the only place the merge's counters become something a user or
+  // Sentry sees, and the two counters must not be treated alike: one is an
+  // error the user is shown, the other is a record nobody is blamed for.
+  function settle(accepted: AcceptedComposerEcho[], parsedMessages: unknown[] = []) {
+    const source = screenAst();
+    const declaration = exactlyOne(
+      source,
+      (node): node is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(node) && node.name?.text === "settleComposerEchoes",
+    );
+    const seen = {
+      timeouts: [] as unknown[],
+      commands: [] as unknown[],
+      errors: [] as unknown[],
+      echoes: [] as unknown[],
+    };
+    const run = compile<(accepted: unknown[], context: Record<string, unknown>) => void>(
+      `${declaration.getText()}\nconst callback = settleComposerEchoes;`,
+      {
+        mergeAcceptedComposerEchoes,
+        sameAcceptedComposerEchoes,
+        COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+        COMPOSER_SEND_TIMEOUT_MESSAGE,
+        reportSendTimeout: (report: unknown) => seen.timeouts.push(report),
+        reportCommandEchoExpired: (context: unknown, count: unknown, parsedMessageCount: unknown) =>
+          seen.commands.push({ context, count, parsedMessageCount }),
+      },
+    );
+    run(accepted, {
+      parsedMessages,
+      relayConfigured: true,
+      relayStatus: "connected",
+      routeShareId: "share-1",
+      sessionId: "claude-psmp2r",
+      setAcceptedComposerMessages: (echoes: unknown) => seen.echoes.push(echoes),
+      setSendError: (message: unknown) => seen.errors.push(message),
+    });
+    return seen;
+  }
+
+  const stale = (clientMessageId: string, extra: Partial<AcceptedComposerEcho> = {}) =>
+    ({
+      baselineMessageCount: 0,
+      baselineUserMessageCount: 0,
+      clientMessageId,
+      // Well past the window, whatever the clock says when this runs.
+      createdAtMs: Date.now() - COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS * 10,
+      message: { id: clientMessageId, role: "user", parts: [], text: "" },
+      ...extra,
+    }) as AcceptedComposerEcho;
+
+  it("shows the error for prose and records it", () => {
+    const seen = settle([stale("composer:prose")]);
+
+    expect(seen.errors).toEqual([COMPOSER_SEND_TIMEOUT_MESSAGE]);
+    expect(seen.timeouts).toHaveLength(1);
+    expect(seen.commands).toHaveLength(0);
+  });
+
+  it("records a command's expiry and tells the user nothing", () => {
+    // Two messages still on screen, which is the field that separates a
+    // transcript sitting there with content and no answer from one a
+    // `/clear` emptied -- the only discriminating fact this record carries,
+    // since a command that worked emits nothing at all.
+    // The baseline matches what is on screen, so the transcript did not
+    // advance -- which is the ONLY way an echo reaches its expiry. Any new
+    // message drops it as "the transcript advanced" instead, which is why
+    // this record means "nothing came back for the whole window".
+    const seen = settle(
+      [stale("composer:slash", { expectsTranscriptEcho: false, baselineMessageCount: 2 })],
+      [
+        { id: "a", role: "assistant", parts: [], text: "" },
+        { id: "b", role: "assistant", parts: [], text: "" },
+      ],
+    );
+
+    expect(seen.errors).toEqual([]);
+    expect(seen.timeouts).toHaveLength(0);
+    expect(seen.commands).toEqual([
+      {
+        context: {
+          relayConfigured: true,
+          relayStatus: "connected",
+          sessionId: "claude-psmp2r",
+          shared: true,
+        },
+        count: 1,
+        parsedMessageCount: 2,
+      },
+    ]);
   });
 });
 

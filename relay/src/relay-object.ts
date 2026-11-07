@@ -58,7 +58,9 @@ import {
   sharedRelayRequestAccess,
   summarizeShare,
   stripTrustedAimuxHeaders,
+  machinesHostingShare,
   nextShareRefreshBatch,
+  rememberMachineProjectRoots,
   updateShareServiceEndpoints,
   upsertAcceptedShare,
 } from "./sharing.js";
@@ -433,7 +435,10 @@ export class RelayObject extends DurableObject<Env> {
         return;
       }
       const target = clientResult.share
-        ? resolveSharedDaemonTarget(this.onlineMachines(), clientResult.share.machineId)
+        ? resolveSharedDaemonTarget(
+            this.machinesHostingShare(clientResult.sharingState, clientResult.share),
+            clientResult.share.machineId,
+          )
         : resolveDaemonTarget(this.onlineMachines(), parsed.machineId);
       if (!target.ok) {
         this.send(ws, {
@@ -504,7 +509,10 @@ export class RelayObject extends DurableObject<Env> {
       return;
     }
     const target = clientResult.share
-      ? resolveSharedDaemonTarget(this.onlineMachines(), clientResult.share.machineId)
+      ? resolveSharedDaemonTarget(
+          this.machinesHostingShare(clientResult.sharingState, clientResult.share),
+          clientResult.share.machineId,
+        )
       : resolveDaemonTarget(this.onlineMachines(), message.machineId);
     if (!target.ok) {
       this.send(ws, {
@@ -627,7 +635,18 @@ export class RelayObject extends DurableObject<Env> {
     const machines = this.onlineMachines();
     const senderIsOnlyMachine = machines.length === 1 && machines[0].id === machineId;
 
-    const loaded = await loadSharingState(this.ctx.storage);
+    const stored = await loadSharingState(this.ctx.storage);
+    const loaded = rememberMachineProjectRoots(
+      stored,
+      machineId,
+      endpoints.map((entry) => entry.projectRoot),
+      // So that a full index evicts an id nothing can be routed to, rather
+      // than a machine that is hosting a share right now.
+      { connectedMachineIds: machines.map((machine) => machine.id) },
+    );
+    // Same object back when the machine reported the same roots it did last
+    // time, which is the ordinary case and must stay free of a write.
+    const learnedSomething = loaded !== stored;
     const { state, updated, matched } = updateShareServiceEndpoints(loaded, {
       ownerUserId,
       machineId,
@@ -646,7 +665,13 @@ export class RelayObject extends DurableObject<Env> {
     }
     // This arrives on every daemon connect and on a reminder, and the ordinary
     // case is that nothing moved and no receiver is owed anything.
-    if (refresh.size === 0) return;
+    if (refresh.size === 0) {
+      // Nothing moved and nobody is owed a refresh -- but the roots this
+      // report taught us are how a share that names no host gets routed, so
+      // they are worth a write on the rare occasion they changed.
+      if (learnedSomething) await saveSharingState(this.ctx.storage, state);
+      return;
+    }
 
     let changed = updated.length > 0;
     // The ones waiting longest for a turn: taking the first twenty every time
@@ -686,7 +711,7 @@ export class RelayObject extends DurableObject<Env> {
       if (!share) continue;
       if (recordStaleReceivers(share, shareReceivers(share))) changed = true;
     }
-    if (changed) await saveSharingState(this.ctx.storage, state);
+    if (changed || learnedSomething) await saveSharingState(this.ctx.storage, state);
   }
 
   private async handleDaemonNotificationPush(
@@ -854,6 +879,19 @@ export class RelayObject extends DurableObject<Env> {
   }
 
   // Sorted so the list a client renders does not reorder on every reconnect.
+  /// The connected machines that could be hosting this share.
+  ///
+  /// For a share that names a host this is every machine, and the routing
+  /// rule picks it. For one that names none it is the machines that have
+  /// reported a service for its checkout -- which is what keeps such a share
+  /// working when a second daemon connects, instead of dying with an error
+  /// saying its host is not connected while that host is right there.
+  private machinesHostingShare(state: SharingState, share: { machineId?: string; projectRoot: string }): MachineInfo[] {
+    const machines = this.onlineMachines();
+    if (share.machineId) return machines;
+    return [...machinesHostingShare(state, share, machines)];
+  }
+
   private onlineMachines(): MachineInfo[] {
     return [...this.daemonSockets.keys()].sort().map((id) => ({ id, name: this.daemonMachineNames.get(id) ?? id }));
   }
@@ -1313,7 +1351,17 @@ export class RelayObject extends DurableObject<Env> {
   ): Promise<
     | {
         ok: true;
-        share?: SharedSessionRecord;
+        share?: undefined;
+        sharingState?: undefined;
+        requestPatch?: { headers?: Record<string, string>; body?: unknown };
+      }
+    // A share is routed from the sharing state, and this is the one place
+    // that reads it per request. Handing it back instead of letting the
+    // routing load it again keeps a guest request to a single storage read.
+    | {
+        ok: true;
+        share: SharedSessionRecord;
+        sharingState: SharingState;
         requestPatch?: { headers?: Record<string, string>; body?: unknown };
       }
     | { ok: false; status: number; error: string }
@@ -1357,6 +1405,7 @@ export class RelayObject extends DurableObject<Env> {
     return {
       ok: true,
       share,
+      sharingState: state,
       requestPatch: {
         headers: {
           ...stripTrustedAimuxHeaders(request.headers),
@@ -1853,7 +1902,6 @@ export class RelayObject extends DurableObject<Env> {
     // failed after the maps are whole, so the client is told to ask again
     // rather than having its request answered by whichever daemon is alone.
     const unroutable: { client: WebSocket; id: string; kind: "request" | "subscription"; clientId: string }[] = [];
-    const supersededMachineIds = new Set<string>();
     for (const ws of this.ctx.getWebSockets()) {
       if (ws === exclude) continue;
       const tags = this.ctx.getTags(ws);
@@ -1872,10 +1920,6 @@ export class RelayObject extends DurableObject<Env> {
           connectionSequenceFromTags(this.ctx.getTags(incumbent)) >= connectionSequenceFromTags(tags);
         const superseded = keepsIncumbent ? ws : incumbent;
         if (superseded) {
-          // Its in-flight work goes with it, rather than waiting out the
-          // request TTL: the socket that was going to answer is gone, and the
-          // replacement never had those requests.
-          supersededMachineIds.add(machine.id);
           try {
             superseded.close(1000, "Replaced");
           } catch {}
@@ -1941,10 +1985,21 @@ export class RelayObject extends DurableObject<Env> {
       }
     }
     this.failUnroutableRebuiltWork(unroutable);
-    for (const machineId of supersededMachineIds) {
-      this.failPendingRequests("Daemon connection replaced", 502, machineId);
-      this.failProjectEventSubscriptions("Daemon connection replaced", 502, machineId);
-    }
+    // Nothing is failed for a superseded socket HERE, on purpose. Superseding
+    // during a rebuild is de-duplication, never a loss: whichever of the two
+    // wins is left in `daemonSockets`, so the machine still has a socket that
+    // can answer.
+    //
+    // Failing here instead meant this: a socket whose peer vanished can sit in
+    // `getWebSockets()` long after it is useless, every message rebuilds these
+    // maps from that list, so the corpse was superseded on EVERY message and
+    // took with it the request registered in the same pass. The daemon stayed
+    // connected and the relay kept reporting `online: true` while every single
+    // request through it came back 502 for ever -- one disconnect in the
+    // daemon log, a healthy relay, and a shared chat that could not load.
+    //
+    // A real replacement is failed where it happens: the daemon connect path
+    // knows the old socket is going and that the new one never had its work.
   }
 
   private failUnroutableRebuiltWork(

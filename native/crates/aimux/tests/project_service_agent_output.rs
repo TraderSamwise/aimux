@@ -2063,16 +2063,30 @@ fn live_pane_mutation_routes_validate_before_touching_tmux() {
     assert_eq!(bad_resize.status, 400);
     assert_eq!(bad_resize.body["error"], "cols must be an integer >= 1");
 
-    let empty_input = route_agent_output_request_with_runtime(
-        &context,
-        "POST",
-        routes::live_pane::INPUT,
-        Some(&json!({ "sessionId": "codex-1", "text": "   " })),
-        &mut runtime,
-    )
-    .unwrap();
-    assert_eq!(empty_input.status, 400);
-    assert_eq!(empty_input.body["error"], "text is required");
+    // Every spelling of an empty message this route is given, because the
+    // route is where the refusal is seen and the helper's own test cannot
+    // reach it. U+FEFF is the one Rust's `trim` does not strip and U+0085 is
+    // the one JavaScript's does not, so each used to be accepted by one side
+    // and refused by the other.
+    for blank in [
+        "   ",
+        "\u{feff}",
+        "\u{85}",
+        "\u{a0}\u{3000}",
+        "\u{2028}",
+        "\t\n",
+    ] {
+        let empty_input = route_agent_output_request_with_runtime(
+            &context,
+            "POST",
+            routes::live_pane::INPUT,
+            Some(&json!({ "sessionId": "codex-1", "text": blank })),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(empty_input.status, 400, "{blank:?} is an empty message");
+        assert_eq!(empty_input.body["error"], "text is required");
+    }
 
     let attachment_input = route_agent_output_request_with_runtime(
         &context,
