@@ -46,6 +46,14 @@ def matrix_entries(workflow_text: str) -> list[dict[str, str]]:
     for line in lines[include + 1 :]:
         if not line.strip():
             continue
+        # A comment is not the end of the list. This used to `break`, so a
+        # perfectly legal YAML comment between two entries silently dropped
+        # every platform after it -- and because the completeness gate reads
+        # this same function, the release still reported a complete asset set
+        # while npm and Homebrew failed looking for a Darwin build nobody had
+        # told them to download. v0.1.74 shipped nothing for exactly that.
+        if line.strip().startswith("#"):
+            continue
         item = ENTRY.match(line)
         if item and (indent is None or len(item.group(1)) == indent):
             indent = len(item.group(1))
@@ -68,7 +76,17 @@ def matrix_entries(workflow_text: str) -> list[dict[str, str]]:
 
 
 def main() -> int:
-    for entry in matrix_entries(WORKFLOW.read_text(encoding="utf-8")):
+    # `-` reads a workflow on stdin, so the parsing rules can be tested
+    # against a workflow that is not the one checked in. Without an argument
+    # it reads the real one, which is how every caller uses it.
+    source = sys.argv[1] if len(sys.argv) > 1 else None
+    if source == "-":
+        text = sys.stdin.read()
+    elif source:
+        text = Path(source).read_text(encoding="utf-8")
+    else:
+        text = WORKFLOW.read_text(encoding="utf-8")
+    for entry in matrix_entries(text):
         print("\t".join(entry[field] for field in FIELDS))
     return 0
 
