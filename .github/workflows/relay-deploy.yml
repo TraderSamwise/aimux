@@ -47,6 +47,17 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      # The root install, not just the relay one. `vitest` is a ROOT
+      # devDependency and the relay's `tsc --noEmit` compiles its own
+      # `*.test.ts` files, which import it. Locally that resolves by walking up
+      # to the repository's `node_modules`; with only `relay/` installed there
+      # is nothing to walk up to, so every run of this workflow has failed at
+      # Typecheck with "Cannot find module 'vitest'" -- including the first
+      # one, so the relay has never actually deployed through it. The Test step
+      # below runs at the root and needs this too.
+      - name: Install repository dependencies
+        run: yarn install --frozen-lockfile
+
       - name: Install relay dependencies
         working-directory: relay
         run: yarn install --frozen-lockfile
