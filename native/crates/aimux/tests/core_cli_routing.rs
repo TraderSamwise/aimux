@@ -263,6 +263,28 @@ fn agent_identity_parser_matches_project_json_forms() {
 }
 
 #[test]
+fn task_parser_accepts_a_workstream_on_assign_and_list() {
+    let assigned = parse_core_task_args(&[
+        "task",
+        "assign",
+        "do the thing",
+        "--to",
+        "codex-1",
+        "--stream",
+        "deaws",
+    ])
+    .expect("assign parses");
+    assert_eq!(assigned.stream.as_deref(), Some("deaws"));
+
+    let listed = parse_core_task_args(&["task", "list", "--stream=deaws"]).expect("list parses");
+    assert_eq!(listed.stream.as_deref(), Some("deaws"));
+
+    // Not every subcommand takes it, and a task without one is normal.
+    let plain = parse_core_task_args(&["task", "list"]).expect("list parses");
+    assert_eq!(plain.stream, None);
+}
+
+#[test]
 fn agent_input_parser_preserves_variadic_text_and_project_option() {
     assert_eq!(
         parse_core_agent_input_args(&["input", "claude-1", "hello", "there", "--project", "/repo"]),
@@ -1236,6 +1258,7 @@ fn task_parser_matches_workflow_forms() {
     assert_eq!(
         assign,
         Some(CoreTaskArgs {
+            stream: None,
             command: "task".into(),
             subcommand: "assign".into(),
             task_id: None,

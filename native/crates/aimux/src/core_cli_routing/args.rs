@@ -377,6 +377,13 @@ pub struct CoreCollaborationArgs {
 pub struct CoreTaskArgs {
     pub command: String,
     pub subcommand: String,
+    /// The workstream a task belongs to, across worktrees and projects.
+    ///
+    /// Without it, membership gets encoded in the description -- the queue on
+    /// tealstreet-next carries two items hand-prefixed `[deaws]` for exactly
+    /// this reason, because there was no field to put it in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

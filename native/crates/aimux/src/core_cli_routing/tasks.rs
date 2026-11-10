@@ -48,6 +48,7 @@ pub fn parse_core_task_args_result<S: AsRef<str>>(
     let mut parsed = CoreTaskArgs {
         command: command.to_owned(),
         subcommand: subcommand.to_owned(),
+        stream: None,
         task_id: None,
         description: None,
         project: None,
@@ -92,6 +93,18 @@ pub fn parse_core_task_args_result<S: AsRef<str>>(
             && let Some(value) = arg.strip_prefix("--session=")
         {
             parsed.session = Some(inline_text_option(value, "--session")?.to_owned());
+            index += 1;
+            continue;
+        }
+        if matches!(subcommand, "assign" | "list") && arg == "--stream" {
+            parsed.stream = Some(required_text_option(args, index, "--stream")?.to_owned());
+            index += 2;
+            continue;
+        }
+        if matches!(subcommand, "assign" | "list")
+            && let Some(value) = arg.strip_prefix("--stream=")
+        {
+            parsed.stream = Some(inline_text_option(value, "--stream")?.to_owned());
             index += 1;
             continue;
         }

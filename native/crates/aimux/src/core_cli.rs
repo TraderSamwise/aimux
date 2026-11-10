@@ -1656,6 +1656,7 @@ where
                             &project_root,
                             parsed.session.as_deref(),
                             parsed.status.as_deref(),
+                            parsed.stream.as_deref(),
                             parsed.json,
                         ),
                         None,
@@ -1683,6 +1684,7 @@ where
                             "type": parsed.task_type,
                             "diff": parsed.diff,
                             "worktree": parsed.worktree,
+                            "stream": parsed.stream,
                         })),
                     ),
                     ("task", "accept") => (

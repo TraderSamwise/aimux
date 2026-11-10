@@ -335,6 +335,11 @@ fn route_task_assign(project_state_dir: &Path, body: &Value) -> ProjectServiceDi
     let task_type = string_field_with_default(body, "type", "task");
     let diff = body.get("diff").cloned();
     let worktree_path = trimmed_string(body.get("worktreePath"));
+    // The workstream this task belongs to, across worktrees and projects.
+    // Without a field for it, membership ends up in the description -- the
+    // tealstreet-next queue carries items hand-prefixed `[deaws]` for exactly
+    // that reason.
+    let stream = trimmed_string(body.get("stream"));
     let assigner = trimmed_string(body.get("assigner"));
     let review_of = trimmed_string(body.get("reviewOf"));
     let iteration = positive_integer(body.get("iteration")).unwrap_or(1);
@@ -356,6 +361,7 @@ fn route_task_assign(project_state_dir: &Path, body: &Value) -> ProjectServiceDi
         task.insert("createdAt".into(), Value::String(now.clone()));
         task.insert("updatedAt".into(), Value::String(now.clone()));
         task.insert("type".into(), Value::String(task_type.clone()));
+        insert_optional_string(&mut task, "stream", stream);
         if let Some(diff) = diff {
             task.insert("diff".into(), diff);
         }

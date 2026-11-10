@@ -540,6 +540,23 @@ fn optional_text_fields_use_javascript_truthiness_and_nullish_fallbacks() {
         })),
         vec!["t-1  task  open  target=sam", "  Fix it"]
     );
+    // A workstream is shown when the task has one. Invisible grouping is the
+    // reason it ended up as a `[deaws]` prefix in free text instead.
+    assert_eq!(
+        render_core_task_list_lines(&json!({
+            "tasks": [{
+                "id": "t-2",
+                "status": "open",
+                "description": "Move the proxies",
+                "assignee": "codex-1",
+                "stream": "deaws"
+            }]
+        })),
+        vec![
+            "t-2  task  open  target=codex-1 stream=deaws",
+            "  Move the proxies"
+        ]
+    );
 }
 
 #[test]

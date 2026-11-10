@@ -85,6 +85,7 @@ pub fn list_tasks(
     exchange: &Value,
     session_id: Option<&str>,
     status: Option<&str>,
+    stream: Option<&str>,
     limit: usize,
 ) -> Value {
     let all_tasks = exchange
@@ -99,6 +100,7 @@ pub fn list_tasks(
             })
         })
         .filter(|task| status.is_none_or(|status| string_field(task, "status") == Some(status)))
+        .filter(|task| stream.is_none_or(|stream| string_field(task, "stream") == Some(stream)))
         .cloned()
         .collect::<Vec<_>>();
     let tasks = all_tasks.iter().take(limit).cloned().collect::<Vec<_>>();
@@ -197,6 +199,10 @@ fn route_task_list(
                 .filter(|value| !value.is_empty()),
             query
                 .get("status")
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty()),
+            query
+                .get("stream")
                 .map(|value| value.trim())
                 .filter(|value| !value.is_empty()),
             limit,
