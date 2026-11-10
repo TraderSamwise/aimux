@@ -704,13 +704,19 @@ pub fn agent_input_text_route(
         match unwrap_project_result(runtime.post_project_service_json(
             &project,
             project_routes::agents::INPUT,
-            json!({
-                "sessionId": session_id,
-                "text": text,
-                "force": force,
-                "from": from,
-                "task": task,
-            }),
+            {
+                // Added only when given. A null `from` would be a new field
+                // on every request that predates attribution.
+                let mut forwarded =
+                    json!({ "sessionId": session_id, "text": text, "force": force });
+                if let Some(from) = from {
+                    forwarded["from"] = Value::String(from);
+                }
+                if let Some(task) = task {
+                    forwarded["task"] = Value::String(task);
+                }
+                forwarded
+            },
             ProjectServicePostOptions::ensure_if_unreachable(),
         )) {
             Ok(result) => result,

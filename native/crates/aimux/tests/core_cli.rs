@@ -974,6 +974,7 @@ fn task_and_review_commands_plan_native_text_routes() {
                 "type": "review",
                 "diff": "--- before\n+++ after",
                 "worktree": "feature",
+                "stream": null,
             })),
         }
     );

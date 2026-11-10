@@ -2842,6 +2842,7 @@ fn task_and_review_commands_execute_native_text_routes_without_core_command_fall
                     "type": "review",
                     "diff": "--- before\n+++ after",
                     "worktree": "feature",
+                    "stream": null,
                 })),
             ),
             (
