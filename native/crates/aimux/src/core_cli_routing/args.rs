@@ -48,6 +48,13 @@ pub struct CoreAgentInputArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     pub force: bool,
+    /// Who is sending, when the sender is another agent rather than a person.
+    ///
+    /// Optional because a person typing into their own terminal is not
+    /// announcing themselves to anybody, and because every caller that
+    /// existed before this field has to keep working unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

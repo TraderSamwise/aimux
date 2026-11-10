@@ -695,11 +695,15 @@ pub fn agent_input_text_route(
         Err(response) => return response,
     };
     let force = boolean_param(route_url, body, "force", false);
+    // Forwarded, not dropped. This route used to pass exactly sessionId, text
+    // and force, which is why the project service had nothing to attribute an
+    // agent-to-agent send with.
+    let from = string_param(route_url, body, "from").filter(|value| !value.trim().is_empty());
     let (project_response, project_root) =
         match unwrap_project_result(runtime.post_project_service_json(
             &project,
             project_routes::agents::INPUT,
-            json!({ "sessionId": session_id, "text": text, "force": force }),
+            json!({ "sessionId": session_id, "text": text, "force": force, "from": from }),
             ProjectServicePostOptions::ensure_if_unreachable(),
         )) {
             Ok(result) => result,
@@ -1497,6 +1501,70 @@ mod tests {
         assert_eq!(
             runtime.forwarded_lane(),
             json!({ "kind": "worktree", "worktreePath": "/repo/feature" })
+        );
+    }
+
+    /// The hop that drops things. This route translates a text command into
+    /// the project-service call, so a field it does not name simply never
+    /// arrives -- which is exactly why agent-to-agent input carried no sender
+    /// for as long as it did. The project-service tests cannot see this,
+    /// because they post to that service directly.
+    #[test]
+    fn agent_input_text_forwards_the_sender_to_the_project_service() {
+        let mut runtime = FakeAgentRuntime::default();
+        let route_url = DaemonRouteUrl::parse("/core/agents/input-text?json=1");
+
+        let response = agent_input_text_route(
+            &mut runtime,
+            &route_url,
+            Some(&json!({
+                "project": "/repo",
+                "sessionId": "claude-psmp2r",
+                "text": "test a cheaper hypothesis first",
+                "from": "claude-utymep",
+            })),
+        );
+
+        assert_eq!(response.status, 200, "{:?}", response.body);
+        let forwarded = runtime
+            .forwarded_bodies
+            .last()
+            .expect("the route forwards a body");
+        assert_eq!(
+            forwarded.get("from").and_then(Value::as_str),
+            Some("claude-utymep")
+        );
+        assert_eq!(
+            forwarded.get("text").and_then(Value::as_str),
+            Some("test a cheaper hypothesis first")
+        );
+    }
+
+    /// And a send that names nobody still forwards cleanly, so every caller
+    /// that predates the field keeps working.
+    #[test]
+    fn agent_input_text_forwards_no_sender_when_none_was_given() {
+        let mut runtime = FakeAgentRuntime::default();
+        let route_url = DaemonRouteUrl::parse("/core/agents/input-text?json=1");
+
+        let response = agent_input_text_route(
+            &mut runtime,
+            &route_url,
+            Some(&json!({
+                "project": "/repo",
+                "sessionId": "claude-psmp2r",
+                "text": "plain words",
+            })),
+        );
+
+        assert_eq!(response.status, 200, "{:?}", response.body);
+        let forwarded = runtime
+            .forwarded_bodies
+            .last()
+            .expect("the route forwards a body");
+        assert!(
+            forwarded.get("from").map(Value::is_null).unwrap_or(true),
+            "an unsigned send names nobody: {forwarded:?}"
         );
     }
 

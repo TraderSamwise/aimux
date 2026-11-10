@@ -2167,6 +2167,87 @@ fn shared_guest_input_is_limited_to_live_pane_shared_session() {
 
 /// Both input routes preserve a numbered list in one delivery per turn.
 #[test]
+fn an_agent_sender_reaches_the_pane_named_on_both_input_routes() {
+    // The route, not the helper. An overseer steering a coder used to arrive
+    // in the same position, with the same framing, as Sam typing -- and the
+    // reason was here: this route forwarded sessionId, text and force, and
+    // dropped everything else, so there was nothing to attribute with.
+    let project = temp_project("agent-sender-input");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime::default();
+
+    for route in [routes::agents::INPUT, routes::live_pane::INPUT] {
+        let response = route_agent_output_request_with_runtime(
+            &context,
+            "POST",
+            route,
+            Some(&json!({
+                "sessionId": "codex-1",
+                "text": "test a cheaper hypothesis first",
+                "from": "claude-utymep"
+            })),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, 200, "{route}");
+    }
+
+    let delivered: Vec<&String> = runtime
+        .actions
+        .iter()
+        .filter_map(|action| match action {
+            FakeRuntimeAction::Text(_, text) => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(delivered.len(), 2, "both routes deliver: {delivered:?}");
+    for text in &delivered {
+        assert!(
+            text.contains("[claude-utymep] test a cheaper hypothesis first"),
+            "the pane must say who sent it: {text:?}"
+        );
+    }
+}
+
+#[test]
+fn an_unsigned_send_reaches_the_pane_exactly_as_before() {
+    // The other direction, so attribution cannot creep onto a person typing
+    // into their own terminal.
+    let project = temp_project("unsigned-input");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime::default();
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "plain words" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(response.status, 200);
+
+    let delivered: Vec<&String> = runtime
+        .actions
+        .iter()
+        .filter_map(|action| match action {
+            FakeRuntimeAction::Text(_, text) => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(delivered.len(), 1);
+    assert!(
+        !delivered[0].contains('['),
+        "an unsigned send carries no label: {:?}",
+        delivered[0]
+    );
+}
+
+#[test]
 fn a_users_multiline_message_arrives_as_a_list_on_both_input_routes() {
     let project = temp_project("multiline-user-input");
     let state_dir = project.join("state");

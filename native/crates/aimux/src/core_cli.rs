@@ -502,6 +502,7 @@ where
                         "sessionId": parsed.session_id,
                         "text": parsed.text,
                         "force": parsed.force,
+                        "from": parsed.from,
                     })),
                 },
                 CoreCliFallback::None,

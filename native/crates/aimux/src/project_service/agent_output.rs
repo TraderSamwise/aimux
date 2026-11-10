@@ -46,7 +46,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use super::agent_input::{
-    format_agent_input_with_attachments, shared_chat_body_actor_prompt,
+    agent_sender_prompt, format_agent_input_with_attachments, shared_chat_body_actor_prompt,
     shared_chat_remote_actor_prompt, shared_chat_trim,
 };
 use super::agent_input_delivery::{
@@ -2249,6 +2249,11 @@ fn compose_prompt_for_delivery(input: PromptForDelivery<'_>) -> String {
         .filter(|actor| actor.role == RemoteActorRole::Guest)
         .and_then(|actor| shared_chat_remote_actor_prompt(actor, &input.text))
         .or_else(|| shared_chat_body_actor_prompt(input.body, &input.text))
+        // Last, because a shared-chat guest is the stronger claim about who is
+        // speaking. This one covers the local channel -- one agent sending to
+        // another through `aimux input`, which until now said nothing at all
+        // about where the words came from.
+        .or_else(|| agent_sender_prompt(input.body, &input.text))
     {
         Some(value) => value,
         None => input.text,

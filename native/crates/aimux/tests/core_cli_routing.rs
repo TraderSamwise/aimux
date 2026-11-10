@@ -271,6 +271,7 @@ fn agent_input_parser_preserves_variadic_text_and_project_option() {
             text: "hello there".into(),
             project: Some("/repo".into()),
             force: false,
+            from: None,
         })
     );
     assert_eq!(
@@ -280,6 +281,49 @@ fn agent_input_parser_preserves_variadic_text_and_project_option() {
             text: "--flag".into(),
             project: None,
             force: true,
+            from: None,
+        })
+    );
+    // `--from` names the sending agent. Without it the send is unsigned,
+    // which is what a person typing into their own terminal is.
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hi", "--from", "claude-utymep"]),
+        Some(CoreAgentInputArgs {
+            session_id: "claude-1".into(),
+            text: "hi".into(),
+            project: None,
+            force: false,
+            from: Some("claude-utymep".into()),
+        })
+    );
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hi", "--from=claude-utymep"]),
+        Some(CoreAgentInputArgs {
+            session_id: "claude-1".into(),
+            text: "hi".into(),
+            project: None,
+            force: false,
+            from: Some("claude-utymep".into()),
+        })
+    );
+    // A flag where the sender should be is a mistake, not a sender.
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hi", "--from", "--force"]),
+        None
+    );
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hi", "--from="]),
+        None
+    );
+    // After `--`, it is text like anything else.
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "--", "--from", "x"]),
+        Some(CoreAgentInputArgs {
+            session_id: "claude-1".into(),
+            text: "--from x".into(),
+            project: None,
+            force: false,
+            from: None,
         })
     );
     assert_eq!(parse_core_agent_input_args(&["input", "claude-1"]), None);
