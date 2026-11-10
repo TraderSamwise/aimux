@@ -60,6 +60,7 @@ pub fn parse_core_agent_input_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgen
     }
     let mut project = None;
     let mut from = None;
+    let mut task = None;
     let mut force = false;
     let mut positional = Vec::new();
     let mut literal_text = false;
@@ -94,6 +95,25 @@ pub fn parse_core_agent_input_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgen
         // `aimux input` is the only channel that starts a turn and it carried
         // no sender at all, so an overseer steering a coder was indistinguishable
         // from Sam typing.
+        // The task this input is acting on, so the delivery reaches the
+        // ledger instead of happening beside it.
+        if arg == "--task" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            task = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--task=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            task = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
         if arg == "--from" {
             let value = required_value(args, index)?;
             if value.starts_with('-') {
@@ -130,6 +150,7 @@ pub fn parse_core_agent_input_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgen
         project,
         force,
         from,
+        task,
     })
 }
 

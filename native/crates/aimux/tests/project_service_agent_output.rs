@@ -2167,6 +2167,40 @@ fn shared_guest_input_is_limited_to_live_pane_shared_session() {
 
 /// Both input routes preserve a numbered list in one delivery per turn.
 #[test]
+fn input_for_a_task_that_does_not_exist_is_refused_rather_than_sent() {
+    // The ledger stays honest only if a wrong task id stops the send. A typo
+    // that delivered and quietly recorded nothing would be the same hole this
+    // whole change closes, wearing a flag.
+    let project = temp_project("input-unknown-task");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime::default();
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::live_pane::INPUT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "text": "do the thing",
+            "from": "claude-utymep",
+            "task": "task-nope"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 400);
+    assert_eq!(response.body["error"], "task not found: task-nope");
+    assert!(
+        runtime.actions.is_empty(),
+        "nothing may be delivered: {:?}",
+        runtime.actions
+    );
+}
+
+#[test]
 fn an_agent_sender_reaches_the_pane_named_on_both_input_routes() {
     // The route, not the helper. An overseer steering a coder used to arrive
     // in the same position, with the same framing, as Sam typing -- and the

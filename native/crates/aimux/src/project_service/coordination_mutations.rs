@@ -1026,6 +1026,50 @@ fn task_lifecycle(
     })
 }
 
+/// Record that input for a task was actually sent to its assignee.
+///
+/// The ledger and the delivery were two different worlds: `aimux task assign`
+/// wrote a row and delivered nothing, `aimux input` delivered and wrote
+/// nothing, and so `aimux task list` held three rows against fifteen live
+/// agents. This is the join -- the one channel that starts a turn can now
+/// stamp the task it is acting on.
+///
+/// A task id that does not exist is an ERROR, not a silent no-op. A typo that
+/// quietly records nothing would reproduce exactly the hole this closes.
+pub fn record_task_input(
+    project_state_dir: &Path,
+    task_id: &str,
+    sender: Option<&str>,
+) -> Result<Value, String> {
+    let task_id = task_id.trim();
+    if task_id.is_empty() {
+        return Err("task id is required".into());
+    }
+    let sender = sender
+        .map(str::trim)
+        .filter(|sender| !sender.is_empty())
+        .unwrap_or(DEFAULT_MESSAGE_SENDER)
+        .to_owned();
+    // The mutator cannot fail, so "no such task" is carried out here and the
+    // exchange is handed back untouched -- a missing task must not write.
+    let mut recorded: Result<Value, String> = Err(format!("task not found: {task_id}"));
+    let written = update_runtime_exchange(runtime_exchange_path(project_state_dir), |exchange| {
+        let Some(mut task) = find_by_id(&exchange, "tasks", task_id) else {
+            return exchange;
+        };
+        let now = now_iso();
+        object_insert_mut(&mut task, "lastInputAt", Value::String(now.clone()));
+        object_insert_mut(&mut task, "lastInputBy", Value::String(sender.clone()));
+        object_insert_mut(&mut task, "updatedAt", Value::String(now));
+        recorded = Ok(task.clone());
+        derive_runtime_exchange_indexes(upsert_item(exchange, "tasks", task))
+    });
+    match written {
+        Ok(_) => recorded,
+        Err(error) => Err(error),
+    }
+}
+
 fn review_lifecycle(
     project_state_dir: &Path,
     body: &Value,

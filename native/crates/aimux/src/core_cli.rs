@@ -503,6 +503,7 @@ where
                         "text": parsed.text,
                         "force": parsed.force,
                         "from": parsed.from,
+                        "task": parsed.task,
                     })),
                 },
                 CoreCliFallback::None,

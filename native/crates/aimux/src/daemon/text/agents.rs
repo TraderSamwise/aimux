@@ -699,11 +699,18 @@ pub fn agent_input_text_route(
     // and force, which is why the project service had nothing to attribute an
     // agent-to-agent send with.
     let from = string_param(route_url, body, "from").filter(|value| !value.trim().is_empty());
+    let task = string_param(route_url, body, "task").filter(|value| !value.trim().is_empty());
     let (project_response, project_root) =
         match unwrap_project_result(runtime.post_project_service_json(
             &project,
             project_routes::agents::INPUT,
-            json!({ "sessionId": session_id, "text": text, "force": force, "from": from }),
+            json!({
+                "sessionId": session_id,
+                "text": text,
+                "force": force,
+                "from": from,
+                "task": task,
+            }),
             ProjectServicePostOptions::ensure_if_unreachable(),
         )) {
             Ok(result) => result,
@@ -1522,6 +1529,7 @@ mod tests {
                 "sessionId": "claude-psmp2r",
                 "text": "test a cheaper hypothesis first",
                 "from": "claude-utymep",
+                "task": "task-1",
             })),
         );
 
@@ -1533,6 +1541,12 @@ mod tests {
         assert_eq!(
             forwarded.get("from").and_then(Value::as_str),
             Some("claude-utymep")
+        );
+        // The task the send is acting on, for the same reason: a field this
+        // hop does not name simply never arrives.
+        assert_eq!(
+            forwarded.get("task").and_then(Value::as_str),
+            Some("task-1")
         );
         assert_eq!(
             forwarded.get("text").and_then(Value::as_str),

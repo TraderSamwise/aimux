@@ -57,6 +57,7 @@ use super::agent_input_delivery::{
 };
 use super::agent_output_projection::insert_projection_fields;
 use super::attachments::{get_attachment, get_attachment_record};
+use super::coordination_mutations::record_task_input;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{
     parse_integer_value, parse_optional_integer, parse_positive_integer_value, query_params,
@@ -2115,6 +2116,22 @@ fn input_live_pane_route(
         Err(error) => return json_error(500, error),
     };
     let project_state_dir = context.project_state_dir();
+    // Before the send, so a task id that does not exist refuses the whole
+    // request rather than delivering and recording nothing. A typo that
+    // silently skipped the ledger would reproduce the gap this closes.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+        && let Err(error) = record_task_input(
+            &project_state_dir,
+            task_id,
+            body.get("from").and_then(Value::as_str),
+        )
+    {
+        return json_error(400, error);
+    }
     let prompt = compose_prompt_for_delivery(PromptForDelivery {
         attachments: &attachments,
         body,
@@ -2732,6 +2749,22 @@ async fn input_live_pane_route_async(
         Err(error) => return json_error(500, error),
     };
     let project_state_dir = context.project_state_dir();
+    // Before the send, so a task id that does not exist refuses the whole
+    // request rather than delivering and recording nothing. A typo that
+    // silently skipped the ledger would reproduce the gap this closes.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+        && let Err(error) = record_task_input(
+            &project_state_dir,
+            task_id,
+            body.get("from").and_then(Value::as_str),
+        )
+    {
+        return json_error(400, error);
+    }
     let prompt = compose_prompt_for_delivery(PromptForDelivery {
         attachments: &attachments,
         body,

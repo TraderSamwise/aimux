@@ -1,3 +1,4 @@
+use aimux::project_service::coordination_mutations::record_task_input;
 use aimux::project_service::exchange_reads::{
     list_tasks, list_thread_summaries, read_message_snapshot,
 };
@@ -24,6 +25,67 @@ fn thread_summaries_filter_participant_sort_by_updated_and_include_latest_messag
     assert_eq!(summaries[0]["thread"]["id"], "thread-3");
     assert_eq!(summaries[0]["latestMessage"]["body"], "latest thread 3");
     assert_eq!(summaries[1]["thread"]["id"], "thread-1");
+    cleanup(project);
+}
+
+#[test]
+fn sending_input_for_a_task_stamps_the_row_it_is_acting_on() {
+    // The join between the two worlds. `aimux task assign` wrote a row and
+    // delivered nothing; `aimux input` delivered and wrote nothing. This is
+    // what lets the ledger say the delegation actually went out.
+    let project = temp_project("task-input-stamp");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let assigned = route_project_service_request(
+        &context,
+        "POST",
+        "/tasks/assign",
+        Some(
+            &json!({ "from": "claude-utymep", "to": "codex-1", "description": "move the proxies" }),
+        ),
+    );
+    assert_eq!(assigned.status, 200, "{:?}", assigned.body);
+    let task_id = assigned.body["task"]["id"]
+        .as_str()
+        .expect("task id")
+        .to_owned();
+
+    // A fresh task has never been sent anything.
+    assert!(assigned.body["task"].get("lastInputAt").is_none());
+
+    let recorded = record_task_input(&state_dir, &task_id, Some("claude-utymep"))
+        .expect("the task is stamped");
+    assert_eq!(recorded["lastInputBy"], "claude-utymep");
+    assert!(
+        recorded["lastInputAt"]
+            .as_str()
+            .is_some_and(|at| !at.is_empty()),
+        "stamped with a time: {recorded:?}"
+    );
+
+    // And it is on the stored row, not just the returned copy.
+    let listed = route_project_service_request(&context, "GET", "/tasks?limit=50", None);
+    let task = listed.body["tasks"]
+        .as_array()
+        .expect("tasks")
+        .iter()
+        .find(|task| task["id"] == json!(task_id.clone()))
+        .expect("the task");
+    assert_eq!(task["lastInputBy"], "claude-utymep");
+
+    // An unsigned send still records that something was sent.
+    let unsigned = record_task_input(&state_dir, &task_id, None).expect("stamped");
+    assert_eq!(unsigned["lastInputBy"], "user");
+
+    // A task that does not exist is an error, and writes nothing.
+    let before = read_runtime_exchange(runtime_exchange_path(&state_dir));
+    let missing = record_task_input(&state_dir, "task-nope", Some("claude-utymep"));
+    assert_eq!(missing.unwrap_err(), "task not found: task-nope");
+    let after = read_runtime_exchange(runtime_exchange_path(&state_dir));
+    assert_eq!(before["tasks"], after["tasks"], "a miss must not write");
+
     cleanup(project);
 }
 

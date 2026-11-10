@@ -294,6 +294,7 @@ fn agent_input_parser_preserves_variadic_text_and_project_option() {
             project: Some("/repo".into()),
             force: false,
             from: None,
+            task: None,
         })
     );
     assert_eq!(
@@ -304,6 +305,7 @@ fn agent_input_parser_preserves_variadic_text_and_project_option() {
             project: None,
             force: true,
             from: None,
+            task: None,
         })
     );
     // `--from` names the sending agent. Without it the send is unsigned,
@@ -316,6 +318,7 @@ fn agent_input_parser_preserves_variadic_text_and_project_option() {
             project: None,
             force: false,
             from: Some("claude-utymep".into()),
+            task: None,
         })
     );
     assert_eq!(
@@ -326,7 +329,31 @@ fn agent_input_parser_preserves_variadic_text_and_project_option() {
             project: None,
             force: false,
             from: Some("claude-utymep".into()),
+            task: None,
         })
+    );
+    // `--task` links the send to the row it is acting on.
+    assert_eq!(
+        parse_core_agent_input_args(&[
+            "input",
+            "claude-1",
+            "hi",
+            "--from",
+            "claude-utymep",
+            "--task",
+            "task-1",
+        ])
+        .and_then(|parsed| parsed.task),
+        Some("task-1".into())
+    );
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hi", "--task=task-1"])
+            .and_then(|parsed| parsed.task),
+        Some("task-1".into())
+    );
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hi", "--task", "--force"]),
+        None
     );
     // A flag where the sender should be is a mistake, not a sender.
     assert_eq!(
@@ -346,6 +373,7 @@ fn agent_input_parser_preserves_variadic_text_and_project_option() {
             project: None,
             force: false,
             from: None,
+            task: None,
         })
     );
     assert_eq!(parse_core_agent_input_args(&["input", "claude-1"]), None);

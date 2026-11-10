@@ -55,6 +55,9 @@ pub struct CoreAgentInputArgs {
     /// existed before this field has to keep working unchanged.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    /// The task this input is acting on, so the delivery reaches the ledger.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
