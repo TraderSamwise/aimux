@@ -734,9 +734,8 @@ fn is_cursor_option_row(line: &str) -> bool {
 /// The nearest line above the options that asks something, because the line
 /// immediately above is not reliably the question: the trust prompt puts a
 /// `Security guide` link label there, and reading the closest non-empty line
-/// would offer that as the question. A wrapped question continues onto the
-/// following lines, so they are joined back on until a blank or a border ends
-/// the paragraph.
+/// would offer that as the question. A wrapped question spans several lines in
+/// both directions from its `?`, so the whole paragraph is joined back up.
 /// Everything the prompt shows above its options, which is what the question
 /// is ABOUT.
 ///
@@ -806,32 +805,62 @@ fn question_in_frame(tail: &[String], first_option_at: usize) -> Option<String> 
     Some(question)
 }
 
+/// The whole paragraph the `?` sits in, not the row it sits on.
+///
+/// A long question is WRAPPED, and a wrap puts the `?` on the LAST row of the
+/// paragraph. Anchoring on that row and reading only forwards therefore kept
+/// the final fragment and threw the question away: a three-row prompt reached
+/// the GUI as "compiled bytes. What do you want?", which reads as a non
+/// sequitur and names nothing the options are about. The paragraph is the
+/// question, so the search runs in both directions from the `?`.
 fn question_above(rows: &[String]) -> Option<String> {
-    let first_option_at = rows.len();
-    let floor = 0;
-    let tail = rows;
-    let asked_at = tail[floor..first_option_at]
-        .iter()
-        .rposition(|line| line.contains('?'))
-        .map(|index| floor + index);
-    let Some(asked_at) = asked_at else {
-        return tail[floor..first_option_at]
+    let Some(asked_at) = rows.iter().rposition(|line| line.contains('?')) else {
+        return rows
             .iter()
             .rev()
             .map(|line| line.trim())
             .find(|line| !line.is_empty() && !looks_like_border(line))
             .map(str::to_owned);
     };
-    let mut question = tail[asked_at].trim().to_owned();
-    for line in &tail[asked_at + 1..first_option_at] {
-        let text = line.trim();
-        if text.is_empty() || looks_like_border(line) {
-            break;
-        }
-        question.push(' ');
-        question.push_str(text);
+    let mut first = asked_at;
+    while first > 0 && is_question_row(&rows[first - 1]) {
+        first -= 1;
     }
-    Some(question)
+    let mut last = asked_at;
+    while last + 1 < rows.len() && is_question_row(&rows[last + 1]) {
+        last += 1;
+    }
+    let question = rows[first..=last]
+        .iter()
+        .map(|line| without_quote_bar(line.trim()))
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!question.is_empty()).then_some(question)
+}
+
+/// A row that is still the question's own paragraph.
+///
+/// Two things end one here: the blank line the TUI leaves between its
+/// sections, and a row the agent wrote to its transcript. The transcript
+/// marker is what keeps the backward walk inside the prompt's frame --
+/// without it a receipt sitting above the question is read as part of it, and
+/// a stale one then certifies an answer that never landed.
+///
+/// Rules and box edges are not checked because the caller already fenced
+/// them off: the rows handed here start after the LAST border above the
+/// options, so none can appear among them. A border test here would be a gate
+/// whose failing case cannot be written.
+fn is_question_row(line: &str) -> bool {
+    !line.trim().is_empty() && !looks_like_transcript_row(line)
+}
+
+/// The quote bar a wrapped question is drawn down the left of, which is frame
+/// rather than words. Left in, every joined row carried one into the middle of
+/// the sentence.
+fn without_quote_bar(text: &str) -> &str {
+    text.strip_prefix(['\u{2502}', '\u{2503}', '\u{2551}', '|'])
+        .map_or(text, str::trim_start)
 }
 
 fn looks_like_border(line: &str) -> bool {
@@ -931,6 +960,76 @@ mod tests {
         include_str!("../../../../testdata/pane-captures/18-plan-middot-bullets.ansi");
     const PERMISSIONS_LIST: &str =
         include_str!("../../../../testdata/pane-captures/19-permissions-list-selected.ansi");
+    const WRAPPED_QUESTION: &str =
+        include_str!("../../../../testdata/pane-captures/20-wrapped-question.ansi");
+
+    #[test]
+    fn reads_a_wrapped_question_from_its_first_row_not_its_last() {
+        // The reported bug: the `?` lands on the last row of a wrapped
+        // question, and reading forwards from it offered the GUI the tail
+        // fragment alone. Both ends of the paragraph have to survive.
+        let selection = selection(WRAPPED_QUESTION).expect("wrapped prompt is a chooser");
+
+        let question = selection.question.expect("the prompt asks something");
+        assert!(
+            question.starts_with("HyroTrader CPU gate: Rust measures slower than TS"),
+            "question was {question:?}"
+        );
+        assert!(
+            question.ends_with("compiled bytes. What do you want?"),
+            "question was {question:?}"
+        );
+        // The middle row is the half that was silently dropped.
+        assert!(
+            question.contains("and no code fix survived"),
+            "question was {question:?}"
+        );
+    }
+
+    #[test]
+    fn leaves_the_quote_bar_out_of_a_wrapped_question() {
+        // The bar is the frame the TUI draws the question inside. Joined in,
+        // it lands in the middle of the sentence the GUI renders.
+        let selection = selection(WRAPPED_QUESTION).expect("wrapped prompt is a chooser");
+
+        let question = selection.question.expect("the prompt asks something");
+        assert!(!question.contains('\u{2502}'), "question was {question:?}");
+    }
+
+    #[test]
+    fn stops_a_wrapped_question_at_the_section_above_it() {
+        // Walking backwards must not leave the prompt's own frame. The chip
+        // above the question and the agent's previous output are not it.
+        let selection = selection(WRAPPED_QUESTION).expect("wrapped prompt is a chooser");
+
+        let question = selection.question.expect("the prompt asks something");
+        assert!(!question.contains("CPU gate "), "question was {question:?}");
+        assert!(
+            !question.contains("read receipt"),
+            "question was {question:?}"
+        );
+    }
+
+    #[test]
+    fn reads_the_wrapped_prompts_options() {
+        let selection = selection(WRAPPED_QUESTION).expect("wrapped prompt is a chooser");
+
+        assert_eq!(
+            selection
+                .options
+                .iter()
+                .map(|option| option.label.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Fix measurement",
+                "Optimize more",
+                "Accept small regression",
+                "Type something.",
+                "Chat about this",
+            ]
+        );
+        assert!(selection.options[0].selected);
+    }
 
     #[test]
     fn reads_the_numbered_tool_permission() {
