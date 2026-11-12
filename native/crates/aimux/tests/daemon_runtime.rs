@@ -2369,7 +2369,10 @@ fn overseer_watch_refuses_missing_agent_before_mutation() {
 }
 
 #[test]
-fn overseer_watch_refuses_project_control_agent_before_mutation() {
+fn overseer_watch_refuses_the_scribe_before_mutation() {
+    // An overseer IS watchable -- it is the manager class at every level above
+    // the leaf. The scribe is the one project-control session that stays out
+    // of the tree, and it is the case this guard now names.
     let fixture = RuntimeFixture::new("overseer-watch-control");
     let project = fixture.project("repo");
     let mut resolver = fixture.resolver();
@@ -2378,7 +2381,7 @@ fn overseer_watch_refuses_project_control_agent_before_mutation() {
         .expect("register project")
         .expect("entry");
     let server = ScriptedHttpServer::spawn(vec![json!({ "overseerSessionIds": [], "agents": [
-        { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
+        { "id": "claude-scribe", "tool": "claude", "status": "idle", "scribe": true }
     ]})]);
     persist_service(
         &resolver,
@@ -2404,16 +2407,16 @@ fn overseer_watch_refuses_project_control_agent_before_mutation() {
     let error = runtime
         .overseer_watch(
             project.to_str().expect("project path"),
-            "claude-overseer",
+            "claude-scribe",
             None,
             None,
         )
-        .expect_err("project control agent fails");
+        .expect_err("the scribe is not a report");
 
     assert_eq!(error.status, 400);
     assert_eq!(
         error.error,
-        "cannot watch project control session: claude-overseer"
+        "cannot watch the project scribe: claude-scribe"
     );
     let requests = server.join();
     assert_eq!(requests.len(), 1);

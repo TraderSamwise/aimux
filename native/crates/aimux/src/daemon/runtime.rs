@@ -148,7 +148,6 @@ use crate::runtime_topology::{
 };
 use crate::secure_permissions;
 use crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots;
-use crate::team_contract::is_project_control_session;
 use crate::tmux::{
     LiveWindowIndex, TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION,
     TMUX_RUNTIME_CONTRACT_OPTION, TMUX_RUNTIME_OWNER_OPTION, TmuxRuntimeManager, TmuxTarget,
@@ -4193,10 +4192,16 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                 error: format!("agent not found: {session_id}"),
             });
         };
-        if is_project_control_agent(target) {
+        // An overseer is watchable: it is the manager class at every level
+        // above the leaf, so a mid-tier overseer reports to the one above it.
+        // Promotion sets `projectControl`, so the old project-control test
+        // refused exactly the agents this tree is made of. The scribe is the
+        // case that rule was really protecting, and it is still refused here
+        // and again in `bind_watch`.
+        if is_scribe_agent(target) {
             return Err(CoreCommandFailure {
                 status: 400,
-                error: format!("cannot watch project control session: {session_id}"),
+                error: format!("cannot watch the project scribe: {session_id}"),
             });
         }
         if !is_agent_live(target) {
@@ -4244,6 +4249,11 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         } else {
             overseer_ids
                 .iter()
+                // Now that an overseer can be a report, the target may be in
+                // this list itself. Picking it would make an agent its own
+                // manager, which the cycle guard then refuses with a message
+                // about a chain the caller never asked for.
+                .filter(|id| id.as_str() != session_id)
                 .find(|id| find_agent(&initial_agents, id).is_some_and(is_agent_input_ready))
                 .cloned()
                 .map(Ok)
@@ -4306,9 +4316,14 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         let updated_target = find_agent(&updated_agents, session_id)
             .cloned()
             .unwrap_or_else(|| target.clone());
+        // The prompt lists what this overseer is responsible for. Filtering
+        // out every project-control session hid exactly the mid-tier
+        // overseers the tree is made of, so a parent was told about its
+        // coders and nothing about the managers under it. Only the scribe is
+        // not a report, and it is already refused above.
         let watched = updated_agents
             .iter()
-            .filter(|agent| !is_project_control_agent(agent))
+            .filter(|agent| !is_scribe_agent(agent))
             .filter(|agent| agent.pointer("/loop/active").and_then(Value::as_bool) == Some(true))
             .cloned()
             .collect::<Vec<_>>();
@@ -5271,8 +5286,8 @@ fn is_agent_input_ready(agent: &Value) -> bool {
     matches!(agent_status(agent), Some("running" | "idle" | "waiting"))
 }
 
-fn is_project_control_agent(agent: &Value) -> bool {
-    is_project_control_session(Some(agent))
+fn is_scribe_agent(agent: &Value) -> bool {
+    crate::team_contract::is_scribe_session(Some(agent))
 }
 
 fn agent_watch_label(agent: &Value) -> &str {
@@ -7134,7 +7149,10 @@ mod tests {
             "projectControl": false
         });
 
-        assert!(!is_project_control_agent(&worker));
+        // The guard that decides watchability is the scribe test now: an
+        // overseer is a legitimate report, so being project control is no
+        // longer what excludes an agent.
+        assert!(!is_scribe_agent(&worker));
         let (agents, published) = overseer_watch_inventory(&json!({
             "agents": [worker], "overseerSessionIds": []
         }))

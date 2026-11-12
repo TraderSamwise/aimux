@@ -262,9 +262,12 @@ pub enum WatchBindingError {
         session_id: String,
         role: String,
     },
-    WatchedMustBeCoder {
+    ScribeCannotBeWatched {
         session_id: String,
-        role: String,
+    },
+    WatchCycle {
+        watched_session_id: String,
+        overseer_session_id: String,
     },
     AlreadyWatched {
         watched_session_id: String,
@@ -279,7 +282,8 @@ impl WatchBindingError {
         match self {
             Self::SessionNotFound { .. } => 404,
             Self::AlreadyWatched { .. } => 409,
-            Self::OverseerRequired { .. } | Self::WatchedMustBeCoder { .. } => 400,
+            Self::OverseerRequired { .. } | Self::ScribeCannotBeWatched { .. } => 400,
+            Self::WatchCycle { .. } => 409,
             Self::Registry(_) | Self::Metadata(_) => 500,
         }
     }
@@ -288,7 +292,8 @@ impl WatchBindingError {
         match self {
             Self::SessionNotFound { .. } => "session-not-found",
             Self::OverseerRequired { .. } => "overseer-required",
-            Self::WatchedMustBeCoder { .. } => "watched-agent-must-be-coder",
+            Self::ScribeCannotBeWatched { .. } => "scribe-cannot-be-watched",
+            Self::WatchCycle { .. } => "watch-cycle",
             Self::AlreadyWatched { .. } => "already-watched",
             Self::Registry(_) => "role-registry-unavailable",
             Self::Metadata(_) => "metadata-unavailable",
@@ -301,8 +306,16 @@ impl WatchBindingError {
             Self::OverseerRequired { session_id, role } => {
                 format!("watch overseer must have role overseer: {session_id} is {role}")
             }
-            Self::WatchedMustBeCoder { session_id, role } => {
-                format!("watched agent must have role coder: {session_id} is {role}")
+            Self::ScribeCannotBeWatched { session_id } => {
+                format!("the scribe is a project function, not a report: {session_id}")
+            }
+            Self::WatchCycle {
+                watched_session_id,
+                overseer_session_id,
+            } => {
+                format!(
+                    "{overseer_session_id} already reports to {watched_session_id}, so watching it would close the chain"
+                )
             }
             Self::AlreadyWatched {
                 watched_session_id,
@@ -320,9 +333,16 @@ impl WatchBindingError {
             Self::OverseerRequired { session_id, role } => {
                 json!({ "sessionId": session_id, "role": role })
             }
-            Self::WatchedMustBeCoder { session_id, role } => {
-                json!({ "sessionId": session_id, "role": role })
+            Self::ScribeCannotBeWatched { session_id } => {
+                json!({ "sessionId": session_id })
             }
+            Self::WatchCycle {
+                watched_session_id,
+                overseer_session_id,
+            } => json!({
+                "watchedSessionId": watched_session_id,
+                "overseerSessionId": overseer_session_id
+            }),
             Self::AlreadyWatched {
                 watched_session_id,
                 overseer_session_id,
@@ -437,11 +457,26 @@ pub fn bind_watch(
             session_id: watched_session_id.to_owned(),
         }
     })?;
+    // An overseer manages at every level above the leaf, so an overseer is a
+    // legitimate report of another overseer. Only the scribe stays out: it is
+    // a project function rather than anybody's report, and it was the one case
+    // the old "must be a coder" rule genuinely protected.
     let watched_role = agent_role(Some(watched)).to_owned();
-    if watched_role != "coder" {
-        return Err(WatchBindingError::WatchedMustBeCoder {
+    if watched_role != "overseer" && crate::team_contract::is_project_control_session(Some(watched))
+    {
+        return Err(WatchBindingError::ScribeCannotBeWatched {
             session_id: watched_session_id.to_owned(),
-            role: watched_role,
+        });
+    }
+
+    // Single-parent alone forbids a DAG, not a cycle: A watching B and B
+    // watching A is two legal bindings that together make a chain with no
+    // top. Nothing walks the chain today, so the cycle is silently storable
+    // -- and the first caller that does walk it hangs. Refuse at the edge.
+    if active && watch_chain_reaches(&registry, overseer_session_id, watched_session_id) {
+        return Err(WatchBindingError::WatchCycle {
+            watched_session_id: watched_session_id.to_owned(),
+            overseer_session_id: overseer_session_id.to_owned(),
         });
     }
 
@@ -460,6 +495,15 @@ pub fn bind_watch(
     }
 
     let registry = mutate_agent_role_registry(project_state_dir, |registry| {
+        // Asked again, this time holding the lock. The check above ran
+        // against a snapshot loaded before it, so two binds racing in
+        // opposite directions -- `top` takes `middle` while `middle` takes
+        // `top` -- would each read a map without the other's edge and both
+        // commit. The pre-check stays because it is what produces the useful
+        // message; this one is what makes the refusal true.
+        if active && watch_chain_reaches(registry, overseer_session_id, watched_session_id) {
+            return Err(WATCH_CYCLE_UNDER_LOCK.to_owned());
+        }
         let bindings = object_field_mut(registry, "watchBindings");
         if active {
             bindings.insert(
@@ -482,7 +526,16 @@ pub fn bind_watch(
         }
         Ok(true)
     })
-    .map_err(WatchBindingError::Registry)?;
+    .map_err(|error| {
+        if error == WATCH_CYCLE_UNDER_LOCK {
+            WatchBindingError::WatchCycle {
+                watched_session_id: watched_session_id.to_owned(),
+                overseer_session_id: overseer_session_id.to_owned(),
+            }
+        } else {
+            WatchBindingError::Registry(error)
+        }
+    })?;
 
     Ok(WatchBindingResult {
         active,
@@ -651,6 +704,37 @@ fn sync_watching_lists(registry: &mut Value) {
         entry.insert("lane".into(), json!({ "kind": "supervisor" }));
         entry.insert("watching".into(), watching);
     }
+}
+
+/// Whether `from` already reports, directly or through its managers, to
+/// `target` -- which is what makes a new `target -> from` binding a cycle.
+///
+/// Bounded by the number of bindings rather than by trust in the data: a
+/// registry that already holds a cycle (written by an older build that had no
+/// check) must not hang the writer that is trying to add another one.
+/// The cycle refusal, raised from inside the registry mutator where the only
+/// error channel is a `String`. Mapped straight back to `WatchCycle` by the
+/// caller, so a racing bind reports the same refusal as a serial one.
+const WATCH_CYCLE_UNDER_LOCK: &str = "watch-cycle-detected-under-lock";
+
+fn watch_chain_reaches(registry: &Value, from: &str, target: &str) -> bool {
+    if from == target {
+        return true;
+    }
+    let Some(bindings) = registry.get("watchBindings").and_then(Value::as_object) else {
+        return false;
+    };
+    let mut current = from;
+    for _ in 0..bindings.len() {
+        let Some(next) = bindings.get(current).and_then(Value::as_str) else {
+            return false;
+        };
+        if next == target {
+            return true;
+        }
+        current = next;
+    }
+    false
 }
 
 fn watched_by(registry: &Value, overseer_session_id: &str) -> Vec<String> {
