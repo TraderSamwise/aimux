@@ -164,10 +164,24 @@ pub fn watched_by_overseer_notification_refusal_reason_for_state(
     {
         return None;
     }
-    if !overseer_ids
-        .iter()
-        .any(|overseer_id| overseer_is_verified_alive(sessions, overseer_id, live_window_ids))
-    {
+    // Whoever actually watches THIS agent has to be the one that is alive.
+    // Any overseer anywhere was close enough while the tree was two levels
+    // and every watched agent reported to the single project overseer. With
+    // a deeper tree it swallows prompts: if a mid-tier manager's window dies
+    // while the one above it lives, its reports are still suppressed and
+    // nobody is reading them.
+    //
+    // No recorded manager falls back to the old rule rather than failing
+    // open or closed on its own: a binding that has not been projected yet
+    // is not evidence that nobody is watching.
+    let watcher = non_empty(string_field(session_metadata, "watchedBy"));
+    let watched_by_someone_alive = match watcher {
+        Some(watcher) => overseer_is_verified_alive(sessions, watcher, live_window_ids),
+        None => overseer_ids
+            .iter()
+            .any(|overseer_id| overseer_is_verified_alive(sessions, overseer_id, live_window_ids)),
+    };
+    if !watched_by_someone_alive {
         return None;
     }
     Some(WATCHED_BY_OVERSEER_NOTIFICATION_REFUSAL_REASON)

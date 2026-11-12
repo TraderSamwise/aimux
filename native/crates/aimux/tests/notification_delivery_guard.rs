@@ -496,3 +496,99 @@ fn watched_sessions(
 fn live_window_ids(ids: &[&str]) -> LiveWindowIndex {
     LiveWindowIndex::from_pairs(ids.iter().map(|id| (*id, "aimux-repo")))
 }
+
+#[test]
+fn a_dead_mid_tier_manager_does_not_keep_its_reports_quiet() {
+    // Suppression used to ask whether ANY overseer was alive, which was
+    // close enough while every watched agent reported to the one project
+    // overseer. With a tree, a mid-tier manager whose window has died leaves
+    // its reports suppressed while nobody is reading them.
+    let event = json!({ "sessionId": "leaf" });
+    let notifications = json!({});
+    let metadata = json!({
+        "sessions": {
+            "leaf": {
+                "watchedBy": "mid",
+                "loop": {
+                    "active": true,
+                    "since": "2026-09-16T00:00:00.000Z",
+                    "source": "overseer"
+                }
+            },
+            "mid": { "overseer": true },
+            "top": { "overseer": true }
+        }
+    });
+    let sessions = vec![
+        tree_session("leaf", "running", "@3"),
+        // `mid` manages `leaf`, and its window is gone.
+        tree_session("mid", "running", "@2"),
+        tree_session("top", "running", "@1"),
+    ];
+    let live = live_window_ids(&["@1", "@3"]);
+
+    let refusal = watched_by_overseer_notification_refusal_reason_for_state(
+        &event,
+        &notifications,
+        &metadata,
+        &sessions,
+        Ok(&live),
+    );
+
+    assert_eq!(
+        refusal, None,
+        "the prompt was swallowed although nobody is watching this agent"
+    );
+}
+
+#[test]
+fn a_live_mid_tier_manager_still_keeps_its_reports_quiet() {
+    let event = json!({ "sessionId": "leaf" });
+    let notifications = json!({});
+    let metadata = json!({
+        "sessions": {
+            "leaf": {
+                "watchedBy": "mid",
+                "loop": {
+                    "active": true,
+                    "since": "2026-09-16T00:00:00.000Z",
+                    "source": "overseer"
+                }
+            },
+            "mid": { "overseer": true },
+            "top": { "overseer": true }
+        }
+    });
+    let sessions = vec![
+        tree_session("leaf", "running", "@3"),
+        tree_session("mid", "running", "@2"),
+        tree_session("top", "running", "@1"),
+    ];
+    let live = live_window_ids(&["@1", "@2", "@3"]);
+
+    let refusal = watched_by_overseer_notification_refusal_reason_for_state(
+        &event,
+        &notifications,
+        &metadata,
+        &sessions,
+        Ok(&live),
+    );
+
+    assert!(
+        refusal.is_some(),
+        "a live manager should still absorb its report's prompt"
+    );
+}
+
+fn tree_session(id: &str, status: &str, window_id: &str) -> serde_json::Value {
+    json!({
+        "id": id,
+        "overseer": id != "leaf",
+        "status": status,
+        "tmuxTarget": {
+            "sessionName": "aimux-repo",
+            "windowId": window_id,
+            "windowIndex": 1,
+        },
+    })
+}

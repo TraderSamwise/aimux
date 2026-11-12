@@ -2270,6 +2270,7 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
         .overseer_watch(
             project.to_str().expect("project path"),
             "codex-1",
+            None,
             Some("keep going"),
             Some("watch CI"),
         )
@@ -2361,6 +2362,7 @@ fn overseer_watch_refuses_missing_agent_before_mutation() {
             "missing",
             None,
             None,
+            None,
         )
         .expect_err("missing agent fails");
 
@@ -2430,7 +2432,13 @@ fn overseer_watch_does_not_hand_a_manager_to_its_own_descendant() {
         fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
 
     let result = runtime
-        .overseer_watch(project.to_str().expect("project path"), "top", None, None)
+        .overseer_watch(
+            project.to_str().expect("project path"),
+            "top",
+            None,
+            None,
+            None,
+        )
         .expect("watching the top of a tree is ordinary");
 
     assert_eq!(
@@ -2442,6 +2450,142 @@ fn overseer_watch_does_not_hand_a_manager_to_its_own_descendant() {
 
     let requests = server.join();
     assert_request_path(&requests[1], "POST", "/agents/spawn");
+    fixture.cleanup();
+}
+
+#[test]
+fn naming_the_manager_is_what_makes_a_third_level_reachable() {
+    // Without this argument the service picks the first ready published
+    // overseer, so after promoting `mid` every later watch still lands on
+    // whichever overseer sorts first -- `top -> mid -> leaf` could only be
+    // built by hand-posting to the project service. The whole recursive tree
+    // was unreachable from any surface that calls this.
+    let fixture = RuntimeFixture::new("overseer-watch-named");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let inventory = json!({ "overseerSessionIds": ["top", "mid"], "agents": [
+        { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+        { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" },
+        { "id": "leaf", "tool": "codex", "status": "running" }
+    ]});
+    let server = ScriptedHttpServer::spawn(vec![
+        inventory.clone(),
+        inventory.clone(),
+        json!({ "ok": true }),
+        json!({ "ok": true }),
+        json!({ "overseerSessionIds": ["top", "mid"], "agents": [
+            { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+            { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" },
+            { "id": "leaf", "tool": "codex", "status": "running", "watchedBy": "mid", "loop": { "active": true } }
+        ]}),
+        json!({ "ok": true }),
+    ]);
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_666));
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
+
+    let result = runtime
+        .overseer_watch(
+            project.to_str().expect("project path"),
+            "leaf",
+            Some("mid"),
+            None,
+            None,
+        )
+        .expect("naming a published overseer is allowed");
+
+    assert_eq!(
+        result["overseerSessionId"], "mid",
+        "the named manager was ignored: {result:?}"
+    );
+    // Nothing was spawned: the named overseer was used as given.
+    assert!(launcher.calls().is_empty());
+    let requests = server.join();
+    assert_request_path(&requests[2], "POST", "/agents/watch");
+    assert_eq!(
+        request_json_body(&requests[2])["overseerSessionId"],
+        "mid",
+        "the binding did not name the requested manager"
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn naming_a_manager_that_is_not_an_overseer_is_refused_rather_than_substituted() {
+    let fixture = RuntimeFixture::new("overseer-watch-named-bad");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let server =
+        ScriptedHttpServer::spawn(vec![json!({ "overseerSessionIds": ["top"], "agents": [
+            { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+            { "id": "worker", "tool": "codex", "status": "running" },
+            { "id": "leaf", "tool": "codex", "status": "running" }
+        ]})]);
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_667));
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
+
+    let error = runtime
+        .overseer_watch(
+            project.to_str().expect("project path"),
+            "leaf",
+            Some("worker"),
+            None,
+            None,
+        )
+        .expect_err("a coder is not a manager");
+
+    assert_eq!(error.status, 400);
+    assert!(
+        error.error.contains("not a published project overseer"),
+        "unexpected refusal: {}",
+        error.error
+    );
+    assert!(launcher.calls().is_empty());
+    let requests = server.join();
+    assert_eq!(requests.len(), 1, "refused before any mutation");
     fixture.cleanup();
 }
 
@@ -2485,6 +2629,7 @@ fn overseer_watch_refuses_the_scribe_before_mutation() {
         .overseer_watch(
             project.to_str().expect("project path"),
             "claude-scribe",
+            None,
             None,
             None,
         )
@@ -3851,6 +3996,7 @@ fn overseer_watch_chooses_the_first_ready_published_owner_without_replacing_sibl
             .overseer_watch(
                 project.to_str().expect("path"),
                 "worker",
+                None,
                 Some("keep going"),
                 None,
             )
@@ -3912,6 +4058,7 @@ fn overseer_watch_repeated_updates_keep_the_existing_second_published_owner() {
             .overseer_watch(
                 project.to_str().expect("path"),
                 "worker",
+                None,
                 Some(goal),
                 Some("check CI"),
             )
@@ -4033,6 +4180,7 @@ fn overseer_watch_refuses_invalid_or_unavailable_bound_owners_before_any_mutatio
             .overseer_watch(
                 project.to_str().expect("path"),
                 "worker",
+                None,
                 Some("new goal"),
                 Some("new instructions"),
             )
@@ -4164,7 +4312,7 @@ fn overseer_watch_rejects_invalid_published_inventory_before_spawning_or_assigni
         let mut runtime =
             fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
         let error = runtime
-            .overseer_watch(project.to_str().expect("path"), "worker", None, None)
+            .overseer_watch(project.to_str().expect("path"), "worker", None, None, None)
             .expect_err("invalid inventory must never become an empty overseer set");
         assert_eq!(error.status, expected);
         assert!(error.error.contains(reason), "{name}: {}", error.error);

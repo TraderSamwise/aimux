@@ -4175,6 +4175,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         &mut self,
         project_root: &str,
         session_id: &str,
+        requested_overseer: Option<&str>,
         goal: Option<&str>,
         instructions: Option<&str>,
     ) -> Result<Value, CoreCommandFailure> {
@@ -4223,7 +4224,32 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                 });
             }
         };
-        let overseer_session_id = if let Some(owner_id) = bound_owner {
+        // A named manager is honoured and never second-guessed: it must be
+        // a published overseer, and the service refuses a cycle. Silently
+        // substituting another would be the same lie the auto-pick told.
+        if let Some(requested) = requested_overseer {
+            if !overseer_ids.iter().any(|id| id == requested) {
+                return Err(CoreCommandFailure {
+                    status: 400,
+                    error: format!(
+                        "cannot watch {session_id} under {requested}: it is not a published project overseer"
+                    ),
+                });
+            }
+            if let Some(bound) = bound_owner
+                && bound != requested
+            {
+                return Err(CoreCommandFailure {
+                    status: 409,
+                    error: format!(
+                        "cannot watch {session_id} under {requested}: it is already watched by {bound}"
+                    ),
+                });
+            }
+        }
+        let overseer_session_id = if let Some(requested) = requested_overseer {
+            requested.to_owned()
+        } else if let Some(owner_id) = bound_owner {
             if !overseer_ids.iter().any(|id| id == owner_id) {
                 return Err(CoreCommandFailure {
                     status: 409,

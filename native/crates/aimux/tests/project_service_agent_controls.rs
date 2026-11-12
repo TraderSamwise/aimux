@@ -1430,10 +1430,16 @@ fn a_release_whose_binding_changed_hands_before_the_lock_is_refused() {
         })
     };
     barrier.wait();
-    // Long enough for the release to have read its snapshot and be waiting
-    // on the lock this thread holds -- a file read against a 2s acquire
-    // budget. Without the wait this thread wins and the check above the lock
-    // is the one that answers, which is the path already covered.
+    // Give the release time to read its snapshot and reach the lock. The
+    // lock leaves no trace a waiter can be polled for, so this is a wait and
+    // not a proof of ordering: when it is long enough the guard under the
+    // lock answers, and when the runner is slow enough that this thread wins
+    // instead, the guard above the lock answers the same way. Either is the
+    // contract. What the assertions below pin is that contract -- a refusal
+    // naming the real holder -- rather than which guard produced it.
+    //
+    // Kept well inside the 2s acquire budget so a slow runner cannot turn
+    // this into a lock timeout, which the 409 assertion would catch anyway.
     std::thread::sleep(std::time::Duration::from_millis(150));
 
     // The release is now waiting on the lock this thread holds. Hand the
@@ -1452,6 +1458,15 @@ fn a_release_whose_binding_changed_hands_before_the_lock_is_refused() {
     let response = releasing.join().expect("release thread");
     assert_eq!(response.status, 409, "{:?}", response.body);
     assert_eq!(response.body["reason"], "already-watched");
+    // The refusal must name who actually holds it. Naming the caller told a
+    // client that `top` owns a binding `other` holds -- and since the
+    // documented escape is to re-release under the named manager, it would
+    // retry `top` forever.
+    assert_eq!(
+        response.body["details"]["overseerSessionId"], "other",
+        "the refusal named the caller instead of the holder: {:?}",
+        response.body
+    );
 
     let registry = load_agent_role_registry(&state_dir).expect("role registry");
     assert_eq!(

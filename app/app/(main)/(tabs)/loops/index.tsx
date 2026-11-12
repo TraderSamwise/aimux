@@ -94,7 +94,13 @@ export default function LoopsScreen() {
     () => entries.filter((entry) => isManageableSession(entry.session)),
     [entries],
   );
-  const loopCandidates = useMemo(
+  // Two lists, because they offer two different things. Promoting an agent
+  // that is already an overseer is a no-op, so that list excludes them. The
+  // loop list must not: a mid-tier overseer is a legitimate report, and
+  // excluding it while the watched list above includes it made Stop a
+  // one-way door -- the agent left the watched list and never appeared among
+  // the ones that can be put back.
+  const promotionCandidates = useMemo(
     () =>
       activeCandidates.filter(
         (entry) =>
@@ -103,6 +109,13 @@ export default function LoopsScreen() {
           entry.session.loop?.active !== true,
       ),
     [activeCandidates, overseerIds],
+  );
+  const loopCandidates = useMemo(
+    () =>
+      activeCandidates.filter(
+        (entry) => entry.session.scribe !== true && entry.session.loop?.active !== true,
+      ),
+    [activeCandidates],
   );
   const canMutate = Boolean(endpoint) && !busyAction;
   const defaultDemotionWorktreePath = useMemo(
@@ -261,12 +274,12 @@ export default function LoopsScreen() {
             ) : (
               <EmptyText>No overseers set.</EmptyText>
             )}
-            {loopCandidates.length > 0 ? (
+            {promotionCandidates.length > 0 ? (
               <View className="mt-3">
                 <Text className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                   Make Overseer
                 </Text>
-                {loopCandidates.map((entry) => (
+                {promotionCandidates.map((entry) => (
                   <AgentRow
                     key={entry.session.id}
                     entry={entry}

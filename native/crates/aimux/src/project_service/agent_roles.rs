@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::atomic_write::write_json_atomic;
 use crate::daemon_state::{
     MetadataState, load_metadata_state, metadata_state_path, save_metadata_state,
+    try_load_metadata_state,
 };
 use crate::state_update_lock::acquire_state_update_lock;
 use crate::team_contract::{agent_lane, agent_role, agent_role_state};
@@ -252,9 +253,15 @@ pub fn set_supervisor_role_with_options(
             .sessions
             .get(session_id)
             .cloned();
-        set_role_metadata_at(project_state_dir, session_id, key, active, now, &options)
+        // `update_session_metadata_at` returns early without writing when the
+        // payload is unchanged -- re-pressing Set on an agent that is already
+        // an overseer is exactly that. Undoing a write that never happened
+        // would restore a snapshot over whatever the loop watcher, the status
+        // writer or input delivery committed for this session in between,
+        // which is data loss rather than repair.
+        let wrote = set_role_metadata_at(project_state_dir, session_id, key, active, now, &options)
             .map_err(|error| format!("{METADATA_UNDER_LOCK}{error}"))?;
-        metadata_written.set(true);
+        metadata_written.set(wrote);
         let updated_metadata_state = load_metadata_state(project_state_dir);
         let updated_session = updated_metadata_state.sessions.get(session_id);
         {
@@ -551,6 +558,7 @@ pub fn bind_watch(
     // the agent exactly where it was. Now that promotion no longer cuts the
     // incoming edge, that escape hatch is the only route to a transfer, and
     // a lie there strands the caller.
+    let release_holder: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
     if !active {
         let current = registry
             .get("watchBindings")
@@ -582,13 +590,17 @@ pub fn bind_watch(
             // left. A transfer landing in the gap would have had its new
             // binding deleted by a release that no longer owned it, and the
             // caller would still be told 200.
-            let owned = registry
+            let holder = registry
                 .get("watchBindings")
                 .and_then(Value::as_object)
                 .and_then(|bindings| bindings.get(watched_session_id))
-                .and_then(Value::as_str)
-                == Some(overseer_session_id);
-            if !owned {
+                .and_then(Value::as_str);
+            if holder != Some(overseer_session_id) {
+                // The holder, not the caller. Naming the caller told a
+                // client that `top` owns a binding `other` holds, and the
+                // documented escape from `already-watched` is to re-release
+                // under the named manager -- so it would retry `top` forever.
+                *release_holder.borrow_mut() = holder.map(str::to_owned);
                 return Err(RELEASE_OWNER_CHANGED_UNDER_LOCK.to_owned());
             }
             object_field_mut(registry, "watchBindings").remove(watched_session_id);
@@ -599,7 +611,10 @@ pub fn bind_watch(
             if error == RELEASE_OWNER_CHANGED_UNDER_LOCK {
                 WatchBindingError::AlreadyWatched {
                     watched_session_id: watched_session_id.to_owned(),
-                    overseer_session_id: overseer_session_id.to_owned(),
+                    overseer_session_id: release_holder
+                        .borrow()
+                        .clone()
+                        .unwrap_or_else(|| "none".to_owned()),
                 }
             } else {
                 WatchBindingError::Registry(error)
@@ -992,8 +1007,13 @@ fn restore_session_metadata(
     before: Option<Value>,
 ) -> Result<(), String> {
     let path = metadata_state_path(project_state_dir);
-    let _lock = acquire_state_update_lock(&path)?;
-    let mut state = load_metadata_state(project_state_dir);
+    let lock = acquire_state_update_lock(&path)?;
+    // Strict, because `load_metadata_state` answers an unreadable file with
+    // an empty state -- and saving that back would erase every other
+    // session to repair one. An undo that cannot read what it is editing
+    // must stop.
+    let mut state = try_load_metadata_state(project_state_dir)
+        .map_err(|error| format!("read metadata before rollback: {error}"))?;
     match before {
         Some(before) => {
             state.sessions.insert(session_id.to_owned(), before);
@@ -1002,9 +1022,15 @@ fn restore_session_metadata(
             state.sessions.remove(session_id);
         }
     }
+    // Fenced like every other writer: without it a holder that paused long
+    // enough to be reclaimed can still overwrite newer state on the way out.
+    lock.ensure_owned_for_commit()?;
     save_metadata_state(project_state_dir, &state).map_err(|error| error.to_string())
 }
 
+/// Returns whether anything was actually written: an unchanged payload is a
+/// no-op, and a caller that has to undo this must not undo a write that never
+/// happened.
 fn set_role_metadata_at(
     project_state_dir: &Path,
     session_id: &str,
@@ -1012,7 +1038,7 @@ fn set_role_metadata_at(
     active: bool,
     now: &str,
     options: &SupervisorRoleOptions,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     update_session_metadata_at(project_state_dir, session_id, now, |current| {
         let mut current = match current {
             Value::Object(map) => map,
@@ -1107,7 +1133,7 @@ fn set_role_metadata_at(
         }
         Value::Object(current)
     })
-    .map(|_| ())
+    .map(|result| result.changed)
 }
 
 fn sync_migration_fields(entry: &mut Map<String, Value>, session: Option<&Value>) {
