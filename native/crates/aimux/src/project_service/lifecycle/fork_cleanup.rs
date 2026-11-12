@@ -307,6 +307,30 @@ fn registry_references_target(value: &Value, target_session_id: &str) -> bool {
             })
 }
 
+/// Whether `from` already reports, directly or through its managers, to
+/// `target`. Bounded by the number of bindings so a registry that already
+/// holds a loop cannot spin here.
+fn reaches_through_bindings(
+    bindings: &serde_json::Map<String, Value>,
+    from: &str,
+    target: &str,
+) -> bool {
+    if from == target {
+        return true;
+    }
+    let mut current = from;
+    for _ in 0..bindings.len() {
+        let Some(next) = bindings.get(current).and_then(Value::as_str) else {
+            return false;
+        };
+        if next == target {
+            return true;
+        }
+        current = next;
+    }
+    false
+}
+
 fn remove_target_registry(value: &mut Value, target_session_id: &str) -> bool {
     let mut inherited: Vec<String> = Vec::new();
     let mut inherited_manager: Option<String> = None;
@@ -340,10 +364,20 @@ fn remove_target_registry(value: &mut Value, target_session_id: &str) -> bool {
                 if watched == target_session_id || watched == manager {
                     continue;
                 }
-                if overseer.as_str() == Some(target_session_id) {
-                    bindings.insert(watched.clone(), Value::String(manager.to_owned()));
-                    inherited.push(watched.clone());
+                if overseer.as_str() != Some(target_session_id) {
+                    continue;
                 }
+                // The inheriting manager may itself sit under the report it
+                // is about to adopt, if the registry already held a loop --
+                // `target -> a, a -> b, b -> target` leaves `a` and `b`
+                // pointing at each other. The deliberate release path
+                // refuses that input outright, but a death cannot refuse, so
+                // the move is skipped and the report is simply released.
+                if reaches_through_bindings(bindings, manager, watched) {
+                    continue;
+                }
+                bindings.insert(watched.clone(), Value::String(manager.to_owned()));
+                inherited.push(watched.clone());
             }
         }
         changed |= before != *bindings;
@@ -460,6 +494,40 @@ mod tests {
             assert_eq!(fs::read(state.0.join(file)).unwrap(), before);
             fs::remove_file(state.0.join(file)).unwrap();
         }
+    }
+
+    #[test]
+    fn inheriting_a_dead_managers_reports_does_not_close_a_loop() {
+        // A registry written before the cycle guard can already hold one.
+        // `target -> a`, `a -> b`, `b -> target`: removing `target` would
+        // hand `b` to `a` while `a` still reports to `b`. The deliberate
+        // release path refuses that input; a death cannot refuse, so the
+        // move is skipped and the report is released instead.
+        let state = StateDir::new();
+        state.write_json("metadata.json", &json!({"version":1,"sessions":{}}));
+        state.write_json(
+            "agent-role-registry.json",
+            &json!({
+                "version": 1,
+                "sessions": {},
+                "roleSlots": {},
+                "watchBindings": {"target":"a","a":"b","b":"target"}
+            }),
+        );
+
+        rollback_fork_target_state(&state.0, "target").unwrap();
+
+        let registry = state.read_json("agent-role-registry.json");
+        let bindings = registry["watchBindings"].as_object().expect("bindings");
+        assert_eq!(
+            bindings.get("a").and_then(Value::as_str),
+            Some("b"),
+            "a's own manager should be untouched: {bindings:?}"
+        );
+        assert!(
+            bindings.get("b").is_none(),
+            "b was handed to a manager that reports to it: {bindings:?}"
+        );
     }
 
     #[test]

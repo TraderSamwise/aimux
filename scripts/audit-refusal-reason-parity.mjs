@@ -48,6 +48,17 @@ function reasonsFromRust(source, enumName) {
   const body = block.slice(reasonAt, block.indexOf("\n    }\n", reasonAt));
   const found = [...body.matchAll(/=>\s*"([a-z0-9-]+)"/g)].map((match) => match[1]);
   if (found.length === 0) throw new Error(`reason() in ${enumName} answered nothing`);
+  // Every arm must answer with a literal the line above can see. A reason
+  // returned through a const or a helper is invisible to this gate, so it is
+  // refused rather than quietly skipped -- a gate that cannot read its own
+  // source is not checking anything.
+  const arms = [...body.matchAll(/=>/g)].length;
+  if (arms !== found.length) {
+    throw new Error(
+      `reason() in ${enumName} has ${arms} arm(s) but ${found.length} string literal(s); ` +
+        `every arm must answer with an inline "kebab-case" literal so this gate can read it`,
+    );
+  }
   return new Set(found);
 }
 
@@ -71,7 +82,18 @@ for (const pair of PAIRS) {
     readFileSync(resolve(repoRoot, pair.tsFile), "utf8"),
     pair.tsType,
   );
-  for (const allowed of pair.tsOnly) ts.delete(allowed);
+  // Deleting unconditionally let a `tsOnly` entry vanish from the union
+  // without the gate noticing, which is the same drift in the other
+  // direction: the route still sends it and the app no longer types it.
+  for (const allowed of pair.tsOnly) {
+    if (!ts.delete(allowed)) {
+      failures += 1;
+      console.error(
+        `${pair.tsType} no longer lists "${allowed}", which the route can still send. ` +
+          `Remove it from tsOnly as well, or put it back.`,
+      );
+    }
+  }
 
   const missingFromTs = [...rust].filter((reason) => !ts.has(reason)).sort();
   const missingFromRust = [...ts].filter((reason) => !rust.has(reason)).sort();

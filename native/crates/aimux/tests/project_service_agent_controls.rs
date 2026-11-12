@@ -1353,6 +1353,115 @@ fn handing_a_report_to_a_different_manager_says_so_rather_than_claiming_success(
 }
 
 #[test]
+fn a_release_whose_binding_changed_hands_before_the_lock_is_refused() {
+    // Refusing a release under the wrong name sent every real release down
+    // the early path, whose ownership test had been read before the lock. A
+    // transfer landing in that gap had its fresh binding deleted by a
+    // release that no longer owned it, and the caller was still told 200.
+    //
+    // Deterministic rather than racy: the test holds the registry lock, lets
+    // the release block on it, transfers the binding underneath, and then
+    // lets go. Whether the release read its snapshot before or after that
+    // write, it must refuse -- before, the check under the lock catches it;
+    // after, the one above does.
+    use aimux::project_service::agent_roles::agent_role_registry_path;
+    use aimux::state_update_lock::acquire_state_update_lock;
+    use std::sync::Arc;
+    use std::sync::Barrier;
+
+    let project = temp_project("release-owner-changed");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "other".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let bound = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "top",
+            "watchedSessionId": "worker",
+            "active": true
+        })),
+    );
+    assert_eq!(bound.status, 200, "{:?}", bound.body);
+
+    let registry_path = agent_role_registry_path(&state_dir);
+    let held = acquire_state_update_lock(&registry_path).expect("registry lock");
+
+    let barrier = Arc::new(Barrier::new(2));
+    let releasing = {
+        let barrier = Arc::clone(&barrier);
+        let project = project.clone();
+        let state_dir = state_dir.clone();
+        std::thread::spawn(move || {
+            let context =
+                ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+            barrier.wait();
+            route_project_service_request(
+                &context,
+                "POST",
+                routes::agents::WATCH,
+                Some(&json!({
+                    "overseerSessionId": "top",
+                    "watchedSessionId": "worker",
+                    "active": false
+                })),
+            )
+        })
+    };
+    barrier.wait();
+    // Long enough for the release to have read its snapshot and be waiting
+    // on the lock this thread holds -- a file read against a 2s acquire
+    // budget. Without the wait this thread wins and the check above the lock
+    // is the one that answers, which is the path already covered.
+    std::thread::sleep(std::time::Duration::from_millis(150));
+
+    // The release is now waiting on the lock this thread holds. Hand the
+    // binding to `other` underneath it.
+    let mut registry: Value =
+        serde_json::from_str(&read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    registry["watchBindings"]["worker"] = json!("other");
+    write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+    drop(held);
+
+    let response = releasing.join().expect("release thread");
+    assert_eq!(response.status, 409, "{:?}", response.body);
+    assert_eq!(response.body["reason"], "already-watched");
+
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(
+        registry["watchBindings"]["worker"], "other",
+        "the release deleted a binding it no longer owned: {registry:?}"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn demoting_watching_overseer_requires_explicit_binding_release() {
     let project = temp_project("watch-demote");
     let state_dir = project.join("state");

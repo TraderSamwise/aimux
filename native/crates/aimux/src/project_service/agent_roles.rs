@@ -4,7 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::atomic_write::write_json_atomic;
-use crate::daemon_state::{MetadataState, load_metadata_state};
+use crate::daemon_state::{
+    MetadataState, load_metadata_state, metadata_state_path, save_metadata_state,
+};
 use crate::state_update_lock::acquire_state_update_lock;
 use crate::team_contract::{agent_lane, agent_role, agent_role_state};
 
@@ -208,6 +210,19 @@ pub fn set_supervisor_role_with_options(
     // channel is a `String`, and rebuilding the list from the snapshot loaded
     // before the lock reported an empty one in the very case that raises it.
     let blocked_reports: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+    // The registry commit happens after the mutator returns, so a metadata
+    // write inside it is already on disk when that commit fails. The two
+    // files cannot be written atomically, and the registry mutation needs
+    // the post-write metadata -- `sync_migration_fields` copies
+    // `effectiveLane` and `runtimeWorkingDirectory`, which this very write
+    // produces -- so the order cannot simply be swapped. What is left is to
+    // undo it: keep the record the write replaces, and put it back if the
+    // registry never lands.
+    let metadata_before = load_metadata_state(project_state_dir)
+        .sessions
+        .get(session_id)
+        .cloned();
+    let metadata_written = std::cell::Cell::new(false);
     mutate_agent_role_registry(project_state_dir, |registry| {
         // Everything that can refuse runs before anything is written.
         //
@@ -234,6 +249,7 @@ pub fn set_supervisor_role_with_options(
 
         set_role_metadata_at(project_state_dir, session_id, key, active, now, &options)
             .map_err(|error| format!("{METADATA_UNDER_LOCK}{error}"))?;
+        metadata_written.set(true);
         let updated_metadata_state = load_metadata_state(project_state_dir);
         let updated_session = updated_metadata_state.sessions.get(session_id);
         {
@@ -310,6 +326,22 @@ pub fn set_supervisor_role_with_options(
         Ok(true)
     })
     .map_err(|error| {
+        // Nothing reached the registry, so the metadata write has to come
+        // back out. Leaving it is the wedge this whole ordering exists to
+        // avoid: the registry would keep saying `overseer` while metadata
+        // said `coder`, the registry wins on every surface, and the
+        // metadata-driven overseer list would already have dropped the
+        // agent. A rollback that itself fails is reported rather than
+        // swallowed -- that state needs a person, and silence would hide it.
+        let rollback = metadata_written
+            .get()
+            .then(|| restore_session_metadata(project_state_dir, session_id, metadata_before))
+            .and_then(Result::err);
+        if let Some(rollback) = rollback {
+            return SupervisorRoleError::Metadata(format!(
+                "{error}; and the metadata written before it could not be put back: {rollback}"
+            ));
+        }
         if let Some(metadata) = error.strip_prefix(METADATA_UNDER_LOCK) {
             SupervisorRoleError::Metadata(metadata.to_owned())
         } else if error == ACTIVE_WATCH_BINDINGS_UNDER_LOCK {
@@ -532,11 +564,36 @@ pub fn bind_watch(
             == Some(overseer_session_id)
     {
         let registry = mutate_agent_role_registry(project_state_dir, |registry| {
+            // Asked again under the lock. The ownership test above ran on a
+            // snapshot loaded before it, and now that releasing under the
+            // wrong name is refused outright, every real release comes
+            // through here -- so an unconditional remove is the only path
+            // left. A transfer landing in the gap would have had its new
+            // binding deleted by a release that no longer owned it, and the
+            // caller would still be told 200.
+            let owned = registry
+                .get("watchBindings")
+                .and_then(Value::as_object)
+                .and_then(|bindings| bindings.get(watched_session_id))
+                .and_then(Value::as_str)
+                == Some(overseer_session_id);
+            if !owned {
+                return Err(RELEASE_OWNER_CHANGED_UNDER_LOCK.to_owned());
+            }
             object_field_mut(registry, "watchBindings").remove(watched_session_id);
             sync_watching_lists(registry);
             Ok(true)
         })
-        .map_err(WatchBindingError::Registry)?;
+        .map_err(|error| {
+            if error == RELEASE_OWNER_CHANGED_UNDER_LOCK {
+                WatchBindingError::AlreadyWatched {
+                    watched_session_id: watched_session_id.to_owned(),
+                    overseer_session_id: overseer_session_id.to_owned(),
+                }
+            } else {
+                WatchBindingError::Registry(error)
+            }
+        })?;
         return Ok(WatchBindingResult {
             active,
             overseer_session_id: overseer_session_id.to_owned(),
@@ -864,6 +921,11 @@ impl DemotionPlan {
     }
 }
 
+/// Raised when a release reaches the lock and the binding has changed hands
+/// since it was read. Reported as `already-watched`, the same refusal a
+/// release under the wrong name gets, because that is what has happened.
+const RELEASE_OWNER_CHANGED_UNDER_LOCK: &str = "release-owner-changed-under-lock";
+
 /// The cycle refusal, raised from inside the registry mutator where the only
 /// error channel is a `String`. Mapped straight back to `WatchCycle` by the
 /// caller, so a racing bind reports the same refusal as a serial one.
@@ -907,6 +969,29 @@ fn watched_by(registry: &Value, overseer_session_id: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Put a session's metadata record back as it was.
+///
+/// Used only to undo a write whose other half never landed. An absent record
+/// before the write means the write created it, so the undo removes it.
+fn restore_session_metadata(
+    project_state_dir: &Path,
+    session_id: &str,
+    before: Option<Value>,
+) -> Result<(), String> {
+    let path = metadata_state_path(project_state_dir);
+    let _lock = acquire_state_update_lock(&path)?;
+    let mut state = load_metadata_state(project_state_dir);
+    match before {
+        Some(before) => {
+            state.sessions.insert(session_id.to_owned(), before);
+        }
+        None => {
+            state.sessions.remove(session_id);
+        }
+    }
+    save_metadata_state(project_state_dir, &state).map_err(|error| error.to_string())
 }
 
 fn set_role_metadata_at(
