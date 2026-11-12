@@ -245,7 +245,7 @@ fn host_agent_stream_resolves_upstream_url_without_warm_path_ensure() {
         HostAgentStreamResolution::Ok {
             session_id: "claude-1".into(),
             url: format!(
-                "http://127.0.0.1:44291{}?sessionId=claude-1&startLine=-2000&intervalMs=500",
+                "http://127.0.0.1:44291{}?sessionId=claude-1&startLine=-8000&intervalMs=500",
                 project_routes::agents::OUTPUT_STREAM
             ),
         }
@@ -277,7 +277,7 @@ fn host_agent_stream_ensures_when_warm_endpoint_is_missing() {
         HostAgentStreamResolution::Ok {
             session_id: "claude-1".into(),
             url: format!(
-                "http://127.0.0.1:44292{}?sessionId=claude-1&startLine=-2000&intervalMs=500",
+                "http://127.0.0.1:44292{}?sessionId=claude-1&startLine=-8000&intervalMs=500",
                 project_routes::agents::OUTPUT_STREAM
             ),
         }
@@ -407,10 +407,10 @@ fn agent_output_sse_handler_reports_tail_notice_and_errors() {
     assert_eq!(
         handler
             .push_chunk_text(
-                "event: output\ndata: {\"output\":\"tail\",\"outputTailOnly\":true,\"captureLineLimit\":2000}\n\n",
+                "event: output\ndata: {\"output\":\"tail\",\"outputTailOnly\":true,\"captureLineLimit\":8000}\n\n",
             )
             .unwrap(),
-        "[aimux showing last 2000 lines]\ntail\n"
+        "[aimux showing last 8000 lines]\ntail\n"
     );
     assert_eq!(
         handler

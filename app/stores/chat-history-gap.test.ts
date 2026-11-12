@@ -68,7 +68,7 @@ describe("a transcript window that shares nothing with the stored one", () => {
   it("does NOT drop a deeper transcript for a shallower window", () => {
     // That path is only reached when the incoming window is shallower than the
     // stored one, so zero overlap means re-chunked content, not missing
-    // history. Dropping it would throw away the 2000 lines Sam paged back to
+    // history. Dropping it would throw away the deep window Sam paged back to
     // every poll -- worse than the join this change removes.
     const merged = mergeTranscriptMessages(BEFORE_SLEEP, AFTER_SLEEP);
     expect(merged.map((m) => m.id)).toEqual(["a", "b", "y", "z"]);

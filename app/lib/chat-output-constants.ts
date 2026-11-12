@@ -1,6 +1,6 @@
 export const CHAT_OUTPUT_INITIAL_CAPTURE_START_LINE = -320;
 export const CHAT_OUTPUT_HISTORY_PAGE_LINES = 320;
-export const CHAT_OUTPUT_MAX_CAPTURE_START_LINE = -2_000;
+export const CHAT_OUTPUT_MAX_CAPTURE_START_LINE = -8_000;
 /**
  * The deepest window this app asks for, as a positive count of lines.
  *

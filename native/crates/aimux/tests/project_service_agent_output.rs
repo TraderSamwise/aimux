@@ -343,15 +343,15 @@ fn output_bounds_match_typescript_capture_window_contract() {
         -MAX_AGENT_OUTPUT_CAPTURE_LINES
     );
     assert_eq!(bounded_agent_output_end_line(-80), None);
-    assert_eq!(bounded_agent_output_end_line(25), Some(2024));
+    assert_eq!(bounded_agent_output_end_line(25), Some(8024));
 
     assert_eq!(
         agent_output_capture_window(Some(-999_999)),
         aimux::project_service::agent_output::AgentOutputCaptureWindow {
             requested_start_line: -999_999,
-            start_line: -2000,
+            start_line: -8000,
             end_line: None,
-            max_lines: 2000,
+            max_lines: 8000,
             tail_only: true,
             clamped: true,
         }
@@ -1023,10 +1023,10 @@ fn output_route_captures_live_topology_target_and_shapes_full_payload() {
     assert_eq!(response.body["sessionId"], "codex-1");
     assert_eq!(response.body["output"], "hello\n");
     assert_eq!(response.body["outputAnsi"], "\u{1b}[32mhello\u{1b}[0m\n");
-    assert_eq!(response.body["startLine"], -2000);
+    assert_eq!(response.body["startLine"], -8000);
     assert_eq!(response.body["requestedStartLine"], -999999);
     assert!(response.body.get("endLine").is_none());
-    assert_eq!(response.body["captureLineLimit"], 2000);
+    assert_eq!(response.body["captureLineLimit"], 8000);
     assert_eq!(response.body["outputTailOnly"], true);
     assert_eq!(response.body["outputStartLineClamped"], true);
     assert_eq!(response.body["outputAvailable"], true);
@@ -1040,7 +1040,7 @@ fn output_route_captures_live_topology_target_and_shapes_full_payload() {
     assert_eq!(
         runtime.calls[0].1,
         CapturePaneOptions {
-            start_line: Some(-2000),
+            start_line: Some(-8000),
             end_line: None,
             include_escapes: true,
         }
@@ -1988,8 +1988,8 @@ fn live_pane_attach_resizes_before_full_output_and_returns_stream_metadata() {
     assert_eq!(response.body["stream"]["sessionId"], "codex-1");
     assert_eq!(response.body["stream"]["startLine"], 10);
     assert_eq!(response.body["stream"]["requestedStartLine"], 10);
-    assert_eq!(response.body["stream"]["endLine"], 2009);
-    assert_eq!(response.body["stream"]["captureLineLimit"], 2000);
+    assert_eq!(response.body["stream"]["endLine"], 8009);
+    assert_eq!(response.body["stream"]["captureLineLimit"], 8000);
     assert_eq!(response.body["stream"]["outputTailOnly"], false);
     assert_eq!(response.body["stream"]["outputStartLineClamped"], false);
     assert_eq!(
