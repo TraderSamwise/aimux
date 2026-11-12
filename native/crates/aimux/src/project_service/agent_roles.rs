@@ -236,13 +236,76 @@ pub fn set_supervisor_role_with_options(
             entry.insert("updatedAt".into(), Value::String(now.to_owned()));
         }
         if active {
-            clear_watch_binding_for_watched(registry, session_id);
+            // A promoted agent keeps its own manager. Clearing the incoming
+            // binding was an artefact of the rule that only a coder could be
+            // watched: with overseers watchable, the obvious way to build a
+            // tree -- bind a coder to its manager, then promote it so it can
+            // manage others -- silently dropped the middle's link upward, and
+            // only promote-then-bind worked. The scribe is not a report, so
+            // its promotion still cuts the edge.
+            if key != "overseer" {
+                clear_watch_binding_for_watched(registry, session_id);
+            }
         } else {
+            // The reports of a demoted overseer move up to its own manager
+            // rather than being cut loose. Left pointing at a non-overseer
+            // they would be re-stamped `role: overseer` by
+            // `sync_watching_lists` on the next pass, quietly undoing the
+            // demotion that was just written.
+            //
+            // Asked again here, under the lock: the `ActiveWatchBindings`
+            // refusal above read a snapshot taken before it, so a bind
+            // arriving in between would slip a report past the check.
+            let reports = watched_by(registry, session_id);
+            if !reports.is_empty() && !options.release_bindings {
+                return Err(format!(
+                    "{ACTIVE_WATCH_BINDINGS_UNDER_LOCK}{}",
+                    reports.join(",")
+                ));
+            }
+            let grandparent = registry
+                .get("watchBindings")
+                .and_then(Value::as_object)
+                .and_then(|bindings| bindings.get(session_id))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            // Only the outgoing edges go. The demoted agent keeps its own
+            // manager for the same reason a promoted one does: cutting it
+            // here would lose the link upward on demote-then-repromote,
+            // which is the bug this change exists to fix, pointing the other
+            // way. It becomes a coder under the manager it already had, and
+            // its former reports become its siblings.
             clear_watch_bindings_for_overseer(registry, session_id);
+            if let Some(grandparent) = grandparent {
+                for report in reports {
+                    // A grandparent is strictly above the subtree, so this
+                    // cannot close a loop -- unless the registry was already
+                    // cyclic, written by a build that had no guard at all.
+                    if watch_chain_reaches(registry, &grandparent, &report) {
+                        continue;
+                    }
+                    object_field_mut(registry, "watchBindings")
+                        .insert(report, Value::String(grandparent.clone()));
+                }
+                sync_watching_lists(registry);
+            }
         }
         Ok(true)
     })
-    .map_err(SupervisorRoleError::Registry)
+    .map_err(|error| {
+        if let Some(blocked) = error.strip_prefix(ACTIVE_WATCH_BINDINGS_UNDER_LOCK) {
+            SupervisorRoleError::ActiveWatchBindings {
+                overseer_session_id: session_id.to_owned(),
+                watched_session_ids: blocked
+                    .split(',')
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+            }
+        } else {
+            SupervisorRoleError::Registry(error)
+        }
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -706,17 +769,23 @@ fn sync_watching_lists(registry: &mut Value) {
     }
 }
 
+/// The still-has-reports refusal, raised from inside the registry mutator
+/// where the only error channel is a `String`. The ids that blocked the
+/// demotion follow the prefix, because the caller's own snapshot predates
+/// the lock and would report an empty list.
+const ACTIVE_WATCH_BINDINGS_UNDER_LOCK: &str = "active-watch-bindings-under-lock:";
+
+/// The cycle refusal, raised from inside the registry mutator where the only
+/// error channel is a `String`. Mapped straight back to `WatchCycle` by the
+/// caller, so a racing bind reports the same refusal as a serial one.
+const WATCH_CYCLE_UNDER_LOCK: &str = "watch-cycle-detected-under-lock";
+
 /// Whether `from` already reports, directly or through its managers, to
 /// `target` -- which is what makes a new `target -> from` binding a cycle.
 ///
 /// Bounded by the number of bindings rather than by trust in the data: a
 /// registry that already holds a cycle (written by an older build that had no
 /// check) must not hang the writer that is trying to add another one.
-/// The cycle refusal, raised from inside the registry mutator where the only
-/// error channel is a `String`. Mapped straight back to `WatchCycle` by the
-/// caller, so a racing bind reports the same refusal as a serial one.
-const WATCH_CYCLE_UNDER_LOCK: &str = "watch-cycle-detected-under-lock";
-
 fn watch_chain_reaches(registry: &Value, from: &str, target: &str) -> bool {
     if from == target {
         return true;

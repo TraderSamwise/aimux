@@ -939,7 +939,7 @@ fn watch_route_unbinds_existing_binding_even_after_roles_drift() {
 }
 
 #[test]
-fn supervisor_promotion_clears_existing_watched_binding_for_promoted_agent() {
+fn scribe_promotion_clears_the_promoted_agents_incoming_binding() {
     let project = temp_project("watch-promote-clears-watched-binding");
     let state_dir = project.join("state");
     save_metadata_state(
@@ -985,6 +985,215 @@ fn supervisor_promotion_clears_existing_watched_binding_for_promoted_agent() {
     assert!(registry.pointer("/watchBindings/worker").is_none());
     assert!(registry.pointer("/sessions/boss/watching").is_none());
     assert_eq!(registry["sessions"]["worker"]["role"], "scribe");
+    cleanup(project);
+}
+
+#[test]
+fn promoting_a_watched_coder_keeps_its_own_manager() {
+    // The obvious way to build a tree is to bind a coder to its manager and
+    // then promote it so it can manage others. Promotion used to cut the
+    // incoming edge, so the middle of the tree lost its link upward and only
+    // promote-then-bind worked -- which nothing says.
+    let project = temp_project("promote-keeps-manager");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "middle".into(),
+                    json!({
+                        "role": "coder",
+                        "worktreePath": "/repo/worktrees/middle",
+                        "updatedAt": "2026-09-05T00:00:00.000Z"
+                    }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let bound = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "top",
+            "watchedSessionId": "middle",
+            "active": true
+        })),
+    );
+    assert_eq!(bound.status, 200, "{:?}", bound.body);
+
+    let promoted = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({ "sessionId": "middle", "active": true })),
+    );
+    assert_eq!(promoted.status, 200, "{:?}", promoted.body);
+
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(
+        registry["watchBindings"]["middle"], "top",
+        "promotion dropped the middle's own manager: {registry:?}"
+    );
+    assert_eq!(registry["sessions"]["middle"]["role"], "overseer");
+    cleanup(project);
+}
+
+#[test]
+fn demoting_a_mid_tier_overseer_moves_its_reports_up_to_its_own_manager() {
+    // Cutting the reports loose instead would leave them pointing at an agent
+    // that is no longer an overseer, and `sync_watching_lists` would stamp it
+    // back to one on the next pass -- undoing the demotion that was just
+    // written.
+    let project = temp_project("demote-reparents");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "middle".into(),
+                    json!({
+                        "overseer": true,
+                        "worktreePath": "/repo/worktrees/middle",
+                        "updatedAt": "2026-09-05T00:00:00.000Z"
+                    }),
+                ),
+                (
+                    "leaf".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    for (overseer, watched) in [("top", "middle"), ("middle", "leaf")] {
+        let bound = route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": overseer,
+                "watchedSessionId": watched,
+                "active": true
+            })),
+        );
+        assert_eq!(
+            bound.status, 200,
+            "{overseer} -> {watched}: {:?}",
+            bound.body
+        );
+    }
+
+    let demoted = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({
+            "sessionId": "middle",
+            "active": false,
+            "releaseBindings": true,
+            "worktreePath": "/repo/worktrees/middle"
+        })),
+    );
+    assert_eq!(demoted.status, 200, "{:?}", demoted.body);
+
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(
+        registry["watchBindings"]["leaf"], "top",
+        "the leaf was orphaned rather than moved up: {registry:?}"
+    );
+    assert_eq!(
+        registry["watchBindings"]["middle"], "top",
+        "the demoted agent lost its own manager: {registry:?}"
+    );
+    assert_eq!(registry["sessions"]["middle"]["role"], "coder");
+    cleanup(project);
+}
+
+#[test]
+fn a_round_trip_through_demotion_keeps_the_link_upward() {
+    // Promotion keeping the manager is only half the symmetry. If demotion
+    // still cut it, demote-then-repromote would lose the link upward -- the
+    // same bug in the other direction.
+    let project = temp_project("demote-repromote");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "middle".into(),
+                    json!({
+                        "overseer": true,
+                        "worktreePath": "/repo/worktrees/middle",
+                        "updatedAt": "2026-09-05T00:00:00.000Z"
+                    }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let bound = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "top",
+            "watchedSessionId": "middle",
+            "active": true
+        })),
+    );
+    assert_eq!(bound.status, 200, "{:?}", bound.body);
+
+    let demoted = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({
+            "sessionId": "middle",
+            "active": false,
+            "worktreePath": "/repo/worktrees/middle"
+        })),
+    );
+    assert_eq!(demoted.status, 200, "{:?}", demoted.body);
+
+    let repromoted = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({ "sessionId": "middle", "active": true })),
+    );
+    assert_eq!(repromoted.status, 200, "{:?}", repromoted.body);
+
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(
+        registry["watchBindings"]["middle"], "top",
+        "the round trip lost the link upward: {registry:?}"
+    );
     cleanup(project);
 }
 

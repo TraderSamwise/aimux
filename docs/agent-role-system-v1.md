@@ -329,6 +329,16 @@ If an overseer has active watch bindings, default demotion should fail with a
 409 and list the bindings. The caller can retry with `releaseBindings: true` or
 an explicit transfer plan.
 
+`releaseBindings` does not orphan the reports. They move up to the demoted
+agent's own manager, and the demoted agent keeps that manager too, so it ends
+up a coder alongside the agents that used to report to it. Where there is no
+manager above -- the demoted agent was the top of the tree -- the reports are
+released with nothing to inherit them. Promotion is the mirror of this and
+leaves an agent's own incoming binding alone, so building a tree by binding
+first and promoting second works in either order. The scribe is the exception
+at both ends: it is a project function rather than a report, and promoting a
+session to scribe cuts its incoming binding.
+
 If the demoted process keeps running, the same launch-time caveat applies in
 reverse: metadata can say `coder`, but a process launched with
 `AIMUX_OVERSEER=1` can still self-identify as an overseer until relaunched.
@@ -580,7 +590,7 @@ Implementation should include mutation-proven tests for:
   supervisor relaunch;
 - launch-time env is present after effective promotion and absent after
   effective demotion;
-- demoting overseer with bindings fails unless release/transfer is explicit;
+- demoting overseer with bindings fails unless release/transfer is explicit, and a release reparents the reports to the demoted agent's own manager rather than orphaning them;
 - one watched coder cannot be bound to two overseers;
 - two concurrent bind attempts serialize through the lifecycle mutation queue;
 - stopped overseer preserves bindings and blocks competing overseer claims;
