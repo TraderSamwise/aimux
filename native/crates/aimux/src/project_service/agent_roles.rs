@@ -218,10 +218,7 @@ pub fn set_supervisor_role_with_options(
     // produces -- so the order cannot simply be swapped. What is left is to
     // undo it: keep the record the write replaces, and put it back if the
     // registry never lands.
-    let metadata_before = load_metadata_state(project_state_dir)
-        .sessions
-        .get(session_id)
-        .cloned();
+    let metadata_before: std::cell::RefCell<Option<Value>> = std::cell::RefCell::new(None);
     let metadata_written = std::cell::Cell::new(false);
     mutate_agent_role_registry(project_state_dir, |registry| {
         // Everything that can refuse runs before anything is written.
@@ -247,6 +244,14 @@ pub fn set_supervisor_role_with_options(
             }
         }
 
+        // Read immediately before the write rather than at the top of the
+        // call: anything captured earlier could be overtaken by another
+        // writer, and the undo would then put back a record that was already
+        // stale -- losing their update to repair ours.
+        *metadata_before.borrow_mut() = load_metadata_state(project_state_dir)
+            .sessions
+            .get(session_id)
+            .cloned();
         set_role_metadata_at(project_state_dir, session_id, key, active, now, &options)
             .map_err(|error| format!("{METADATA_UNDER_LOCK}{error}"))?;
         metadata_written.set(true);
@@ -335,7 +340,13 @@ pub fn set_supervisor_role_with_options(
         // swallowed -- that state needs a person, and silence would hide it.
         let rollback = metadata_written
             .get()
-            .then(|| restore_session_metadata(project_state_dir, session_id, metadata_before))
+            .then(|| {
+                restore_session_metadata(
+                    project_state_dir,
+                    session_id,
+                    metadata_before.borrow().clone(),
+                )
+            })
             .and_then(Result::err);
         if let Some(rollback) = rollback {
             return SupervisorRoleError::Metadata(format!(
