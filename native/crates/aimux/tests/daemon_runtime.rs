@@ -2237,8 +2237,10 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
         ]}),
         json!({ "ok": true }),
         json!({ "ok": true, "active": true, "overseerSessionId": "claude-overseer", "watchedSessionId": "codex-1", "watchedSessionIds": ["codex-1"] }),
+        // `watchedBy` is what makes this agent part of the prompt's list now:
+        // the list is what this overseer manages, not every looping agent.
         json!({ "overseerSessionIds": ["claude-overseer"], "agents": [
-            { "id": "codex-1", "tool": "codex", "status": "running", "loop": { "active": true, "goal": "keep going" } },
+            { "id": "codex-1", "tool": "codex", "status": "running", "watchedBy": "claude-overseer", "loop": { "active": true, "goal": "keep going" } },
             { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
         ]}),
         json!({ "ok": true }),
@@ -2288,9 +2290,20 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
         json!({ "tool": "claude", "open": false, "overseer": true })
     );
     assert_request_path(&requests[2], "GET", "/agents");
-    assert_request_path(&requests[3], "POST", "/agents/loop");
+    // The binding comes first: a watch the service refuses must not leave the
+    // agent looping with nobody watching it.
+    assert_request_path(&requests[3], "POST", "/agents/watch");
     assert_eq!(
         request_json_body(&requests[3]),
+        json!({
+            "overseerSessionId": "claude-overseer",
+            "watchedSessionId": "codex-1",
+            "active": true
+        })
+    );
+    assert_request_path(&requests[4], "POST", "/agents/loop");
+    assert_eq!(
+        request_json_body(&requests[4]),
         json!({
             "sessionId": "codex-1",
             "active": true,
@@ -2298,15 +2311,6 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
             "source": "dashboard",
             "updatedBy": "dashboard",
             "goal": "keep going"
-        })
-    );
-    assert_request_path(&requests[4], "POST", "/agents/watch");
-    assert_eq!(
-        request_json_body(&requests[4]),
-        json!({
-            "overseerSessionId": "claude-overseer",
-            "watchedSessionId": "codex-1",
-            "active": true
         })
     );
     assert_request_path(&requests[5], "GET", "/agents");
@@ -2365,6 +2369,79 @@ fn overseer_watch_refuses_missing_agent_before_mutation() {
     let requests = server.join();
     assert_eq!(requests.len(), 1);
     assert_request_path(&requests[0], "GET", "/agents");
+    fixture.cleanup();
+}
+
+#[test]
+fn overseer_watch_does_not_hand_a_manager_to_its_own_descendant() {
+    // The tree is `top -> mid`, and `top` has no manager of its own. Watching
+    // `top` auto-picks from the published overseers, which now includes
+    // `mid` -- a descendant. Handing `top` to `mid` closes a loop, and the
+    // caller would get a cycle refusal naming a chain it never asked about,
+    // for the ordinary act of watching the top of a tree. A fresh overseer is
+    // spawned instead.
+    let fixture = RuntimeFixture::new("overseer-watch-descendant");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let agents = json!({ "overseerSessionIds": ["mid"], "agents": [
+        { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+        { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" }
+    ]});
+    let server = ScriptedHttpServer::spawn(vec![
+        agents.clone(),
+        json!({ "sessionId": "claude-fresh" }),
+        json!({ "overseerSessionIds": ["mid", "claude-fresh"], "agents": [
+            { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+            { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" },
+            { "id": "claude-fresh", "tool": "claude", "status": "idle", "overseer": true }
+        ]}),
+        json!({ "ok": true }),
+        json!({ "ok": true }),
+        json!({ "overseerSessionIds": ["mid", "claude-fresh"], "agents": [
+            { "id": "top", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "claude-fresh", "loop": { "active": true } },
+            { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" },
+            { "id": "claude-fresh", "tool": "claude", "status": "idle", "overseer": true }
+        ]}),
+        json!({ "ok": true }),
+    ]);
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_665));
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
+
+    let result = runtime
+        .overseer_watch(project.to_str().expect("project path"), "top", None, None)
+        .expect("watching the top of a tree is ordinary");
+
+    assert_eq!(
+        result["overseerSessionId"], "claude-fresh",
+        "a descendant was handed its own manager: {result:?}"
+    );
+    // And the prompt names only what this overseer manages.
+    assert_eq!(result["watchedSessionIds"], json!(["top"]));
+
+    let requests = server.join();
+    assert_request_path(&requests[1], "POST", "/agents/spawn");
     fixture.cleanup();
 }
 
@@ -3784,14 +3861,14 @@ fn overseer_watch_chooses_the_first_ready_published_owner_without_replacing_sibl
         assert_eq!(requests.len(), 6);
         assert_request_path(&requests[0], "GET", "/agents");
         assert_request_path(&requests[1], "GET", "/agents");
-        assert_request_path(&requests[2], "POST", "/agents/loop");
-        assert_request_path(&requests[3], "POST", "/agents/watch");
+        assert_request_path(&requests[2], "POST", "/agents/watch");
         assert_eq!(
-            request_json_body(&requests[3]),
+            request_json_body(&requests[2]),
             json!({
                 "overseerSessionId": chosen, "watchedSessionId": "worker", "active": true,
             })
         );
+        assert_request_path(&requests[3], "POST", "/agents/loop");
         assert_request_path(&requests[4], "GET", "/agents");
         assert_request_path(&requests[5], "POST", "/agents/input");
         assert_eq!(request_json_body(&requests[5])["sessionId"], chosen);
@@ -3849,13 +3926,13 @@ fn overseer_watch_repeated_updates_keep_the_existing_second_published_owner() {
     {
         assert_request_path(&requests[0], "GET", "/agents");
         assert_request_path(&requests[1], "GET", "/agents");
-        assert_request_path(&requests[2], "POST", "/agents/loop");
-        assert_eq!(request_json_body(&requests[2])["goal"], goal);
-        assert_request_path(&requests[3], "POST", "/agents/watch");
+        assert_request_path(&requests[2], "POST", "/agents/watch");
         assert_eq!(
-            request_json_body(&requests[3])["overseerSessionId"],
+            request_json_body(&requests[2])["overseerSessionId"],
             "control-b"
         );
+        assert_request_path(&requests[3], "POST", "/agents/loop");
+        assert_eq!(request_json_body(&requests[3])["goal"], goal);
         assert_request_path(&requests[4], "GET", "/agents");
         assert_request_path(&requests[5], "POST", "/agents/input");
         let input = request_json_body(&requests[5]);

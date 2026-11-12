@@ -4249,11 +4249,14 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         } else {
             overseer_ids
                 .iter()
-                // Now that an overseer can be a report, the target may be in
-                // this list itself. Picking it would make an agent its own
-                // manager, which the cycle guard then refuses with a message
-                // about a chain the caller never asked for.
-                .filter(|id| id.as_str() != session_id)
+                // Now that an overseer can be a report, the target's own
+                // descendants are in this list. Handing the target to one of
+                // them closes a loop, and the caller gets a cycle refusal
+                // naming a chain it never asked about -- for the ordinary act
+                // of watching the top of a tree. Skip the target and
+                // everything beneath it; spawning a fresh overseer is the
+                // right answer when nothing else is eligible.
+                .filter(|id| !reports_to(&initial_agents, id, session_id))
                 .find(|id| find_agent(&initial_agents, id).is_some_and(is_agent_input_ready))
                 .cloned()
                 .map(Ok)
@@ -4295,12 +4298,10 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         if let Some(goal) = goal {
             loop_body.insert("goal".to_owned(), Value::String(goal.to_owned()));
         }
-        self.project_service_json(
-            &project_root,
-            project_routes::agents::LOOP,
-            Some(Value::Object(loop_body)),
-            None,
-        )?;
+        // The binding first. Starting the loop first meant that a watch the
+        // service then refused -- which it now can, for a cycle -- left the
+        // agent looping with nobody watching it, and the caller saw only the
+        // refusal.
         self.project_service_json(
             &project_root,
             project_routes::agents::WATCH,
@@ -4311,19 +4312,28 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             })),
             None,
         )?;
+        self.project_service_json(
+            &project_root,
+            project_routes::agents::LOOP,
+            Some(Value::Object(loop_body)),
+            None,
+        )?;
 
         let updated_agents = self.read_project_agents(&project_root)?;
         let updated_target = find_agent(&updated_agents, session_id)
             .cloned()
             .unwrap_or_else(|| target.clone());
-        // The prompt lists what this overseer is responsible for. Filtering
-        // out every project-control session hid exactly the mid-tier
-        // overseers the tree is made of, so a parent was told about its
-        // coders and nothing about the managers under it. Only the scribe is
-        // not a report, and it is already refused above.
+        // The prompt lists what this overseer is responsible for, which is
+        // the agents bound to it -- not every looping agent in the project.
+        // The old project-control filter was hiding that: with overseers
+        // watchable it stopped hiding it, and a mid-tier overseer was handed
+        // a list containing its own manager and other subtrees, under a line
+        // telling it to treat that list as the source of truth.
         let watched = updated_agents
             .iter()
-            .filter(|agent| !is_scribe_agent(agent))
+            .filter(|agent| {
+                trimmed_value_string(agent.get("watchedBy")) == Some(&overseer_session_id)
+            })
             .filter(|agent| agent.pointer("/loop/active").and_then(Value::as_bool) == Some(true))
             .cloned()
             .collect::<Vec<_>>();
@@ -5284,6 +5294,27 @@ fn is_agent_input_ready(agent: &Value) -> bool {
         return can_receive_input;
     }
     matches!(agent_status(agent), Some("running" | "idle" | "waiting"))
+}
+
+/// Whether `candidate` is `ancestor`, or reports to it through any chain of
+/// managers -- read off the `watchedBy` each agent record carries.
+///
+/// Bounded by the number of agents so a registry that already holds a cycle
+/// cannot spin here.
+fn reports_to(agents: &[Value], candidate: &str, ancestor: &str) -> bool {
+    let mut current = candidate;
+    for _ in 0..=agents.len() {
+        if current == ancestor {
+            return true;
+        }
+        let Some(next) = find_agent(agents, current)
+            .and_then(|agent| trimmed_value_string(agent.get("watchedBy")))
+        else {
+            return false;
+        };
+        current = next;
+    }
+    false
 }
 
 fn is_scribe_agent(agent: &Value) -> bool {
@@ -7151,8 +7182,32 @@ mod tests {
 
         // The guard that decides watchability is the scribe test now: an
         // overseer is a legitimate report, so being project control is no
-        // longer what excludes an agent.
+        // longer what excludes an agent. Asserting that on this fixture alone
+        // proves nothing -- it was false under the old rule too -- so the
+        // pair that actually diverged is asserted beside it.
         assert!(!is_scribe_agent(&worker));
+        let overseer = json!({
+            "id": "claude-lead",
+            "status": "idle",
+            "tool": "claude",
+            "overseer": true,
+            "projectControl": true
+        });
+        assert!(
+            !is_scribe_agent(&overseer),
+            "an overseer must be watchable, which is the whole tree"
+        );
+        assert!(crate::team_contract::is_project_control_session(Some(
+            &overseer
+        )));
+        let scribe = json!({
+            "id": "claude-scribe",
+            "status": "idle",
+            "tool": "claude",
+            "scribe": true,
+            "projectControl": true
+        });
+        assert!(is_scribe_agent(&scribe));
         let (agents, published) = overseer_watch_inventory(&json!({
             "agents": [worker], "overseerSessionIds": []
         }))

@@ -1198,6 +1198,161 @@ fn a_round_trip_through_demotion_keeps_the_link_upward() {
 }
 
 #[test]
+fn a_report_that_cannot_be_moved_up_refuses_the_demotion_rather_than_orphaning_it() {
+    // A cycle cannot be created through the route any more, but one written
+    // by a build that had no guard can still be on disk. Reparenting into it
+    // is impossible, and silently skipping the move would leave the report
+    // with no manager at all and no word of it -- its old binding has just
+    // been cleared.
+    let project = temp_project("demote-unplaceable");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "middle".into(),
+                    json!({
+                        "overseer": true,
+                        "worktreePath": "/repo/worktrees/middle",
+                        "updatedAt": "2026-09-05T00:00:00.000Z"
+                    }),
+                ),
+                (
+                    "leaf".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+
+    // Written straight to disk: `top` reports to `leaf` and `leaf` reports to
+    // `middle`, which the route itself would now refuse to assemble.
+    create_dir_all(&state_dir).unwrap();
+    write(
+        state_dir.join("agent-role-registry.json"),
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "sessions": {},
+            "roleSlots": {},
+            "watchBindings": { "middle": "top", "leaf": "middle", "top": "leaf" }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let demoted = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({
+            "sessionId": "middle",
+            "active": false,
+            "releaseBindings": true,
+            "worktreePath": "/repo/worktrees/middle"
+        })),
+    );
+
+    assert_eq!(demoted.status, 409, "{:?}", demoted.body);
+    assert_eq!(demoted.body["reason"], "unplaceable-reports");
+    assert_eq!(demoted.body["details"]["watchedSessionIds"][0], "leaf");
+    // Refused whole: the tree is exactly as it was.
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["watchBindings"]["leaf"], "middle");
+    // And metadata was never written. A refusal that had already demoted the
+    // agent in metadata left the registry saying overseer and metadata saying
+    // coder, which no retry could repair: the registry wins on every surface,
+    // while the metadata-driven overseer list had already dropped the agent,
+    // so its reports pointed at a non-overseer and rebinding was refused.
+    let metadata = load_metadata_state(&state_dir);
+    assert_eq!(
+        metadata
+            .sessions
+            .get("middle")
+            .and_then(|s| s.get("overseer")),
+        Some(&json!(true)),
+        "the refused demotion still wrote metadata: {:?}",
+        metadata.sessions.get("middle")
+    );
+    cleanup(project);
+}
+
+#[test]
+fn handing_a_report_to_a_different_manager_says_so_rather_than_claiming_success() {
+    // Promotion no longer cuts the incoming edge, so a second `watch` for an
+    // already-bound agent is refused -- and releasing it is the documented
+    // way out. Releasing with the WRONG manager named used to remove nothing
+    // and still answer 200, which made the one route to a transfer report
+    // success while leaving the agent exactly where it was.
+    let project = temp_project("watch-transfer");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "other".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let watch = |overseer: &str, watched: &str, active: bool| {
+        route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": overseer,
+                "watchedSessionId": watched,
+                "active": active
+            })),
+        )
+    };
+
+    assert_eq!(watch("top", "worker", true).status, 200);
+
+    // Taking it directly is refused, and names who holds it.
+    let stolen = watch("other", "worker", true);
+    assert_eq!(stolen.status, 409);
+    assert_eq!(stolen.body["reason"], "already-watched");
+
+    // Releasing it under the wrong name is refused too, rather than
+    // answering 200 having done nothing.
+    let wrong_release = watch("other", "worker", false);
+    assert_eq!(wrong_release.status, 409, "{:?}", wrong_release.body);
+    assert_eq!(wrong_release.body["reason"], "already-watched");
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["watchBindings"]["worker"], "top");
+
+    // The real release, then the transfer.
+    assert_eq!(watch("top", "worker", false).status, 200);
+    assert_eq!(watch("other", "worker", true).status, 200);
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["watchBindings"]["worker"], "other");
+    cleanup(project);
+}
+
+#[test]
 fn demoting_watching_overseer_requires_explicit_binding_release() {
     let project = temp_project("watch-demote");
     let state_dir = project.join("state");
@@ -1533,7 +1688,7 @@ fn two_binds_racing_in_opposite_directions_cannot_close_a_loop() {
                 let context =
                     ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
                 barrier.wait();
-                route_project_service_request(
+                let response = route_project_service_request(
                     &context,
                     "POST",
                     routes::agents::WATCH,
@@ -1542,14 +1697,35 @@ fn two_binds_racing_in_opposite_directions_cannot_close_a_loop() {
                         "watchedSessionId": watched,
                         "active": true
                     })),
-                )
-                .status
+                );
+                (response.status, response.body)
             }));
         }
-        let statuses = handles
+        let outcomes = handles
             .into_iter()
             .map(|handle| handle.join().expect("bind thread"))
             .collect::<Vec<_>>();
+
+        // Assert the shape of the refusal, not only the absence of a cycle.
+        // Collecting the statuses and never asserting on them let this pass
+        // when either call fell over on a lock-acquire timeout -- no write,
+        // no cycle, green -- and left the sentinel-to-`watch-cycle` mapping
+        // proved by nothing: a raw sentinel leaking as a 500 looked the same.
+        let mut bound = 0;
+        for (status, body) in &outcomes {
+            match status {
+                200 => bound += 1,
+                409 => assert_eq!(
+                    body["reason"], "watch-cycle",
+                    "attempt {attempt} refused for the wrong reason: {body:?}"
+                ),
+                other => panic!("attempt {attempt} answered {other}: {body:?}"),
+            }
+        }
+        assert_eq!(
+            bound, 1,
+            "attempt {attempt} did not settle on exactly one binding: {outcomes:?}"
+        );
 
         let registry = load_agent_role_registry(&state_dir).expect("role registry");
         let a_reports_to_b =
@@ -1558,14 +1734,14 @@ fn two_binds_racing_in_opposite_directions_cannot_close_a_loop() {
             registry.pointer("/watchBindings/b").and_then(Value::as_str) == Some("a");
         assert!(
             !(a_reports_to_b && b_reports_to_a),
-            "attempt {attempt} stored a cycle; statuses were {statuses:?}"
+            "attempt {attempt} stored a cycle; outcomes were {outcomes:?}"
         );
         cleanup(project);
     }
 }
 
 #[test]
-fn watch_route_refuses_non_coder_watched_agent() {
+fn watch_route_refuses_the_scribe_as_a_report() {
     let project = temp_project("watch-refuse-non-coder");
     let state_dir = project.join("state");
     save_metadata_state(

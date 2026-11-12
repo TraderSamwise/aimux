@@ -308,6 +308,8 @@ fn registry_references_target(value: &Value, target_session_id: &str) -> bool {
 }
 
 fn remove_target_registry(value: &mut Value, target_session_id: &str) -> bool {
+    let mut inherited: Vec<String> = Vec::new();
+    let mut inherited_manager: Option<String> = None;
     let mut changed = value
         .get_mut("sessions")
         .and_then(Value::as_object_mut)
@@ -316,11 +318,36 @@ fn remove_target_registry(value: &mut Value, target_session_id: &str) -> bool {
         .get_mut("watchBindings")
         .and_then(Value::as_object_mut)
     {
-        let before = bindings.len();
+        // The dead agent's reports move up to its own manager, the same way
+        // a deliberate demotion moves them. Dropping them instead left a
+        // whole subtree with no manager the moment a mid-tier overseer died,
+        // which is the state the demotion path exists to avoid -- and a
+        // death is the case where nobody is watching to notice.
+        //
+        // With no manager above, there is nothing to inherit them and they
+        // are released, as before.
+        let manager = bindings
+            .get(target_session_id)
+            .and_then(Value::as_str)
+            .filter(|manager| *manager != target_session_id)
+            .map(str::to_owned);
+        let before = bindings.clone();
         bindings.retain(|watched, overseer| {
             watched != target_session_id && overseer.as_str() != Some(target_session_id)
         });
-        changed |= before != bindings.len();
+        if let Some(manager) = manager.as_deref() {
+            for (watched, overseer) in &before {
+                if watched == target_session_id || watched == manager {
+                    continue;
+                }
+                if overseer.as_str() == Some(target_session_id) {
+                    bindings.insert(watched.clone(), Value::String(manager.to_owned()));
+                    inherited.push(watched.clone());
+                }
+            }
+        }
+        changed |= before != *bindings;
+        inherited_manager = manager;
     }
     if let Some(slots) = value.get_mut("roleSlots").and_then(Value::as_object_mut) {
         let before = slots.len();
@@ -333,6 +360,34 @@ fn remove_target_registry(value: &mut Value, target_session_id: &str) -> bool {
                 let before = ids.len();
                 ids.retain(|id| id.as_str() != Some(target_session_id));
                 changed |= before != ids.len();
+            }
+        }
+        // `watching` mirrors the bindings, so a report that just changed
+        // hands has to appear on its new manager's list. Retaining ids one by
+        // one can only remove, never add, which would have left the two
+        // halves of the registry disagreeing about the same relationship.
+        if let Some(manager) = inherited_manager.as_deref()
+            && !inherited.is_empty()
+            && let Some(entry) = sessions.get_mut(manager).and_then(Value::as_object_mut)
+        {
+            let ids = entry
+                .entry("watching".to_owned())
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Some(ids) = ids.as_array_mut() {
+                for id in inherited {
+                    if !ids
+                        .iter()
+                        .any(|existing| existing.as_str() == Some(id.as_str()))
+                    {
+                        ids.push(Value::String(id));
+                        changed = true;
+                    }
+                }
+                ids.sort_by(|left, right| {
+                    left.as_str()
+                        .unwrap_or("")
+                        .cmp(right.as_str().unwrap_or(""))
+                });
             }
         }
     }
@@ -424,13 +479,18 @@ mod tests {
         assert_eq!(metadata["sessions"], json!({"source":source}));
         assert_eq!(metadata["futureField"], json!({"keep":true}));
         let registry = state.read_json("agent-role-registry.json");
+        // `third` reported to the removed agent and is inherited by its
+        // manager rather than orphaned, so it joins `source`'s list.
         assert_eq!(
             registry["sessions"]["source"],
-            json!({"role":"overseer","watching":["other"],"custom":"preserve"})
+            json!({"role":"overseer","watching":["other","third"],"custom":"preserve"})
         );
         assert_eq!(registry["sessions"]["other"], json!({"role":"coder"}));
         assert!(registry["sessions"].get("target").is_none());
-        assert_eq!(registry["watchBindings"], json!({"other":"source"}));
+        assert_eq!(
+            registry["watchBindings"],
+            json!({"other":"source","third":"source"})
+        );
         assert_eq!(
             registry["roleSlots"],
             json!({"keep":{"sessionId":"source","extra":1}})

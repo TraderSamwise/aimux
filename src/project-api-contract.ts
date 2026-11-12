@@ -1660,6 +1660,7 @@ export type AgentRoleMutationRefusalReason =
   | "unsupported-role"
   | "target-worktree-required"
   | "active-watch-bindings"
+  | "unplaceable-reports"
   | "metadata-unavailable"
   | "role-registry-unavailable";
 

@@ -44,7 +44,8 @@ compatibility rules.
 ## Non-Goals For v1
 
 - Multiple overseers watching the same coder.
-- Overseers watching non-coder roles.
+- Overseers watching the scribe, or any other project-control session
+  that is not itself an overseer.
 - Cross-project supervisor identities.
 - Moving a running process's current working directory as part of a metadata
   migration.
@@ -280,7 +281,10 @@ cannot change inside an already-running process.
 1. Caller asks project service to set `role: "overseer"` and lane
    `{ kind: "supervisor" }`.
 2. Service verifies the source session is currently a coder.
-3. Service removes incompatible coder-only bindings from the source session.
+3. Service leaves the source session's own incoming binding alone, so a
+   coder promoted to overseer keeps the manager it already had.
+   Promotion to scribe still removes it, because a scribe is not a
+   report.
 4. Service creates or attaches a supervisor role slot.
 5. Service writes the role registry under one mutation lock.
 6. Service updates metadata/topology projections.
@@ -371,7 +375,12 @@ Invariant:
 
 - `watchedSessionId` is unique across the graph.
 - The watcher role must be `overseer`.
-- The watched role must be `coder` in v1.
+- The watched role may be `coder` or `overseer`: an overseer is the
+  manager class at every level above the leaf, so it is a legal report
+  of the overseer above it. The scribe is not a report and is refused.
+- A binding must not close a chain. The service walks upward from the
+  proposed manager before writing, inside the registry lock, so two
+  binds racing in opposite directions cannot each pass a stale read.
 - The service must prove both sessions exist in readable topology/metadata
   before creating or acting on a binding.
 - Could-not-read topology is not "unbound" and not "session absent".

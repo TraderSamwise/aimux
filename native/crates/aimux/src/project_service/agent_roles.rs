@@ -92,6 +92,10 @@ pub enum SupervisorRoleError {
         overseer_session_id: String,
         watched_session_ids: Vec<String>,
     },
+    UnplaceableReports {
+        overseer_session_id: String,
+        watched_session_ids: Vec<String>,
+    },
     Metadata(String),
     Registry(String),
 }
@@ -100,7 +104,7 @@ impl SupervisorRoleError {
     pub fn status(&self) -> u16 {
         match self {
             Self::UnsupportedRole(_) | Self::TargetWorktreeRequired { .. } => 400,
-            Self::ActiveWatchBindings { .. } => 409,
+            Self::ActiveWatchBindings { .. } | Self::UnplaceableReports { .. } => 409,
             Self::Metadata(_) | Self::Registry(_) => 500,
         }
     }
@@ -119,6 +123,15 @@ impl SupervisorRoleError {
                 watched_session_ids.len(),
                 watched_session_ids.join(", ")
             ),
+            Self::UnplaceableReports {
+                overseer_session_id,
+                watched_session_ids,
+            } => format!(
+                "cannot release {} agent(s) from {overseer_session_id}: the role registry already \
+                 holds a watch cycle above them, so there is nowhere to move them to ({})",
+                watched_session_ids.len(),
+                watched_session_ids.join(", ")
+            ),
             Self::Metadata(error) | Self::Registry(error) => error.clone(),
         }
     }
@@ -128,6 +141,7 @@ impl SupervisorRoleError {
             Self::UnsupportedRole(_) => "unsupported-role",
             Self::TargetWorktreeRequired { .. } => "target-worktree-required",
             Self::ActiveWatchBindings { .. } => "active-watch-bindings",
+            Self::UnplaceableReports { .. } => "unplaceable-reports",
             Self::Metadata(_) => "metadata-unavailable",
             Self::Registry(_) => "role-registry-unavailable",
         }
@@ -142,6 +156,10 @@ impl SupervisorRoleError {
                 "hint": "retry the demotion with a worktreePath, or let the project service derive it from session metadata"
             }),
             Self::ActiveWatchBindings {
+                overseer_session_id,
+                watched_session_ids,
+            }
+            | Self::UnplaceableReports {
                 overseer_session_id,
                 watched_session_ids,
             } => json!({
@@ -186,11 +204,38 @@ pub fn set_supervisor_role_with_options(
             session_id: session_id.to_owned(),
         });
     }
-    set_role_metadata_at(project_state_dir, session_id, key, active, now, &options)
-        .map_err(SupervisorRoleError::Metadata)?;
-    let updated_metadata_state = load_metadata_state(project_state_dir);
-    let updated_session = updated_metadata_state.sessions.get(session_id);
+    // What the mutator saw under the lock, carried back out: its only error
+    // channel is a `String`, and rebuilding the list from the snapshot loaded
+    // before the lock reported an empty one in the very case that raises it.
+    let blocked_reports: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
     mutate_agent_role_registry(project_state_dir, |registry| {
+        // Everything that can refuse runs before anything is written.
+        //
+        // The metadata write used to happen out here, ahead of the lock, back
+        // when the only refusal was the pre-check above it. The refusals this
+        // function now makes under the lock turned that order into a trap: a
+        // 409 left metadata saying `coder` while the registry still said
+        // `overseer`, the registry wins on every surface, and
+        // `overseer_session_ids` -- which reads metadata -- had already
+        // dropped the agent. Its reports then pointed at a non-overseer and
+        // `bind_watch` refused to repair it, so every retry failed the same
+        // way. Nothing rolled it back because nothing could.
+        let demotion = (!active).then(|| DemotionPlan::read(registry, session_id));
+        if let Some(plan) = demotion.as_ref() {
+            if !plan.reports.is_empty() && !options.release_bindings {
+                *blocked_reports.borrow_mut() = plan.reports.clone();
+                return Err(ACTIVE_WATCH_BINDINGS_UNDER_LOCK.to_owned());
+            }
+            if let Some(unplaceable) = plan.unplaceable(registry) {
+                *blocked_reports.borrow_mut() = unplaceable;
+                return Err(UNPLACEABLE_REPORTS_UNDER_LOCK.to_owned());
+            }
+        }
+
+        set_role_metadata_at(project_state_dir, session_id, key, active, now, &options)
+            .map_err(|error| format!("{METADATA_UNDER_LOCK}{error}"))?;
+        let updated_metadata_state = load_metadata_state(project_state_dir);
+        let updated_session = updated_metadata_state.sessions.get(session_id);
         {
             let sessions = object_field_mut(registry, "sessions");
             let entry = object_field_mut(
@@ -246,29 +291,7 @@ pub fn set_supervisor_role_with_options(
             if key != "overseer" {
                 clear_watch_binding_for_watched(registry, session_id);
             }
-        } else {
-            // The reports of a demoted overseer move up to its own manager
-            // rather than being cut loose. Left pointing at a non-overseer
-            // they would be re-stamped `role: overseer` by
-            // `sync_watching_lists` on the next pass, quietly undoing the
-            // demotion that was just written.
-            //
-            // Asked again here, under the lock: the `ActiveWatchBindings`
-            // refusal above read a snapshot taken before it, so a bind
-            // arriving in between would slip a report past the check.
-            let reports = watched_by(registry, session_id);
-            if !reports.is_empty() && !options.release_bindings {
-                return Err(format!(
-                    "{ACTIVE_WATCH_BINDINGS_UNDER_LOCK}{}",
-                    reports.join(",")
-                ));
-            }
-            let grandparent = registry
-                .get("watchBindings")
-                .and_then(Value::as_object)
-                .and_then(|bindings| bindings.get(session_id))
-                .and_then(Value::as_str)
-                .map(str::to_owned);
+        } else if let Some(plan) = demotion {
             // Only the outgoing edges go. The demoted agent keeps its own
             // manager for the same reason a promoted one does: cutting it
             // here would lose the link upward on demote-then-repromote,
@@ -276,14 +299,8 @@ pub fn set_supervisor_role_with_options(
             // way. It becomes a coder under the manager it already had, and
             // its former reports become its siblings.
             clear_watch_bindings_for_overseer(registry, session_id);
-            if let Some(grandparent) = grandparent {
-                for report in reports {
-                    // A grandparent is strictly above the subtree, so this
-                    // cannot close a loop -- unless the registry was already
-                    // cyclic, written by a build that had no guard at all.
-                    if watch_chain_reaches(registry, &grandparent, &report) {
-                        continue;
-                    }
+            if let Some(grandparent) = plan.grandparent {
+                for report in plan.reports {
                     object_field_mut(registry, "watchBindings")
                         .insert(report, Value::String(grandparent.clone()));
                 }
@@ -293,14 +310,17 @@ pub fn set_supervisor_role_with_options(
         Ok(true)
     })
     .map_err(|error| {
-        if let Some(blocked) = error.strip_prefix(ACTIVE_WATCH_BINDINGS_UNDER_LOCK) {
+        if let Some(metadata) = error.strip_prefix(METADATA_UNDER_LOCK) {
+            SupervisorRoleError::Metadata(metadata.to_owned())
+        } else if error == ACTIVE_WATCH_BINDINGS_UNDER_LOCK {
             SupervisorRoleError::ActiveWatchBindings {
                 overseer_session_id: session_id.to_owned(),
-                watched_session_ids: blocked
-                    .split(',')
-                    .filter(|id| !id.is_empty())
-                    .map(str::to_owned)
-                    .collect(),
+                watched_session_ids: blocked_reports.borrow().clone(),
+            }
+        } else if error == UNPLACEABLE_REPORTS_UNDER_LOCK {
+            SupervisorRoleError::UnplaceableReports {
+                overseer_session_id: session_id.to_owned(),
+                watched_session_ids: blocked_reports.borrow().clone(),
             }
         } else {
             SupervisorRoleError::Registry(error)
@@ -482,6 +502,27 @@ pub fn bind_watch(
     let project_state_dir = project_state_dir.as_ref();
     let registry =
         load_agent_role_registry(project_state_dir).map_err(WatchBindingError::Registry)?;
+    // Releasing a binding that names a different manager is not a release.
+    // It used to fall through, remove nothing, and still answer 200 -- so the
+    // one documented way out of `already-watched` reported success and left
+    // the agent exactly where it was. Now that promotion no longer cuts the
+    // incoming edge, that escape hatch is the only route to a transfer, and
+    // a lie there strands the caller.
+    if !active {
+        let current = registry
+            .get("watchBindings")
+            .and_then(Value::as_object)
+            .and_then(|bindings| bindings.get(watched_session_id))
+            .and_then(Value::as_str);
+        if let Some(current) = current
+            && current != overseer_session_id
+        {
+            return Err(WatchBindingError::AlreadyWatched {
+                watched_session_id: watched_session_id.to_owned(),
+                overseer_session_id: current.to_owned(),
+            });
+        }
+    }
     if !active
         && registry
             .get("watchBindings")
@@ -773,7 +814,55 @@ fn sync_watching_lists(registry: &mut Value) {
 /// where the only error channel is a `String`. The ids that blocked the
 /// demotion follow the prefix, because the caller's own snapshot predates
 /// the lock and would report an empty list.
-const ACTIVE_WATCH_BINDINGS_UNDER_LOCK: &str = "active-watch-bindings-under-lock:";
+const ACTIVE_WATCH_BINDINGS_UNDER_LOCK: &str = "active-watch-bindings-under-lock";
+
+/// Raised when a released report cannot be moved up because the registry
+/// already holds a cycle. The ids travel in the same cell.
+const UNPLACEABLE_REPORTS_UNDER_LOCK: &str = "unplaceable-reports-under-lock";
+
+/// A metadata failure raised from inside the mutator, kept distinct from a
+/// registry failure so the caller still reports which half could not be
+/// written.
+const METADATA_UNDER_LOCK: &str = "metadata-under-lock:";
+
+/// What a demotion needs to know before it writes anything: the reports that
+/// must be placed somewhere, and the manager they would be placed under.
+///
+/// Read once, under the lock, and used to answer every refusal before the
+/// first write -- which is the whole point of it being a separate step.
+struct DemotionPlan {
+    reports: Vec<String>,
+    grandparent: Option<String>,
+}
+
+impl DemotionPlan {
+    fn read(registry: &Value, session_id: &str) -> Self {
+        Self {
+            reports: watched_by(registry, session_id),
+            grandparent: registry
+                .get("watchBindings")
+                .and_then(Value::as_object)
+                .and_then(|bindings| bindings.get(session_id))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        }
+    }
+
+    /// The reports that cannot be moved up, which is only possible when the
+    /// registry already holds a cycle above them -- written by a build with no
+    /// guard at all. Skipping those moves would leave each report with no
+    /// manager and no word of it, so the demotion is refused whole instead.
+    fn unplaceable(&self, registry: &Value) -> Option<Vec<String>> {
+        let grandparent = self.grandparent.as_deref()?;
+        let blocked = self
+            .reports
+            .iter()
+            .filter(|report| watch_chain_reaches(registry, grandparent, report))
+            .cloned()
+            .collect::<Vec<_>>();
+        (!blocked.is_empty()).then_some(blocked)
+    }
+}
 
 /// The cycle refusal, raised from inside the registry mutator where the only
 /// error channel is a `String`. Mapped straight back to `WatchCycle` by the

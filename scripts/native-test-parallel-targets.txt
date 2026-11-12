@@ -111,7 +111,6 @@ plugin_tick_tasks
 process_inspector
 project_api_contract
 project_liveness_surfaces
-project_service_agent_controls
 project_service_agent_output
 project_service_attachments
 project_service_desktop_alerts

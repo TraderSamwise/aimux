@@ -62,10 +62,6 @@ export default function LoopsScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const entries = useMemo(() => flattenSessions(groups), [groups]);
-  const overseerIds = useMemo(
-    () => new Set(state?.overseerSessionIds ?? []),
-    [state?.overseerSessionIds],
-  );
   const overseers = useMemo(() => {
     const sessions = new Map(state?.sessions.map((session) => [session.id, session]));
     return (state?.overseerSessionIds ?? []).flatMap((id, order) => {
@@ -73,15 +69,19 @@ export default function LoopsScreen() {
       return session ? [{ session, order }] : [];
     });
   }, [state?.overseerSessionIds, state?.sessions]);
+  // An overseer is a legitimate report of another overseer, so being one is
+  // no longer a reason to be left out of any of these three lists. Excluding
+  // them here meant the app could not show a mid-tier overseer as watched,
+  // and could not offer one as either end of a new binding -- the recursive
+  // tree was unreachable from the GUI entirely. Only the scribe stays out: it
+  // is a project function rather than anybody's report, and the service
+  // refuses to bind it.
   const watched = useMemo(
     () =>
       entries.filter(
-        (entry) =>
-          entry.session.loop?.active === true &&
-          !overseerIds.has(entry.session.id) &&
-          entry.session.scribe !== true,
+        (entry) => entry.session.loop?.active === true && entry.session.scribe !== true,
       ),
-    [entries, overseerIds],
+    [entries],
   );
   const stateErrorCopy = stateError ? projectStateErrorCopy(stateError) : null;
   const activeCandidates = useMemo(
@@ -91,22 +91,16 @@ export default function LoopsScreen() {
   const watchCandidates = useMemo(
     () =>
       activeCandidates.filter(
-        (entry) =>
-          !overseerIds.has(entry.session.id) &&
-          entry.session.scribe !== true &&
-          entry.session.loop?.active !== true,
+        (entry) => entry.session.scribe !== true && entry.session.loop?.active !== true,
       ),
-    [activeCandidates, overseerIds],
+    [activeCandidates],
   );
   const overseerCandidates = useMemo(
     () =>
       activeCandidates.filter(
-        (entry) =>
-          !overseerIds.has(entry.session.id) &&
-          entry.session.scribe !== true &&
-          entry.session.loop?.active !== true,
+        (entry) => entry.session.scribe !== true && entry.session.loop?.active !== true,
       ),
-    [activeCandidates, overseerIds],
+    [activeCandidates],
   );
   const canMutate = Boolean(endpoint) && !busyAction;
   const defaultDemotionWorktreePath = useMemo(
