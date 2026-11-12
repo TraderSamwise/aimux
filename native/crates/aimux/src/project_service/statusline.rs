@@ -27,6 +27,7 @@ use super::desktop_state::{
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
+use crate::team_contract::manager_session_id;
 
 const STATUSLINE_STALE_MS: u128 = 8_000;
 const STATUSLINE_REFRESH_STATE_FILE: &str = "statusline-refresh.json";
@@ -1222,15 +1223,12 @@ fn resolve_focused_teammate_group<'a>(
     let Some(focused) = resolve_focused_teammate(snapshot, project_root, options) else {
         return Vec::new();
     };
-    let Some(parent_session_id) = string_field_from_path(focused, &["team", "parentSessionId"])
-    else {
+    let Some(parent_session_id) = manager_session_id(focused) else {
         return Vec::new();
     };
     let mut teammates = statusline_session_group(snapshot, "teammates")
         .into_iter()
-        .filter(|session| {
-            string_field_from_path(session, &["team", "parentSessionId"]) == Some(parent_session_id)
-        })
+        .filter(|session| manager_session_id(session) == Some(parent_session_id))
         .filter(|session| is_live_footer_session(session))
         .collect::<Vec<_>>();
     teammates.sort_by(compare_teammate_sessions);
@@ -1252,14 +1250,12 @@ fn resolve_current_teammates<'a>(
     else {
         return Vec::new();
     };
-    if string_field_from_path(parent_session, &["team", "parentSessionId"]).is_some() {
+    if manager_session_id(parent_session).is_some() {
         return Vec::new();
     }
     let mut teammates = statusline_session_group(snapshot, "teammates")
         .into_iter()
-        .filter(|session| {
-            string_field_from_path(session, &["team", "parentSessionId"]) == Some(parent_session_id)
-        })
+        .filter(|session| manager_session_id(session) == Some(parent_session_id))
         .filter(|session| is_live_footer_session(session))
         .collect::<Vec<_>>();
     teammates.sort_by(compare_teammate_sessions);
@@ -1999,6 +1995,60 @@ mod tests {
         assert!(!rendered.contains("other"));
         assert!(rendered.find("claude(coder)").unwrap() < rendered.find("shell[svc]").unwrap());
         assert!(rendered.find("shell[svc]").unwrap() < rendered.find("team:").unwrap());
+    }
+
+    #[test]
+    fn a_blank_stored_parent_does_not_make_an_agent_somebody_else_s_report() {
+        // `supervisor_team(role)` seeds `"parentSessionId": ""`, and this file
+        // used to read that path without trimming: the blank arrived as
+        // `Some("")`, the parent counted as its own teammate, and its team
+        // footer was dropped. Every other reader in the tree already treated
+        // blank as absent.
+        let snapshot = json!({
+            "sessions": [
+                {
+                    "id": "parent",
+                    "kind": "agent",
+                    "tool": "claude",
+                    "role": "coder",
+                    "team": { "teamId": "coder", "role": "coder", "parentSessionId": "" },
+                    "windowName": "claude",
+                    "tmuxWindowId": "@1",
+                    "worktreePath": "/repo",
+                    "status": "running"
+                }
+            ],
+            "teammates": [
+                {
+                    "id": "reviewer",
+                    "kind": "agent",
+                    "tool": "codex",
+                    "role": "reviewer",
+                    "label": "review",
+                    "windowName": "codex",
+                    "tmuxWindowId": "@9",
+                    "worktreePath": "/repo",
+                    "status": "running",
+                    "team": { "teamId": "team-1", "parentSessionId": "parent", "role": "reviewer", "label": "review", "order": 1 }
+                }
+            ]
+        });
+
+        let rendered = render_bottom_line(
+            &snapshot,
+            "/repo",
+            RenderOptions {
+                current_window: Some("claude"),
+                current_window_id: Some("@1"),
+                current_path: Some("/repo"),
+                ..RenderOptions::default()
+            },
+        );
+
+        assert!(
+            rendered.contains("team: review running"),
+            "rendered was {rendered:?}"
+        );
     }
 
     #[test]

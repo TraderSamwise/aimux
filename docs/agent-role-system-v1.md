@@ -44,7 +44,8 @@ compatibility rules.
 ## Non-Goals For v1
 
 - Multiple overseers watching the same coder.
-- Overseers watching non-coder roles.
+- Overseers watching the scribe, or any other project-control session
+  that is not itself an overseer.
 - Cross-project supervisor identities.
 - Moving a running process's current working directory as part of a metadata
   migration.
@@ -280,7 +281,10 @@ cannot change inside an already-running process.
 1. Caller asks project service to set `role: "overseer"` and lane
    `{ kind: "supervisor" }`.
 2. Service verifies the source session is currently a coder.
-3. Service removes incompatible coder-only bindings from the source session.
+3. Service leaves the source session's own incoming binding alone, so a
+   coder promoted to overseer keeps the manager it already had.
+   Promotion to scribe still removes it, because a scribe is not a
+   report.
 4. Service creates or attaches a supervisor role slot.
 5. Service writes the role registry under one mutation lock.
 6. Service updates metadata/topology projections.
@@ -329,6 +333,22 @@ If an overseer has active watch bindings, default demotion should fail with a
 409 and list the bindings. The caller can retry with `releaseBindings: true` or
 an explicit transfer plan.
 
+Promoting a session to scribe is refused while it still has reports, for the
+same reason: a scribe is a project function, not a manager, and leaving its
+outgoing bindings in place would have the registry hand it reports while
+metadata called it a scribe. Release them first, or demote it with
+`releaseBindings` so they move up to its own manager, and then promote.
+
+`releaseBindings` does not orphan the reports. They move up to the demoted
+agent's own manager, and the demoted agent keeps that manager too, so it ends
+up a coder alongside the agents that used to report to it. Where there is no
+manager above -- the demoted agent was the top of the tree -- the reports are
+released with nothing to inherit them. Promotion is the mirror of this and
+leaves an agent's own incoming binding alone, so building a tree by binding
+first and promoting second works in either order. The scribe is the exception
+at both ends: it is a project function rather than a report, and promoting a
+session to scribe cuts its incoming binding.
+
 If the demoted process keeps running, the same launch-time caveat applies in
 reverse: metadata can say `coder`, but a process launched with
 `AIMUX_OVERSEER=1` can still self-identify as an overseer until relaunched.
@@ -361,7 +381,12 @@ Invariant:
 
 - `watchedSessionId` is unique across the graph.
 - The watcher role must be `overseer`.
-- The watched role must be `coder` in v1.
+- The watched role may be `coder` or `overseer`: an overseer is the
+  manager class at every level above the leaf, so it is a legal report
+  of the overseer above it. The scribe is not a report and is refused.
+- A binding must not close a chain. The service walks upward from the
+  proposed manager before writing, inside the registry lock, so two
+  binds racing in opposite directions cannot each pass a stale read.
 - The service must prove both sessions exist in readable topology/metadata
   before creating or acting on a binding.
 - Could-not-read topology is not "unbound" and not "session absent".
@@ -580,7 +605,7 @@ Implementation should include mutation-proven tests for:
   supervisor relaunch;
 - launch-time env is present after effective promotion and absent after
   effective demotion;
-- demoting overseer with bindings fails unless release/transfer is explicit;
+- demoting overseer with bindings fails unless release/transfer is explicit, and a release reparents the reports to the demoted agent's own manager rather than orphaning them;
 - one watched coder cannot be bound to two overseers;
 - two concurrent bind attempts serialize through the lifecycle mutation queue;
 - stopped overseer preserves bindings and blocks competing overseer claims;

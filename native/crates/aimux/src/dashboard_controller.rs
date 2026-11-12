@@ -4233,7 +4233,7 @@ pub fn is_teammate_session(session: &DashboardSession) -> bool {
     session
         .team
         .as_ref()
-        .is_some_and(|team| !team.parent_session_id.is_empty())
+        .is_some_and(|team| team.manager_session_id().is_some())
 }
 
 pub fn sorted_teammates_for_parent<'a>(
@@ -4247,7 +4247,7 @@ pub fn sorted_teammates_for_parent<'a>(
             session
                 .team
                 .as_ref()
-                .is_some_and(|team| team.parent_session_id == parent_session_id)
+                .is_some_and(|team| team.manager_session_id() == Some(parent_session_id))
         })
         .collect::<Vec<_>>();
     // Teammate rows render in the same tmux screen as the footer chips, so

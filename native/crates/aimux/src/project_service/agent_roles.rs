@@ -4,7 +4,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::atomic_write::write_json_atomic;
-use crate::daemon_state::{MetadataState, load_metadata_state};
+use crate::daemon_state::{
+    MetadataState, load_metadata_state, metadata_state_path, save_metadata_state,
+    try_load_metadata_state,
+};
 use crate::state_update_lock::acquire_state_update_lock;
 use crate::team_contract::{agent_lane, agent_role, agent_role_state};
 
@@ -92,6 +95,10 @@ pub enum SupervisorRoleError {
         overseer_session_id: String,
         watched_session_ids: Vec<String>,
     },
+    UnplaceableReports {
+        overseer_session_id: String,
+        watched_session_ids: Vec<String>,
+    },
     Metadata(String),
     Registry(String),
 }
@@ -100,7 +107,7 @@ impl SupervisorRoleError {
     pub fn status(&self) -> u16 {
         match self {
             Self::UnsupportedRole(_) | Self::TargetWorktreeRequired { .. } => 400,
-            Self::ActiveWatchBindings { .. } => 409,
+            Self::ActiveWatchBindings { .. } | Self::UnplaceableReports { .. } => 409,
             Self::Metadata(_) | Self::Registry(_) => 500,
         }
     }
@@ -119,6 +126,15 @@ impl SupervisorRoleError {
                 watched_session_ids.len(),
                 watched_session_ids.join(", ")
             ),
+            Self::UnplaceableReports {
+                overseer_session_id,
+                watched_session_ids,
+            } => format!(
+                "cannot release {} agent(s) from {overseer_session_id}: the role registry already \
+                 holds a watch cycle above them, so there is nowhere to move them to ({})",
+                watched_session_ids.len(),
+                watched_session_ids.join(", ")
+            ),
             Self::Metadata(error) | Self::Registry(error) => error.clone(),
         }
     }
@@ -128,6 +144,7 @@ impl SupervisorRoleError {
             Self::UnsupportedRole(_) => "unsupported-role",
             Self::TargetWorktreeRequired { .. } => "target-worktree-required",
             Self::ActiveWatchBindings { .. } => "active-watch-bindings",
+            Self::UnplaceableReports { .. } => "unplaceable-reports",
             Self::Metadata(_) => "metadata-unavailable",
             Self::Registry(_) => "role-registry-unavailable",
         }
@@ -142,6 +159,10 @@ impl SupervisorRoleError {
                 "hint": "retry the demotion with a worktreePath, or let the project service derive it from session metadata"
             }),
             Self::ActiveWatchBindings {
+                overseer_session_id,
+                watched_session_ids,
+            }
+            | Self::UnplaceableReports {
                 overseer_session_id,
                 watched_session_ids,
             } => json!({
@@ -186,11 +207,76 @@ pub fn set_supervisor_role_with_options(
             session_id: session_id.to_owned(),
         });
     }
-    set_role_metadata_at(project_state_dir, session_id, key, active, now, &options)
-        .map_err(SupervisorRoleError::Metadata)?;
-    let updated_metadata_state = load_metadata_state(project_state_dir);
-    let updated_session = updated_metadata_state.sessions.get(session_id);
+    // What the mutator saw under the lock, carried back out: its only error
+    // channel is a `String`, and rebuilding the list from the snapshot loaded
+    // before the lock reported an empty one in the very case that raises it.
+    let blocked_reports: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+    // The registry commit happens after the mutator returns, so a metadata
+    // write inside it is already on disk when that commit fails. The two
+    // files cannot be written atomically, and the registry mutation needs
+    // the post-write metadata -- `sync_migration_fields` copies
+    // `effectiveLane` and `runtimeWorkingDirectory`, which this very write
+    // produces -- so the order cannot simply be swapped. What is left is to
+    // undo it: keep the record the write replaces, and put it back if the
+    // registry never lands.
+    let metadata_before: std::cell::RefCell<Option<Value>> = std::cell::RefCell::new(None);
+    let metadata_written = std::cell::Cell::new(false);
     mutate_agent_role_registry(project_state_dir, |registry| {
+        // Everything that can refuse runs before anything is written.
+        //
+        // The metadata write used to happen out here, ahead of the lock, back
+        // when the only refusal was the pre-check above it. The refusals this
+        // function now makes under the lock turned that order into a trap: a
+        // 409 left metadata saying `coder` while the registry still said
+        // `overseer`, the registry wins on every surface, and
+        // `overseer_session_ids` -- which reads metadata -- had already
+        // dropped the agent. Its reports then pointed at a non-overseer and
+        // `bind_watch` refused to repair it, so every retry failed the same
+        // way. Nothing rolled it back because nothing could.
+        // A scribe is not a manager either, so promoting one that still has
+        // reports would leave `sync_watching_lists` stamping it back to
+        // `role: overseer` on the strength of them -- metadata saying scribe
+        // while the registry still handed it reports. Asked here, with the
+        // demotion checks, so it precedes the metadata write rather than
+        // leaning on the rollback to undo one.
+        if active && key != "overseer" {
+            let reports = watched_by(registry, session_id);
+            if !reports.is_empty() {
+                *blocked_reports.borrow_mut() = reports;
+                return Err(ACTIVE_WATCH_BINDINGS_UNDER_LOCK.to_owned());
+            }
+        }
+        let demotion = (!active).then(|| DemotionPlan::read(registry, session_id));
+        if let Some(plan) = demotion.as_ref() {
+            if !plan.reports.is_empty() && !options.release_bindings {
+                *blocked_reports.borrow_mut() = plan.reports.clone();
+                return Err(ACTIVE_WATCH_BINDINGS_UNDER_LOCK.to_owned());
+            }
+            if let Some(unplaceable) = plan.unplaceable(registry) {
+                *blocked_reports.borrow_mut() = unplaceable;
+                return Err(UNPLACEABLE_REPORTS_UNDER_LOCK.to_owned());
+            }
+        }
+
+        // Read immediately before the write rather than at the top of the
+        // call: anything captured earlier could be overtaken by another
+        // writer, and the undo would then put back a record that was already
+        // stale -- losing their update to repair ours.
+        *metadata_before.borrow_mut() = load_metadata_state(project_state_dir)
+            .sessions
+            .get(session_id)
+            .cloned();
+        // `update_session_metadata_at` returns early without writing when the
+        // payload is unchanged -- re-pressing Set on an agent that is already
+        // an overseer is exactly that. Undoing a write that never happened
+        // would restore a snapshot over whatever the loop watcher, the status
+        // writer or input delivery committed for this session in between,
+        // which is data loss rather than repair.
+        let wrote = set_role_metadata_at(project_state_dir, session_id, key, active, now, &options)
+            .map_err(|error| format!("{METADATA_UNDER_LOCK}{error}"))?;
+        metadata_written.set(wrote);
+        let updated_metadata_state = load_metadata_state(project_state_dir);
+        let updated_session = updated_metadata_state.sessions.get(session_id);
         {
             let sessions = object_field_mut(registry, "sessions");
             let entry = object_field_mut(
@@ -236,13 +322,73 @@ pub fn set_supervisor_role_with_options(
             entry.insert("updatedAt".into(), Value::String(now.to_owned()));
         }
         if active {
-            clear_watch_binding_for_watched(registry, session_id);
-        } else {
+            // A promoted agent keeps its own manager. Clearing the incoming
+            // binding was an artefact of the rule that only a coder could be
+            // watched: with overseers watchable, the obvious way to build a
+            // tree -- bind a coder to its manager, then promote it so it can
+            // manage others -- silently dropped the middle's link upward, and
+            // only promote-then-bind worked. The scribe is not a report, so
+            // its promotion still cuts the edge.
+            if key != "overseer" {
+                clear_watch_binding_for_watched(registry, session_id);
+            }
+        } else if let Some(plan) = demotion {
+            // Only the outgoing edges go. The demoted agent keeps its own
+            // manager for the same reason a promoted one does: cutting it
+            // here would lose the link upward on demote-then-repromote,
+            // which is the bug this change exists to fix, pointing the other
+            // way. It becomes a coder under the manager it already had, and
+            // its former reports become its siblings.
             clear_watch_bindings_for_overseer(registry, session_id);
+            if let Some(grandparent) = plan.grandparent {
+                for report in plan.reports {
+                    object_field_mut(registry, "watchBindings")
+                        .insert(report, Value::String(grandparent.clone()));
+                }
+                sync_watching_lists(registry);
+            }
         }
         Ok(true)
     })
-    .map_err(SupervisorRoleError::Registry)
+    .map_err(|error| {
+        // Nothing reached the registry, so the metadata write has to come
+        // back out. Leaving it is the wedge this whole ordering exists to
+        // avoid: the registry would keep saying `overseer` while metadata
+        // said `coder`, the registry wins on every surface, and the
+        // metadata-driven overseer list would already have dropped the
+        // agent. A rollback that itself fails is reported rather than
+        // swallowed -- that state needs a person, and silence would hide it.
+        let rollback = metadata_written
+            .get()
+            .then(|| {
+                restore_session_metadata(
+                    project_state_dir,
+                    session_id,
+                    metadata_before.borrow().clone(),
+                )
+            })
+            .and_then(Result::err);
+        if let Some(rollback) = rollback {
+            return SupervisorRoleError::Metadata(format!(
+                "{error}; and the metadata written before it could not be put back: {rollback}"
+            ));
+        }
+        if let Some(metadata) = error.strip_prefix(METADATA_UNDER_LOCK) {
+            SupervisorRoleError::Metadata(metadata.to_owned())
+        } else if error == ACTIVE_WATCH_BINDINGS_UNDER_LOCK {
+            SupervisorRoleError::ActiveWatchBindings {
+                overseer_session_id: session_id.to_owned(),
+                watched_session_ids: blocked_reports.borrow().clone(),
+            }
+        } else if error == UNPLACEABLE_REPORTS_UNDER_LOCK {
+            SupervisorRoleError::UnplaceableReports {
+                overseer_session_id: session_id.to_owned(),
+                watched_session_ids: blocked_reports.borrow().clone(),
+            }
+        } else {
+            SupervisorRoleError::Registry(error)
+        }
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -262,9 +408,12 @@ pub enum WatchBindingError {
         session_id: String,
         role: String,
     },
-    WatchedMustBeCoder {
+    ScribeCannotBeWatched {
         session_id: String,
-        role: String,
+    },
+    WatchCycle {
+        watched_session_id: String,
+        overseer_session_id: String,
     },
     AlreadyWatched {
         watched_session_id: String,
@@ -279,7 +428,8 @@ impl WatchBindingError {
         match self {
             Self::SessionNotFound { .. } => 404,
             Self::AlreadyWatched { .. } => 409,
-            Self::OverseerRequired { .. } | Self::WatchedMustBeCoder { .. } => 400,
+            Self::OverseerRequired { .. } | Self::ScribeCannotBeWatched { .. } => 400,
+            Self::WatchCycle { .. } => 409,
             Self::Registry(_) | Self::Metadata(_) => 500,
         }
     }
@@ -288,7 +438,8 @@ impl WatchBindingError {
         match self {
             Self::SessionNotFound { .. } => "session-not-found",
             Self::OverseerRequired { .. } => "overseer-required",
-            Self::WatchedMustBeCoder { .. } => "watched-agent-must-be-coder",
+            Self::ScribeCannotBeWatched { .. } => "scribe-cannot-be-watched",
+            Self::WatchCycle { .. } => "watch-cycle",
             Self::AlreadyWatched { .. } => "already-watched",
             Self::Registry(_) => "role-registry-unavailable",
             Self::Metadata(_) => "metadata-unavailable",
@@ -301,8 +452,16 @@ impl WatchBindingError {
             Self::OverseerRequired { session_id, role } => {
                 format!("watch overseer must have role overseer: {session_id} is {role}")
             }
-            Self::WatchedMustBeCoder { session_id, role } => {
-                format!("watched agent must have role coder: {session_id} is {role}")
+            Self::ScribeCannotBeWatched { session_id } => {
+                format!("the scribe is a project function, not a report: {session_id}")
+            }
+            Self::WatchCycle {
+                watched_session_id,
+                overseer_session_id,
+            } => {
+                format!(
+                    "{overseer_session_id} already reports to {watched_session_id}, so watching it would close the chain"
+                )
             }
             Self::AlreadyWatched {
                 watched_session_id,
@@ -320,9 +479,16 @@ impl WatchBindingError {
             Self::OverseerRequired { session_id, role } => {
                 json!({ "sessionId": session_id, "role": role })
             }
-            Self::WatchedMustBeCoder { session_id, role } => {
-                json!({ "sessionId": session_id, "role": role })
+            Self::ScribeCannotBeWatched { session_id } => {
+                json!({ "sessionId": session_id })
             }
+            Self::WatchCycle {
+                watched_session_id,
+                overseer_session_id,
+            } => json!({
+                "watchedSessionId": watched_session_id,
+                "overseerSessionId": overseer_session_id
+            }),
             Self::AlreadyWatched {
                 watched_session_id,
                 overseer_session_id,
@@ -399,6 +565,44 @@ pub fn bind_watch(
     let project_state_dir = project_state_dir.as_ref();
     let registry =
         load_agent_role_registry(project_state_dir).map_err(WatchBindingError::Registry)?;
+    // Releasing a binding that names a different manager is not a release.
+    // It used to fall through, remove nothing, and still answer 200 -- so the
+    // one documented way out of `already-watched` reported success and left
+    // the agent exactly where it was. Now that promotion no longer cuts the
+    // incoming edge, that escape hatch is the only route to a transfer, and
+    // a lie there strands the caller.
+    let conflicting_holder: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
+    if !active
+        && registry
+            .get("watchBindings")
+            .and_then(Value::as_object)
+            .is_some_and(|bindings| !bindings.contains_key(watched_session_id))
+    {
+        // Nothing to release. Falling through ran the full bind validation
+        // and could 404 on an overseer session that has since gone -- about
+        // a binding that is correctly already absent.
+        return Ok(WatchBindingResult {
+            active,
+            overseer_session_id: overseer_session_id.to_owned(),
+            watched_session_id: watched_session_id.to_owned(),
+            watched_session_ids: watched_by(&registry, overseer_session_id),
+        });
+    }
+    if !active {
+        let current = registry
+            .get("watchBindings")
+            .and_then(Value::as_object)
+            .and_then(|bindings| bindings.get(watched_session_id))
+            .and_then(Value::as_str);
+        if let Some(current) = current
+            && current != overseer_session_id
+        {
+            return Err(WatchBindingError::AlreadyWatched {
+                watched_session_id: watched_session_id.to_owned(),
+                overseer_session_id: current.to_owned(),
+            });
+        }
+    }
     if !active
         && registry
             .get("watchBindings")
@@ -408,11 +612,51 @@ pub fn bind_watch(
             == Some(overseer_session_id)
     {
         let registry = mutate_agent_role_registry(project_state_dir, |registry| {
+            // Asked again under the lock. The ownership test above ran on a
+            // snapshot loaded before it, and now that releasing under the
+            // wrong name is refused outright, every real release comes
+            // through here -- so an unconditional remove is the only path
+            // left. A transfer landing in the gap would have had its new
+            // binding deleted by a release that no longer owned it, and the
+            // caller would still be told 200.
+            let holder = registry
+                .get("watchBindings")
+                .and_then(Value::as_object)
+                .and_then(|bindings| bindings.get(watched_session_id))
+                .and_then(Value::as_str);
+            // Already gone is what this call wanted. Two releases of the
+            // same binding used to leave the loser a 409 naming `"none"` as
+            // the holder, and the documented escape -- re-release under the
+            // named holder -- then posts `none` and gets a 404 for a session
+            // that does not exist, about a binding that is correctly absent.
+            if holder.is_none() {
+                return Ok(false);
+            }
+            if holder != Some(overseer_session_id) {
+                // The holder, not the caller. Naming the caller told a
+                // client that `top` owns a binding `other` holds, and the
+                // documented escape from `already-watched` is to re-release
+                // under the named manager -- so it would retry `top` forever.
+                *conflicting_holder.borrow_mut() = holder.map(str::to_owned);
+                return Err(RELEASE_OWNER_CHANGED_UNDER_LOCK.to_owned());
+            }
             object_field_mut(registry, "watchBindings").remove(watched_session_id);
             sync_watching_lists(registry);
             Ok(true)
         })
-        .map_err(WatchBindingError::Registry)?;
+        .map_err(|error| {
+            if error == RELEASE_OWNER_CHANGED_UNDER_LOCK {
+                WatchBindingError::AlreadyWatched {
+                    watched_session_id: watched_session_id.to_owned(),
+                    overseer_session_id: conflicting_holder
+                        .borrow()
+                        .clone()
+                        .unwrap_or_else(|| "none".to_owned()),
+                }
+            } else {
+                WatchBindingError::Registry(error)
+            }
+        })?;
         return Ok(WatchBindingResult {
             active,
             overseer_session_id: overseer_session_id.to_owned(),
@@ -437,11 +681,26 @@ pub fn bind_watch(
             session_id: watched_session_id.to_owned(),
         }
     })?;
+    // An overseer manages at every level above the leaf, so an overseer is a
+    // legitimate report of another overseer. Only the scribe stays out: it is
+    // a project function rather than anybody's report, and it was the one case
+    // the old "must be a coder" rule genuinely protected.
     let watched_role = agent_role(Some(watched)).to_owned();
-    if watched_role != "coder" {
-        return Err(WatchBindingError::WatchedMustBeCoder {
+    if watched_role != "overseer" && crate::team_contract::is_project_control_session(Some(watched))
+    {
+        return Err(WatchBindingError::ScribeCannotBeWatched {
             session_id: watched_session_id.to_owned(),
-            role: watched_role,
+        });
+    }
+
+    // Single-parent alone forbids a DAG, not a cycle: A watching B and B
+    // watching A is two legal bindings that together make a chain with no
+    // top. Nothing walks the chain today, so the cycle is silently storable
+    // -- and the first caller that does walk it hangs. Refuse at the edge.
+    if active && watch_chain_reaches(&registry, overseer_session_id, watched_session_id) {
+        return Err(WatchBindingError::WatchCycle {
+            watched_session_id: watched_session_id.to_owned(),
+            overseer_session_id: overseer_session_id.to_owned(),
         });
     }
 
@@ -460,6 +719,32 @@ pub fn bind_watch(
     }
 
     let registry = mutate_agent_role_registry(project_state_dir, |registry| {
+        // Asked again, this time holding the lock. The check above ran
+        // against a snapshot loaded before it, so two binds racing in
+        // opposite directions -- `top` takes `middle` while `middle` takes
+        // `top` -- would each read a map without the other's edge and both
+        // commit. The pre-check stays because it is what produces the useful
+        // message; this one is what makes the refusal true.
+        if active && watch_chain_reaches(registry, overseer_session_id, watched_session_id) {
+            return Err(WATCH_CYCLE_UNDER_LOCK.to_owned());
+        }
+        // And the owner, for the same reason as the cycle. Two binds of the
+        // same agent to different managers both read a map with no owner
+        // before the lock, so the `AlreadyWatched` check above passes twice
+        // and the second insert silently replaces the first manager. The
+        // release path got this recheck; the bind path is where a report
+        // actually changes hands.
+        if active
+            && let Some(current) = registry
+                .get("watchBindings")
+                .and_then(Value::as_object)
+                .and_then(|bindings| bindings.get(watched_session_id))
+                .and_then(Value::as_str)
+                .filter(|current| *current != overseer_session_id)
+        {
+            *conflicting_holder.borrow_mut() = Some(current.to_owned());
+            return Err(BIND_OWNER_TAKEN_UNDER_LOCK.to_owned());
+        }
         let bindings = object_field_mut(registry, "watchBindings");
         if active {
             bindings.insert(
@@ -482,7 +767,24 @@ pub fn bind_watch(
         }
         Ok(true)
     })
-    .map_err(WatchBindingError::Registry)?;
+    .map_err(|error| {
+        if error == BIND_OWNER_TAKEN_UNDER_LOCK {
+            WatchBindingError::AlreadyWatched {
+                watched_session_id: watched_session_id.to_owned(),
+                overseer_session_id: conflicting_holder
+                    .borrow()
+                    .clone()
+                    .unwrap_or_else(|| "none".to_owned()),
+            }
+        } else if error == WATCH_CYCLE_UNDER_LOCK {
+            WatchBindingError::WatchCycle {
+                watched_session_id: watched_session_id.to_owned(),
+                overseer_session_id: overseer_session_id.to_owned(),
+            }
+        } else {
+            WatchBindingError::Registry(error)
+        }
+    })?;
 
     Ok(WatchBindingResult {
         active,
@@ -653,6 +955,100 @@ fn sync_watching_lists(registry: &mut Value) {
     }
 }
 
+/// The still-has-reports refusal, raised from inside the registry mutator
+/// where the only error channel is a `String`. The ids that blocked the
+/// demotion follow the prefix, because the caller's own snapshot predates
+/// the lock and would report an empty list.
+const ACTIVE_WATCH_BINDINGS_UNDER_LOCK: &str = "active-watch-bindings-under-lock";
+
+/// Raised when a released report cannot be moved up because the registry
+/// already holds a cycle. The ids travel in the same cell.
+const UNPLACEABLE_REPORTS_UNDER_LOCK: &str = "unplaceable-reports-under-lock";
+
+/// A metadata failure raised from inside the mutator, kept distinct from a
+/// registry failure so the caller still reports which half could not be
+/// written.
+const METADATA_UNDER_LOCK: &str = "metadata-under-lock:";
+
+/// What a demotion needs to know before it writes anything: the reports that
+/// must be placed somewhere, and the manager they would be placed under.
+///
+/// Read once, under the lock, and used to answer every refusal before the
+/// first write -- which is the whole point of it being a separate step.
+struct DemotionPlan {
+    reports: Vec<String>,
+    grandparent: Option<String>,
+}
+
+impl DemotionPlan {
+    fn read(registry: &Value, session_id: &str) -> Self {
+        Self {
+            reports: watched_by(registry, session_id),
+            grandparent: registry
+                .get("watchBindings")
+                .and_then(Value::as_object)
+                .and_then(|bindings| bindings.get(session_id))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        }
+    }
+
+    /// The reports that cannot be moved up, which is only possible when the
+    /// registry already holds a cycle above them -- written by a build with no
+    /// guard at all. Skipping those moves would leave each report with no
+    /// manager and no word of it, so the demotion is refused whole instead.
+    fn unplaceable(&self, registry: &Value) -> Option<Vec<String>> {
+        let grandparent = self.grandparent.as_deref()?;
+        let blocked = self
+            .reports
+            .iter()
+            .filter(|report| watch_chain_reaches(registry, grandparent, report))
+            .cloned()
+            .collect::<Vec<_>>();
+        (!blocked.is_empty()).then_some(blocked)
+    }
+}
+
+/// Raised when a bind reaches the lock and someone else has taken the agent
+/// in the meantime. Reported as `already-watched`, naming the holder.
+const BIND_OWNER_TAKEN_UNDER_LOCK: &str = "bind-owner-taken-under-lock";
+
+/// Raised when a release reaches the lock and the binding has changed hands
+/// since it was read. Reported as `already-watched`, the same refusal a
+/// release under the wrong name gets, because that is what has happened.
+const RELEASE_OWNER_CHANGED_UNDER_LOCK: &str = "release-owner-changed-under-lock";
+
+/// The cycle refusal, raised from inside the registry mutator where the only
+/// error channel is a `String`. Mapped straight back to `WatchCycle` by the
+/// caller, so a racing bind reports the same refusal as a serial one.
+const WATCH_CYCLE_UNDER_LOCK: &str = "watch-cycle-detected-under-lock";
+
+/// Whether `from` already reports, directly or through its managers, to
+/// `target` -- which is what makes a new `target -> from` binding a cycle.
+///
+/// Bounded by the number of bindings rather than by trust in the data: a
+/// registry that already holds a cycle (written by an older build that had no
+/// check) must not hang the writer that is trying to add another one.
+fn watch_chain_reaches(registry: &Value, from: &str, target: &str) -> bool {
+    if from == target {
+        return true;
+    }
+    let Some(bindings) = registry.get("watchBindings").and_then(Value::as_object) else {
+        return false;
+    };
+    let mut current = from;
+    for _ in 0..bindings.len() {
+        let Some(next) = bindings.get(current).and_then(Value::as_str) else {
+            return false;
+        };
+        if next == target {
+            return true;
+        }
+        current = next;
+    }
+    false
+}
+
 fn watched_by(registry: &Value, overseer_session_id: &str) -> Vec<String> {
     registry
         .get("watchBindings")
@@ -667,6 +1063,40 @@ fn watched_by(registry: &Value, overseer_session_id: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Put a session's metadata record back as it was.
+///
+/// Used only to undo a write whose other half never landed. An absent record
+/// before the write means the write created it, so the undo removes it.
+fn restore_session_metadata(
+    project_state_dir: &Path,
+    session_id: &str,
+    before: Option<Value>,
+) -> Result<(), String> {
+    let path = metadata_state_path(project_state_dir);
+    let lock = acquire_state_update_lock(&path)?;
+    // Strict, because `load_metadata_state` answers an unreadable file with
+    // an empty state -- and saving that back would erase every other
+    // session to repair one. An undo that cannot read what it is editing
+    // must stop.
+    let mut state = try_load_metadata_state(project_state_dir)
+        .map_err(|error| format!("read metadata before rollback: {error}"))?;
+    match before {
+        Some(before) => {
+            state.sessions.insert(session_id.to_owned(), before);
+        }
+        None => {
+            state.sessions.remove(session_id);
+        }
+    }
+    // Fenced like every other writer: without it a holder that paused long
+    // enough to be reclaimed can still overwrite newer state on the way out.
+    lock.ensure_owned_for_commit()?;
+    save_metadata_state(project_state_dir, &state).map_err(|error| error.to_string())
+}
+
+/// Returns whether anything was actually written: an unchanged payload is a
+/// no-op, and a caller that has to undo this must not undo a write that never
+/// happened.
 fn set_role_metadata_at(
     project_state_dir: &Path,
     session_id: &str,
@@ -674,7 +1104,7 @@ fn set_role_metadata_at(
     active: bool,
     now: &str,
     options: &SupervisorRoleOptions,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     update_session_metadata_at(project_state_dir, session_id, now, |current| {
         let mut current = match current {
             Value::Object(map) => map,
@@ -769,7 +1199,7 @@ fn set_role_metadata_at(
         }
         Value::Object(current)
     })
-    .map(|_| ())
+    .map(|result| result.changed)
 }
 
 fn sync_migration_fields(entry: &mut Map<String, Value>, session: Option<&Value>) {

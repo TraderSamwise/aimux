@@ -1660,6 +1660,7 @@ export type AgentRoleMutationRefusalReason =
   | "unsupported-role"
   | "target-worktree-required"
   | "active-watch-bindings"
+  | "unplaceable-reports"
   | "metadata-unavailable"
   | "role-registry-unavailable";
 
@@ -1709,7 +1710,8 @@ export type AgentWatchRefusalReason =
   | "invalid-request"
   | "session-not-found"
   | "overseer-required"
-  | "watched-agent-must-be-coder"
+  | "scribe-cannot-be-watched"
+  | "watch-cycle"
   | "already-watched"
   | "role-registry-unavailable"
   | "metadata-unavailable"

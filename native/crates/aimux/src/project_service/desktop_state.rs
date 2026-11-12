@@ -52,6 +52,7 @@ use super::usage::parse_recency_timestamp;
 use super::visual_clients::VisualClientLeaseRoute;
 
 use crate::runtime_topology::LIVE_WORKTREE_STATUSES as ACTIVE_WORKTREE_STATUSES;
+use crate::team_contract::manager_session_id;
 const DASHBOARD_SERVICE_STATUSES: &[&str] = &[
     "planned", "starting", "running", "stopped", "offline", "error",
 ];
@@ -2151,7 +2152,7 @@ fn dashboard_service_status(status: Option<&str>) -> &'static str {
 }
 
 fn is_teammate_session(session: &Value) -> bool {
-    team_string_field(session, "parentSessionId").is_some()
+    manager_session_id(session).is_some()
 }
 
 fn dashboard_session_visibility_allows(session: &Value) -> bool {
@@ -2698,16 +2699,6 @@ fn canonical_worktree_path(trimmed: &str) -> String {
         .to_string_lossy()
         .trim_end_matches('/')
         .to_owned()
-}
-
-fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value
-        .get("team")
-        .and_then(Value::as_object)
-        .and_then(|team| team.get(key))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
 }
 
 fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {

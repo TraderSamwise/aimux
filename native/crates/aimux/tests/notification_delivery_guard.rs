@@ -129,6 +129,7 @@ fn watched_agent_with_verified_live_overseer_refuses_external_notification() {
             &json!({}),
             &metadata,
             &sessions,
+            &no_watch_bindings(),
             Ok(&live_window_ids),
         ),
         Some(WATCHED_BY_OVERSEER_NOTIFICATION_REFUSAL_REASON)
@@ -147,6 +148,7 @@ fn watched_worker_is_suppressed_by_second_or_third_live_overseer() {
                 &json!({}),
                 &metadata,
                 &sessions,
+                &no_watch_bindings(),
                 Ok(&windows),
             ),
             Some(WATCHED_BY_OVERSEER_NOTIFICATION_REFUSAL_REASON),
@@ -202,6 +204,7 @@ fn topology_overseers_with_loop_only_metadata_watch_workers_and_keep_their_own_p
                 &json!({}),
                 &metadata,
                 &sessions,
+                &no_watch_bindings(),
                 Ok(&windows),
             ),
             (id == "worker-1").then_some(WATCHED_BY_OVERSEER_NOTIFICATION_REFUSAL_REASON),
@@ -217,6 +220,7 @@ fn topology_overseers_with_loop_only_metadata_watch_workers_and_keep_their_own_p
             &json!({}),
             &metadata,
             &sessions,
+            &no_watch_bindings(),
             Ok(&windows),
         ),
         None
@@ -239,6 +243,7 @@ fn every_overseer_keeps_its_own_goal_notifications_with_other_live_overseers() {
                 &json!({}),
                 &metadata,
                 &sessions,
+                &no_watch_bindings(),
                 Ok(&windows),
             ),
             None,
@@ -265,6 +270,7 @@ fn watched_worker_keeps_paging_without_any_verified_live_overseer() {
                 &json!({}),
                 &metadata,
                 &sessions,
+                &no_watch_bindings(),
                 Ok(&windows),
             ),
             None
@@ -276,6 +282,7 @@ fn watched_worker_keeps_paging_without_any_verified_live_overseer() {
             &json!({}),
             &metadata,
             &sessions,
+            &no_watch_bindings(),
             Err("tmux inventory failed"),
         ),
         None
@@ -290,6 +297,7 @@ fn watched_worker_keeps_paging_without_any_verified_live_overseer() {
             &json!({}),
             &metadata,
             &sessions,
+            &no_watch_bindings(),
             Ok(&windows),
         ),
         None
@@ -310,6 +318,7 @@ fn unwatched_agent_keeps_external_notification_delivery() {
             &json!({}),
             &metadata,
             &sessions,
+            &no_watch_bindings(),
             Ok(&live_window_ids),
         ),
         None
@@ -328,6 +337,7 @@ fn watched_agent_notifies_when_overseer_liveness_cannot_be_verified() {
             &json!({}),
             &metadata,
             &sessions,
+            &no_watch_bindings(),
             Err("tmux socket busy"),
         ),
         None
@@ -340,6 +350,7 @@ fn watched_agent_notifies_when_overseer_liveness_cannot_be_verified() {
             &json!({}),
             &metadata,
             &sessions,
+            &no_watch_bindings(),
             Ok(&live_window_ids),
         ),
         None
@@ -359,6 +370,7 @@ fn watched_agent_project_or_agent_override_forces_external_notification_delivery
             &json!({ "notifyWhenWatchedByOverseer": true }),
             &metadata,
             &sessions,
+            &no_watch_bindings(),
             Ok(&live_window_ids),
         ),
         None
@@ -371,6 +383,7 @@ fn watched_agent_project_or_agent_override_forces_external_notification_delivery
             &json!({}),
             &metadata,
             &sessions,
+            &no_watch_bindings(),
             Ok(&live_window_ids),
         ),
         None
@@ -495,4 +508,106 @@ fn watched_sessions(
 
 fn live_window_ids(ids: &[&str]) -> LiveWindowIndex {
     LiveWindowIndex::from_pairs(ids.iter().map(|id| (*id, "aimux-repo")))
+}
+
+#[test]
+fn a_dead_mid_tier_manager_does_not_keep_its_reports_quiet() {
+    // Suppression used to ask whether ANY overseer was alive, which was
+    // close enough while every watched agent reported to the one project
+    // overseer. With a tree, a mid-tier manager whose window has died leaves
+    // its reports suppressed while nobody is reading them.
+    let event = json!({ "sessionId": "leaf" });
+    let notifications = json!({});
+    let metadata = json!({
+        "sessions": {
+            "leaf": {
+                "loop": {
+                    "active": true,
+                    "since": "2026-09-16T00:00:00.000Z",
+                    "source": "overseer"
+                }
+            },
+            "mid": { "overseer": true },
+            "top": { "overseer": true }
+        }
+    });
+    let sessions = vec![
+        tree_session("leaf", "running", "@3"),
+        // `mid` manages `leaf`, and its window is gone.
+        tree_session("mid", "running", "@2"),
+        tree_session("top", "running", "@1"),
+    ];
+    let live = live_window_ids(&["@1", "@3"]);
+
+    let refusal = watched_by_overseer_notification_refusal_reason_for_state(
+        &event,
+        &notifications,
+        &metadata,
+        &sessions,
+        &json!({ "leaf": "mid" }),
+        Ok(&live),
+    );
+
+    assert_eq!(
+        refusal, None,
+        "the prompt was swallowed although nobody is watching this agent"
+    );
+}
+
+#[test]
+fn a_live_mid_tier_manager_still_keeps_its_reports_quiet() {
+    let event = json!({ "sessionId": "leaf" });
+    let notifications = json!({});
+    let metadata = json!({
+        "sessions": {
+            "leaf": {
+                "loop": {
+                    "active": true,
+                    "since": "2026-09-16T00:00:00.000Z",
+                    "source": "overseer"
+                }
+            },
+            "mid": { "overseer": true },
+            "top": { "overseer": true }
+        }
+    });
+    let sessions = vec![
+        tree_session("leaf", "running", "@3"),
+        tree_session("mid", "running", "@2"),
+        tree_session("top", "running", "@1"),
+    ];
+    let live = live_window_ids(&["@1", "@2", "@3"]);
+
+    let refusal = watched_by_overseer_notification_refusal_reason_for_state(
+        &event,
+        &notifications,
+        &metadata,
+        &sessions,
+        &json!({ "leaf": "mid" }),
+        Ok(&live),
+    );
+
+    assert!(
+        refusal.is_some(),
+        "a live manager should still absorb its report's prompt"
+    );
+}
+
+fn tree_session(id: &str, status: &str, window_id: &str) -> serde_json::Value {
+    json!({
+        "id": id,
+        "overseer": id != "leaf",
+        "status": status,
+        "tmuxTarget": {
+            "sessionName": "aimux-repo",
+            "windowId": window_id,
+            "windowIndex": 1,
+        },
+    })
+}
+
+/// No recorded manager, which is what every pre-tree fixture describes: the
+/// guard then falls back to the project-wide rule it always used.
+fn no_watch_bindings() -> serde_json::Value {
+    serde_json::Value::Null
 }

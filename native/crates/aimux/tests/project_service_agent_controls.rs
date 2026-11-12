@@ -939,7 +939,7 @@ fn watch_route_unbinds_existing_binding_even_after_roles_drift() {
 }
 
 #[test]
-fn supervisor_promotion_clears_existing_watched_binding_for_promoted_agent() {
+fn scribe_promotion_clears_the_promoted_agents_incoming_binding() {
     let project = temp_project("watch-promote-clears-watched-binding");
     let state_dir = project.join("state");
     save_metadata_state(
@@ -985,6 +985,677 @@ fn supervisor_promotion_clears_existing_watched_binding_for_promoted_agent() {
     assert!(registry.pointer("/watchBindings/worker").is_none());
     assert!(registry.pointer("/sessions/boss/watching").is_none());
     assert_eq!(registry["sessions"]["worker"]["role"], "scribe");
+    cleanup(project);
+}
+
+#[test]
+fn promoting_a_watched_coder_keeps_its_own_manager() {
+    // The obvious way to build a tree is to bind a coder to its manager and
+    // then promote it so it can manage others. Promotion used to cut the
+    // incoming edge, so the middle of the tree lost its link upward and only
+    // promote-then-bind worked -- which nothing says.
+    let project = temp_project("promote-keeps-manager");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "middle".into(),
+                    json!({
+                        "role": "coder",
+                        "worktreePath": "/repo/worktrees/middle",
+                        "updatedAt": "2026-09-05T00:00:00.000Z"
+                    }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let bound = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "top",
+            "watchedSessionId": "middle",
+            "active": true
+        })),
+    );
+    assert_eq!(bound.status, 200, "{:?}", bound.body);
+
+    let promoted = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({ "sessionId": "middle", "active": true })),
+    );
+    assert_eq!(promoted.status, 200, "{:?}", promoted.body);
+
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(
+        registry["watchBindings"]["middle"], "top",
+        "promotion dropped the middle's own manager: {registry:?}"
+    );
+    assert_eq!(registry["sessions"]["middle"]["role"], "overseer");
+    cleanup(project);
+}
+
+#[test]
+fn demoting_a_mid_tier_overseer_moves_its_reports_up_to_its_own_manager() {
+    // Cutting the reports loose instead would leave them pointing at an agent
+    // that is no longer an overseer, and `sync_watching_lists` would stamp it
+    // back to one on the next pass -- undoing the demotion that was just
+    // written.
+    let project = temp_project("demote-reparents");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "middle".into(),
+                    json!({
+                        "overseer": true,
+                        "worktreePath": "/repo/worktrees/middle",
+                        "updatedAt": "2026-09-05T00:00:00.000Z"
+                    }),
+                ),
+                (
+                    "leaf".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    for (overseer, watched) in [("top", "middle"), ("middle", "leaf")] {
+        let bound = route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": overseer,
+                "watchedSessionId": watched,
+                "active": true
+            })),
+        );
+        assert_eq!(
+            bound.status, 200,
+            "{overseer} -> {watched}: {:?}",
+            bound.body
+        );
+    }
+
+    let demoted = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({
+            "sessionId": "middle",
+            "active": false,
+            "releaseBindings": true,
+            "worktreePath": "/repo/worktrees/middle"
+        })),
+    );
+    assert_eq!(demoted.status, 200, "{:?}", demoted.body);
+
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(
+        registry["watchBindings"]["leaf"], "top",
+        "the leaf was orphaned rather than moved up: {registry:?}"
+    );
+    assert_eq!(
+        registry["watchBindings"]["middle"], "top",
+        "the demoted agent lost its own manager: {registry:?}"
+    );
+    assert_eq!(registry["sessions"]["middle"]["role"], "coder");
+    cleanup(project);
+}
+
+#[test]
+fn a_round_trip_through_demotion_keeps_the_link_upward() {
+    // Promotion keeping the manager is only half the symmetry. If demotion
+    // still cut it, demote-then-repromote would lose the link upward -- the
+    // same bug in the other direction.
+    let project = temp_project("demote-repromote");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "middle".into(),
+                    json!({
+                        "overseer": true,
+                        "worktreePath": "/repo/worktrees/middle",
+                        "updatedAt": "2026-09-05T00:00:00.000Z"
+                    }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let bound = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "top",
+            "watchedSessionId": "middle",
+            "active": true
+        })),
+    );
+    assert_eq!(bound.status, 200, "{:?}", bound.body);
+
+    let demoted = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({
+            "sessionId": "middle",
+            "active": false,
+            "worktreePath": "/repo/worktrees/middle"
+        })),
+    );
+    assert_eq!(demoted.status, 200, "{:?}", demoted.body);
+
+    let repromoted = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({ "sessionId": "middle", "active": true })),
+    );
+    assert_eq!(repromoted.status, 200, "{:?}", repromoted.body);
+
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(
+        registry["watchBindings"]["middle"], "top",
+        "the round trip lost the link upward: {registry:?}"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn a_report_that_cannot_be_moved_up_refuses_the_demotion_rather_than_orphaning_it() {
+    // A cycle cannot be created through the route any more, but one written
+    // by a build that had no guard can still be on disk. Reparenting into it
+    // is impossible, and silently skipping the move would leave the report
+    // with no manager at all and no word of it -- its old binding has just
+    // been cleared.
+    let project = temp_project("demote-unplaceable");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "middle".into(),
+                    json!({
+                        "overseer": true,
+                        "worktreePath": "/repo/worktrees/middle",
+                        "updatedAt": "2026-09-05T00:00:00.000Z"
+                    }),
+                ),
+                (
+                    "leaf".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+
+    // Written straight to disk: `top` reports to `leaf` and `leaf` reports to
+    // `middle`, which the route itself would now refuse to assemble.
+    create_dir_all(&state_dir).unwrap();
+    write(
+        state_dir.join("agent-role-registry.json"),
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "sessions": {},
+            "roleSlots": {},
+            "watchBindings": { "middle": "top", "leaf": "middle", "top": "leaf" }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let demoted = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({
+            "sessionId": "middle",
+            "active": false,
+            "releaseBindings": true,
+            "worktreePath": "/repo/worktrees/middle"
+        })),
+    );
+
+    assert_eq!(demoted.status, 409, "{:?}", demoted.body);
+    assert_eq!(demoted.body["reason"], "unplaceable-reports");
+    assert_eq!(demoted.body["details"]["watchedSessionIds"][0], "leaf");
+    // Refused whole: the tree is exactly as it was.
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["watchBindings"]["leaf"], "middle");
+    // And metadata was never written. A refusal that had already demoted the
+    // agent in metadata left the registry saying overseer and metadata saying
+    // coder, which no retry could repair: the registry wins on every surface,
+    // while the metadata-driven overseer list had already dropped the agent,
+    // so its reports pointed at a non-overseer and rebinding was refused.
+    let metadata = load_metadata_state(&state_dir);
+    assert_eq!(
+        metadata
+            .sessions
+            .get("middle")
+            .and_then(|s| s.get("overseer")),
+        Some(&json!(true)),
+        "the refused demotion still wrote metadata: {:?}",
+        metadata.sessions.get("middle")
+    );
+    cleanup(project);
+}
+
+#[test]
+fn handing_a_report_to_a_different_manager_says_so_rather_than_claiming_success() {
+    // Promotion no longer cuts the incoming edge, so a second `watch` for an
+    // already-bound agent is refused -- and releasing it is the documented
+    // way out. Releasing with the WRONG manager named used to remove nothing
+    // and still answer 200, which made the one route to a transfer report
+    // success while leaving the agent exactly where it was.
+    let project = temp_project("watch-transfer");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "other".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let watch = |overseer: &str, watched: &str, active: bool| {
+        route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": overseer,
+                "watchedSessionId": watched,
+                "active": active
+            })),
+        )
+    };
+
+    assert_eq!(watch("top", "worker", true).status, 200);
+
+    // Taking it directly is refused, and names who holds it.
+    let stolen = watch("other", "worker", true);
+    assert_eq!(stolen.status, 409);
+    assert_eq!(stolen.body["reason"], "already-watched");
+
+    // Releasing it under the wrong name is refused too, rather than
+    // answering 200 having done nothing.
+    let wrong_release = watch("other", "worker", false);
+    assert_eq!(wrong_release.status, 409, "{:?}", wrong_release.body);
+    assert_eq!(wrong_release.body["reason"], "already-watched");
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["watchBindings"]["worker"], "top");
+
+    // The real release, then the transfer.
+    assert_eq!(watch("top", "worker", false).status, 200);
+    assert_eq!(watch("other", "worker", true).status, 200);
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["watchBindings"]["worker"], "other");
+    cleanup(project);
+}
+
+#[test]
+fn a_release_whose_binding_changed_hands_before_the_lock_is_refused() {
+    // Refusing a release under the wrong name sent every real release down
+    // the early path, whose ownership test had been read before the lock. A
+    // transfer landing in that gap had its fresh binding deleted by a
+    // release that no longer owned it, and the caller was still told 200.
+    //
+    // Deterministic rather than racy: the test holds the registry lock, lets
+    // the release block on it, transfers the binding underneath, and then
+    // lets go. Whether the release read its snapshot before or after that
+    // write, it must refuse -- before, the check under the lock catches it;
+    // after, the one above does.
+    use aimux::project_service::agent_roles::agent_role_registry_path;
+    use aimux::state_update_lock::acquire_state_update_lock;
+    use std::sync::Arc;
+    use std::sync::Barrier;
+
+    let project = temp_project("release-owner-changed");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "other".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let bound = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "top",
+            "watchedSessionId": "worker",
+            "active": true
+        })),
+    );
+    assert_eq!(bound.status, 200, "{:?}", bound.body);
+
+    let registry_path = agent_role_registry_path(&state_dir);
+    let held = acquire_state_update_lock(&registry_path).expect("registry lock");
+
+    let barrier = Arc::new(Barrier::new(2));
+    let releasing = {
+        let barrier = Arc::clone(&barrier);
+        let project = project.clone();
+        let state_dir = state_dir.clone();
+        std::thread::spawn(move || {
+            let context =
+                ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+            barrier.wait();
+            route_project_service_request(
+                &context,
+                "POST",
+                routes::agents::WATCH,
+                Some(&json!({
+                    "overseerSessionId": "top",
+                    "watchedSessionId": "worker",
+                    "active": false
+                })),
+            )
+        })
+    };
+    barrier.wait();
+    // Give the release time to read its snapshot and reach the lock. The
+    // lock leaves no trace a waiter can be polled for, so this is a wait and
+    // not a proof of ordering: when it is long enough the guard under the
+    // lock answers, and when the runner is slow enough that this thread wins
+    // instead, the guard above the lock answers the same way. Either is the
+    // contract. What the assertions below pin is that contract -- a refusal
+    // naming the real holder -- rather than which guard produced it.
+    //
+    // Kept well inside the 2s acquire budget so a slow runner cannot turn
+    // this into a lock timeout, which the 409 assertion would catch anyway.
+    std::thread::sleep(std::time::Duration::from_millis(150));
+
+    // The release is now waiting on the lock this thread holds. Hand the
+    // binding to `other` underneath it.
+    let mut registry: Value =
+        serde_json::from_str(&read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    registry["watchBindings"]["worker"] = json!("other");
+    write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+    drop(held);
+
+    let response = releasing.join().expect("release thread");
+    assert_eq!(response.status, 409, "{:?}", response.body);
+    assert_eq!(response.body["reason"], "already-watched");
+    // The refusal must name who actually holds it. Naming the caller told a
+    // client that `top` owns a binding `other` holds -- and since the
+    // documented escape is to re-release under the named manager, it would
+    // retry `top` forever.
+    assert_eq!(
+        response.body["details"]["overseerSessionId"], "other",
+        "the refusal named the caller instead of the holder: {:?}",
+        response.body
+    );
+
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(
+        registry["watchBindings"]["worker"], "other",
+        "the release deleted a binding it no longer owned: {registry:?}"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn a_bind_racing_another_bind_cannot_take_an_agent_that_just_changed_hands() {
+    // `AlreadyWatched` was checked against a snapshot read before the lock,
+    // so two binds of the same agent to different managers both saw no owner
+    // and the second insert silently replaced the first. The release path
+    // got this recheck already; the bind path is where a report actually
+    // changes hands.
+    use aimux::project_service::agent_roles::agent_role_registry_path;
+    use aimux::state_update_lock::acquire_state_update_lock;
+    use std::sync::Arc;
+    use std::sync::Barrier;
+
+    let project = temp_project("bind-owner-taken");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "other".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // Seed the registry so the file exists, then take it back to unbound.
+    assert_eq!(
+        route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": "top",
+                "watchedSessionId": "worker",
+                "active": true
+            })),
+        )
+        .status,
+        200
+    );
+    assert_eq!(
+        route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": "top",
+                "watchedSessionId": "worker",
+                "active": false
+            })),
+        )
+        .status,
+        200
+    );
+
+    let registry_path = agent_role_registry_path(&state_dir);
+    let held = acquire_state_update_lock(&registry_path).expect("registry lock");
+
+    let barrier = Arc::new(Barrier::new(2));
+    let binding = {
+        let barrier = Arc::clone(&barrier);
+        let project = project.clone();
+        let state_dir = state_dir.clone();
+        std::thread::spawn(move || {
+            let context =
+                ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+            barrier.wait();
+            route_project_service_request(
+                &context,
+                "POST",
+                routes::agents::WATCH,
+                Some(&json!({
+                    "overseerSessionId": "top",
+                    "watchedSessionId": "worker",
+                    "active": true
+                })),
+            )
+        })
+    };
+    barrier.wait();
+    std::thread::sleep(std::time::Duration::from_millis(150));
+
+    // `other` takes the worker while `top`'s bind waits on the lock.
+    let mut registry: Value =
+        serde_json::from_str(&read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    registry["watchBindings"]["worker"] = json!("other");
+    write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+    drop(held);
+
+    let response = binding.join().expect("bind thread");
+    assert_eq!(response.status, 409, "{:?}", response.body);
+    assert_eq!(response.body["reason"], "already-watched");
+    assert_eq!(
+        response.body["details"]["overseerSessionId"], "other",
+        "the refusal named the wrong holder: {:?}",
+        response.body
+    );
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(
+        registry["watchBindings"]["worker"], "other",
+        "the bind replaced a manager that already held the agent: {registry:?}"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn a_manager_cannot_become_the_scribe_while_it_still_has_reports() {
+    // Promotion to scribe cleared only the incoming edge. The outgoing ones
+    // survived, and `sync_watching_lists` stamped the session back to
+    // `role: overseer` on the strength of them -- metadata saying scribe
+    // while the registry still handed it reports.
+    let project = temp_project("scribe-with-reports");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "boss".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    assert_eq!(
+        route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": "boss",
+                "watchedSessionId": "worker",
+                "active": true
+            })),
+        )
+        .status,
+        200
+    );
+
+    let promoted = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::SCRIBE,
+        Some(&json!({ "sessionId": "boss", "active": true })),
+    );
+
+    assert_eq!(promoted.status, 409, "{:?}", promoted.body);
+    assert_eq!(promoted.body["reason"], "active-watch-bindings");
+    assert_eq!(promoted.body["details"]["watchedSessionIds"][0], "worker");
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["watchBindings"]["worker"], "boss");
+    let metadata = load_metadata_state(&state_dir);
+    assert_ne!(
+        metadata.sessions.get("boss").and_then(|s| s.get("scribe")),
+        Some(&json!(true)),
+        "the refused promotion still wrote metadata"
+    );
     cleanup(project);
 }
 
@@ -1064,7 +1735,320 @@ fn demoting_watching_overseer_requires_explicit_binding_release() {
 }
 
 #[test]
-fn watch_route_refuses_non_coder_watched_agent() {
+fn an_overseer_can_report_to_another_overseer() {
+    // The whole point of the tree: overseer is the manager class at every
+    // level above the leaf, so a mid-tier overseer is both somebody's manager
+    // and somebody's report. The old rule refused any watched agent that was
+    // not a coder, which made two levels the maximum the model could express.
+    let project = temp_project("watch-depth-three");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "middle".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "leaf".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    for (overseer, watched) in [("top", "middle"), ("middle", "leaf")] {
+        let response = route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": overseer,
+                "watchedSessionId": watched,
+                "active": true
+            })),
+        );
+        assert_eq!(
+            response.status, 200,
+            "{overseer} -> {watched}: {:?}",
+            response.body
+        );
+    }
+
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["watchBindings"]["middle"], "top");
+    assert_eq!(registry["watchBindings"]["leaf"], "middle");
+    cleanup(project);
+}
+
+#[test]
+fn a_watch_that_would_close_the_chain_is_refused() {
+    // Single-parent forbids a DAG, not a cycle: `top -> middle` and
+    // `middle -> top` are each legal on their own and together make a chain
+    // with no top. Nothing walked the chain before, so it was storable; the
+    // first caller that walks it would hang.
+    let project = temp_project("watch-cycle");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "middle".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let bound = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "top",
+            "watchedSessionId": "middle",
+            "active": true
+        })),
+    );
+    assert_eq!(bound.status, 200, "{:?}", bound.body);
+
+    let closed = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "middle",
+            "watchedSessionId": "top",
+            "active": true
+        })),
+    );
+
+    assert_eq!(closed.status, 409);
+    assert_eq!(closed.body["ok"], false);
+    assert_eq!(closed.body["reason"], "watch-cycle");
+    // Refused before the write, not after it.
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert!(registry.pointer("/watchBindings/top").is_none());
+    assert_eq!(registry["watchBindings"]["middle"], "top");
+    cleanup(project);
+}
+
+#[test]
+fn a_longer_chain_cannot_be_closed_into_a_loop_either() {
+    // The one-hop case exercises the first comparison and never enters the
+    // walk's loop body. Three hops is what proves the walk itself.
+    let project = temp_project("watch-cycle-three-hop");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "a".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "b".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "c".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    for (overseer, watched) in [("a", "b"), ("b", "c")] {
+        let response = route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": overseer,
+                "watchedSessionId": watched,
+                "active": true
+            })),
+        );
+        assert_eq!(
+            response.status, 200,
+            "{overseer} -> {watched}: {:?}",
+            response.body
+        );
+    }
+
+    // c reports to b reports to a. Handing a to c closes the loop.
+    let closed = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "c",
+            "watchedSessionId": "a",
+            "active": true
+        })),
+    );
+
+    assert_eq!(closed.status, 409, "{:?}", closed.body);
+    assert_eq!(closed.body["reason"], "watch-cycle");
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert!(registry.pointer("/watchBindings/a").is_none());
+    cleanup(project);
+}
+
+#[test]
+fn an_overseer_cannot_be_made_its_own_manager() {
+    let project = temp_project("watch-self");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "solo".into(),
+                json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+            )]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "solo",
+            "watchedSessionId": "solo",
+            "active": true
+        })),
+    );
+
+    assert_eq!(response.status, 409, "{:?}", response.body);
+    assert_eq!(response.body["reason"], "watch-cycle");
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert!(registry.pointer("/watchBindings/solo").is_none());
+    cleanup(project);
+}
+
+#[test]
+fn two_binds_racing_in_opposite_directions_cannot_close_a_loop() {
+    // The serial guard reads a snapshot taken before the registry lock, so
+    // `a -> b` and `b -> a` arriving together each see a map without the
+    // other's edge and both pass it. The second guard runs inside the
+    // mutator, where the lock has already serialised them.
+    //
+    // The barrier is what makes this provable rather than hopeful: removing
+    // the inner guard fails this on the first attempt with both calls
+    // answering 200 and a loop on disk. The attempts loop covers scheduling
+    // variance rather than supplying the overlap.
+    use std::sync::Arc;
+    use std::sync::Barrier;
+
+    for attempt in 0..32 {
+        let project = temp_project(&format!("watch-race-{attempt}"));
+        let state_dir = project.join("state");
+        save_metadata_state(
+            &state_dir,
+            &MetadataState {
+                version: 1,
+                sessions: BTreeMap::from([
+                    (
+                        "a".into(),
+                        json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                    ),
+                    (
+                        "b".into(),
+                        json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                    ),
+                ]),
+            },
+        )
+        .unwrap();
+
+        let barrier = Arc::new(Barrier::new(2));
+        let mut handles = Vec::new();
+        for (overseer, watched) in [("a", "b"), ("b", "a")] {
+            let barrier = Arc::clone(&barrier);
+            let project = project.clone();
+            let state_dir = state_dir.clone();
+            handles.push(std::thread::spawn(move || {
+                let context =
+                    ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+                barrier.wait();
+                let response = route_project_service_request(
+                    &context,
+                    "POST",
+                    routes::agents::WATCH,
+                    Some(&json!({
+                        "overseerSessionId": overseer,
+                        "watchedSessionId": watched,
+                        "active": true
+                    })),
+                );
+                (response.status, response.body)
+            }));
+        }
+        let outcomes = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("bind thread"))
+            .collect::<Vec<_>>();
+
+        // Assert the shape of the refusal, not only the absence of a cycle.
+        // Collecting the statuses and never asserting on them let this pass
+        // when either call fell over on a lock-acquire timeout -- no write,
+        // no cycle, green -- and left the sentinel-to-`watch-cycle` mapping
+        // proved by nothing: a raw sentinel leaking as a 500 looked the same.
+        let mut bound = 0;
+        for (status, body) in &outcomes {
+            match status {
+                200 => bound += 1,
+                409 => assert_eq!(
+                    body["reason"], "watch-cycle",
+                    "attempt {attempt} refused for the wrong reason: {body:?}"
+                ),
+                other => panic!("attempt {attempt} answered {other}: {body:?}"),
+            }
+        }
+        assert_eq!(
+            bound, 1,
+            "attempt {attempt} did not settle on exactly one binding: {outcomes:?}"
+        );
+
+        let registry = load_agent_role_registry(&state_dir).expect("role registry");
+        let a_reports_to_b =
+            registry.pointer("/watchBindings/a").and_then(Value::as_str) == Some("b");
+        let b_reports_to_a =
+            registry.pointer("/watchBindings/b").and_then(Value::as_str) == Some("a");
+        assert!(
+            !(a_reports_to_b && b_reports_to_a),
+            "attempt {attempt} stored a cycle; outcomes were {outcomes:?}"
+        );
+        cleanup(project);
+    }
+}
+
+#[test]
+fn watch_route_refuses_the_scribe_as_a_report() {
     let project = temp_project("watch-refuse-non-coder");
     let state_dir = project.join("state");
     save_metadata_state(
@@ -1099,8 +2083,8 @@ fn watch_route_refuses_non_coder_watched_agent() {
 
     assert_eq!(response.status, 400);
     assert_eq!(response.body["ok"], false);
-    assert_eq!(response.body["reason"], "watched-agent-must-be-coder");
-    assert_eq!(response.body["details"]["role"], "scribe");
+    assert_eq!(response.body["reason"], "scribe-cannot-be-watched");
+    assert_eq!(response.body["details"]["sessionId"], "scribe");
     assert!(
         load_agent_role_registry(&state_dir)
             .expect("role registry")

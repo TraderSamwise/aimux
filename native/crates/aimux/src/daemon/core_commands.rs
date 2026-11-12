@@ -23,6 +23,7 @@ pub trait DaemonCoreCommandRuntime: DaemonStatusRuntime {
         &mut self,
         project_root: &str,
         session_id: &str,
+        overseer_session_id: Option<&str>,
         goal: Option<&str>,
         instructions: Option<&str>,
     ) -> Result<Value, CoreCommandFailure>;
@@ -175,11 +176,29 @@ pub fn route_core_command(
                     command_error(&id, Some(command), "sessionId is required"),
                 );
             }
+            // Naming the manager is what makes a tree deeper than two levels
+            // reachable at all. Without it the service picks the first ready
+            // overseer, so after promoting a middle one every later watch
+            // still lands on whichever sorts first.
+            // Present but blank is a caller error, not "pick one for me".
+            // Collapsing it into omission silently chose a manager for a
+            // request that was trying to name one.
+            if payload
+                .and_then(|payload| payload.get("overseerSessionId"))
+                .is_some_and(|value| value.as_str().map(str::trim).unwrap_or_default().is_empty())
+            {
+                return DaemonRouteResponse::json(
+                    400,
+                    command_error(&id, Some(command), "overseerSessionId must not be blank"),
+                );
+            }
+            let overseer_session_id = trimmed_string(payload, "overseerSessionId");
             let goal = trimmed_string(payload, "goal");
             let instructions = trimmed_string(payload, "instructions");
             match runtime.overseer_watch(
                 &project_root,
                 session_id,
+                overseer_session_id.as_deref(),
                 goal.as_deref(),
                 instructions.as_deref(),
             ) {

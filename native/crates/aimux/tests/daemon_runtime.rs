@@ -2237,8 +2237,10 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
         ]}),
         json!({ "ok": true }),
         json!({ "ok": true, "active": true, "overseerSessionId": "claude-overseer", "watchedSessionId": "codex-1", "watchedSessionIds": ["codex-1"] }),
+        // `watchedBy` is what makes this agent part of the prompt's list now:
+        // the list is what this overseer manages, not every looping agent.
         json!({ "overseerSessionIds": ["claude-overseer"], "agents": [
-            { "id": "codex-1", "tool": "codex", "status": "running", "loop": { "active": true, "goal": "keep going" } },
+            { "id": "codex-1", "tool": "codex", "status": "running", "watchedBy": "claude-overseer", "loop": { "active": true, "goal": "keep going" } },
             { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
         ]}),
         json!({ "ok": true }),
@@ -2268,6 +2270,7 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
         .overseer_watch(
             project.to_str().expect("project path"),
             "codex-1",
+            None,
             Some("keep going"),
             Some("watch CI"),
         )
@@ -2288,9 +2291,20 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
         json!({ "tool": "claude", "open": false, "overseer": true })
     );
     assert_request_path(&requests[2], "GET", "/agents");
-    assert_request_path(&requests[3], "POST", "/agents/loop");
+    // The binding comes first: a watch the service refuses must not leave the
+    // agent looping with nobody watching it.
+    assert_request_path(&requests[3], "POST", "/agents/watch");
     assert_eq!(
         request_json_body(&requests[3]),
+        json!({
+            "overseerSessionId": "claude-overseer",
+            "watchedSessionId": "codex-1",
+            "active": true
+        })
+    );
+    assert_request_path(&requests[4], "POST", "/agents/loop");
+    assert_eq!(
+        request_json_body(&requests[4]),
         json!({
             "sessionId": "codex-1",
             "active": true,
@@ -2298,15 +2312,6 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
             "source": "dashboard",
             "updatedBy": "dashboard",
             "goal": "keep going"
-        })
-    );
-    assert_request_path(&requests[4], "POST", "/agents/watch");
-    assert_eq!(
-        request_json_body(&requests[4]),
-        json!({
-            "overseerSessionId": "claude-overseer",
-            "watchedSessionId": "codex-1",
-            "active": true
         })
     );
     assert_request_path(&requests[5], "GET", "/agents");
@@ -2357,6 +2362,7 @@ fn overseer_watch_refuses_missing_agent_before_mutation() {
             "missing",
             None,
             None,
+            None,
         )
         .expect_err("missing agent fails");
 
@@ -2369,7 +2375,225 @@ fn overseer_watch_refuses_missing_agent_before_mutation() {
 }
 
 #[test]
-fn overseer_watch_refuses_project_control_agent_before_mutation() {
+fn overseer_watch_does_not_hand_a_manager_to_its_own_descendant() {
+    // The tree is `top -> mid`, and `top` has no manager of its own. Watching
+    // `top` auto-picks from the published overseers, which now includes
+    // `mid` -- a descendant. Handing `top` to `mid` closes a loop, and the
+    // caller would get a cycle refusal naming a chain it never asked about,
+    // for the ordinary act of watching the top of a tree. A fresh overseer is
+    // spawned instead.
+    let fixture = RuntimeFixture::new("overseer-watch-descendant");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let agents = json!({ "overseerSessionIds": ["mid"], "agents": [
+        { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+        { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" }
+    ]});
+    let server = ScriptedHttpServer::spawn(vec![
+        agents.clone(),
+        json!({ "sessionId": "claude-fresh" }),
+        json!({ "overseerSessionIds": ["mid", "claude-fresh"], "agents": [
+            { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+            { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" },
+            { "id": "claude-fresh", "tool": "claude", "status": "idle", "overseer": true }
+        ]}),
+        json!({ "ok": true }),
+        json!({ "ok": true }),
+        json!({ "overseerSessionIds": ["mid", "claude-fresh"], "agents": [
+            { "id": "top", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "claude-fresh", "loop": { "active": true } },
+            { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" },
+            { "id": "claude-fresh", "tool": "claude", "status": "idle", "overseer": true }
+        ]}),
+        json!({ "ok": true }),
+    ]);
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_665));
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
+
+    let result = runtime
+        .overseer_watch(
+            project.to_str().expect("project path"),
+            "top",
+            None,
+            None,
+            None,
+        )
+        .expect("watching the top of a tree is ordinary");
+
+    assert_eq!(
+        result["overseerSessionId"], "claude-fresh",
+        "a descendant was handed its own manager: {result:?}"
+    );
+    // And the prompt names only what this overseer manages.
+    assert_eq!(result["watchedSessionIds"], json!(["top"]));
+
+    let requests = server.join();
+    assert_request_path(&requests[1], "POST", "/agents/spawn");
+    fixture.cleanup();
+}
+
+#[test]
+fn naming_the_manager_is_what_makes_a_third_level_reachable() {
+    // Without this argument the service picks the first ready published
+    // overseer, so after promoting `mid` every later watch still lands on
+    // whichever overseer sorts first -- `top -> mid -> leaf` could only be
+    // built by hand-posting to the project service. The whole recursive tree
+    // was unreachable from any surface that calls this.
+    let fixture = RuntimeFixture::new("overseer-watch-named");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let inventory = json!({ "overseerSessionIds": ["top", "mid"], "agents": [
+        { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+        { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" },
+        { "id": "leaf", "tool": "codex", "status": "running" }
+    ]});
+    let server = ScriptedHttpServer::spawn(vec![
+        inventory.clone(),
+        inventory.clone(),
+        json!({ "ok": true }),
+        json!({ "ok": true }),
+        json!({ "overseerSessionIds": ["top", "mid"], "agents": [
+            { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+            { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" },
+            { "id": "leaf", "tool": "codex", "status": "running", "watchedBy": "mid", "loop": { "active": true } }
+        ]}),
+        json!({ "ok": true }),
+    ]);
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_666));
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
+
+    let result = runtime
+        .overseer_watch(
+            project.to_str().expect("project path"),
+            "leaf",
+            Some("mid"),
+            None,
+            None,
+        )
+        .expect("naming a published overseer is allowed");
+
+    assert_eq!(
+        result["overseerSessionId"], "mid",
+        "the named manager was ignored: {result:?}"
+    );
+    // Nothing was spawned: the named overseer was used as given.
+    assert!(launcher.calls().is_empty());
+    let requests = server.join();
+    assert_request_path(&requests[2], "POST", "/agents/watch");
+    assert_eq!(
+        request_json_body(&requests[2])["overseerSessionId"],
+        "mid",
+        "the binding did not name the requested manager"
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn naming_a_manager_that_is_not_an_overseer_is_refused_rather_than_substituted() {
+    let fixture = RuntimeFixture::new("overseer-watch-named-bad");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let server =
+        ScriptedHttpServer::spawn(vec![json!({ "overseerSessionIds": ["top"], "agents": [
+            { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+            { "id": "worker", "tool": "codex", "status": "running" },
+            { "id": "leaf", "tool": "codex", "status": "running" }
+        ]})]);
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_667));
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
+
+    let error = runtime
+        .overseer_watch(
+            project.to_str().expect("project path"),
+            "leaf",
+            Some("worker"),
+            None,
+            None,
+        )
+        .expect_err("a coder is not a manager");
+
+    assert_eq!(error.status, 400);
+    assert!(
+        error.error.contains("not a published project overseer"),
+        "unexpected refusal: {}",
+        error.error
+    );
+    assert!(launcher.calls().is_empty());
+    let requests = server.join();
+    assert_eq!(requests.len(), 1, "refused before any mutation");
+    fixture.cleanup();
+}
+
+#[test]
+fn overseer_watch_refuses_the_scribe_before_mutation() {
+    // An overseer IS watchable -- it is the manager class at every level above
+    // the leaf. The scribe is the one project-control session that stays out
+    // of the tree, and it is the case this guard now names.
     let fixture = RuntimeFixture::new("overseer-watch-control");
     let project = fixture.project("repo");
     let mut resolver = fixture.resolver();
@@ -2378,7 +2602,7 @@ fn overseer_watch_refuses_project_control_agent_before_mutation() {
         .expect("register project")
         .expect("entry");
     let server = ScriptedHttpServer::spawn(vec![json!({ "overseerSessionIds": [], "agents": [
-        { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
+        { "id": "claude-scribe", "tool": "claude", "status": "idle", "scribe": true }
     ]})]);
     persist_service(
         &resolver,
@@ -2404,16 +2628,17 @@ fn overseer_watch_refuses_project_control_agent_before_mutation() {
     let error = runtime
         .overseer_watch(
             project.to_str().expect("project path"),
-            "claude-overseer",
+            "claude-scribe",
+            None,
             None,
             None,
         )
-        .expect_err("project control agent fails");
+        .expect_err("the scribe is not a report");
 
     assert_eq!(error.status, 400);
     assert_eq!(
         error.error,
-        "cannot watch project control session: claude-overseer"
+        "cannot watch project control session claude-scribe: only an overseer is a report"
     );
     let requests = server.join();
     assert_eq!(requests.len(), 1);
@@ -3771,6 +3996,7 @@ fn overseer_watch_chooses_the_first_ready_published_owner_without_replacing_sibl
             .overseer_watch(
                 project.to_str().expect("path"),
                 "worker",
+                None,
                 Some("keep going"),
                 None,
             )
@@ -3781,14 +4007,14 @@ fn overseer_watch_chooses_the_first_ready_published_owner_without_replacing_sibl
         assert_eq!(requests.len(), 6);
         assert_request_path(&requests[0], "GET", "/agents");
         assert_request_path(&requests[1], "GET", "/agents");
-        assert_request_path(&requests[2], "POST", "/agents/loop");
-        assert_request_path(&requests[3], "POST", "/agents/watch");
+        assert_request_path(&requests[2], "POST", "/agents/watch");
         assert_eq!(
-            request_json_body(&requests[3]),
+            request_json_body(&requests[2]),
             json!({
                 "overseerSessionId": chosen, "watchedSessionId": "worker", "active": true,
             })
         );
+        assert_request_path(&requests[3], "POST", "/agents/loop");
         assert_request_path(&requests[4], "GET", "/agents");
         assert_request_path(&requests[5], "POST", "/agents/input");
         assert_eq!(request_json_body(&requests[5])["sessionId"], chosen);
@@ -3832,6 +4058,7 @@ fn overseer_watch_repeated_updates_keep_the_existing_second_published_owner() {
             .overseer_watch(
                 project.to_str().expect("path"),
                 "worker",
+                None,
                 Some(goal),
                 Some("check CI"),
             )
@@ -3846,13 +4073,13 @@ fn overseer_watch_repeated_updates_keep_the_existing_second_published_owner() {
     {
         assert_request_path(&requests[0], "GET", "/agents");
         assert_request_path(&requests[1], "GET", "/agents");
-        assert_request_path(&requests[2], "POST", "/agents/loop");
-        assert_eq!(request_json_body(&requests[2])["goal"], goal);
-        assert_request_path(&requests[3], "POST", "/agents/watch");
+        assert_request_path(&requests[2], "POST", "/agents/watch");
         assert_eq!(
-            request_json_body(&requests[3])["overseerSessionId"],
+            request_json_body(&requests[2])["overseerSessionId"],
             "control-b"
         );
+        assert_request_path(&requests[3], "POST", "/agents/loop");
+        assert_eq!(request_json_body(&requests[3])["goal"], goal);
         assert_request_path(&requests[4], "GET", "/agents");
         assert_request_path(&requests[5], "POST", "/agents/input");
         let input = request_json_body(&requests[5]);
@@ -3953,6 +4180,7 @@ fn overseer_watch_refuses_invalid_or_unavailable_bound_owners_before_any_mutatio
             .overseer_watch(
                 project.to_str().expect("path"),
                 "worker",
+                None,
                 Some("new goal"),
                 Some("new instructions"),
             )
@@ -4084,7 +4312,7 @@ fn overseer_watch_rejects_invalid_published_inventory_before_spawning_or_assigni
         let mut runtime =
             fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
         let error = runtime
-            .overseer_watch(project.to_str().expect("path"), "worker", None, None)
+            .overseer_watch(project.to_str().expect("path"), "worker", None, None, None)
             .expect_err("invalid inventory must never become an empty overseer set");
         assert_eq!(error.status, expected);
         assert!(error.error.contains(reason), "{name}: {}", error.error);

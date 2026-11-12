@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::config::load_config_for_project;
 use crate::daemon_state::load_metadata_state;
 use crate::debug_logging::{LogLevel, log_at};
+use crate::project_service::agent_roles::load_agent_role_registry;
 use crate::project_service::agents::{
     overseer_session_ids_for_state, session_is_backed_by_live_window,
     try_live_window_ids_for_session_projection,
@@ -108,6 +109,34 @@ fn watched_by_overseer_notification_refusal_reason(
 ) -> Option<&'static str> {
     let project_state_dir = project_state_dir?;
     let metadata = serde_json::to_value(load_metadata_state(project_state_dir)).ok()?;
+    // Who manages whom lives in the role registry and nowhere else -- it is
+    // projected onto agent-list records as `watchedBy`, which this path never
+    // sees.
+    //
+    // A registry we could not read is not a registry with no bindings.
+    // Treating it as empty falls back to "any overseer alive", which is the
+    // rule that swallowed a dead manager's reports in the first place -- so
+    // an unreadable registry would silently reinstate the bug it is here to
+    // fix. Not knowing who is watching means not suppressing: an extra
+    // notification is a nuisance, a missing one is the failure.
+    let watch_bindings = match load_agent_role_registry(project_state_dir) {
+        Ok(registry) => registry
+            .get("watchBindings")
+            .cloned()
+            .unwrap_or(Value::Null),
+        Err(error) => {
+            log_at(
+                LogLevel::Warn,
+                "notification delivered because the role registry is unreadable",
+                "notifications",
+                Some(json!({
+                    "sessionId": string_field(event, "sessionId"),
+                    "error": error,
+                })),
+            );
+            return None;
+        }
+    };
     let topology = read_runtime_topology(runtime_topology_path(project_state_dir)).ok()?;
     let sessions = list_topology_session_states(&topology, None);
     if crate::async_runtime::is_async_worker_context() {
@@ -116,6 +145,7 @@ fn watched_by_overseer_notification_refusal_reason(
             &Value::Null,
             &metadata,
             &sessions,
+            &watch_bindings,
             Err("live tmux window verification is unavailable in async worker context"),
         );
     }
@@ -130,6 +160,7 @@ fn watched_by_overseer_notification_refusal_reason(
         &notifications,
         &metadata,
         &sessions,
+        &watch_bindings,
         Ok(&live_window_ids),
     )
 }
@@ -139,6 +170,7 @@ pub fn watched_by_overseer_notification_refusal_reason_for_state(
     notifications: &Value,
     metadata: &Value,
     sessions: &[Value],
+    watch_bindings: &Value,
     live_window_ids: Result<&LiveWindowIndex, &str>,
 ) -> Option<&'static str> {
     if bool_field(event, "forceExternalNotification", false)
@@ -164,10 +196,28 @@ pub fn watched_by_overseer_notification_refusal_reason_for_state(
     {
         return None;
     }
-    if !overseer_ids
-        .iter()
-        .any(|overseer_id| overseer_is_verified_alive(sessions, overseer_id, live_window_ids))
-    {
+    // Whoever actually watches THIS agent has to be the one that is alive.
+    // Any overseer anywhere was close enough while the tree was two levels
+    // and every watched agent reported to the single project overseer. With
+    // a deeper tree it swallows prompts: if a mid-tier manager's window dies
+    // while the one above it lives, its reports are still suppressed and
+    // nobody is reading them.
+    //
+    // No recorded manager falls back to the old rule rather than failing
+    // open or closed on its own: a binding that has not been projected yet
+    // is not evidence that nobody is watching.
+    let watcher = watch_bindings
+        .get(session_id)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|watcher| !watcher.is_empty());
+    let watched_by_someone_alive = match watcher {
+        Some(watcher) => overseer_is_verified_alive(sessions, watcher, live_window_ids),
+        None => overseer_ids
+            .iter()
+            .any(|overseer_id| overseer_is_verified_alive(sessions, overseer_id, live_window_ids)),
+    };
+    if !watched_by_someone_alive {
         return None;
     }
     Some(WATCHED_BY_OVERSEER_NOTIFICATION_REFUSAL_REASON)

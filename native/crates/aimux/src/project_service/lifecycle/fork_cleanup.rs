@@ -307,7 +307,33 @@ fn registry_references_target(value: &Value, target_session_id: &str) -> bool {
             })
 }
 
+/// Whether `from` already reports, directly or through its managers, to
+/// `target`. Bounded by the number of bindings so a registry that already
+/// holds a loop cannot spin here.
+fn reaches_through_bindings(
+    bindings: &serde_json::Map<String, Value>,
+    from: &str,
+    target: &str,
+) -> bool {
+    if from == target {
+        return true;
+    }
+    let mut current = from;
+    for _ in 0..bindings.len() {
+        let Some(next) = bindings.get(current).and_then(Value::as_str) else {
+            return false;
+        };
+        if next == target {
+            return true;
+        }
+        current = next;
+    }
+    false
+}
+
 fn remove_target_registry(value: &mut Value, target_session_id: &str) -> bool {
+    let mut inherited: Vec<String> = Vec::new();
+    let mut inherited_manager: Option<String> = None;
     let mut changed = value
         .get_mut("sessions")
         .and_then(Value::as_object_mut)
@@ -316,11 +342,46 @@ fn remove_target_registry(value: &mut Value, target_session_id: &str) -> bool {
         .get_mut("watchBindings")
         .and_then(Value::as_object_mut)
     {
-        let before = bindings.len();
+        // The dead agent's reports move up to its own manager, the same way
+        // a deliberate demotion moves them. Dropping them instead left a
+        // whole subtree with no manager the moment a mid-tier overseer died,
+        // which is the state the demotion path exists to avoid -- and a
+        // death is the case where nobody is watching to notice.
+        //
+        // With no manager above, there is nothing to inherit them and they
+        // are released, as before.
+        let manager = bindings
+            .get(target_session_id)
+            .and_then(Value::as_str)
+            .filter(|manager| *manager != target_session_id)
+            .map(str::to_owned);
+        let before = bindings.clone();
         bindings.retain(|watched, overseer| {
             watched != target_session_id && overseer.as_str() != Some(target_session_id)
         });
-        changed |= before != bindings.len();
+        if let Some(manager) = manager.as_deref() {
+            for (watched, overseer) in &before {
+                if watched == target_session_id || watched == manager {
+                    continue;
+                }
+                if overseer.as_str() != Some(target_session_id) {
+                    continue;
+                }
+                // The inheriting manager may itself sit under the report it
+                // is about to adopt, if the registry already held a loop --
+                // `target -> a, a -> b, b -> target` leaves `a` and `b`
+                // pointing at each other. The deliberate release path
+                // refuses that input outright, but a death cannot refuse, so
+                // the move is skipped and the report is simply released.
+                if reaches_through_bindings(bindings, manager, watched) {
+                    continue;
+                }
+                bindings.insert(watched.clone(), Value::String(manager.to_owned()));
+                inherited.push(watched.clone());
+            }
+        }
+        changed |= before != *bindings;
+        inherited_manager = manager;
     }
     if let Some(slots) = value.get_mut("roleSlots").and_then(Value::as_object_mut) {
         let before = slots.len();
@@ -333,6 +394,34 @@ fn remove_target_registry(value: &mut Value, target_session_id: &str) -> bool {
                 let before = ids.len();
                 ids.retain(|id| id.as_str() != Some(target_session_id));
                 changed |= before != ids.len();
+            }
+        }
+        // `watching` mirrors the bindings, so a report that just changed
+        // hands has to appear on its new manager's list. Retaining ids one by
+        // one can only remove, never add, which would have left the two
+        // halves of the registry disagreeing about the same relationship.
+        if let Some(manager) = inherited_manager.as_deref()
+            && !inherited.is_empty()
+            && let Some(entry) = sessions.get_mut(manager).and_then(Value::as_object_mut)
+        {
+            let ids = entry
+                .entry("watching".to_owned())
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Some(ids) = ids.as_array_mut() {
+                for id in inherited {
+                    if !ids
+                        .iter()
+                        .any(|existing| existing.as_str() == Some(id.as_str()))
+                    {
+                        ids.push(Value::String(id));
+                        changed = true;
+                    }
+                }
+                ids.sort_by(|left, right| {
+                    left.as_str()
+                        .unwrap_or("")
+                        .cmp(right.as_str().unwrap_or(""))
+                });
             }
         }
     }
@@ -408,6 +497,40 @@ mod tests {
     }
 
     #[test]
+    fn inheriting_a_dead_managers_reports_does_not_close_a_loop() {
+        // A registry written before the cycle guard can already hold one.
+        // `target -> a`, `a -> b`, `b -> target`: removing `target` would
+        // hand `b` to `a` while `a` still reports to `b`. The deliberate
+        // release path refuses that input; a death cannot refuse, so the
+        // move is skipped and the report is released instead.
+        let state = StateDir::new();
+        state.write_json("metadata.json", &json!({"version":1,"sessions":{}}));
+        state.write_json(
+            "agent-role-registry.json",
+            &json!({
+                "version": 1,
+                "sessions": {},
+                "roleSlots": {},
+                "watchBindings": {"target":"a","a":"b","b":"target"}
+            }),
+        );
+
+        rollback_fork_target_state(&state.0, "target").unwrap();
+
+        let registry = state.read_json("agent-role-registry.json");
+        let bindings = registry["watchBindings"].as_object().expect("bindings");
+        assert_eq!(
+            bindings.get("a").and_then(Value::as_str),
+            Some("b"),
+            "a's own manager should be untouched: {bindings:?}"
+        );
+        assert!(
+            bindings.get("b").is_none(),
+            "b was handed to a manager that reports to it: {bindings:?}"
+        );
+    }
+
+    #[test]
     fn fork_target_cleanup_preserves_unrelated_metadata_and_role_state() {
         let state = StateDir::new();
         let source = json!({"derived":{"activity":"running"},"context":{"segments":[{"expiresAt":1,"text":"preserve expired source"}]},"custom":"preserve"});
@@ -424,13 +547,18 @@ mod tests {
         assert_eq!(metadata["sessions"], json!({"source":source}));
         assert_eq!(metadata["futureField"], json!({"keep":true}));
         let registry = state.read_json("agent-role-registry.json");
+        // `third` reported to the removed agent and is inherited by its
+        // manager rather than orphaned, so it joins `source`'s list.
         assert_eq!(
             registry["sessions"]["source"],
-            json!({"role":"overseer","watching":["other"],"custom":"preserve"})
+            json!({"role":"overseer","watching":["other","third"],"custom":"preserve"})
         );
         assert_eq!(registry["sessions"]["other"], json!({"role":"coder"}));
         assert!(registry["sessions"].get("target").is_none());
-        assert_eq!(registry["watchBindings"], json!({"other":"source"}));
+        assert_eq!(
+            registry["watchBindings"],
+            json!({"other":"source","third":"source"})
+        );
         assert_eq!(
             registry["roleSlots"],
             json!({"keep":{"sessionId":"source","extra":1}})

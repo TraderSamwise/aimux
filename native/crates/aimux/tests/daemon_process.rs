@@ -272,6 +272,7 @@ impl DaemonCoreCommandRuntime for FakeRuntime {
         &mut self,
         _project_root: &str,
         _session_id: &str,
+        _overseer_session_id: Option<&str>,
         _goal: Option<&str>,
         _instructions: Option<&str>,
     ) -> Result<Value, CoreCommandFailure> {
