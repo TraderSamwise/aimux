@@ -14,6 +14,7 @@ import { useAuth } from "@/lib/auth";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
 import { useRouteProject } from "@/lib/use-route-project";
+import { topologyRowIndent } from "@/lib/topology-rows";
 import { cn } from "@/lib/utils";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { selectedSessionIdAtom } from "@/stores/projects";
@@ -128,8 +129,10 @@ function RowCard({
       className={cn(
         "flex-row items-center px-3 py-3 active:bg-accent",
         index > 0 && "border-t border-border",
-        row.depth > 0 && "pl-8",
       )}
+      // Proportional to the delegation depth the service derived. A boolean
+      // indent drew a three-level org as one flat list of peers.
+      style={{ paddingLeft: topologyRowIndent(row.depth) }}
     >
       <View className="mr-3">
         {/* Toned by `health`, which already knows about `pendingAction`;
@@ -146,9 +149,15 @@ function RowCard({
             {row.kind}
           </Text>
         </View>
-        {row.detail || row.status ? (
+        {/* `managerNotShown` is said out loud because the indent cannot say
+            it: the manager is not among these rows -- another checkout, or one
+            that has since gone -- and drawn flat the row reads like an agent
+            nobody is watching. */}
+        {row.detail || row.status || row.managerNotShown ? (
           <Text className="mt-1 text-[11px] text-muted-foreground" numberOfLines={1}>
-            {[row.detail, row.status].filter(Boolean).join(" · ")}
+            {[row.detail, row.status, row.managerNotShown ? "manager not shown" : null]
+              .filter(Boolean)
+              .join(" · ")}
           </Text>
         ) : null}
       </View>

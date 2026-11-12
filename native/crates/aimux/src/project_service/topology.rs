@@ -165,6 +165,101 @@ pub fn build_topology_worktrees_from_desktop_state(state: &Value) -> Vec<Value> 
         .collect()
 }
 
+/// One agent of a checkout, placed in that checkout's delegation tree.
+struct SupervisedSession<'a> {
+    session: &'a Value,
+    depth: usize,
+    /// Whether its manager is one of the same checkout's sessions, and so can
+    /// be drawn above it.
+    manager_in_checkout: bool,
+}
+
+/// A checkout's agents in tree order, each with how deep it sits below the
+/// checkout's own roots.
+///
+/// Derived once, here, because every surface draws it: the TUI indents by the
+/// depth and the Expo app pads by it. The edge is `watchedBy` -- who runs the
+/// agent's loop -- and a manager that lives in another checkout cannot be
+/// drawn above its report on this card, so such a report is a root here and
+/// carries `watchedBy` for the surface to say who holds it.
+///
+/// Siblings keep the order they arrived in rather than the registry's key
+/// order, and a manager is always emitted above its reports even when it was
+/// listed after them. The walk is driven by a visited flag, so a registry
+/// hand-edited into a loop terminates with every agent drawn exactly once
+/// instead of hanging the renderer or dropping the whole cycle.
+fn sessions_in_supervision_order<'a>(
+    sessions: &'a [Value],
+    role_registry: Option<&Value>,
+) -> Vec<SupervisedSession<'a>> {
+    let index_of = sessions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, session)| string_field(session, "id").map(|id| (id, index)))
+        .collect::<BTreeMap<_, _>>();
+    // Where each agent's manager is, and separately which agent to draw it
+    // under. They differ for an agent bound to itself by a hand-edited
+    // registry: its manager is on this card, but nothing can be drawn under
+    // itself.
+    let managers: Vec<Option<usize>> = sessions
+        .iter()
+        .map(|session| {
+            string_field(session, "id")
+                .and_then(|id| {
+                    role_registry.and_then(|registry| {
+                        super::agent_roles::watch_binding_overseer(registry, id)
+                    })
+                })
+                .and_then(|overseer| index_of.get(overseer).copied())
+        })
+        .collect();
+    let parents: Vec<Option<usize>> = managers
+        .iter()
+        .enumerate()
+        .map(|(index, manager)| (*manager).filter(|parent| *parent != index))
+        .collect();
+    let mut children = vec![Vec::new(); sessions.len()];
+    let mut roots = Vec::new();
+    for (index, parent) in parents.iter().enumerate() {
+        match parent {
+            Some(parent) => children[*parent].push(index),
+            None => roots.push(index),
+        }
+    }
+    let mut ordered: Vec<SupervisedSession<'a>> = Vec::with_capacity(sessions.len());
+    let mut drawn = vec![false; sessions.len()];
+    let mut stack = Vec::new();
+    // The roots first, then whatever a cycle left unreachable -- in the order
+    // the sessions arrived, so the choice of where to break a loop is at least
+    // stable between refreshes.
+    for start in roots.iter().copied().chain(0..sessions.len()) {
+        if drawn[start] {
+            continue;
+        }
+        stack.push((start, 0usize));
+        while let Some((index, depth)) = stack.pop() {
+            if drawn[index] {
+                continue;
+            }
+            drawn[index] = true;
+            ordered.push(SupervisedSession {
+                session: &sessions[index],
+                depth,
+                // Asked of where the manager is, not of how this row was
+                // drawn. An agent at the top of a cycle is drawn as a root
+                // too, and its manager is right here on the same card.
+                manager_in_checkout: managers[index].is_some(),
+            });
+            for child in children[index].iter().rev() {
+                if !drawn[*child] {
+                    stack.push((*child, depth + 1));
+                }
+            }
+        }
+    }
+    ordered
+}
+
 pub fn build_project_topology(
     project_name: &str,
     worktrees: Vec<Value>,
@@ -177,7 +272,14 @@ pub fn build_project_topology(
     for worktree in &worktrees {
         let mut child_healths = Vec::new();
         let mut child_rows = Vec::new();
-        for session in array_field(worktree, "sessions") {
+        for placed in
+            sessions_in_supervision_order(array_field(worktree, "sessions"), role_registry)
+        {
+            let SupervisedSession {
+                session,
+                depth: delegation_depth,
+                manager_in_checkout,
+            } = placed;
             let health = health_for_status(
                 string_field(session, "status"),
                 string_field(session, "pendingAction"),
@@ -185,7 +287,7 @@ pub fn build_project_topology(
             child_healths.push(health);
             let mut row = Map::new();
             row.insert("kind".into(), Value::String("agent".into()));
-            row.insert("depth".into(), Value::from(1));
+            row.insert("depth".into(), Value::from(1 + delegation_depth));
             row.insert(
                 "label".into(),
                 Value::String(
@@ -225,13 +327,19 @@ pub fn build_project_topology(
                 "parentSessionId",
                 crate::team_contract::manager_session_id(session),
             );
-            insert_optional_string(
-                &mut row,
-                "watchedBy",
-                string_field(session, "id").and_then(|id| {
-                    role_registry.and_then(|registry| watch_binding_overseer(registry, id))
-                }),
-            );
+            let watched_by = string_field(session, "id").and_then(|id| {
+                role_registry.and_then(|registry| watch_binding_overseer(registry, id))
+            });
+            insert_optional_string(&mut row, "watchedBy", watched_by);
+            // A watch binding crosses checkouts, and a manager can exit
+            // while its report runs on. Either way the manager is not among
+            // these rows, and an unmarked row then looks exactly like one
+            // nobody manages -- the two states the screen exists to tell
+            // apart. The flag says only that: not shown here. Which of the
+            // two it is, `watchedBy` can be followed to find out.
+            if watched_by.is_some() && !manager_in_checkout {
+                row.insert("managerNotShown".into(), Value::Bool(true));
+            }
             // Carried, not recomputed: the topology screen renders the same
             // agent as the dashboard row and claimed to read the same way.
             if let Some(recent_output) = session.get("recentOutput").and_then(Value::as_bool) {

@@ -3578,6 +3578,31 @@ fn topology_row_task(row: &Value) -> String {
     }
 }
 
+/// Said out loud, because the indent cannot say it: this agent has a manager
+/// and that manager is not among these rows. Drawn flat with no note, it reads
+/// exactly like an agent nobody is watching.
+fn topology_manager_not_shown(row: &Value) -> String {
+    if row
+        .get("managerNotShown")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        format!(" {}", style("↗ manager not shown", Tone::Muted))
+    } else {
+        String::new()
+    }
+}
+
+/// How far a topology row is indented, in columns, for its delegation depth.
+///
+/// Shared with the Expo app through
+/// `testdata/contracts/v1/topology-depth/surfaces.json`: the service decides
+/// the depth and each surface only multiplies it, so the two cannot drift into
+/// drawing different trees from the same answer.
+pub fn topology_indent_columns(depth: usize) -> usize {
+    2 + depth * 2
+}
+
 fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> Vec<String> {
     let Some(topology) = resource.map(|resource| resource.get("topology").unwrap_or(resource))
     else {
@@ -3621,7 +3646,10 @@ fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> V
         let label = string_at(row, &["label"]).unwrap_or("");
         let kind = string_at(row, &["kind"]).unwrap_or("");
         let health = string_at(row, &["health"]).unwrap_or("");
-        let indent = if depth > 0 { "    " } else { "  " };
+        // Proportional, because the depth is now the delegation depth rather
+        // than a worktree/child flag. A boolean indent drew a three-level org
+        // as one flat list of peers under its checkout.
+        let indent = " ".repeat(topology_indent_columns(depth));
         let detail = string_at(row, &["detail"])
             .map(|detail| format!(" {}", style(&format!("({detail})"), Tone::Muted)))
             .unwrap_or_default();
@@ -3648,7 +3676,7 @@ fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> V
             ));
         } else {
             lines.push(format!(
-                "{} {indent}{} {} {}{}{}{}{}",
+                "{} {indent}{} {} {}{}{}{}{}{}",
                 if selected {
                     style("▸", Tone::Accent)
                 } else {
@@ -3656,9 +3684,18 @@ fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> V
                 },
                 topology_dot(health),
                 chip(kind, ChipTone::Muted),
-                pad_visible(&topology_row_identity(row, label), 26),
+                // The indent spends columns the identity used to have, so it
+                // is taken back from the identity rather than pushed onto the
+                // task column, which is the one that falls off the right edge.
+                pad_visible(
+                    &topology_row_identity(row, label),
+                    26usize
+                        .saturating_sub(indent.len().saturating_sub(topology_indent_columns(1),))
+                        .max(14),
+                ),
                 pad_visible(&topology_row_state(row), 10),
                 detail,
+                topology_manager_not_shown(row),
                 topology_row_task(row),
                 trailing_mark(selected)
             ));

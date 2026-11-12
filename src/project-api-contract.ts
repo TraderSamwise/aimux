@@ -1071,6 +1071,8 @@ export interface ProjectTopologyResponse extends ProjectApiOk {
       parentSessionId?: string;
       /** Who runs this agent's loop; the edge the org tree is drawn from. */
       watchedBy?: string;
+      /** It has a manager, and that manager is not among these rows. */
+      managerNotShown?: boolean;
     }>;
   };
 }
