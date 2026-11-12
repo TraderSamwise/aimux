@@ -333,6 +333,12 @@ If an overseer has active watch bindings, default demotion should fail with a
 409 and list the bindings. The caller can retry with `releaseBindings: true` or
 an explicit transfer plan.
 
+Promoting a session to scribe is refused while it still has reports, for the
+same reason: a scribe is a project function, not a manager, and leaving its
+outgoing bindings in place would have the registry hand it reports while
+metadata called it a scribe. Release them first, or demote it with
+`releaseBindings` so they move up to its own manager, and then promote.
+
 `releaseBindings` does not orphan the reports. They move up to the demoted
 agent's own manager, and the demoted agent keeps that manager too, so it ends
 up a coder alongside the agents that used to report to it. Where there is no

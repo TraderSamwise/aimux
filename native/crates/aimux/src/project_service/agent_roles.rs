@@ -233,6 +233,19 @@ pub fn set_supervisor_role_with_options(
         // dropped the agent. Its reports then pointed at a non-overseer and
         // `bind_watch` refused to repair it, so every retry failed the same
         // way. Nothing rolled it back because nothing could.
+        // A scribe is not a manager either, so promoting one that still has
+        // reports would leave `sync_watching_lists` stamping it back to
+        // `role: overseer` on the strength of them -- metadata saying scribe
+        // while the registry still handed it reports. Asked here, with the
+        // demotion checks, so it precedes the metadata write rather than
+        // leaning on the rollback to undo one.
+        if active && key != "overseer" {
+            let reports = watched_by(registry, session_id);
+            if !reports.is_empty() {
+                *blocked_reports.borrow_mut() = reports;
+                return Err(ACTIVE_WATCH_BINDINGS_UNDER_LOCK.to_owned());
+            }
+        }
         let demotion = (!active).then(|| DemotionPlan::read(registry, session_id));
         if let Some(plan) = demotion.as_ref() {
             if !plan.reports.is_empty() && !options.release_bindings {
@@ -317,16 +330,6 @@ pub fn set_supervisor_role_with_options(
             // only promote-then-bind worked. The scribe is not a report, so
             // its promotion still cuts the edge.
             if key != "overseer" {
-                // A scribe is not a manager either. Clearing only the
-                // incoming edge left the outgoing ones in place, and
-                // `sync_watching_lists` then stamped the session back to
-                // `role: overseer` on the strength of them -- metadata
-                // saying scribe while the registry still handed it reports.
-                let reports = watched_by(registry, session_id);
-                if !reports.is_empty() {
-                    *blocked_reports.borrow_mut() = reports;
-                    return Err(ACTIVE_WATCH_BINDINGS_UNDER_LOCK.to_owned());
-                }
                 clear_watch_binding_for_watched(registry, session_id);
             }
         } else if let Some(plan) = demotion {
@@ -568,7 +571,7 @@ pub fn bind_watch(
     // the agent exactly where it was. Now that promotion no longer cuts the
     // incoming edge, that escape hatch is the only route to a transfer, and
     // a lie there strands the caller.
-    let release_holder: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
+    let conflicting_holder: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
     if !active
         && registry
             .get("watchBindings")
@@ -634,7 +637,7 @@ pub fn bind_watch(
                 // client that `top` owns a binding `other` holds, and the
                 // documented escape from `already-watched` is to re-release
                 // under the named manager -- so it would retry `top` forever.
-                *release_holder.borrow_mut() = holder.map(str::to_owned);
+                *conflicting_holder.borrow_mut() = holder.map(str::to_owned);
                 return Err(RELEASE_OWNER_CHANGED_UNDER_LOCK.to_owned());
             }
             object_field_mut(registry, "watchBindings").remove(watched_session_id);
@@ -645,7 +648,7 @@ pub fn bind_watch(
             if error == RELEASE_OWNER_CHANGED_UNDER_LOCK {
                 WatchBindingError::AlreadyWatched {
                     watched_session_id: watched_session_id.to_owned(),
-                    overseer_session_id: release_holder
+                    overseer_session_id: conflicting_holder
                         .borrow()
                         .clone()
                         .unwrap_or_else(|| "none".to_owned()),
@@ -739,7 +742,7 @@ pub fn bind_watch(
                 .and_then(Value::as_str)
                 .filter(|current| *current != overseer_session_id)
         {
-            *release_holder.borrow_mut() = Some(current.to_owned());
+            *conflicting_holder.borrow_mut() = Some(current.to_owned());
             return Err(BIND_OWNER_TAKEN_UNDER_LOCK.to_owned());
         }
         let bindings = object_field_mut(registry, "watchBindings");
@@ -768,7 +771,7 @@ pub fn bind_watch(
         if error == BIND_OWNER_TAKEN_UNDER_LOCK {
             WatchBindingError::AlreadyWatched {
                 watched_session_id: watched_session_id.to_owned(),
-                overseer_session_id: release_holder
+                overseer_session_id: conflicting_holder
                     .borrow()
                     .clone()
                     .unwrap_or_else(|| "none".to_owned()),
