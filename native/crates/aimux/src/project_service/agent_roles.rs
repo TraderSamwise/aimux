@@ -317,6 +317,16 @@ pub fn set_supervisor_role_with_options(
             // only promote-then-bind worked. The scribe is not a report, so
             // its promotion still cuts the edge.
             if key != "overseer" {
+                // A scribe is not a manager either. Clearing only the
+                // incoming edge left the outgoing ones in place, and
+                // `sync_watching_lists` then stamped the session back to
+                // `role: overseer` on the strength of them -- metadata
+                // saying scribe while the registry still handed it reports.
+                let reports = watched_by(registry, session_id);
+                if !reports.is_empty() {
+                    *blocked_reports.borrow_mut() = reports;
+                    return Err(ACTIVE_WATCH_BINDINGS_UNDER_LOCK.to_owned());
+                }
                 clear_watch_binding_for_watched(registry, session_id);
             }
         } else if let Some(plan) = demotion {
@@ -715,6 +725,23 @@ pub fn bind_watch(
         if active && watch_chain_reaches(registry, overseer_session_id, watched_session_id) {
             return Err(WATCH_CYCLE_UNDER_LOCK.to_owned());
         }
+        // And the owner, for the same reason as the cycle. Two binds of the
+        // same agent to different managers both read a map with no owner
+        // before the lock, so the `AlreadyWatched` check above passes twice
+        // and the second insert silently replaces the first manager. The
+        // release path got this recheck; the bind path is where a report
+        // actually changes hands.
+        if active
+            && let Some(current) = registry
+                .get("watchBindings")
+                .and_then(Value::as_object)
+                .and_then(|bindings| bindings.get(watched_session_id))
+                .and_then(Value::as_str)
+                .filter(|current| *current != overseer_session_id)
+        {
+            *release_holder.borrow_mut() = Some(current.to_owned());
+            return Err(BIND_OWNER_TAKEN_UNDER_LOCK.to_owned());
+        }
         let bindings = object_field_mut(registry, "watchBindings");
         if active {
             bindings.insert(
@@ -738,7 +765,15 @@ pub fn bind_watch(
         Ok(true)
     })
     .map_err(|error| {
-        if error == WATCH_CYCLE_UNDER_LOCK {
+        if error == BIND_OWNER_TAKEN_UNDER_LOCK {
+            WatchBindingError::AlreadyWatched {
+                watched_session_id: watched_session_id.to_owned(),
+                overseer_session_id: release_holder
+                    .borrow()
+                    .clone()
+                    .unwrap_or_else(|| "none".to_owned()),
+            }
+        } else if error == WATCH_CYCLE_UNDER_LOCK {
             WatchBindingError::WatchCycle {
                 watched_session_id: watched_session_id.to_owned(),
                 overseer_session_id: overseer_session_id.to_owned(),
@@ -970,6 +1005,10 @@ impl DemotionPlan {
         (!blocked.is_empty()).then_some(blocked)
     }
 }
+
+/// Raised when a bind reaches the lock and someone else has taken the agent
+/// in the meantime. Reported as `already-watched`, naming the holder.
+const BIND_OWNER_TAKEN_UNDER_LOCK: &str = "bind-owner-taken-under-lock";
 
 /// Raised when a release reaches the lock and the binding has changed hands
 /// since it was read. Reported as `already-watched`, the same refusal a

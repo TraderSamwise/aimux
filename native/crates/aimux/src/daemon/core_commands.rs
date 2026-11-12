@@ -180,6 +180,18 @@ pub fn route_core_command(
             // reachable at all. Without it the service picks the first ready
             // overseer, so after promoting a middle one every later watch
             // still lands on whichever sorts first.
+            // Present but blank is a caller error, not "pick one for me".
+            // Collapsing it into omission silently chose a manager for a
+            // request that was trying to name one.
+            if payload
+                .and_then(|payload| payload.get("overseerSessionId"))
+                .is_some_and(|value| value.as_str().map(str::trim).unwrap_or_default().is_empty())
+            {
+                return DaemonRouteResponse::json(
+                    400,
+                    command_error(&id, Some(command), "overseerSessionId must not be blank"),
+                );
+            }
             let overseer_session_id = trimmed_string(payload, "overseerSessionId");
             let goal = trimmed_string(payload, "goal");
             let instructions = trimmed_string(payload, "instructions");

@@ -4199,10 +4199,16 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         // refused exactly the agents this tree is made of. The scribe is the
         // case that rule was really protecting, and it is still refused here
         // and again in `bind_watch`.
-        if is_scribe_agent(target) {
+        // The same predicate the project service applies, so this layer
+        // cannot admit a target the service will refuse. A project-control
+        // session that is neither overseer nor scribe passed a scribe-only
+        // test here and was refused two calls later.
+        if !is_overseer_agent(target) && is_project_control_agent(target) {
             return Err(CoreCommandFailure {
                 status: 400,
-                error: format!("cannot watch the project scribe: {session_id}"),
+                error: format!(
+                    "cannot watch project control session {session_id}: only an overseer is a report"
+                ),
             });
         }
         if !is_agent_live(target) {
@@ -5359,8 +5365,12 @@ fn reports_to(agents: &[Value], candidate: &str, ancestor: &str) -> bool {
     false
 }
 
-fn is_scribe_agent(agent: &Value) -> bool {
-    crate::team_contract::is_scribe_session(Some(agent))
+fn is_overseer_agent(agent: &Value) -> bool {
+    crate::team_contract::is_overseer_session(Some(agent))
+}
+
+fn is_project_control_agent(agent: &Value) -> bool {
+    crate::team_contract::is_project_control_session(Some(agent))
 }
 
 fn agent_watch_label(agent: &Value) -> &str {
@@ -7227,7 +7237,7 @@ mod tests {
         // longer what excludes an agent. Asserting that on this fixture alone
         // proves nothing -- it was false under the old rule too -- so the
         // pair that actually diverged is asserted beside it.
-        assert!(!is_scribe_agent(&worker));
+        assert!(!is_project_control_agent(&worker));
         let overseer = json!({
             "id": "claude-lead",
             "status": "idle",
@@ -7236,12 +7246,10 @@ mod tests {
             "projectControl": true
         });
         assert!(
-            !is_scribe_agent(&overseer),
+            is_overseer_agent(&overseer),
             "an overseer must be watchable, which is the whole tree"
         );
-        assert!(crate::team_contract::is_project_control_session(Some(
-            &overseer
-        )));
+        assert!(is_project_control_agent(&overseer));
         let scribe = json!({
             "id": "claude-scribe",
             "status": "idle",
@@ -7249,7 +7257,7 @@ mod tests {
             "scribe": true,
             "projectControl": true
         });
-        assert!(is_scribe_agent(&scribe));
+        assert!(!is_overseer_agent(&scribe) && is_project_control_agent(&scribe));
         let (agents, published) = overseer_watch_inventory(&json!({
             "agents": [worker], "overseerSessionIds": []
         }))

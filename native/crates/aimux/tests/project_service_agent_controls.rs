@@ -1477,6 +1477,189 @@ fn a_release_whose_binding_changed_hands_before_the_lock_is_refused() {
 }
 
 #[test]
+fn a_bind_racing_another_bind_cannot_take_an_agent_that_just_changed_hands() {
+    // `AlreadyWatched` was checked against a snapshot read before the lock,
+    // so two binds of the same agent to different managers both saw no owner
+    // and the second insert silently replaced the first. The release path
+    // got this recheck already; the bind path is where a report actually
+    // changes hands.
+    use aimux::project_service::agent_roles::agent_role_registry_path;
+    use aimux::state_update_lock::acquire_state_update_lock;
+    use std::sync::Arc;
+    use std::sync::Barrier;
+
+    let project = temp_project("bind-owner-taken");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "top".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "other".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // Seed the registry so the file exists, then take it back to unbound.
+    assert_eq!(
+        route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": "top",
+                "watchedSessionId": "worker",
+                "active": true
+            })),
+        )
+        .status,
+        200
+    );
+    assert_eq!(
+        route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": "top",
+                "watchedSessionId": "worker",
+                "active": false
+            })),
+        )
+        .status,
+        200
+    );
+
+    let registry_path = agent_role_registry_path(&state_dir);
+    let held = acquire_state_update_lock(&registry_path).expect("registry lock");
+
+    let barrier = Arc::new(Barrier::new(2));
+    let binding = {
+        let barrier = Arc::clone(&barrier);
+        let project = project.clone();
+        let state_dir = state_dir.clone();
+        std::thread::spawn(move || {
+            let context =
+                ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+            barrier.wait();
+            route_project_service_request(
+                &context,
+                "POST",
+                routes::agents::WATCH,
+                Some(&json!({
+                    "overseerSessionId": "top",
+                    "watchedSessionId": "worker",
+                    "active": true
+                })),
+            )
+        })
+    };
+    barrier.wait();
+    std::thread::sleep(std::time::Duration::from_millis(150));
+
+    // `other` takes the worker while `top`'s bind waits on the lock.
+    let mut registry: Value =
+        serde_json::from_str(&read_to_string(&registry_path).expect("read registry"))
+            .expect("parse registry");
+    registry["watchBindings"]["worker"] = json!("other");
+    write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+    drop(held);
+
+    let response = binding.join().expect("bind thread");
+    assert_eq!(response.status, 409, "{:?}", response.body);
+    assert_eq!(response.body["reason"], "already-watched");
+    assert_eq!(
+        response.body["details"]["overseerSessionId"], "other",
+        "the refusal named the wrong holder: {:?}",
+        response.body
+    );
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(
+        registry["watchBindings"]["worker"], "other",
+        "the bind replaced a manager that already held the agent: {registry:?}"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn a_manager_cannot_become_the_scribe_while_it_still_has_reports() {
+    // Promotion to scribe cleared only the incoming edge. The outgoing ones
+    // survived, and `sync_watching_lists` stamped the session back to
+    // `role: overseer` on the strength of them -- metadata saying scribe
+    // while the registry still handed it reports.
+    let project = temp_project("scribe-with-reports");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "boss".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    assert_eq!(
+        route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": "boss",
+                "watchedSessionId": "worker",
+                "active": true
+            })),
+        )
+        .status,
+        200
+    );
+
+    let promoted = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::SCRIBE,
+        Some(&json!({ "sessionId": "boss", "active": true })),
+    );
+
+    assert_eq!(promoted.status, 409, "{:?}", promoted.body);
+    assert_eq!(promoted.body["reason"], "active-watch-bindings");
+    assert_eq!(promoted.body["details"]["watchedSessionIds"][0], "worker");
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["watchBindings"]["worker"], "boss");
+    let metadata = load_metadata_state(&state_dir);
+    assert_ne!(
+        metadata.sessions.get("boss").and_then(|s| s.get("scribe")),
+        Some(&json!(true)),
+        "the refused promotion still wrote metadata"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn demoting_watching_overseer_requires_explicit_binding_release() {
     let project = temp_project("watch-demote");
     let state_dir = project.join("state");

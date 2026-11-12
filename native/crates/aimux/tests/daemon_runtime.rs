@@ -2638,7 +2638,7 @@ fn overseer_watch_refuses_the_scribe_before_mutation() {
     assert_eq!(error.status, 400);
     assert_eq!(
         error.error,
-        "cannot watch the project scribe: claude-scribe"
+        "cannot watch project control session claude-scribe: only an overseer is a report"
     );
     let requests = server.join();
     assert_eq!(requests.len(), 1);
