@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::config::load_config_for_project;
 use crate::daemon_state::load_metadata_state;
 use crate::debug_logging::{LogLevel, log_at};
+use crate::project_service::agent_roles::load_agent_role_registry;
 use crate::project_service::agents::{
     overseer_session_ids_for_state, session_is_backed_by_live_window,
     try_live_window_ids_for_session_projection,
@@ -108,6 +109,14 @@ fn watched_by_overseer_notification_refusal_reason(
 ) -> Option<&'static str> {
     let project_state_dir = project_state_dir?;
     let metadata = serde_json::to_value(load_metadata_state(project_state_dir)).ok()?;
+    // Who manages whom lives in the role registry and nowhere else -- it is
+    // projected onto agent-list records as `watchedBy`, which this path never
+    // sees. An unreadable registry leaves the bindings absent, which falls
+    // back to the older project-wide rule rather than deciding on a guess.
+    let watch_bindings = load_agent_role_registry(project_state_dir)
+        .ok()
+        .and_then(|registry| registry.get("watchBindings").cloned())
+        .unwrap_or(Value::Null);
     let topology = read_runtime_topology(runtime_topology_path(project_state_dir)).ok()?;
     let sessions = list_topology_session_states(&topology, None);
     if crate::async_runtime::is_async_worker_context() {
@@ -116,6 +125,7 @@ fn watched_by_overseer_notification_refusal_reason(
             &Value::Null,
             &metadata,
             &sessions,
+            &watch_bindings,
             Err("live tmux window verification is unavailable in async worker context"),
         );
     }
@@ -130,6 +140,7 @@ fn watched_by_overseer_notification_refusal_reason(
         &notifications,
         &metadata,
         &sessions,
+        &watch_bindings,
         Ok(&live_window_ids),
     )
 }
@@ -139,6 +150,7 @@ pub fn watched_by_overseer_notification_refusal_reason_for_state(
     notifications: &Value,
     metadata: &Value,
     sessions: &[Value],
+    watch_bindings: &Value,
     live_window_ids: Result<&LiveWindowIndex, &str>,
 ) -> Option<&'static str> {
     if bool_field(event, "forceExternalNotification", false)
@@ -174,7 +186,11 @@ pub fn watched_by_overseer_notification_refusal_reason_for_state(
     // No recorded manager falls back to the old rule rather than failing
     // open or closed on its own: a binding that has not been projected yet
     // is not evidence that nobody is watching.
-    let watcher = non_empty(string_field(session_metadata, "watchedBy"));
+    let watcher = watch_bindings
+        .get(session_id)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|watcher| !watcher.is_empty());
     let watched_by_someone_alive = match watcher {
         Some(watcher) => overseer_is_verified_alive(sessions, watcher, live_window_ids),
         None => overseer_ids

@@ -182,6 +182,8 @@ export interface CoreOverseerWatchPayload extends CoreProjectPayload {
   sessionId: string;
   goal?: string;
   instructions?: string;
+  /** Which overseer should manage it. Omitted, the service picks one. */
+  overseerSessionId?: string;
 }
 
 export interface CoreRestartPayload {

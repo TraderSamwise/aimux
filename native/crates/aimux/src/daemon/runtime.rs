@@ -4246,6 +4246,22 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                     ),
                 });
             }
+            // The same readiness the bound-owner path demands. Without it a
+            // named manager that is offline is waited on for the full input
+            // budget and then reported as a timeout, which names the wrong
+            // problem.
+            let ready = find_agent(&initial_agents, requested).is_some_and(is_agent_input_ready);
+            if !ready {
+                return Err(CoreCommandFailure {
+                    status: 409,
+                    error: format!(
+                        "cannot watch {session_id} under {requested}: it is not ready for input (status: {})",
+                        find_agent(&initial_agents, requested)
+                            .and_then(agent_status)
+                            .unwrap_or("unknown")
+                    ),
+                });
+            }
         }
         let overseer_session_id = if let Some(requested) = requested_overseer {
             requested.to_owned()

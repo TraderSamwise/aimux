@@ -595,6 +595,14 @@ pub fn bind_watch(
                 .and_then(Value::as_object)
                 .and_then(|bindings| bindings.get(watched_session_id))
                 .and_then(Value::as_str);
+            // Already gone is what this call wanted. Two releases of the
+            // same binding used to leave the loser a 409 naming `"none"` as
+            // the holder, and the documented escape -- re-release under the
+            // named holder -- then posts `none` and gets a 404 for a session
+            // that does not exist, about a binding that is correctly absent.
+            if holder.is_none() {
+                return Ok(false);
+            }
             if holder != Some(overseer_session_id) {
                 // The holder, not the caller. Naming the caller told a
                 // client that `top` owns a binding `other` holds, and the
