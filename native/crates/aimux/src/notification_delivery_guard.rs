@@ -111,12 +111,32 @@ fn watched_by_overseer_notification_refusal_reason(
     let metadata = serde_json::to_value(load_metadata_state(project_state_dir)).ok()?;
     // Who manages whom lives in the role registry and nowhere else -- it is
     // projected onto agent-list records as `watchedBy`, which this path never
-    // sees. An unreadable registry leaves the bindings absent, which falls
-    // back to the older project-wide rule rather than deciding on a guess.
-    let watch_bindings = load_agent_role_registry(project_state_dir)
-        .ok()
-        .and_then(|registry| registry.get("watchBindings").cloned())
-        .unwrap_or(Value::Null);
+    // sees.
+    //
+    // A registry we could not read is not a registry with no bindings.
+    // Treating it as empty falls back to "any overseer alive", which is the
+    // rule that swallowed a dead manager's reports in the first place -- so
+    // an unreadable registry would silently reinstate the bug it is here to
+    // fix. Not knowing who is watching means not suppressing: an extra
+    // notification is a nuisance, a missing one is the failure.
+    let watch_bindings = match load_agent_role_registry(project_state_dir) {
+        Ok(registry) => registry
+            .get("watchBindings")
+            .cloned()
+            .unwrap_or(Value::Null),
+        Err(error) => {
+            log_at(
+                LogLevel::Warn,
+                "notification delivered because the role registry is unreadable",
+                "notifications",
+                Some(json!({
+                    "sessionId": string_field(event, "sessionId"),
+                    "error": error,
+                })),
+            );
+            return None;
+        }
+    };
     let topology = read_runtime_topology(runtime_topology_path(project_state_dir)).ok()?;
     let sessions = list_topology_session_states(&topology, None);
     if crate::async_runtime::is_async_worker_context() {

@@ -559,6 +559,22 @@ pub fn bind_watch(
     // incoming edge, that escape hatch is the only route to a transfer, and
     // a lie there strands the caller.
     let release_holder: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
+    if !active
+        && registry
+            .get("watchBindings")
+            .and_then(Value::as_object)
+            .is_some_and(|bindings| !bindings.contains_key(watched_session_id))
+    {
+        // Nothing to release. Falling through ran the full bind validation
+        // and could 404 on an overseer session that has since gone -- about
+        // a binding that is correctly already absent.
+        return Ok(WatchBindingResult {
+            active,
+            overseer_session_id: overseer_session_id.to_owned(),
+            watched_session_id: watched_session_id.to_owned(),
+            watched_session_ids: watched_by(&registry, overseer_session_id),
+        });
+    }
     if !active {
         let current = registry
             .get("watchBindings")
