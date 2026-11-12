@@ -7,7 +7,7 @@
   ],
   "generatedBy": "scripts/capture-agent-output-io-contracts.mjs",
   "description": "Agent output capture bounds captured by running the TypeScript bounds helpers.",
-  "constants": { "DEFAULT_AGENT_OUTPUT_START_LINE": -120, "MAX_AGENT_OUTPUT_CAPTURE_LINES": 2000 },
+  "constants": { "DEFAULT_AGENT_OUTPUT_START_LINE": -120, "MAX_AGENT_OUTPUT_CAPTURE_LINES": 8000 },
   "cases": [
     {
       "id": "agent-output-bounds-001",
@@ -19,7 +19,7 @@
         "captureWindow": {
           "requestedStartLine": -120,
           "startLine": -120,
-          "maxLines": 2000,
+          "maxLines": 8000,
           "tailOnly": true,
           "clamped": false
         }
@@ -32,11 +32,11 @@
       "source": "src/agent-output-bounds.ts",
       "input": { "startLine": -999999 },
       "output": {
-        "boundedStartLine": -2000,
+        "boundedStartLine": -8000,
         "captureWindow": {
           "requestedStartLine": -999999,
-          "startLine": -2000,
-          "maxLines": 2000,
+          "startLine": -8000,
+          "maxLines": 8000,
           "tailOnly": true,
           "clamped": true
         }
@@ -45,15 +45,15 @@
     },
     {
       "id": "agent-output-bounds-003",
-      "name": "start-line--2000",
+      "name": "start-line--8000",
       "source": "src/agent-output-bounds.ts",
-      "input": { "startLine": -2000 },
+      "input": { "startLine": -8000 },
       "output": {
-        "boundedStartLine": -2000,
+        "boundedStartLine": -8000,
         "captureWindow": {
-          "requestedStartLine": -2000,
-          "startLine": -2000,
-          "maxLines": 2000,
+          "requestedStartLine": -8000,
+          "startLine": -8000,
+          "maxLines": 8000,
           "tailOnly": true,
           "clamped": false
         }
@@ -70,7 +70,7 @@
         "captureWindow": {
           "requestedStartLine": -120,
           "startLine": -120,
-          "maxLines": 2000,
+          "maxLines": 8000,
           "tailOnly": true,
           "clamped": false
         }
@@ -87,7 +87,7 @@
         "captureWindow": {
           "requestedStartLine": -80,
           "startLine": -80,
-          "maxLines": 2000,
+          "maxLines": 8000,
           "tailOnly": true,
           "clamped": false
         }
@@ -104,7 +104,7 @@
         "captureWindow": {
           "requestedStartLine": -1,
           "startLine": -1,
-          "maxLines": 2000,
+          "maxLines": 8000,
           "tailOnly": true,
           "clamped": false
         }
@@ -118,12 +118,12 @@
       "input": { "startLine": 0 },
       "output": {
         "boundedStartLine": 0,
-        "boundedEndLine": 1999,
+        "boundedEndLine": 7999,
         "captureWindow": {
           "requestedStartLine": 0,
           "startLine": 0,
-          "endLine": 1999,
-          "maxLines": 2000,
+          "endLine": 7999,
+          "maxLines": 8000,
           "tailOnly": false,
           "clamped": false
         }
@@ -137,12 +137,12 @@
       "input": { "startLine": 25 },
       "output": {
         "boundedStartLine": 25,
-        "boundedEndLine": 2024,
+        "boundedEndLine": 8024,
         "captureWindow": {
           "requestedStartLine": 25,
           "startLine": 25,
-          "endLine": 2024,
-          "maxLines": 2000,
+          "endLine": 8024,
+          "maxLines": 8000,
           "tailOnly": false,
           "clamped": false
         }
@@ -156,12 +156,12 @@
       "input": { "startLine": 1999 },
       "output": {
         "boundedStartLine": 1999,
-        "boundedEndLine": 3998,
+        "boundedEndLine": 9998,
         "captureWindow": {
           "requestedStartLine": 1999,
           "startLine": 1999,
-          "endLine": 3998,
-          "maxLines": 2000,
+          "endLine": 9998,
+          "maxLines": 8000,
           "tailOnly": false,
           "clamped": false
         }
@@ -175,12 +175,12 @@
       "input": { "startLine": 2000 },
       "output": {
         "boundedStartLine": 2000,
-        "boundedEndLine": 3999,
+        "boundedEndLine": 9999,
         "captureWindow": {
           "requestedStartLine": 2000,
           "startLine": 2000,
-          "endLine": 3999,
-          "maxLines": 2000,
+          "endLine": 9999,
+          "maxLines": 8000,
           "tailOnly": false,
           "clamped": false
         }
@@ -194,12 +194,12 @@
       "input": { "startLine": 4096 },
       "output": {
         "boundedStartLine": 4096,
-        "boundedEndLine": 6095,
+        "boundedEndLine": 12095,
         "captureWindow": {
           "requestedStartLine": 4096,
           "startLine": 4096,
-          "endLine": 6095,
-          "maxLines": 2000,
+          "endLine": 12095,
+          "maxLines": 8000,
           "tailOnly": false,
           "clamped": false
         }

@@ -821,7 +821,7 @@ export default function ChatScreen() {
     // Only when a transcript is actually stored for this agent. The start line
     // is the echoed request, the atom outlives the pane it described, and a
     // stream event with no start line clears it -- so on its own it can say
-    // "-2000" about history that is no longer there. Tied to content that is
+    // the floor about history that is no longer there. Tied to content that is
     // on screen, cursor and transcript agree.
     const stored = jotaiStore.get(transcriptStartLineFamily(agentKey));
     const hasTranscript = jotaiStore.get(transcriptFamily(agentKey)).length > 0;
@@ -1158,7 +1158,7 @@ export default function ChatScreen() {
   // Coming back from a long background, re-read the deepest tail the service
   // will serve rather than the opening window: a shallow window shares no
   // message with the stored transcript, and the lines between were never
-  // fetched. `-2000 < currentStartLine` takes the wholesale-replace branch.
+  // fetched. The floor being deeper than `currentStartLine` takes the wholesale-replace branch.
   // One place both paging paths decide what a page meant. A React updater has
   // to be pure, so the decision happens here and only the new value goes in.
   //

@@ -468,7 +468,7 @@ fn host_agent_stream_interceptor_applies_access_and_cli_guards() {
 fn host_agent_stream_interceptor_resolves_and_pipes_upstream() {
     let (url, join) = serve_once(|mut stream| {
         let request = read_request_text(&mut stream);
-        assert!(request.starts_with("GET /agents/output/stream?sessionId=claude-1&startLine=-2000&intervalMs=500 HTTP/1.1\r\n"));
+        assert!(request.starts_with("GET /agents/output/stream?sessionId=claude-1&startLine=-8000&intervalMs=500 HTTP/1.1\r\n"));
         stream
             .write_all(
                 b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n28\r\nevent: output\ndata: {\"output\":\"hello\"}\n\n\r\n0\r\n\r\n",
