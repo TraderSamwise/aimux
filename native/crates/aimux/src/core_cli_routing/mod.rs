@@ -12,6 +12,8 @@ mod threads;
 mod workflow;
 mod worktrees;
 
+use crate::project_service::agent_output::MAX_AGENT_OUTPUT_CAPTURE_LINES;
+
 pub use agents::{
     parse_core_agent_identity_args, parse_core_agent_input_args, parse_core_agent_list_args,
     parse_core_agent_migrate_args, parse_core_agent_plane_args, parse_core_agent_ps_args,
@@ -396,7 +398,8 @@ pub fn parse_core_host_agent_stream_args_result<S: AsRef<str>>(
     }
     let mut project = None;
     let mut session_id = None;
-    let mut start_line_value = Some("-2000".to_owned());
+    let default_start_line = (-MAX_AGENT_OUTPUT_CAPTURE_LINES).to_string();
+    let mut start_line_value = Some(default_start_line.clone());
     let mut lines_value = None;
     let mut interval_ms_value = Some("500".to_owned());
     let mut index = 2;
@@ -476,8 +479,12 @@ pub fn parse_core_host_agent_stream_args_result<S: AsRef<str>>(
             }
             -lines
         }
-        None => parse_strict_safe_integer(start_line_value.as_deref().unwrap_or("-2000"))
-            .ok_or(CoreHostAgentStreamArgsError::StartLineNotInteger)?,
+        None => parse_strict_safe_integer(
+            start_line_value
+                .as_deref()
+                .unwrap_or(default_start_line.as_str()),
+        )
+        .ok_or(CoreHostAgentStreamArgsError::StartLineNotInteger)?,
     };
     let interval_ms = parse_strict_safe_integer(interval_ms_value.as_deref().unwrap_or("500"))
         .filter(|interval_ms| *interval_ms >= 100)

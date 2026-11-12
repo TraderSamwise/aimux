@@ -5,12 +5,12 @@ use crate::daemon::routing::{
 };
 use crate::daemon::text::params::ProjectServiceJsonResult;
 use crate::daemon_state::MetadataApiEndpoint;
+use crate::project_service::agent_output::{
+    DEFAULT_AGENT_OUTPUT_START_LINE, MAX_AGENT_OUTPUT_CAPTURE_LINES,
+};
 use crate::project_api_contract::routes as project_routes;
 use serde_json::{Value, json};
 use std::fmt::{self, Display, Formatter};
-
-const DEFAULT_AGENT_OUTPUT_START_LINE: i64 = -120;
-const MAX_AGENT_OUTPUT_CAPTURE_LINES: i64 = 2_000;
 
 pub trait DaemonHostAgentTextRuntime {
     fn resolve_project_root(&self, value: &str) -> String;

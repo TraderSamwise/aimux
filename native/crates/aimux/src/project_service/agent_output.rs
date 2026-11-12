@@ -68,7 +68,7 @@ use super::router::ProjectServiceRequestContext;
 use super::tmux_metadata_sync::{TmuxMetadataSyncRuntime, sync_tmux_window_metadata};
 
 pub const DEFAULT_AGENT_OUTPUT_START_LINE: i64 = -120;
-pub const MAX_AGENT_OUTPUT_CAPTURE_LINES: i64 = 2_000;
+pub const MAX_AGENT_OUTPUT_CAPTURE_LINES: i64 = 8_000;
 
 const ACTIVE_OUTPUT_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
 const AGENT_OUTPUT_READ_PURPOSES: &[&str] = &[
