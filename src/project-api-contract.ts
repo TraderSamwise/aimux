@@ -1064,6 +1064,13 @@ export interface ProjectTopologyResponse extends ProjectApiOk {
       sessionId?: string;
       serviceId?: string;
       worktreePath?: string;
+      tool?: string;
+      task?: string;
+      recentOutput?: boolean;
+      /** Who spawned this agent. */
+      parentSessionId?: string;
+      /** Who runs this agent's loop; the edge the org tree is drawn from. */
+      watchedBy?: string;
     }>;
   };
 }

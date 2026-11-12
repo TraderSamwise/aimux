@@ -816,6 +816,19 @@ pub fn sync_agent_role_registry_session_from_metadata(
     .map(|_| ())
 }
 
+/// Who runs this session's loop, read from the one place that edge is stored.
+///
+/// `/agents` gets it through `overlay_agent_role_registry` below. Topology
+/// builds from desktop state, which never loads the registry, so it asks here
+/// rather than reaching into `watchBindings` with a second copy of the lookup.
+pub fn watch_binding_overseer<'a>(registry: &'a Value, session_id: &str) -> Option<&'a str> {
+    registry
+        .get("watchBindings")
+        .and_then(Value::as_object)
+        .and_then(|bindings| bindings.get(session_id))
+        .and_then(Value::as_str)
+}
+
 pub fn overlay_agent_role_registry(agent: &mut Map<String, Value>, registry: Option<&Value>) {
     let Some(id) = agent.get("id").and_then(Value::as_str).map(str::to_owned) else {
         return;
@@ -849,12 +862,7 @@ pub fn overlay_agent_role_registry(agent: &mut Map<String, Value>, registry: Opt
             }
         }
     }
-    if let Some(watched_by) = registry
-        .get("watchBindings")
-        .and_then(Value::as_object)
-        .and_then(|bindings| bindings.get(&id))
-        .and_then(Value::as_str)
-    {
+    if let Some(watched_by) = watch_binding_overseer(registry, &id) {
         agent.insert("watchedBy".into(), Value::String(watched_by.to_owned()));
     }
     let probe = Value::Object(agent.clone());

@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use crate::project_api_contract::routes;
 use crate::project_service_manifest::get_project_service_manifest;
 
+use super::agent_roles::{load_agent_role_registry, watch_binding_overseer};
 use super::desktop_state::{
     desktop_state_for_context, item_worktree_group_key, worktree_path_identity,
 };
@@ -22,6 +23,17 @@ pub fn route_topology_request(
         Ok(state) => state,
         Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
     };
+    // Who manages whom lives in the role registry and nowhere else. Desktop
+    // state does not load it, so without this the topology response has no
+    // supervision edge at all -- every agent looks like a direct report of its
+    // checkout. An unreadable registry is not a registry with no bindings:
+    // the loader already answers `Ok(empty)` for a project that never bound a
+    // watch, so an `Err` here means the file is corrupt, and a tree drawn flat
+    // from a corrupt file is a wrong answer rather than a missing one.
+    let role_registry = match load_agent_role_registry(context.project_state_dir()) {
+        Ok(registry) => registry,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    };
     let service_info = get_project_service_manifest()
         .ok()
         .and_then(|manifest| serde_json::to_value(manifest).ok())
@@ -36,7 +48,11 @@ pub fn route_topology_request(
         json!({
             "ok": true,
             "serviceInfo": service_info,
-            "topology": build_project_topology(project_name, build_topology_worktrees_from_desktop_state(&state)),
+            "topology": build_project_topology(
+                project_name,
+                build_topology_worktrees_from_desktop_state(&state),
+                Some(&role_registry),
+            ),
         }),
     ))
 }
@@ -149,7 +165,11 @@ pub fn build_topology_worktrees_from_desktop_state(state: &Value) -> Vec<Value> 
         .collect()
 }
 
-pub fn build_project_topology(project_name: &str, worktrees: Vec<Value>) -> Value {
+pub fn build_project_topology(
+    project_name: &str,
+    worktrees: Vec<Value>,
+    role_registry: Option<&Value>,
+) -> Value {
     let mut rows = Vec::new();
     let mut worktree_views = Vec::new();
     let mut agent_count = 0usize;
@@ -194,6 +214,24 @@ pub fn build_project_topology(project_name: &str, worktrees: Vec<Value>) -> Valu
                     .filter(|description| !description.is_empty()),
             );
             insert_optional_string(&mut row, "worktreePath", string_field(worktree, "path"));
+            // Both parent edges, because they answer different questions and
+            // neither implies the other. `parentSessionId` is who spawned this
+            // agent; `watchedBy` is who runs its loop, which is the edge an org
+            // tree is drawn from. A `/watch` binding exists on sessions with no
+            // team parent at all, so deriving either from the other would drop
+            // every watch relationship in the project.
+            insert_optional_string(
+                &mut row,
+                "parentSessionId",
+                crate::team_contract::manager_session_id(session),
+            );
+            insert_optional_string(
+                &mut row,
+                "watchedBy",
+                string_field(session, "id").and_then(|id| {
+                    role_registry.and_then(|registry| watch_binding_overseer(registry, id))
+                }),
+            );
             // Carried, not recomputed: the topology screen renders the same
             // agent as the dashboard row and claimed to read the same way.
             if let Some(recent_output) = session.get("recentOutput").and_then(Value::as_bool) {

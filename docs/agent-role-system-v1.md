@@ -507,6 +507,24 @@ compatibility, but clients should prefer `supervisorLane.sessions` when present.
 
 ## Dashboard And GUI Rendering
 
+The `/topology` response carries both parent edges on every agent row, because
+they answer different questions and neither implies the other:
+
+- `parentSessionId` is who spawned the agent, read from `team.parentSessionId`.
+- `watchedBy` is who runs the agent's loop, read from the role registry's
+  `watchBindings` -- the same field name, for the same fact, that `/agents`
+  records carry. It is the edge a delegation tree is drawn from.
+
+Every `/watch` binding in a real project is on a session with no team parent at
+all, so a surface that filled one field from the other would be wrong in the
+only case the edge is used. Clients render the edge they are given; they do not
+recompute it from roles, ordering, or worktree membership.
+
+A `/topology` request refuses with 500 when the role registry cannot be read.
+A project that never bound a watch loads an empty registry successfully, so a
+read error means the file is corrupt -- and a tree drawn flat from a corrupt
+file is a confidently wrong org chart rather than a missing one.
+
 TUI dashboard:
 
 - Render the supervisor lane as its own box above worktree groups.
