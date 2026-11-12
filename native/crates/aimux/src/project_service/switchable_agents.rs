@@ -41,6 +41,7 @@ use super::session_visibility::{
 };
 use super::usage::{load_last_used_state, parse_recency_timestamp};
 use super::visual_clients::VisualClientLeaseRoute;
+use crate::team_contract::team_string_field;
 
 const LIVE_SERVICE_STATUSES: &[&str] = &["starting", "running"];
 const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
@@ -1353,16 +1354,6 @@ fn activity_chip(value: &str) -> Option<(&'static str, &'static str)> {
         "interrupted" => Some(("idle", "Interrupted")),
         _ => None,
     }
-}
-
-fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value
-        .get("team")
-        .and_then(Value::as_object)
-        .and_then(|team| team.get(key))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
 }
 
 fn target_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {

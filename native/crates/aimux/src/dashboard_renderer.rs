@@ -2840,7 +2840,7 @@ fn selected_teammates<'a>(input: &'a DashboardRenderInput<'_>) -> Vec<&'a Dashbo
             session
                 .team
                 .as_ref()
-                .is_some_and(|team| team.parent_session_id == parent.id)
+                .is_some_and(|team| team.manager_session_id() == Some(parent.id.as_str()))
         })
         .collect::<Vec<_>>();
     // Teammate rows render in the same tmux screen as the footer chips, so

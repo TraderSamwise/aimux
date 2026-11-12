@@ -22,6 +22,7 @@ use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname
 use super::http::{query_params, trimmed_query};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
+use crate::team_contract::{manager_session_id, team_string_field};
 
 const ACTIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle", "offline"];
 
@@ -1055,7 +1056,7 @@ fn active_task_for<'a>(tasks: &'a [Value], session_id: &str) -> Option<&'a Value
 }
 
 fn is_teammate_session(session: &Value) -> bool {
-    team_string_field(session, "parentSessionId").is_some()
+    manager_session_id(session).is_some()
 }
 
 fn should_relaunch_fresh_session(session: &Value) -> bool {
@@ -1110,16 +1111,6 @@ fn array_field<'a>(value: &'a Value, key: &str) -> &'a [Value] {
 
 fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
-}
-
-fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value
-        .get("team")
-        .and_then(Value::as_object)
-        .and_then(|team| team.get(key))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
 }
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {

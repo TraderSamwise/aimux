@@ -44,12 +44,7 @@ pub fn select_orphan_teammate_ids(sessions: &[Value], known_parent_ids: &[String
         let Some(id) = session.get("id").and_then(Value::as_str) else {
             continue;
         };
-        let Some(parent_session_id) = session
-            .get("team")
-            .and_then(|team| team.get("parentSessionId"))
-            .and_then(Value::as_str)
-            .filter(|parent| !parent.is_empty())
-        else {
+        let Some(parent_session_id) = manager_session_id(session) else {
             continue;
         };
         if parents.contains(parent_session_id) || by_id.contains_key(id) {
@@ -96,6 +91,45 @@ pub struct AgentControlFacts<'a> {
 /// without this it would have to guess at it.
 pub fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+/// A field of a session's `team` object, absent when it is blank.
+///
+/// This body was written out five times -- `agents.rs`, `worktrees.rs`,
+/// `desktop_state.rs`, `switchable_agents.rs`, `session_visibility.rs` --
+/// identically, which is the shape a rule takes just before one copy drifts.
+pub fn team_string_field<'a>(session: &'a Value, key: &str) -> Option<&'a str> {
+    non_empty(
+        session
+            .get("team")
+            .and_then(Value::as_object)
+            .and_then(|team| team.get(key))
+            .and_then(Value::as_str),
+    )
+}
+
+/// Who manages this agent, read off the session record.
+///
+/// ONE rule, because the codebase had several. `tmux_control`'s own
+/// `team_parent_id` returned the raw string, so a stored `""` arrived as
+/// `Some("")` and every one of its six call sites re-spelled the emptiness
+/// check itself; `statusline` read the same field through a path walker that
+/// does not trim either. Everywhere else an empty parent already meant no
+/// parent. A record written with `"parentSessionId": ""` therefore had a
+/// manager in two files and none in the rest.
+///
+/// Blank is absent, here and for every caller.
+pub fn manager_session_id(session: &Value) -> Option<&str> {
+    team_string_field(session, "parentSessionId")
+}
+
+/// `manager_session_id` for callers holding the `team` object alone.
+///
+/// The navigation items in `tmux_control` carry `team` as a value of their
+/// own rather than a whole session record, and must not answer differently
+/// for it.
+pub fn manager_session_id_in_team(team: &Value) -> Option<&str> {
+    non_empty(team.get("parentSessionId").and_then(Value::as_str))
 }
 
 impl<'a> AgentControlFacts<'a> {
@@ -544,6 +578,34 @@ fn string_field<'a>(session: &'a Value, key: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_blank_parent_is_no_parent_whichever_shape_it_arrives_in() {
+        // The session form and the bare-team form are the same question, and
+        // `tmux_control` used to answer it differently from everyone else.
+        let session = serde_json::json!({
+            "id": "solo",
+            "team": { "teamId": "coder", "role": "coder", "parentSessionId": "   " }
+        });
+        assert_eq!(super::manager_session_id(&session), None);
+        assert_eq!(super::manager_session_id_in_team(&session["team"]), None);
+
+        let managed = serde_json::json!({
+            "id": "worker",
+            "team": { "teamId": "team-1", "role": "coder", "parentSessionId": " lead " }
+        });
+        assert_eq!(super::manager_session_id(&managed), Some("lead"));
+        assert_eq!(
+            super::manager_session_id_in_team(&managed["team"]),
+            Some("lead")
+        );
+    }
+
+    #[test]
+    fn an_agent_with_no_team_object_has_no_manager() {
+        let session = serde_json::json!({ "id": "lead" });
+        assert_eq!(super::manager_session_id(&session), None);
+    }
     use super::*;
     use serde_json::json;
 
