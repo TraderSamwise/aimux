@@ -3335,6 +3335,34 @@ fn an_agent_nobody_manages_is_every_tops_business() {
     }
 }
 
+/// A middle manager's own exit is news for the manager above it.
+///
+/// The exit filter drops every overseer before the scope check, so a mid that
+/// said it was done gave its own manager nothing -- while the briefing path,
+/// which keeps a managed overseer, had been fixed for exactly this.
+#[test]
+fn a_managers_exit_reaches_the_manager_above_it() {
+    let (lead, mut lead_meta) = looping_session_with_status("lead", Some("running"), "busy");
+    lead_meta["overseer"] = json!(true);
+    let (mid, mut mid_meta) = self_exited_session_with_status("mid", Some("offline"), "done");
+    mid_meta["overseer"] = json!(true);
+    let mut input = input_with_config(
+        vec![lead, mid],
+        json!({ "sessions": { "lead": lead_meta, "mid": mid_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0, "unchangedReminderTicks": 1 }),
+    );
+    input["watchBindings"] = json!({ "mid": "lead" });
+
+    let sends = LoopWatcher::new().plan_sends(&input, NOW);
+    let exits = sends
+        .iter()
+        .filter(|send| send.kind == LoopSendKind::LoopExit)
+        .collect::<Vec<_>>();
+    assert_eq!(exits.len(), 1, "one exit, one manager told: {sends:?}");
+    assert_eq!(exits[0].session_id, "lead");
+    assert!(briefing_mentions(exits[0], "mid"), "{:?}", exits[0].text);
+}
+
 /// A manager that is no longer an overseer is not a manager.
 ///
 /// `bind_watch` requires the manager to be an overseer, but a demotion or a

@@ -1477,6 +1477,71 @@ fn a_release_whose_binding_changed_hands_before_the_lock_is_refused() {
     cleanup(project);
 }
 
+/// Releasing a binding does not need a readable topology.
+///
+/// Who is in the graveyard matters only when creating a binding. Reading it on
+/// the release path too made a corrupt topology block the one operation that
+/// could repair the state it was refusing to describe.
+#[test]
+fn a_watch_can_be_released_while_the_topology_is_unreadable() {
+    let project = temp_project("release-unreadable-topology");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "boss".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    assert_eq!(
+        route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": "boss",
+                "watchedSessionId": "worker",
+                "active": true
+            })),
+        )
+        .status,
+        200
+    );
+
+    // The topology goes bad after the binding exists.
+    write(runtime_topology_path(&state_dir), "{ not yaml: [").unwrap();
+
+    let released = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "boss",
+            "watchedSessionId": "worker",
+            "active": false
+        })),
+    );
+
+    assert_eq!(released.status, 200, "{:?}", released.body);
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert!(
+        registry["watchBindings"].get("worker").is_none(),
+        "the binding survived a release: {registry:?}"
+    );
+    cleanup(project);
+}
+
 /// A manager in the graveyard cannot be given new reports.
 ///
 /// Killing a manager moves its reports up to its own manager. Without this the

@@ -1208,13 +1208,20 @@ fn route_watch(
     // and a bind must not hand a dead manager new reports. A topology that
     // cannot be read is not "nobody is dead": the bind is refused rather than
     // granted on a guess.
-    let departed = match graveyarded_session_ids(&context.project_state_dir()) {
-        Ok(departed) => departed,
-        Err(error) => {
-            let error = WatchBindingError::Topology(error);
-            permit.fail(started_at, error.message());
-            return watch_binding_error_response(error);
+    let departed = if active {
+        match graveyarded_session_ids(&context.project_state_dir()) {
+            Ok(departed) => departed,
+            Err(error) => {
+                let error = WatchBindingError::Topology(error);
+                permit.fail(started_at, error.message());
+                return watch_binding_error_response(error);
+            }
         }
+    } else {
+        // Releasing a binding needs nobody's status: it only removes an edge.
+        // Reading the topology here made an unreadable one block the one
+        // operation that could repair the state it was refusing to describe.
+        BTreeSet::new()
     };
     match bind_watch(
         context.project_state_dir(),

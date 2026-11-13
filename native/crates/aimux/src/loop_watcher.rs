@@ -1061,7 +1061,12 @@ impl LoopWatcher {
         pauses: &BTreeMap<String, LoopAlertPause>,
     ) -> Option<LoopSend> {
         let overseer = Some(send.session_id.as_str());
-        let mut candidates = find_loop_candidates_with_overseer(input, overseer);
+        // The same set the send was planned from. Rebuilding a buffered
+        // briefing from the fleet-wide one dropped a managed overseer out of
+        // its manager's buffered text and could add another manager's paused
+        // worker to a paused summary -- the buffered copy saying something the
+        // live path would never have said.
+        let mut candidates = find_briefing_candidates(input, overseer);
         if matches!(
             send.kind,
             LoopSendKind::DirectNudge | LoopSendKind::PausedSummary
@@ -2392,8 +2397,20 @@ pub fn find_loop_exit_candidates_with_overseer(
         .iter()
         .filter_map(|session| {
             let id = str_field(session, "id");
+            // An overseer is excluded unless it is this recipient's own
+            // report: a middle manager that says it is done is exactly the
+            // news its manager needs, and dropping every overseer here meant
+            // the manager above heard nothing about it.
+            let managed_by_recipient = overseer_id.is_some_and(|recipient| {
+                input
+                    .get("watchBindings")
+                    .and_then(Value::as_object)
+                    .is_some_and(|bindings| {
+                        briefable_manager_of(input, bindings, id).as_deref() == Some(recipient)
+                    })
+            });
             if overseer_id == Some(id)
-                || overseer_ids.iter().any(|overseer| overseer == id)
+                || (!managed_by_recipient && overseer_ids.iter().any(|overseer| overseer == id))
                 || !is_known_loop_exit_session_status(session)
                 || session_is_parked(input, session)
                 // An exit is news for the manager that holds the agent, not
