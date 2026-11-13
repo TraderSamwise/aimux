@@ -923,6 +923,12 @@ fn clear_watch_binding_for_watched(registry: &mut Value, watched_session_id: &st
     sync_watching_lists(registry);
 }
 
+/// Re-derive `watching` from `watchBindings`, and stamp the supervisor lane.
+///
+/// Runs when the registry is loaded, so a writer that goes through
+/// `mutate_agent_role_registry` never has to think about `watching`. A writer
+/// that edits the file directly does, and cannot call this: the lane stamp
+/// would rewrite records it was asked to leave alone.
 fn sync_watching_lists(registry: &mut Value) {
     let mut by_overseer: Map<String, Value> = Map::new();
     if let Some(bindings) = registry.get("watchBindings").and_then(Value::as_object) {

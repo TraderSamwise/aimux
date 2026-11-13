@@ -14,6 +14,11 @@ native/darwin/aimux-notifier.app/
 scripts/__pycache__/
 app/perf/generated/
 
+# Watchman's liveness probes, one file per query, dropped in whatever
+# directory it was asked about. They are never ours and they bury the status
+# output every agent in this checkout reads before staging.
+.watchman-cookie-*
+
 # Secrets and local env
 .env
 .env.*

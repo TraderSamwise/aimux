@@ -1471,6 +1471,12 @@ export interface KillAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId: string;
   status: "graveyard";
   previousStatus: "running" | "offline";
+  /**
+   * The agent is in the graveyard, but its reports could not be moved up to
+   * its own manager, so the role registry still has them bound to it. Present
+   * only on that failure; the kill itself succeeded either way.
+   */
+  reportsReleaseError?: string;
 }
 
 export interface ReapDeadAgentRecord {
