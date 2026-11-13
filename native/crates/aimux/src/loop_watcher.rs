@@ -2141,7 +2141,14 @@ fn briefable_manager_of(
         if next == current {
             return None;
         }
-        if session_can_receive_loop_send(input, next) {
+        // And an overseer: `bind_watch` requires that of a manager, but a
+        // demotion or a hand-edited file can leave a binding pointing at an
+        // agent that is no longer one, and a plain coder is nobody's manager.
+        // Walked past rather than accepted, so the report surfaces to the next
+        // real manager above it.
+        if session_can_receive_loop_send(input, next)
+            && overseer_ids(input).iter().any(|id| id == next)
+        {
             return Some(next.to_owned());
         }
         current = next.to_owned();
@@ -2157,10 +2164,10 @@ fn briefable_manager_of(
 /// nudging it. The lead is told about the manager; the manager is told about
 /// the coders.
 ///
-/// An agent nobody manages belongs to the top, because unmanaged work still
-/// has to reach somebody -- to one top, see `unmanaged_work_owner`. An
-/// unmanaged *overseer* is in nobody's scope: a peer at the top of its own
-/// tree is not a report.
+/// An agent nobody manages is every top's business, because unmanaged work
+/// still has to reach somebody and naming one top for it was wrong twice over
+/// -- the body below says how. An unmanaged *overseer* is in nobody's scope:
+/// a peer at the top of its own tree is not a report.
 ///
 /// `None` is every recipient at once, which is the no-live-overseer fallback
 /// and must stay exactly as it was. So is a project with no bindings, which is
@@ -2195,6 +2202,10 @@ fn watch_scope_contains(input: &Value, candidate_id: &str, recipient: Option<&st
     // nobody manages is unclaimed, and saying so to every top is true; the
     // narrowing exists so that a MANAGED agent has exactly one manager, and it
     // does. Binding the agent is what gives it one owner.
+    //
+    // This is still narrower than before any of this work, which handed every
+    // live overseer the whole fleet: the tops hear about the unclaimed agents
+    // and nothing else of each other's.
     if overseer_ids(input).iter().any(|id| id == candidate_id) {
         return false;
     }

@@ -3335,6 +3335,43 @@ fn an_agent_nobody_manages_is_every_tops_business() {
     }
 }
 
+/// A manager that is no longer an overseer is not a manager.
+///
+/// `bind_watch` requires the manager to be an overseer, but a demotion or a
+/// hand-edited file can leave a binding pointing at a plain agent. Accepted as
+/// a manager, it hides the real top: no overseer looks like a root, and every
+/// unclaimed agent is then told to everyone.
+#[test]
+fn a_binding_to_a_plain_agent_does_not_make_it_a_manager() {
+    let mut input = three_level_input(json!({ "stoppedDwellMs": 0 }));
+    let (helper, helper_meta) = non_loop_session("helper", "idle");
+    input["sessions"]
+        .as_array_mut()
+        .expect("sessions")
+        .push(helper);
+    input["metadata"]["sessions"]["helper"] = helper_meta;
+    // The lead's binding names a plain agent, which is nobody's manager.
+    input["watchBindings"] = json!({ "lead": "helper", "mid": "lead" });
+
+    let sends = LoopWatcher::new().plan_sends(&input, NOW);
+    let hears = |recipient: &str, agent: &str| {
+        sends
+            .iter()
+            .filter(|send| {
+                send.session_id == recipient && send.kind == LoopSendKind::OverseerBriefing
+            })
+            .any(|send| briefing_mentions(send, agent))
+    };
+    assert!(
+        hears("lead", "nobodys"),
+        "the lead is still the top, because a coder is not its manager: {sends:?}"
+    );
+    assert!(
+        !hears("mid", "nobodys"),
+        "and the mid is still not a top: {sends:?}"
+    );
+}
+
 /// A cycle of live managers leaves no top, and that must not be silence.
 ///
 /// With every overseer reporting to another, no recipient is a root, so the

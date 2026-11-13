@@ -445,7 +445,8 @@ prevent.
   back to a peer checkout's lead when a checkout had no root. The duplication
   is not the defect the narrowing is for: an unclaimed agent is unclaimed, and
   the narrowing exists so a *managed* agent has exactly one manager. Binding it
-  is what gives it one owner.
+  is what gives it one owner. This is still narrower than the behaviour it
+  replaced, which handed every live overseer the whole fleet.
 - A manager that cannot be briefed is walked straight past. A binding can name
   an agent nothing will brief -- a worktree graveyard keeps its agents'
   bindings on purpose, and an offline overseer gets no recipient engine at all

@@ -3553,14 +3553,23 @@ fn topology_row_identity(row: &Value, label: &str) -> String {
 /// and truncating the composed string takes the id away first. A deep row has
 /// fewer columns to spend, so it spends them on the name.
 fn topology_row_identity_within(row: &Value, label: &str, name_width: usize) -> String {
-    // No floor: a pad narrow enough to leave the name one column is a pad
-    // where `(id)` alone is the better answer, and a floor here silently
-    // returned something wider than the caller asked for.
-    let name = truncate_plain(label, name_width.max(1));
+    // No floor at all: when the caller has nothing left to give the name, the
+    // `(id)` alone is the answer, and a floor here returns something wider
+    // than was asked for -- which sends the whole string back to being
+    // clipped, losing the id this exists to keep.
+    let name = truncate_plain(label, name_width);
     let weight = topology_row_weight(row);
     let Some(session_id) = string_at(row, &["sessionId"]) else {
         return style(&name, weight);
     };
+    // Nothing left for the name: the id alone, with no leading space to pay
+    // for.
+    if name.is_empty() {
+        let short = string_at(row, &["tool"])
+            .and_then(|tool| session_id.strip_prefix(&format!("{tool}-")))
+            .unwrap_or(session_id);
+        return style(&format!("({short})"), Tone::Muted);
+    }
     let short_id = string_at(row, &["tool"])
         .and_then(|tool| session_id.strip_prefix(&format!("{tool}-")))
         .unwrap_or(session_id);

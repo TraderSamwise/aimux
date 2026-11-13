@@ -180,7 +180,7 @@ fn a_deep_row_with_a_short_label_keeps_its_session_id() {
         .max_by_key(|line| line.len() - line.trim_start_matches([' ', '▸']).len())
         .unwrap_or_else(|| panic!("no agent row was drawn: {lines:?}"));
     assert!(
-        deepest.contains("01HX8ZK3QF5") || deepest.contains("QF5"),
+        deepest.contains("01HX8ZK3QF5"),
         "the deepest row lost the id it is selected by: {deepest:?}"
     );
 }
