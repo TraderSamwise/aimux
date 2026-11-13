@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
@@ -28,6 +28,7 @@ use crate::runtime_topology::{
 use crate::transcript_turn_state::{default_codex_sessions_dir, find_codex_transcript_path};
 
 use super::agent_output::AgentOutputResponseMode;
+use super::agent_roles::load_agent_role_registry;
 use super::agents::overseer_session_ids_for_state;
 use super::coordination_worklist::{build_coordination_thread_entries, build_coordination_view};
 use super::interactions::pending_interactions_for_stream;
@@ -243,6 +244,7 @@ impl PeriodicTask for LoopWatcherTask {
                 exchange,
                 coordination_worklist,
             );
+            attach_watch_bindings(&mut input, &project_state_dir);
             let indeterminate = apply_live_activity_overrides_for_scan(context, &mut input).await?;
             refresh_parked_session_alerts(&mut input, &project_state_dir)?;
             self.apply_token_spend(&mut input);
@@ -431,6 +433,39 @@ pub fn loop_delivery_queue(
         if !progressed {
             return queue;
         }
+    }
+}
+
+/// Put the supervision edge in front of the watcher.
+///
+/// Who manages whom lives in the role registry and nowhere else. The scan
+/// input is assembled from the runtime topology, which has never carried it,
+/// so until now the watcher could not tell a three-level org from a flat one:
+/// it handed every overseer the whole fleet.
+///
+/// A registry that cannot be read leaves the bindings absent, which is the
+/// no-bindings case -- every overseer hears about everyone, as before. For a
+/// briefing path that is the safe direction: telling a manager about an agent
+/// twice is noise, telling nobody about it is the failure. The read error is
+/// named in the log rather than left to be inferred from a fleet that suddenly
+/// has no managers.
+fn attach_watch_bindings(input: &mut Value, project_state_dir: &Path) {
+    let bindings = match load_agent_role_registry(project_state_dir) {
+        Ok(registry) => registry.get("watchBindings").cloned(),
+        Err(error) => {
+            log_at(
+                LogLevel::Warn,
+                "loop watcher could not read who manages whom",
+                "loop-watcher",
+                Some(json!({ "error": error })),
+            );
+            return;
+        }
+    };
+    if let Some(bindings) = bindings
+        && let Some(object) = input.as_object_mut()
+    {
+        object.insert("watchBindings".into(), bindings);
     }
 }
 
@@ -906,5 +941,85 @@ fn apply_token_spend_to_input(input: &mut Value, session_id: &str, spend: &Spend
         .and_then(Value::as_object_mut)
     {
         session.insert("tokenSpend".into(), value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_state_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "aimux-loop-watch-bindings-{label}-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&path).expect("state dir");
+        path
+    }
+
+    /// The watcher cannot follow an edge it cannot see.
+    #[test]
+    fn the_scan_input_carries_who_manages_whom() {
+        let state_dir = temp_state_dir("present");
+        fs::write(
+            state_dir.join("agent-role-registry.json"),
+            serde_json::to_string_pretty(&json!({
+                "version": 1,
+                "sessions": {},
+                "watchBindings": { "mid": "lead", "coder": "mid" },
+                "roleSlots": {}
+            }))
+            .expect("serialize registry"),
+        )
+        .expect("write registry");
+
+        let mut input = json!({ "sessions": [], "metadata": {} });
+        attach_watch_bindings(&mut input, &state_dir);
+
+        assert_eq!(
+            input["watchBindings"],
+            json!({ "mid": "lead", "coder": "mid" }),
+            "the scan input has to carry the supervision edge: {input}"
+        );
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
+    /// A project that never bound a watch has no edge, and that is not an error.
+    #[test]
+    fn a_project_with_no_registry_carries_no_edge() {
+        let state_dir = temp_state_dir("absent");
+        let mut input = json!({ "sessions": [], "metadata": {} });
+        attach_watch_bindings(&mut input, &state_dir);
+        assert_eq!(
+            input["watchBindings"],
+            json!({}),
+            "an absent registry loads as an empty one: {input}"
+        );
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
+    /// A registry that cannot be read leaves the edge absent on purpose.
+    ///
+    /// Absent is the no-bindings case, which briefs every overseer about the
+    /// whole fleet -- noisy, and the right direction for a briefing. The error
+    /// is logged rather than turned into a fleet with no managers.
+    #[test]
+    fn an_unreadable_registry_leaves_the_edge_absent_rather_than_guessing() {
+        let state_dir = temp_state_dir("corrupt");
+        fs::write(state_dir.join("agent-role-registry.json"), "{ not json")
+            .expect("write registry");
+
+        let mut input = json!({ "sessions": [], "metadata": {} });
+        attach_watch_bindings(&mut input, &state_dir);
+
+        assert!(
+            input.get("watchBindings").is_none(),
+            "a corrupt registry must not be read as a shape: {input}"
+        );
+        let _ = fs::remove_dir_all(state_dir);
     }
 }
