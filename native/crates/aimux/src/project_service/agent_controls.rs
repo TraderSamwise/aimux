@@ -1211,7 +1211,7 @@ fn route_watch(
     let departed = match graveyarded_session_ids(&context.project_state_dir()) {
         Ok(departed) => departed,
         Err(error) => {
-            let error = WatchBindingError::Metadata(error);
+            let error = WatchBindingError::Topology(error);
             permit.fail(started_at, error.message());
             return watch_binding_error_response(error);
         }

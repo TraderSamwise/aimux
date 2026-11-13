@@ -3543,7 +3543,17 @@ fn topology_row_weight(row: &Value) -> Tone {
 }
 
 fn topology_row_identity(row: &Value, label: &str) -> String {
-    let name = truncate_plain(label, 20);
+    topology_row_identity_within(row, label, 20)
+}
+
+/// The identity with the name capped at `name_width`.
+///
+/// The cap is on the NAME, not on the composed result, because the `(id)`
+/// after it is the thing a person selects by: two agents can share a label,
+/// and truncating the composed string takes the id away first. A deep row has
+/// fewer columns to spend, so it spends them on the name.
+fn topology_row_identity_within(row: &Value, label: &str, name_width: usize) -> String {
+    let name = truncate_plain(label, name_width.max(6));
     let weight = topology_row_weight(row);
     let Some(session_id) = string_at(row, &["sessionId"]) else {
         return style(&name, weight);
@@ -3601,15 +3611,22 @@ fn topology_manager_not_shown(row: &Value) -> String {
 /// identity that fills it exactly -- and then the two columns run together,
 /// which is what a three-deep tree looked like.
 fn topology_padded_identity(row: &Value, label: &str, width: usize) -> String {
-    let identity = topology_row_identity(row, label);
-    // Truncated only when it would actually fill the pad: `truncate_ansi`
-    // appends a reset even when it changes nothing, and these bytes are
-    // compared against the Node frame.
     let gap = width.saturating_sub(1).max(1);
-    if visible_width(&identity) > gap {
-        pad_visible(&truncate_ansi(&identity, gap), width)
+    let identity = topology_row_identity(row, label);
+    if visible_width(&identity) <= gap {
+        // Untouched: `truncate_ansi` appends a reset even when it changes
+        // nothing, and these bytes are compared against the Node frame.
+        return pad_visible(&identity, width);
+    }
+    // Spend the shortfall on the name and keep the id. Falling back to
+    // truncating the whole string when even that does not fit, because a row
+    // that overflows its column is worse than one with a clipped id.
+    let overflow = visible_width(&identity) - gap;
+    let narrowed = topology_row_identity_within(row, label, 20usize.saturating_sub(overflow));
+    if visible_width(&narrowed) > gap {
+        pad_visible(&truncate_ansi(&narrowed, gap), width)
     } else {
-        pad_visible(&identity, width)
+        pad_visible(&narrowed, width)
     }
 }
 

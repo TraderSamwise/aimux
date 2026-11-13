@@ -114,6 +114,26 @@ fn a_narrow_terminal_keeps_the_task_and_drops_the_note() {
     );
 }
 
+/// A deep row keeps the id a person selects by.
+///
+/// The indent is paid for out of the identity column, and truncating the
+/// composed identity took the `(id)` away first -- the one thing telling two
+/// agents with the same label apart. The shortfall is spent on the label.
+#[test]
+fn a_deep_row_keeps_the_session_id() {
+    let resource = deep_topology(4);
+    let lines = rendered_lines(&resource, 120);
+    let deepest = lines
+        .iter()
+        .filter(|line| line.contains(" agent "))
+        .max_by_key(|line| line.len() - line.trim_start_matches([' ', '▸']).len())
+        .unwrap_or_else(|| panic!("no agent row was drawn: {lines:?}"));
+    assert!(
+        deepest.contains("(4)"),
+        "the deepest row lost the id it is selected by: {deepest:?}"
+    );
+}
+
 #[test]
 fn a_deep_row_still_says_what_the_agent_is_doing() {
     // The indent is taken from the identity column precisely so the task

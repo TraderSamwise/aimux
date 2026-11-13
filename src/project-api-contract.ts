@@ -1738,6 +1738,8 @@ export type AgentWatchRefusalReason =
   | "already-watched"
   | "role-registry-unavailable"
   | "metadata-unavailable"
+  /** The runtime topology could not be read, so who is in the graveyard is unknown. */
+  | "topology-unavailable"
   | "lifecycle-mutation-unavailable";
 
 export type AgentWatchResponse =

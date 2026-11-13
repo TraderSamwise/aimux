@@ -2149,26 +2149,75 @@ fn briefable_manager_of(
     None
 }
 
-/// Which overseer answers for the agents nobody manages.
+/// Which overseer answers for the agents nobody manages, per checkout.
 ///
-/// The tops of the trees are the candidates for it, and exactly one of them
-/// takes it: offered to every root, an unbound agent is briefed twice and
-/// handed to two managers as spare capacity, which is the double-staffing this
-/// whole narrowing exists to stop. Which root is arbitrary, so it is the
-/// lowest id -- arbitrary but the same answer on every tick and on every
-/// surface, which is what matters.
+/// The tops of the trees are the candidates, and within one checkout exactly
+/// one of them takes it: offered to every root, an unbound agent is briefed
+/// twice and handed to two managers as spare capacity, which is the
+/// double-staffing the narrowing exists to stop.
 ///
-/// A binding graph with no root at all is a registry that has been
-/// hand-edited into a cycle of live managers. There is no top to answer, and
-/// the alternative to picking one is that every unbound agent goes unmentioned
-/// for as long as the cycle lasts. So every overseer answers, which is noisy
-/// and was the behaviour before any of this.
-fn unmanaged_work_owner(input: &Value, bindings: &Map<String, Value>) -> Option<String> {
-    overseer_ids(input)
-        .into_iter()
-        .filter(|id| session_can_receive_loop_send(input, id))
-        .filter(|id| briefable_manager_of(input, bindings, id).is_none())
-        .min()
+/// Per checkout, because one owner for the whole project is the same mistake
+/// pointing the other way -- the lowest-id root in some other worktree would
+/// be told to staff an agent in a checkout it is not working in, while the
+/// lead that does own that checkout never heard about it. Which root within a
+/// checkout is arbitrary, so it is the lowest id: arbitrary, but the same
+/// answer on every tick and on every surface.
+///
+/// An agent in a checkout with no root of its own falls to the lowest-id root
+/// anywhere, because somebody has to hear about it.
+struct UnmanagedOwners {
+    by_worktree: BTreeMap<String, String>,
+    fallback: Option<String>,
+}
+
+impl UnmanagedOwners {
+    fn read(input: &Value, bindings: &Map<String, Value>) -> Self {
+        let sessions = array_field(input, "sessions");
+        let mut by_worktree: BTreeMap<String, String> = BTreeMap::new();
+        let mut fallback: Option<String> = None;
+        for id in overseer_ids(input) {
+            if !session_can_receive_loop_send(input, &id) {
+                continue;
+            }
+            if briefable_manager_of(input, bindings, &id).is_some() {
+                continue;
+            }
+            let worktree = sessions
+                .iter()
+                .find(|session| str_field(session, "id") == id)
+                .map(|session| str_field(session, "worktreePath").to_owned())
+                .unwrap_or_default();
+            by_worktree
+                .entry(worktree)
+                .and_modify(|current| {
+                    if id < *current {
+                        *current = id.clone();
+                    }
+                })
+                .or_insert_with(|| id.clone());
+            if fallback.as_ref().is_none_or(|current| id < *current) {
+                fallback = Some(id);
+            }
+        }
+        Self {
+            by_worktree,
+            fallback,
+        }
+    }
+
+    /// Whether `recipient` answers for an unmanaged agent in `worktree`.
+    ///
+    /// A binding graph with no root at all is a registry hand-edited into a
+    /// cycle of live managers. There is nobody to answer, and the alternative
+    /// is that every unbound agent goes unmentioned for as long as the cycle
+    /// lasts -- so everyone answers, which is noisy and is what happened
+    /// before any of this.
+    fn answered_by(&self, worktree: &str, recipient: &str) -> bool {
+        match self.by_worktree.get(worktree).or(self.fallback.as_ref()) {
+            Some(owner) => owner == recipient,
+            None => true,
+        }
+    }
 }
 
 /// Whether `candidate` is `recipient`'s to act on.
@@ -2199,23 +2248,20 @@ fn watch_scope_contains(input: &Value, candidate_id: &str, recipient: Option<&st
     else {
         return true;
     };
-    match briefable_manager_of(input, bindings, candidate_id) {
-        Some(manager) => manager == recipient,
-        None => {
-            // Nobody who can be briefed manages it, so it is the top's
-            // business -- unless it is an overseer, which is a peer, not a
-            // report.
-            if overseer_ids(input).iter().any(|id| id == candidate_id) {
-                return false;
-            }
-            match unmanaged_work_owner(input, bindings) {
-                Some(owner) => owner == recipient,
-                // No top at all: a cycle of live managers. Everyone answers,
-                // rather than nobody.
-                None => true,
-            }
-        }
+    if let Some(manager) = briefable_manager_of(input, bindings, candidate_id) {
+        return manager == recipient;
     }
+    // Nobody who can be briefed manages it, so it is the top's business --
+    // unless it is an overseer, which is a peer, not a report.
+    if overseer_ids(input).iter().any(|id| id == candidate_id) {
+        return false;
+    }
+    let worktree = array_field(input, "sessions")
+        .iter()
+        .find(|session| str_field(session, "id") == candidate_id)
+        .map(|session| str_field(session, "worktreePath").to_owned())
+        .unwrap_or_default();
+    UnmanagedOwners::read(input, bindings).answered_by(&worktree, recipient)
 }
 
 /// The candidates a recipient is briefed about.

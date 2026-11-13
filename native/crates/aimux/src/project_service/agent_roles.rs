@@ -428,6 +428,11 @@ pub enum WatchBindingError {
     },
     Registry(String),
     Metadata(String),
+    /// The runtime topology could not be read, so who is in the graveyard is
+    /// unknown. Named separately from the metadata failure because they are
+    /// different files and a refusal that names the wrong one sends the reader
+    /// to the wrong place.
+    Topology(String),
 }
 
 impl WatchBindingError {
@@ -438,7 +443,7 @@ impl WatchBindingError {
             Self::OverseerRequired { .. } | Self::ScribeCannotBeWatched { .. } => 400,
             Self::OverseerDeparted { .. } => 409,
             Self::WatchCycle { .. } => 409,
-            Self::Registry(_) | Self::Metadata(_) => 500,
+            Self::Registry(_) | Self::Metadata(_) | Self::Topology(_) => 500,
         }
     }
 
@@ -452,6 +457,7 @@ impl WatchBindingError {
             Self::AlreadyWatched { .. } => "already-watched",
             Self::Registry(_) => "role-registry-unavailable",
             Self::Metadata(_) => "metadata-unavailable",
+            Self::Topology(_) => "topology-unavailable",
         }
     }
 
@@ -481,7 +487,7 @@ impl WatchBindingError {
             } => {
                 format!("{watched_session_id} is already watched by overseer {overseer_session_id}")
             }
-            Self::Registry(error) | Self::Metadata(error) => error.clone(),
+            Self::Registry(error) | Self::Metadata(error) | Self::Topology(error) => error.clone(),
         }
     }
 
@@ -511,7 +517,9 @@ impl WatchBindingError {
                 "watchedSessionId": watched_session_id,
                 "overseerSessionId": overseer_session_id
             }),
-            Self::Registry(error) | Self::Metadata(error) => json!({ "error": error }),
+            Self::Registry(error) | Self::Metadata(error) | Self::Topology(error) => {
+                json!({ "error": error })
+            }
         }
     }
 }

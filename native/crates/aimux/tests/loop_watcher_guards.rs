@@ -3280,43 +3280,60 @@ fn a_root_manager_is_in_nobodys_briefing() {
     );
 }
 
-/// Exactly one top answers for the agents nobody manages.
+/// The root of the agent's own checkout answers for it, and only that one.
 ///
 /// Offered to every root, an unbound agent is briefed twice and handed to two
 /// managers as spare capacity -- the double-staffing the narrowing exists to
-/// stop, arriving by the other door.
+/// stop, arriving by the other door. Offered to one root for the whole
+/// project, it is the same mistake pointing the other way: a lead in another
+/// worktree is told to staff an agent in a checkout it is not working in,
+/// while the lead that owns that checkout never hears about it.
+///
+/// This asserts WHICH root, because counting mentions passes with the wrong
+/// one chosen -- which is what the first version of this test did.
 #[test]
-fn one_root_answers_for_the_agents_nobody_manages() {
+fn the_root_of_the_agents_own_checkout_answers_for_it() {
     let mut input = three_level_input(json!({ "stoppedDwellMs": 0 }));
-    // A second tree beside the first, with its own root.
-    let (other, mut other_meta) = non_loop_session("other-lead", "idle");
+    // A second tree in a second checkout, whose root sorts AFTER the first
+    // lead, so a global lowest-id rule hands its agent to the wrong one.
+    let (mut other, mut other_meta) = non_loop_session("zz-other-lead", "idle");
     other_meta["overseer"] = json!(true);
-    input["sessions"]
-        .as_array_mut()
-        .expect("sessions")
-        .push(other);
-    input["metadata"]["sessions"]["other-lead"] = other_meta;
-    input["watchBindings"] = json!({
-        "mid": "lead",
-        "coder-a": "mid",
-        "coder-b": "other-lead"
-    });
+    other["worktreePath"] = json!("/repo/.aimux/worktrees/feature-b");
+    let (mut stranded, stranded_meta) = looping_session("zz-stranded", "idle");
+    stranded["worktreePath"] = json!("/repo/.aimux/worktrees/feature-b");
+    let sessions = input["sessions"].as_array_mut().expect("sessions");
+    sessions.push(other);
+    sessions.push(stranded);
+    input["metadata"]["sessions"]["zz-other-lead"] = other_meta;
+    input["metadata"]["sessions"]["zz-stranded"] = stranded_meta;
+    input["watchBindings"] = json!({ "mid": "lead", "coder-a": "mid", "coder-b": "mid" });
 
     let sends = LoopWatcher::new().plan_sends(&input, NOW);
-    let mentions = ["lead", "other-lead"]
-        .into_iter()
-        .filter(|recipient| {
-            sends
-                .iter()
-                .filter(|send| {
-                    send.session_id == *recipient && send.kind == LoopSendKind::OverseerBriefing
-                })
-                .any(|send| briefing_mentions(send, "nobodys"))
-        })
-        .count();
-    assert_eq!(
-        mentions, 1,
-        "exactly one root hears about the unbound agent: {sends:?}"
+    let hears = |recipient: &str, agent: &str| {
+        sends
+            .iter()
+            .filter(|send| {
+                send.session_id == recipient && send.kind == LoopSendKind::OverseerBriefing
+            })
+            .any(|send| briefing_mentions(send, agent))
+    };
+
+    assert!(
+        hears("zz-other-lead", "zz-stranded"),
+        "the lead of feature-b owns the unbound agent in feature-b: {sends:?}"
+    );
+    assert!(
+        !hears("lead", "zz-stranded"),
+        "and the main checkout's lead is not told to staff it: {sends:?}"
+    );
+    // And the other direction, so the rule is not passing by accident.
+    assert!(
+        hears("lead", "nobodys"),
+        "the main checkout's unbound agent is the main lead's: {sends:?}"
+    );
+    assert!(
+        !hears("zz-other-lead", "nobodys"),
+        "and not the other checkout's: {sends:?}"
     );
 }
 
