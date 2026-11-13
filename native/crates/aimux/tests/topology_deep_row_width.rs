@@ -134,6 +134,57 @@ fn a_deep_row_keeps_the_session_id() {
     );
 }
 
+/// A SHORT label keeps its id too.
+///
+/// The shortfall used to be subtracted from the 20-column cap rather than from
+/// the name's own width, so a label already shorter than the cap narrowed by
+/// nothing and the id was clipped anyway -- which is the case this exists to
+/// prevent, and the common one: most labels are short.
+#[test]
+fn a_deep_row_with_a_short_label_keeps_its_session_id() {
+    let mut rows = vec![json!({
+        "kind": "worktree",
+        "label": "main",
+        "health": "active",
+        "depth": 0,
+        "worktreePath": "/repo"
+    })];
+    for depth in 1..=5usize {
+        rows.push(json!({
+            "kind": "agent",
+            "label": "coder",
+            "health": "active",
+            "detail": "coder",
+            "status": "waiting",
+            "depth": depth,
+            // Long enough that label + id overflows a deep row's column, with
+            // a label well under the cap.
+            "sessionId": format!("claude-01HX8ZK3QF{depth}"),
+            "tool": "claude",
+            "worktreePath": "/repo"
+        }));
+    }
+    let resource = json!({
+        "topology": {
+            "projectName": "aimux",
+            "health": "active",
+            "counts": { "worktrees": 1, "agents": 5, "services": 0 },
+            "rows": rows
+        }
+    });
+
+    let lines = rendered_lines(&resource, 120);
+    let deepest = lines
+        .iter()
+        .filter(|line| line.contains(" agent "))
+        .max_by_key(|line| line.len() - line.trim_start_matches([' ', '▸']).len())
+        .unwrap_or_else(|| panic!("no agent row was drawn: {lines:?}"));
+    assert!(
+        deepest.contains("01HX8ZK3QF5") || deepest.contains("QF5"),
+        "the deepest row lost the id it is selected by: {deepest:?}"
+    );
+}
+
 #[test]
 fn a_deep_row_still_says_what_the_agent_is_doing() {
     // The indent is taken from the identity column precisely so the task

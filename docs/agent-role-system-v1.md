@@ -437,14 +437,15 @@ direct ones. A lead that heard about every agent under its middle managers
 would put two managers on one agent, which is the thing a hierarchy exists to
 prevent.
 
-- An agent nobody manages belongs to the top of its own checkout, and to
-  exactly one: the lowest-id root overseer there. Offered to every root, an
-  unbound agent is briefed twice and handed to two managers as spare capacity.
-  Offered to one root for the whole project, the same mistake points the other
-  way -- a lead in another worktree is told to staff an agent in a checkout it
-  is not working in, while the lead that owns that checkout never hears about
-  it. An agent in a checkout with no root of its own falls to the lowest-id
-  root anywhere, because somebody has to hear about it.
+- An agent nobody manages is every top's business. Naming one owner for it was
+  tried twice and was wrong both times: the lowest-id root anywhere told a lead
+  in one checkout to staff an agent in another, and the lowest-id root in the
+  agent's own checkout needed a canonical checkout key the tick loop cannot
+  afford, mis-bucketed a root whose path comes from its lane, and still fell
+  back to a peer checkout's lead when a checkout had no root. The duplication
+  is not the defect the narrowing is for: an unclaimed agent is unclaimed, and
+  the narrowing exists so a *managed* agent has exactly one manager. Binding it
+  is what gives it one owner.
 - A manager that cannot be briefed is walked straight past. A binding can name
   an agent nothing will brief -- a worktree graveyard keeps its agents'
   bindings on purpose, and an offline overseer gets no recipient engine at all

@@ -3553,7 +3553,10 @@ fn topology_row_identity(row: &Value, label: &str) -> String {
 /// and truncating the composed string takes the id away first. A deep row has
 /// fewer columns to spend, so it spends them on the name.
 fn topology_row_identity_within(row: &Value, label: &str, name_width: usize) -> String {
-    let name = truncate_plain(label, name_width.max(6));
+    // No floor: a pad narrow enough to leave the name one column is a pad
+    // where `(id)` alone is the better answer, and a floor here silently
+    // returned something wider than the caller asked for.
+    let name = truncate_plain(label, name_width.max(1));
     let weight = topology_row_weight(row);
     let Some(session_id) = string_at(row, &["sessionId"]) else {
         return style(&name, weight);
@@ -3618,11 +3621,13 @@ fn topology_padded_identity(row: &Value, label: &str, width: usize) -> String {
         // nothing, and these bytes are compared against the Node frame.
         return pad_visible(&identity, width);
     }
-    // Spend the shortfall on the name and keep the id. Falling back to
-    // truncating the whole string when even that does not fit, because a row
-    // that overflows its column is worse than one with a clipped id.
+    // Spend the shortfall on the name, measured from the name's own width
+    // rather than from the cap it would have had: for a label already shorter
+    // than the cap, subtracting from the cap narrows nothing and the id gets
+    // clipped anyway, which is the thing this exists to prevent.
     let overflow = visible_width(&identity) - gap;
-    let narrowed = topology_row_identity_within(row, label, 20usize.saturating_sub(overflow));
+    let name_width = visible_width(&truncate_plain(label, 20));
+    let narrowed = topology_row_identity_within(row, label, name_width.saturating_sub(overflow));
     if visible_width(&narrowed) > gap {
         pad_visible(&truncate_ansi(&narrowed, gap), width)
     } else {

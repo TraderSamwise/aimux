@@ -2149,77 +2149,6 @@ fn briefable_manager_of(
     None
 }
 
-/// Which overseer answers for the agents nobody manages, per checkout.
-///
-/// The tops of the trees are the candidates, and within one checkout exactly
-/// one of them takes it: offered to every root, an unbound agent is briefed
-/// twice and handed to two managers as spare capacity, which is the
-/// double-staffing the narrowing exists to stop.
-///
-/// Per checkout, because one owner for the whole project is the same mistake
-/// pointing the other way -- the lowest-id root in some other worktree would
-/// be told to staff an agent in a checkout it is not working in, while the
-/// lead that does own that checkout never heard about it. Which root within a
-/// checkout is arbitrary, so it is the lowest id: arbitrary, but the same
-/// answer on every tick and on every surface.
-///
-/// An agent in a checkout with no root of its own falls to the lowest-id root
-/// anywhere, because somebody has to hear about it.
-struct UnmanagedOwners {
-    by_worktree: BTreeMap<String, String>,
-    fallback: Option<String>,
-}
-
-impl UnmanagedOwners {
-    fn read(input: &Value, bindings: &Map<String, Value>) -> Self {
-        let sessions = array_field(input, "sessions");
-        let mut by_worktree: BTreeMap<String, String> = BTreeMap::new();
-        let mut fallback: Option<String> = None;
-        for id in overseer_ids(input) {
-            if !session_can_receive_loop_send(input, &id) {
-                continue;
-            }
-            if briefable_manager_of(input, bindings, &id).is_some() {
-                continue;
-            }
-            let worktree = sessions
-                .iter()
-                .find(|session| str_field(session, "id") == id)
-                .map(|session| str_field(session, "worktreePath").to_owned())
-                .unwrap_or_default();
-            by_worktree
-                .entry(worktree)
-                .and_modify(|current| {
-                    if id < *current {
-                        *current = id.clone();
-                    }
-                })
-                .or_insert_with(|| id.clone());
-            if fallback.as_ref().is_none_or(|current| id < *current) {
-                fallback = Some(id);
-            }
-        }
-        Self {
-            by_worktree,
-            fallback,
-        }
-    }
-
-    /// Whether `recipient` answers for an unmanaged agent in `worktree`.
-    ///
-    /// A binding graph with no root at all is a registry hand-edited into a
-    /// cycle of live managers. There is nobody to answer, and the alternative
-    /// is that every unbound agent goes unmentioned for as long as the cycle
-    /// lasts -- so everyone answers, which is noisy and is what happened
-    /// before any of this.
-    fn answered_by(&self, worktree: &str, recipient: &str) -> bool {
-        match self.by_worktree.get(worktree).or(self.fallback.as_ref()) {
-            Some(owner) => owner == recipient,
-            None => true,
-        }
-    }
-}
-
 /// Whether `candidate` is `recipient`'s to act on.
 ///
 /// Its own reports, and only its own. Not its reports' reports: a lead that
@@ -2253,15 +2182,34 @@ fn watch_scope_contains(input: &Value, candidate_id: &str, recipient: Option<&st
     }
     // Nobody who can be briefed manages it, so it is the top's business --
     // unless it is an overseer, which is a peer, not a report.
+    //
+    // EVERY top's business, deliberately. Three rounds of review went into
+    // naming one owner for it: first the lowest-id root anywhere, which told a
+    // lead in one checkout to staff an agent in another; then the lowest-id
+    // root in the agent's own checkout, which needed a canonical checkout key
+    // the tick loop cannot afford, mis-bucketed a root whose path comes from
+    // its lane, and still fell back to another checkout's lead for a checkout
+    // with no root of its own.
+    //
+    // The duplication that rule was avoiding is not a defect here. An agent
+    // nobody manages is unclaimed, and saying so to every top is true; the
+    // narrowing exists so that a MANAGED agent has exactly one manager, and it
+    // does. Binding the agent is what gives it one owner.
     if overseer_ids(input).iter().any(|id| id == candidate_id) {
         return false;
     }
-    let worktree = array_field(input, "sessions")
-        .iter()
-        .find(|session| str_field(session, "id") == candidate_id)
-        .map(|session| str_field(session, "worktreePath").to_owned())
-        .unwrap_or_default();
-    UnmanagedOwners::read(input, bindings).answered_by(&worktree, recipient)
+    if briefable_manager_of(input, bindings, recipient).is_none() {
+        return true;
+    }
+    // This recipient is not a top. If the project has no top at all -- a
+    // registry hand-edited into a cycle of live managers -- then saying
+    // nothing would leave every unclaimed agent unmentioned for as long as the
+    // cycle lasts, so everyone answers. Reached only on that path, which is
+    // why it is allowed to walk the overseers.
+    !overseer_ids(input).iter().any(|id| {
+        session_can_receive_loop_send(input, id)
+            && briefable_manager_of(input, bindings, id).is_none()
+    })
 }
 
 /// The candidates a recipient is briefed about.

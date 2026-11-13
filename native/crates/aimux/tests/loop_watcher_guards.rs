@@ -3280,32 +3280,29 @@ fn a_root_manager_is_in_nobodys_briefing() {
     );
 }
 
-/// The root of the agent's own checkout answers for it, and only that one.
+/// An agent nobody manages is every top's business.
 ///
-/// Offered to every root, an unbound agent is briefed twice and handed to two
-/// managers as spare capacity -- the double-staffing the narrowing exists to
-/// stop, arriving by the other door. Offered to one root for the whole
-/// project, it is the same mistake pointing the other way: a lead in another
-/// worktree is told to staff an agent in a checkout it is not working in,
-/// while the lead that owns that checkout never hears about it.
+/// Three rounds of review went into naming one owner for it, and each answer
+/// was wrong in a new way: the lowest-id root anywhere told a lead in one
+/// checkout to staff an agent in another, and the lowest-id root in the
+/// agent's own checkout needed a canonical checkout key the tick loop cannot
+/// afford, mis-bucketed a root whose path comes from its lane, and still fell
+/// back to a peer checkout's lead when a checkout had no root.
 ///
-/// This asserts WHICH root, because counting mentions passes with the wrong
-/// one chosen -- which is what the first version of this test did.
+/// The duplication is not a defect: an unclaimed agent is unclaimed, and the
+/// narrowing exists so a MANAGED agent has exactly one manager. A middle
+/// manager still hears nothing about it.
 #[test]
-fn the_root_of_the_agents_own_checkout_answers_for_it() {
+fn an_agent_nobody_manages_is_every_tops_business() {
     let mut input = three_level_input(json!({ "stoppedDwellMs": 0 }));
-    // A second tree in a second checkout, whose root sorts AFTER the first
-    // lead, so a global lowest-id rule hands its agent to the wrong one.
-    let (mut other, mut other_meta) = non_loop_session("zz-other-lead", "idle");
+    let (mut other, mut other_meta) = non_loop_session("other-lead", "idle");
     other_meta["overseer"] = json!(true);
     other["worktreePath"] = json!("/repo/.aimux/worktrees/feature-b");
-    let (mut stranded, stranded_meta) = looping_session("zz-stranded", "idle");
-    stranded["worktreePath"] = json!("/repo/.aimux/worktrees/feature-b");
-    let sessions = input["sessions"].as_array_mut().expect("sessions");
-    sessions.push(other);
-    sessions.push(stranded);
-    input["metadata"]["sessions"]["zz-other-lead"] = other_meta;
-    input["metadata"]["sessions"]["zz-stranded"] = stranded_meta;
+    input["sessions"]
+        .as_array_mut()
+        .expect("sessions")
+        .push(other);
+    input["metadata"]["sessions"]["other-lead"] = other_meta;
     input["watchBindings"] = json!({ "mid": "lead", "coder-a": "mid", "coder-b": "mid" });
 
     let sends = LoopWatcher::new().plan_sends(&input, NOW);
@@ -3318,23 +3315,24 @@ fn the_root_of_the_agents_own_checkout_answers_for_it() {
             .any(|send| briefing_mentions(send, agent))
     };
 
+    for root in ["lead", "other-lead"] {
+        assert!(
+            hears(root, "nobodys"),
+            "{root} is a top, so an unclaimed agent is its business: {sends:?}"
+        );
+    }
+    // The middle manager is not a top, and the coders it does manage are not
+    // anybody else's.
     assert!(
-        hears("zz-other-lead", "zz-stranded"),
-        "the lead of feature-b owns the unbound agent in feature-b: {sends:?}"
+        !hears("mid", "nobodys"),
+        "a middle manager is told about its own reports only: {sends:?}"
     );
-    assert!(
-        !hears("lead", "zz-stranded"),
-        "and the main checkout's lead is not told to staff it: {sends:?}"
-    );
-    // And the other direction, so the rule is not passing by accident.
-    assert!(
-        hears("lead", "nobodys"),
-        "the main checkout's unbound agent is the main lead's: {sends:?}"
-    );
-    assert!(
-        !hears("zz-other-lead", "nobodys"),
-        "and not the other checkout's: {sends:?}"
-    );
+    for root in ["lead", "other-lead"] {
+        assert!(
+            !hears(root, "coder-a"),
+            "{root} must not be told about an agent the mid manages: {sends:?}"
+        );
+    }
 }
 
 /// A cycle of live managers leaves no top, and that must not be silence.
