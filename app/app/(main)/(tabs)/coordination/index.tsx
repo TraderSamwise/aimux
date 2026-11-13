@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { projectStateKey } from "@/lib/project-key";
 import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
@@ -28,6 +28,18 @@ import {
   isCurrentCoordinationWorklistRequest,
   type CoordinationWorklistRequestScope,
 } from "@/stores/coordination";
+import { StoryList, TaskList, TaskProgress } from "@/components/project-activity";
+import { isOpenTask } from "@/lib/project-observability";
+import { createProjectResourceRequestTracker } from "@/lib/project-resource-request-tracker";
+import {
+  emptyProjectObservability,
+  projectObservabilityResourceFamily,
+  projectTasksResourceFamily,
+} from "@/stores/project";
+import {
+  refreshProjectObservabilityResourceAtom,
+  refreshProjectTasksResourceAtom,
+} from "@/stores/projectRefresh";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { selectedSessionIdAtom } from "@/stores/projects";
 import { serviceEndpointKey } from "@/lib/daemon-url";
@@ -211,6 +223,68 @@ export default function CoordinationScreen() {
   ]);
   const serializedRefresh = useSerializedProjectApiRefresh(refresh);
 
+  // The project's recent activity and its open queue, moved here from the
+  // project screen: what needs a person and what is in flight are the same
+  // question, and they were two screens apart.
+  const observabilityRefreshNonce = useAtomValue(
+    projectApiViewRefreshNonceFamily("project-observability"),
+  );
+  const tasksRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("tasks"));
+  const observabilityResource = useAtomValue(
+    projectObservabilityResourceFamily(projectKeyForState),
+  );
+  const tasksResource = useAtomValue(projectTasksResourceFamily(projectKeyForState));
+  const refreshObservability = useSetAtom(refreshProjectObservabilityResourceAtom);
+  const refreshTasks = useSetAtom(refreshProjectTasksResourceAtom);
+  const activityTrackerRef = useRef(
+    createProjectResourceRequestTracker({
+      projectStateKey: projectKeyForState,
+      endpointKey,
+    }),
+  );
+  // Before paint, as the project screen did: a switch between projects that
+  // updated the tracker after the render could accept a reply for the project
+  // just left.
+  useLayoutEffect(() => {
+    const tracker = activityTrackerRef.current;
+    tracker.update({ projectStateKey: projectKeyForState, endpointKey });
+    return () => {
+      tracker.invalidateGeneration();
+    };
+  }, [endpointKey, projectKeyForState]);
+  const refreshActivity = useCallback(async () => {
+    const request = activityTrackerRef.current.begin();
+    const input = {
+      endpoint,
+      getToken,
+      request,
+      isCurrentRequest: (marker: typeof request) => activityTrackerRef.current.isCurrent(marker),
+    };
+    await Promise.all([refreshObservability(input), refreshTasks(input)]);
+  }, [endpoint, getToken, refreshObservability, refreshTasks]);
+  const serializedRefreshActivity = useSerializedProjectApiRefresh(refreshActivity);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void serializedRefreshActivity();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [
+    endpointKey,
+    observabilityRefreshNonce,
+    projectKeyForState,
+    serializedRefreshActivity,
+    tasksRefreshNonce,
+  ]);
+  // Absent is not empty: before the first answer a zeroed progress strip and
+  // "no queue items" are a claim about the project, not a loading state.
+  const activityReady = observabilityResource.value?.project !== undefined;
+  const tasksReady = tasksResource.value !== null;
+  const activityModel = observabilityResource.value?.project ?? emptyProjectObservability();
+  const openTasks = useMemo(
+    () => (tasksResource.value?.tasks ?? []).filter(isOpenTask),
+    [tasksResource.value],
+  );
+
   useEffect(() => {
     const timer = setTimeout(() => {
       void serializedRefresh();
@@ -256,7 +330,12 @@ export default function CoordinationScreen() {
             variant="outline"
             size="icon"
             disabled={!endpoint || resource.pending}
-            onPress={() => void serializedRefresh()}
+            onPress={() => {
+              // Everything this screen shows, not just the worklist: the
+              // queue and the activity feed are on it now.
+              void serializedRefresh();
+              void serializedRefreshActivity();
+            }}
             accessibilityLabel="Refresh coordination"
           >
             <RefreshCw size={18} color={foregroundIconColor} />
@@ -304,6 +383,44 @@ export default function CoordinationScreen() {
           <WorklistSection title="Later" items={tail} onPressItem={handlePressItem} />
         </View>
       )}
+
+      {/* Outside the worklist's own empty state on purpose: a quiet worklist
+          is not a quiet project, and hiding the queue and the activity behind
+          "nothing needs you" would lose both the moment it is true. */}
+      {project && endpoint ? (
+        <View className="mt-6">
+          {/* The failures come with the data: these two resources moved here
+              from the project screen, and a screen that shows their contents
+              has to show when they could not be read. */}
+          {tasksResource.error ? (
+            <PageStateCard title="Project queue failed" body={tasksResource.error} tone="danger" />
+          ) : null}
+          {observabilityResource.error ? (
+            <PageStateCard
+              title="Project activity failed"
+              body={observabilityResource.error}
+              tone="danger"
+            />
+          ) : null}
+          <Text className="mb-3 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+            Queue
+          </Text>
+          {activityReady ? <TaskProgress model={activityModel} /> : null}
+          {tasksReady ? (
+            <TaskList tasks={openTasks} endpoint={endpoint} />
+          ) : (
+            <PageStateCard title="Loading queue..." body="Fetching task exchange state." />
+          )}
+          <Text className="mt-6 mb-3 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+            Activity
+          </Text>
+          {activityReady ? (
+            <StoryList items={activityModel.story} />
+          ) : (
+            <PageStateCard title="Loading activity..." body="Fetching project activity." />
+          )}
+        </View>
+      ) : null}
     </Page>
   );
 }

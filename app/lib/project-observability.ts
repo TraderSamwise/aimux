@@ -35,7 +35,15 @@ function normalize(value?: string): string {
   return value?.trim().toLowerCase() ?? "";
 }
 
-function isOpenTask(task: TaskSummaryResponse): boolean {
+/**
+ * Whether a task still wants somebody.
+ *
+ * Exported because the coordination screen renders the open queue and must
+ * ask the same question this module answers. A hand-rolled list beside it
+ * missed `cancelled`, `abandoned`, `complete`, `completed` and `closed`, and
+ * put finished tasks in front of a person with live claim controls.
+ */
+export function isOpenTask(task: TaskSummaryResponse): boolean {
   const status = normalize(task.status);
   return ![
     "done",
