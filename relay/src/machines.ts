@@ -92,9 +92,25 @@ export function machineFromTags(tags: readonly string[]): MachineInfo {
   return { id, name: machineNameFromTags(tags) ?? id };
 }
 
+/// Why a share could not be routed, for the log and for the owner.
+///
+/// The `error` text a guest sees is deliberately the same for all of these --
+/// the shape of the fleet is not a guest's business. This says which one it
+/// actually was, so a report of "the machine hosting this shared chat is not
+/// connected" can be told apart from a share that never named a machine, which
+/// is a different problem with a different fix and sent one investigation
+/// looking at connectivity while the host was sitting right there.
+export type SharedDaemonRefusal = "no-daemon-connected" | "bound-machine-offline" | "share-names-no-machine";
+
 export type DaemonTargetResolution =
   | { ok: true; machineId: string }
-  | { ok: false; status: number; error: string; machines: MachineInfo[] };
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      machines: MachineInfo[];
+      refusal?: SharedDaemonRefusal;
+    };
 
 // A client that names no machine is answered, not guessed at: one machine is
 // unambiguous, several is a question only the client can settle. Guessing would
@@ -142,7 +158,13 @@ export function resolveSharedDaemonTarget(
   shareMachineId: string | undefined,
 ): DaemonTargetResolution {
   if (machines.length === 0) {
-    return { ok: false, status: 503, error: "Daemon not connected", machines: [] };
+    return {
+      ok: false,
+      status: 503,
+      error: "Daemon not connected",
+      machines: [],
+      refusal: "no-daemon-connected",
+    };
   }
   const bound = shareMachineId?.trim();
   if (bound) {
@@ -153,18 +175,21 @@ export function resolveSharedDaemonTarget(
           status: 503,
           error: "The machine hosting this shared chat is not connected",
           machines: [],
+          refusal: "bound-machine-offline",
         };
   }
   if (machines.length === 1) {
     return { ok: true, machineId: machines[0].id };
   }
   // Deliberately the same text as a disconnected host: the number of machines
-  // on the account is not a guest's business either.
+  // on the account is not a guest's business either. The `refusal` says which
+  // it really was, for the owner and the log.
   return {
     ok: false,
     status: 503,
     error: "The machine hosting this shared chat is not connected",
     machines: [],
+    refusal: "share-names-no-machine",
   };
 }
 

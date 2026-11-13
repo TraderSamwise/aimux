@@ -40,6 +40,7 @@ describe("sharing state", () => {
       owner,
       projectRoot: "/Users/sam/cs/example",
       serviceEndpoint: { host: "127.0.0.1", port: 43192 },
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "ALEX@EXAMPLE.COM",
       now: activeInviteCreatedAt,
@@ -73,6 +74,7 @@ describe("sharing state", () => {
       owner,
       projectRoot: "/Users/sam/cs/example",
       serviceEndpoint: { host: "127.0.0.1", port: 43192 },
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
       now: activeInviteCreatedAt,
@@ -105,6 +107,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -126,6 +129,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "sam@example.com",
     });
@@ -142,6 +146,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -166,6 +171,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -190,6 +196,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -258,6 +265,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -302,6 +310,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -372,6 +381,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
       now: activeInviteCreatedAt,
@@ -395,6 +405,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -415,6 +426,7 @@ describe("sharing state", () => {
             ownerUserId: owner.userId,
             projectRoot: "/Users/sam/cs/example",
             serviceEndpoint: { host: "", port: 99999 },
+            machineId: undefined,
             sessionId: "claude-abc",
             createdAt: "2026-05-24T00:00:00.000Z",
             updatedAt: "2026-05-24T00:00:00.000Z",
@@ -434,6 +446,7 @@ describe("sharing state", () => {
       {
         owner,
         projectRoot: "/Users/sam/cs/example",
+        machineId: undefined,
         sessionId: "claude-abc",
         email: "alex@example.com",
       },

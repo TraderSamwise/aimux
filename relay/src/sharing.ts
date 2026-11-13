@@ -129,7 +129,21 @@ export interface CreateShareInviteInput {
   owner: ShareActor;
   projectRoot: string;
   serviceEndpoint?: ShareServiceEndpoint;
-  machineId?: string;
+  /**
+   * Which of the owner's machines hosts the session.
+   *
+   * Required of every caller that can know it, so a new share is never left
+   * for the project-root guess to route -- two machines with the same checkout
+   * path both claim it, and the route then refuses a share whose host is
+   * sitting right there.
+   *
+   * Still `| undefined` rather than absent, because a daemon that connected
+   * without a usable id is tagged `unidentified` and `sanitizeShareMachineId`
+   * folds that to nothing: a hard requirement would take sharing away from
+   * such an owner entirely. The relay accepts the absence and refuses the
+   * route with its own named reason instead.
+   */
+  machineId: string | undefined;
   sessionId: string;
   email: string;
   now?: string;
@@ -413,8 +427,13 @@ export function findShareForSession(
   // guests to the wrong host, which is what the machine binding exists to stop.
   //
   // Two unbound candidates is a question, not an answer, so neither is taken.
+  // Folded, not compared raw: `/repo` and `/repo/` are one checkout, and a
+  // trailing slash made the re-invite miss its own share, create a second one,
+  // and strand the first one's guests -- which is the outcome this adoption
+  // exists to prevent.
+  const wantedRoot = shareProjectRootKey(projectRoot);
   const adoptable = forOwnerSession.filter(
-    (share) => !sanitizeShareMachineId(share.machineId) && share.projectRoot === projectRoot,
+    (share) => !sanitizeShareMachineId(share.machineId) && shareProjectRootKey(share.projectRoot) === wantedRoot,
   );
   return adoptable.length === 1 ? adoptable[0] : undefined;
 }

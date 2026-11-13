@@ -133,7 +133,25 @@ describe("choosing which machine answers a shared guest", () => {
       status: 503,
       error: "The machine hosting this shared chat is not connected",
       machines: [],
+      refusal: "bound-machine-offline",
     });
+  });
+
+  // One wording, three causes. The guest is told the same thing however the
+  // route failed, and the `refusal` is what lets a report of it be told
+  // apart: an away host is a connectivity problem, a share that named no
+  // machine is not, and one investigation of the second spent its time on the
+  // first.
+  it("says which refusal it was without saying it to the guest", () => {
+    const cases: Array<[ReturnType<typeof resolveSharedDaemonTarget>, string]> = [
+      [resolveSharedDaemonTarget([], "strix"), "no-daemon-connected"],
+      [resolveSharedDaemonTarget([MBP], "strix"), "bound-machine-offline"],
+      [resolveSharedDaemonTarget([MBP, STRIX], undefined), "share-names-no-machine"],
+    ];
+    for (const [resolution, refusal] of cases) {
+      expect(resolution.ok).toBe(false);
+      expect(resolution.ok === false && resolution.refusal).toBe(refusal);
+    }
   });
 
   // The number of machines on the account is not a guest's business, so an

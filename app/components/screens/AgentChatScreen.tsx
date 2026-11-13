@@ -2293,6 +2293,17 @@ export default function ChatScreen() {
       setInviteStatus("Sign in is required to send invites.");
       return;
     }
+    // A share has to name the machine that holds the session, or the relay is
+    // left guessing from the checkout path -- and two machines with the same
+    // path both claim it, so the route then refuses a share whose host is
+    // online. The endpoint is null while the host is down, which is exactly
+    // when an invite would be created with nothing to bind it to.
+    if (!serviceEndpoint?.machineId) {
+      setInviteStatus(
+        "This agent's host has to be reachable to share it: the invite records which machine holds the session.",
+      );
+      return;
+    }
     setInviteBusy(true);
     setInviteStatus(null);
     try {
