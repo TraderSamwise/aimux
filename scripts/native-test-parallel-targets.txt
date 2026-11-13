@@ -169,6 +169,8 @@ subagent_activity_task
 supervisor_lane_surfaces
 terminal_key_parser_contract
 tmux_expose
+topology_deep_row_width
+topology_depth_surfaces
 transcript_reconciler_behavior
 transcript_reconciler_task
 transcript_tail_encoding

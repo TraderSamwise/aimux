@@ -1064,6 +1064,15 @@ export interface ProjectTopologyResponse extends ProjectApiOk {
       sessionId?: string;
       serviceId?: string;
       worktreePath?: string;
+      tool?: string;
+      task?: string;
+      recentOutput?: boolean;
+      /** Who spawned this agent. */
+      parentSessionId?: string;
+      /** Who runs this agent's loop; the edge the org tree is drawn from. */
+      watchedBy?: string;
+      /** It has a manager, and that manager is not among these rows. */
+      managerNotShown?: boolean;
     }>;
   };
 }
@@ -1462,6 +1471,12 @@ export interface KillAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId: string;
   status: "graveyard";
   previousStatus: "running" | "offline";
+  /**
+   * The agent is in the graveyard, but its reports could not be moved up to
+   * its own manager, so the role registry still has them bound to it. Present
+   * only on that failure; the kill itself succeeded either way.
+   */
+  reportsReleaseError?: string;
 }
 
 export interface ReapDeadAgentRecord {
@@ -1497,6 +1512,12 @@ export interface ReapDeadAgentsResponse extends ProjectLifecycleTransitionRespon
   status: "reaped" | "unchanged";
   reaped: ReapDeadAgentRecord[];
   skipped: ReapDeadAgentRecord[];
+  /**
+   * Agents that were reaped but whose reports could not be moved up to their
+   * own manager, so the role registry still has them bound to a dead agent.
+   * Present only on that failure; the reaping itself succeeded either way.
+   */
+  reportsReleaseErrors?: Array<{ sessionId: string; error: string }>;
 }
 
 export interface ResurrectAgentResponse extends ProjectLifecycleTransitionResponse {
@@ -1711,10 +1732,14 @@ export type AgentWatchRefusalReason =
   | "session-not-found"
   | "overseer-required"
   | "scribe-cannot-be-watched"
+  /** The proposed manager is in the graveyard, so it runs nobody's loop. */
+  | "overseer-departed"
   | "watch-cycle"
   | "already-watched"
   | "role-registry-unavailable"
   | "metadata-unavailable"
+  /** The runtime topology could not be read, so who is in the graveyard is unknown. */
+  | "topology-unavailable"
   | "lifecycle-mutation-unavailable";
 
 export type AgentWatchResponse =

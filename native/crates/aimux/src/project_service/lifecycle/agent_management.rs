@@ -364,12 +364,67 @@ pub(super) fn route_agent_kill_checked(
     clear_prompt_context(&project_state_dir, &session_id);
     prune_restore_eligibility(&project_state_dir, &session_id);
     clear_agent_destructive_operation_failures(&project_state_dir, &session_id);
-    lifecycle_response(
-        json!({ "sessionId": session_id, "status": "graveyard", "previousStatus": previous_status }),
-        "agent.kill",
-        "agent",
-        Some(&session_id),
-    )
+    // After the topology write, never inside it: the registry has its own lock.
+    let reports_error = release_graveyarded_manager_reports(&project_state_dir, &session_id);
+    graveyard_response(&session_id, previous_status, reports_error)
+}
+
+/// A graveyarded manager cannot run anyone's loop, so its reports move up to
+/// its own manager.
+///
+/// Without this the registry keeps handing a dead agent a subtree: the topology
+/// screen draws its reports under it, the demotion and cycle checks keep
+/// counting them, and once loop briefings follow this edge those reports would
+/// be briefed to nobody at all. It is the same rule a deliberate demotion
+/// applies, and the one `inherit_reports_from_departing` already holds.
+///
+/// The dead agent keeps its own record and its own incoming edge, because it
+/// can be restored from the graveyard. It comes back childless, which is
+/// honest: nothing was watching it while it was gone.
+///
+/// Returns the failure if the registry could not be written. The tmux window
+/// is already gone by the time this runs, so this cannot fail the route -- but
+/// it is reported rather than swallowed.
+fn release_graveyarded_manager_reports(
+    project_state_dir: &Path,
+    session_id: &str,
+) -> Option<String> {
+    match crate::project_service::agent_roles::mutate_agent_role_registry(
+        project_state_dir,
+        |registry| {
+            Ok(super::fork_cleanup::inherit_reports_from_departing(registry, session_id).changed)
+        },
+    ) {
+        Ok(_) => None,
+        Err(error) => {
+            log_always_at(
+                LogLevel::Warn,
+                "graveyarded agent kept its reports",
+                "lifecycle",
+                Some(json!({ "sessionId": session_id, "error": error })),
+            );
+            Some(error)
+        }
+    }
+}
+
+/// The graveyard response, carrying a reports move that did not land.
+fn graveyard_response(
+    session_id: &str,
+    previous_status: &str,
+    reports_error: Option<String>,
+) -> ProjectServiceDispatchResponse {
+    let mut body = json!({
+        "sessionId": session_id,
+        "status": "graveyard",
+        "previousStatus": previous_status
+    });
+    if let Some(error) = reports_error
+        && let Some(object) = body.as_object_mut()
+    {
+        object.insert("reportsReleaseError".into(), Value::String(error));
+    }
+    lifecycle_response(body, "agent.kill", "agent", Some(session_id))
 }
 
 fn graveyard_candidate_identity(topology: &Value, session_id: &str) -> Value {
@@ -441,12 +496,8 @@ pub(super) async fn route_agent_kill_async(
     }
     prune_restore_eligibility(&project_state_dir, &session_id);
     clear_agent_destructive_operation_failures(&project_state_dir, &session_id);
-    lifecycle_response(
-        json!({ "sessionId": session_id, "status": "graveyard", "previousStatus": previous_status }),
-        "agent.kill",
-        "agent",
-        Some(&session_id),
-    )
+    let reports_error = release_graveyarded_manager_reports(&project_state_dir, &session_id);
+    graveyard_response(&session_id, previous_status, reports_error)
 }
 
 fn record_agent_kill_operation_failure(
@@ -795,6 +846,7 @@ pub(super) fn route_graveyard_reap_dead_agents(
         }
     }
 
+    let mut reap_failures = Vec::new();
     if !reaped_ids.is_empty() {
         let result = update_runtime_topology(
             runtime_topology_path(&project_state_dir),
@@ -835,15 +887,32 @@ pub(super) fn route_graveyard_reap_dead_agents(
         for session_id in &reaped_ids {
             clear_prompt_context(&project_state_dir, session_id);
             prune_restore_eligibility(&project_state_dir, session_id);
+            // A reaped agent is as dead as a killed one and is individually
+            // resurrectable, so there is no "they all come back together" to
+            // justify leaving its reports bound to it, the way a worktree
+            // graveyard can.
+            if let Some(error) = release_graveyarded_manager_reports(&project_state_dir, session_id)
+            {
+                // Reported per agent rather than dropped: a lock timeout here
+                // graveyards the agent and leaves its subtree bound to it, and
+                // the single-kill path says so on its response.
+                reap_failures.push(json!({ "sessionId": session_id, "error": error }));
+            }
         }
     }
 
+    let mut body = json!({
+        "status": if reaped.is_empty() { "unchanged" } else { "reaped" },
+        "reaped": reaped,
+        "skipped": skipped,
+    });
+    if !reap_failures.is_empty()
+        && let Some(object) = body.as_object_mut()
+    {
+        object.insert("reportsReleaseErrors".into(), Value::Array(reap_failures));
+    }
     lifecycle_response(
-        json!({
-            "status": if reaped.is_empty() { "unchanged" } else { "reaped" },
-            "reaped": reaped,
-            "skipped": skipped,
-        }),
+        body,
         "graveyard.agent.reapDead",
         "agent",
         requested_session_id.as_deref(),

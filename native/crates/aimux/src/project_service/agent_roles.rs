@@ -411,6 +411,13 @@ pub enum WatchBindingError {
     ScribeCannotBeWatched {
         session_id: String,
     },
+    /// The proposed manager is in the graveyard, so it cannot run anyone's
+    /// loop. A kill moves a dead manager's reports up; without this the very
+    /// next bind could hand it new ones, and the rule would hold for exactly
+    /// as long as nobody tried.
+    OverseerDeparted {
+        session_id: String,
+    },
     WatchCycle {
         watched_session_id: String,
         overseer_session_id: String,
@@ -421,6 +428,11 @@ pub enum WatchBindingError {
     },
     Registry(String),
     Metadata(String),
+    /// The runtime topology could not be read, so who is in the graveyard is
+    /// unknown. Named separately from the metadata failure because they are
+    /// different files and a refusal that names the wrong one sends the reader
+    /// to the wrong place.
+    Topology(String),
 }
 
 impl WatchBindingError {
@@ -429,8 +441,9 @@ impl WatchBindingError {
             Self::SessionNotFound { .. } => 404,
             Self::AlreadyWatched { .. } => 409,
             Self::OverseerRequired { .. } | Self::ScribeCannotBeWatched { .. } => 400,
+            Self::OverseerDeparted { .. } => 409,
             Self::WatchCycle { .. } => 409,
-            Self::Registry(_) | Self::Metadata(_) => 500,
+            Self::Registry(_) | Self::Metadata(_) | Self::Topology(_) => 500,
         }
     }
 
@@ -439,10 +452,12 @@ impl WatchBindingError {
             Self::SessionNotFound { .. } => "session-not-found",
             Self::OverseerRequired { .. } => "overseer-required",
             Self::ScribeCannotBeWatched { .. } => "scribe-cannot-be-watched",
+            Self::OverseerDeparted { .. } => "overseer-departed",
             Self::WatchCycle { .. } => "watch-cycle",
             Self::AlreadyWatched { .. } => "already-watched",
             Self::Registry(_) => "role-registry-unavailable",
             Self::Metadata(_) => "metadata-unavailable",
+            Self::Topology(_) => "topology-unavailable",
         }
     }
 
@@ -454,6 +469,9 @@ impl WatchBindingError {
             }
             Self::ScribeCannotBeWatched { session_id } => {
                 format!("the scribe is a project function, not a report: {session_id}")
+            }
+            Self::OverseerDeparted { session_id } => {
+                format!("{session_id} is in the graveyard and cannot run another agent's loop")
             }
             Self::WatchCycle {
                 watched_session_id,
@@ -469,7 +487,7 @@ impl WatchBindingError {
             } => {
                 format!("{watched_session_id} is already watched by overseer {overseer_session_id}")
             }
-            Self::Registry(error) | Self::Metadata(error) => error.clone(),
+            Self::Registry(error) | Self::Metadata(error) | Self::Topology(error) => error.clone(),
         }
     }
 
@@ -480,6 +498,9 @@ impl WatchBindingError {
                 json!({ "sessionId": session_id, "role": role })
             }
             Self::ScribeCannotBeWatched { session_id } => {
+                json!({ "sessionId": session_id })
+            }
+            Self::OverseerDeparted { session_id } => {
                 json!({ "sessionId": session_id })
             }
             Self::WatchCycle {
@@ -496,7 +517,9 @@ impl WatchBindingError {
                 "watchedSessionId": watched_session_id,
                 "overseerSessionId": overseer_session_id
             }),
-            Self::Registry(error) | Self::Metadata(error) => json!({ "error": error }),
+            Self::Registry(error) | Self::Metadata(error) | Self::Topology(error) => {
+                json!({ "error": error })
+            }
         }
     }
 }
@@ -561,6 +584,9 @@ pub fn bind_watch(
     watched_session_id: &str,
     active: bool,
     now: &str,
+    // Sessions the runtime topology calls graveyarded, which metadata does
+    // not record.
+    departed: &BTreeSet<String>,
 ) -> Result<WatchBindingResult, WatchBindingError> {
     let project_state_dir = project_state_dir.as_ref();
     let registry =
@@ -674,6 +700,16 @@ pub fn bind_watch(
         return Err(WatchBindingError::OverseerRequired {
             session_id: overseer_session_id.to_owned(),
             role: overseer_role,
+        });
+    }
+    // A manager in the graveyard runs nobody's loop. The kill path moves a
+    // dead manager's reports up to its own manager, and without this the next
+    // bind hands it new ones -- the invariant would hold for exactly as long
+    // as nobody tried. The status lives in the runtime topology rather than
+    // metadata, so the caller is asked for it.
+    if departed.contains(overseer_session_id) {
+        return Err(WatchBindingError::OverseerDeparted {
+            session_id: overseer_session_id.to_owned(),
         });
     }
     let watched = metadata.sessions.get(watched_session_id).ok_or_else(|| {
@@ -816,6 +852,19 @@ pub fn sync_agent_role_registry_session_from_metadata(
     .map(|_| ())
 }
 
+/// Who runs this session's loop, read from the one place that edge is stored.
+///
+/// `/agents` gets it through `overlay_agent_role_registry` below. Topology
+/// builds from desktop state, which never loads the registry, so it asks here
+/// rather than reaching into `watchBindings` with a second copy of the lookup.
+pub fn watch_binding_overseer<'a>(registry: &'a Value, session_id: &str) -> Option<&'a str> {
+    registry
+        .get("watchBindings")
+        .and_then(Value::as_object)
+        .and_then(|bindings| bindings.get(session_id))
+        .and_then(Value::as_str)
+}
+
 pub fn overlay_agent_role_registry(agent: &mut Map<String, Value>, registry: Option<&Value>) {
     let Some(id) = agent.get("id").and_then(Value::as_str).map(str::to_owned) else {
         return;
@@ -849,12 +898,7 @@ pub fn overlay_agent_role_registry(agent: &mut Map<String, Value>, registry: Opt
             }
         }
     }
-    if let Some(watched_by) = registry
-        .get("watchBindings")
-        .and_then(Value::as_object)
-        .and_then(|bindings| bindings.get(&id))
-        .and_then(Value::as_str)
-    {
+    if let Some(watched_by) = watch_binding_overseer(registry, &id) {
         agent.insert("watchedBy".into(), Value::String(watched_by.to_owned()));
     }
     let probe = Value::Object(agent.clone());
@@ -915,6 +959,12 @@ fn clear_watch_binding_for_watched(registry: &mut Value, watched_session_id: &st
     sync_watching_lists(registry);
 }
 
+/// Re-derive `watching` from `watchBindings`, and stamp the supervisor lane.
+///
+/// Runs when the registry is loaded, so a writer that goes through
+/// `mutate_agent_role_registry` never has to think about `watching`. A writer
+/// that edits the file directly does, and cannot call this: the lane stamp
+/// would rewrite records it was asked to leave alone.
 fn sync_watching_lists(registry: &mut Value) {
     let mut by_overseer: Map<String, Value> = Map::new();
     if let Some(bindings) = registry.get("watchBindings").and_then(Value::as_object) {

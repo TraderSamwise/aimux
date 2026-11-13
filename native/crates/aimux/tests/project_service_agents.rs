@@ -1135,6 +1135,82 @@ fn graveyard_reap_dead_agents_reaps_only_verified_missing_windows() {
     cleanup(project);
 }
 
+/// A reaped manager stops holding reports, like a killed one.
+///
+/// The reaper writes the graveyard status itself rather than going through
+/// either kill route, so it had to be hooked separately -- and unlike a
+/// worktree graveyard, a reaped agent is resurrected on its own, so there is
+/// no "they all come back together" to justify leaving its subtree bound to a
+/// corpse.
+#[test]
+fn reaping_a_dead_manager_moves_its_reports_up() {
+    let isolation = support::TestIsolation::new("reap-dead-manager");
+    let project = temp_project("reap-dead-manager");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &reap_dead_topology_fixture(&[
+            ("lead", "node-lead", "aimux-repo", "@lead", "running"),
+            ("mid", "node-mid", "aimux-repo", "@mid", "running"),
+            ("coder", "node-coder", "aimux-repo", "@coder", "running"),
+        ]),
+    )
+    .unwrap();
+    write(
+        state_dir.join("agent-role-registry.json"),
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "sessions": {
+                "lead": { "role": "overseer", "watching": ["mid"] },
+                "mid": { "role": "overseer", "watching": ["coder"] }
+            },
+            "watchBindings": { "mid": "lead", "coder": "mid" },
+            "roleSlots": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let context = isolation.project_context(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        window_lists: BTreeMap::from([(
+            "aimux-repo".to_owned(),
+            Ok(vec![
+                tmux_window("@lead", 1, "lead"),
+                tmux_window("@coder", 3, "coder"),
+            ]),
+        )]),
+        ..FakeLifecycleRuntime::default()
+    };
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::graveyard_actions::REAP_DEAD_AGENTS,
+        Some(&json!({})),
+        &mut runtime,
+    )
+    .expect("reap-dead route handles request");
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    assert_eq!(response.body["reaped"][0]["sessionId"], "mid");
+    // Read the way production reads it. `watching` mirrors the bindings and is
+    // re-derived by the loader, so the bytes on disk lag by one load and no
+    // reader ever sees them.
+    let registry = aimux::project_service::agent_roles::load_agent_role_registry(&state_dir)
+        .expect("role registry");
+    assert_eq!(
+        registry["watchBindings"]["coder"], "lead",
+        "the report stayed with a reaped manager: {registry:?}"
+    );
+    assert_eq!(
+        registry["sessions"]["lead"]["watching"],
+        json!(["coder", "mid"]),
+        "`watching` has to say what the bindings say: {registry:?}"
+    );
+    cleanup(project);
+}
+
 #[test]
 fn graveyard_reap_dead_agents_never_reaps_when_runtime_is_unqueryable() {
     let isolation = support::TestIsolation::new("reap-dead-unqueryable");

@@ -5,6 +5,7 @@ use aimux::loop_watcher::{load_loop_watcher_state, loop_watcher_state_path};
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_roles::load_agent_role_registry;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::runtime_topology::runtime_topology_path;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
@@ -1472,6 +1473,154 @@ fn a_release_whose_binding_changed_hands_before_the_lock_is_refused() {
     assert_eq!(
         registry["watchBindings"]["worker"], "other",
         "the release deleted a binding it no longer owned: {registry:?}"
+    );
+    cleanup(project);
+}
+
+/// Releasing a binding does not need a readable topology.
+///
+/// Who is in the graveyard matters only when creating a binding. Reading it on
+/// the release path too made a corrupt topology block the one operation that
+/// could repair the state it was refusing to describe.
+#[test]
+fn a_watch_can_be_released_while_the_topology_is_unreadable() {
+    let project = temp_project("release-unreadable-topology");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "boss".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    assert_eq!(
+        route_project_service_request(
+            &context,
+            "POST",
+            routes::agents::WATCH,
+            Some(&json!({
+                "overseerSessionId": "boss",
+                "watchedSessionId": "worker",
+                "active": true
+            })),
+        )
+        .status,
+        200
+    );
+
+    // The topology goes bad after the binding exists.
+    write(runtime_topology_path(&state_dir), "{ not yaml: [").unwrap();
+
+    let released = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "boss",
+            "watchedSessionId": "worker",
+            "active": false
+        })),
+    );
+
+    assert_eq!(released.status, 200, "{:?}", released.body);
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert!(
+        registry["watchBindings"].get("worker").is_none(),
+        "the binding survived a release: {registry:?}"
+    );
+    cleanup(project);
+}
+
+/// A manager in the graveyard cannot be given new reports.
+///
+/// Killing a manager moves its reports up to its own manager. Without this the
+/// very next bind hands it fresh ones, and the rule holds for exactly as long
+/// as nobody tries -- the topology screen draws reports under an agent that is
+/// gone, and the loop briefs them to nobody.
+#[test]
+fn a_watch_cannot_bind_a_report_to_a_graveyarded_manager() {
+    let project = temp_project("bind-departed-overseer");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "departed".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "role": "coder", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    // The graveyard status lives in the runtime topology, which is where the
+    // route has to look: metadata keeps a killed agent's record unchanged.
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&json!({
+            "version": 1,
+            "generatedAt": "2026-09-05T00:00:00.000Z",
+            "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": "/repo",
+                       "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }],
+            "nodes": [
+                { "id": "node-departed", "rigId": "rig-1", "logicalId": "departed",
+                  "toolConfigKey": "claude", "createdAt": "2026-09-05T00:00:00.000Z" },
+                { "id": "node-worker", "rigId": "rig-1", "logicalId": "worker",
+                  "toolConfigKey": "codex", "createdAt": "2026-09-05T00:00:00.000Z" }
+            ],
+            "edges": [],
+            "bindings": [],
+            "sessions": [
+                { "id": "departed", "nodeId": "node-departed", "status": "graveyard", "command": "claude",
+                  "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" },
+                { "id": "worker", "nodeId": "node-worker", "status": "running", "command": "codex",
+                  "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+            ],
+            "services": [],
+            "worktrees": [],
+            "worktreeGraveyard": [],
+            "teamRoles": [],
+            "remoteClients": [],
+            "lifecycleOperations": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "departed",
+            "watchedSessionId": "worker",
+            "active": true
+        })),
+    );
+
+    assert_eq!(response.status, 409, "{:?}", response.body);
+    assert_eq!(response.body["reason"], "overseer-departed");
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert!(
+        registry["watchBindings"].get("worker").is_none(),
+        "the refused bind still wrote: {registry:?}"
     );
     cleanup(project);
 }

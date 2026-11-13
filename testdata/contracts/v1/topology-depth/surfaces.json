@@ -1,0 +1,304 @@
+{
+  "description": "How deep an agent sits in the delegation tree, and how every surface draws that depth. The project service derives the depth once in build_project_topology by walking the supervision edge (`watchedBy`, the role registry's watchBindings) among the sessions of one checkout; the TUI and the Expo app each only multiply it. Before this, depth was a two-level flag -- worktree at 0 and everything inside it at 1 -- so both renderers indented with a boolean and a three-level org read as one flat list of peers. A row whose manager is not among these rows says so with `managerNotShown`, because the indent cannot: unmarked, it reads exactly like an agent nobody manages. Every case pins the row ORDER too, because an indent is only a tree if a manager is drawn above its reports.",
+  "generatedBy": "hand, from native/crates/aimux/src/project_service/topology.rs",
+  "indent": {
+    "tuiBaseColumns": 2,
+    "tuiColumnsPerDepth": 2,
+    "appBasePixels": 12,
+    "appPixelsPerDepth": 16
+  },
+  "cases": [
+    {
+      "why": "a three-level org: lead watches a middle manager, which watches two coders",
+      "worktree": {
+        "name": "main",
+        "branch": "master",
+        "path": "/repo"
+      },
+      "watchBindings": {
+        "mid": "lead",
+        "coder-a": "mid",
+        "coder-b": "mid"
+      },
+      "sessions": [
+        {
+          "id": "lead",
+          "command": "claude",
+          "label": "Lead",
+          "status": "running"
+        },
+        {
+          "id": "mid",
+          "command": "claude",
+          "label": "Mid",
+          "status": "running"
+        },
+        {
+          "id": "coder-a",
+          "command": "codex",
+          "label": "Coder A",
+          "status": "running"
+        },
+        {
+          "id": "coder-b",
+          "command": "codex",
+          "label": "Coder B",
+          "status": "running"
+        }
+      ],
+      "rows": [
+        {
+          "kind": "worktree",
+          "label": "main",
+          "depth": 0,
+          "tuiIndent": 2,
+          "appIndent": 12
+        },
+        {
+          "kind": "agent",
+          "sessionId": "lead",
+          "depth": 1,
+          "tuiIndent": 4,
+          "appIndent": 28
+        },
+        {
+          "kind": "agent",
+          "sessionId": "mid",
+          "depth": 2,
+          "tuiIndent": 6,
+          "appIndent": 44
+        },
+        {
+          "kind": "agent",
+          "sessionId": "coder-a",
+          "depth": 3,
+          "tuiIndent": 8,
+          "appIndent": 60
+        },
+        {
+          "kind": "agent",
+          "sessionId": "coder-b",
+          "depth": 3,
+          "tuiIndent": 8,
+          "appIndent": 60
+        }
+      ]
+    },
+    {
+      "why": "unmanaged agents stay where they were: one level inside their checkout",
+      "worktree": {
+        "name": "main",
+        "branch": "master",
+        "path": "/repo"
+      },
+      "watchBindings": {},
+      "sessions": [
+        {
+          "id": "solo-a",
+          "command": "claude",
+          "label": "Solo A",
+          "status": "running"
+        },
+        {
+          "id": "solo-b",
+          "command": "codex",
+          "label": "Solo B",
+          "status": "idle"
+        }
+      ],
+      "rows": [
+        {
+          "kind": "worktree",
+          "label": "main",
+          "depth": 0,
+          "tuiIndent": 2,
+          "appIndent": 12
+        },
+        {
+          "kind": "agent",
+          "sessionId": "solo-a",
+          "depth": 1,
+          "tuiIndent": 4,
+          "appIndent": 28
+        },
+        {
+          "kind": "agent",
+          "sessionId": "solo-b",
+          "depth": 1,
+          "tuiIndent": 4,
+          "appIndent": 28
+        }
+      ]
+    },
+    {
+      "why": "a manager in another checkout cannot nest its report here, so the report stays at checkout level and carries the edge instead",
+      "worktree": {
+        "name": "feature-a",
+        "branch": "feat/a",
+        "path": "/repo/.aimux/worktrees/feature-a"
+      },
+      "watchBindings": {
+        "remote-report": "lead-elsewhere"
+      },
+      "sessions": [
+        {
+          "id": "remote-report",
+          "command": "codex",
+          "label": "Report",
+          "status": "running"
+        }
+      ],
+      "rows": [
+        {
+          "kind": "worktree",
+          "label": "feature-a",
+          "depth": 0,
+          "tuiIndent": 2,
+          "appIndent": 12
+        },
+        {
+          "kind": "agent",
+          "sessionId": "remote-report",
+          "depth": 1,
+          "tuiIndent": 4,
+          "appIndent": 28,
+          "watchedBy": "lead-elsewhere",
+          "managerNotShown": true
+        }
+      ]
+    },
+    {
+      "why": "a report listed before its manager is still drawn under it: the order is the tree's, not the input's",
+      "worktree": {
+        "name": "main",
+        "branch": "master",
+        "path": "/repo"
+      },
+      "watchBindings": {
+        "early-report": "late-manager"
+      },
+      "sessions": [
+        {
+          "id": "early-report",
+          "command": "codex",
+          "label": "Report",
+          "status": "running"
+        },
+        {
+          "id": "late-manager",
+          "command": "claude",
+          "label": "Manager",
+          "status": "running"
+        }
+      ],
+      "rows": [
+        {
+          "kind": "worktree",
+          "label": "main",
+          "depth": 0,
+          "tuiIndent": 2,
+          "appIndent": 12
+        },
+        {
+          "kind": "agent",
+          "sessionId": "late-manager",
+          "depth": 1,
+          "tuiIndent": 4,
+          "appIndent": 28
+        },
+        {
+          "kind": "agent",
+          "sessionId": "early-report",
+          "depth": 2,
+          "tuiIndent": 6,
+          "appIndent": 44
+        }
+      ]
+    },
+    {
+      "why": "a registry edited by hand into a loop must terminate and degrade to roots rather than hang the renderer",
+      "worktree": {
+        "name": "main",
+        "branch": "master",
+        "path": "/repo"
+      },
+      "watchBindings": {
+        "ouro-a": "ouro-b",
+        "ouro-b": "ouro-a"
+      },
+      "sessions": [
+        {
+          "id": "ouro-a",
+          "command": "claude",
+          "label": "A",
+          "status": "running"
+        },
+        {
+          "id": "ouro-b",
+          "command": "claude",
+          "label": "B",
+          "status": "running"
+        }
+      ],
+      "rows": [
+        {
+          "kind": "worktree",
+          "label": "main",
+          "depth": 0,
+          "tuiIndent": 2,
+          "appIndent": 12
+        },
+        {
+          "kind": "agent",
+          "sessionId": "ouro-a",
+          "depth": 1,
+          "tuiIndent": 4,
+          "appIndent": 28
+        },
+        {
+          "kind": "agent",
+          "sessionId": "ouro-b",
+          "depth": 2,
+          "tuiIndent": 6,
+          "appIndent": 44
+        }
+      ]
+    },
+    {
+      "why": "a registry hand-edited to bind an agent to itself: nothing can be drawn under itself, but its manager is not missing from these rows either",
+      "worktree": {
+        "name": "main",
+        "branch": "master",
+        "path": "/repo"
+      },
+      "watchBindings": {
+        "narcissus": "narcissus"
+      },
+      "sessions": [
+        {
+          "id": "narcissus",
+          "command": "claude",
+          "label": "Narcissus",
+          "status": "running"
+        }
+      ],
+      "rows": [
+        {
+          "kind": "worktree",
+          "label": "main",
+          "depth": 0,
+          "tuiIndent": 2,
+          "appIndent": 12
+        },
+        {
+          "kind": "agent",
+          "sessionId": "narcissus",
+          "depth": 1,
+          "tuiIndent": 4,
+          "appIndent": 28,
+          "watchedBy": "narcissus"
+        }
+      ]
+    }
+  ]
+}

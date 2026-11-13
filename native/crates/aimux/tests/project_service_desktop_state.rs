@@ -2555,8 +2555,11 @@ fn the_service_decides_who_produced_output_recently() {
 
         // The topology screen renders the same agent and says so in its own
         // doc comment, but cannot see the stamp -- it has to be carried.
-        let topology_view =
-            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        let topology_view = build_project_topology(
+            "repo",
+            build_topology_worktrees_from_desktop_state(&state),
+            None,
+        );
         match find_topology_agent_row(&topology_view, target) {
             Some(row) => assert_eq!(
                 row["recentOutput"], *expect_recent,
@@ -2659,8 +2662,11 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
             .flatten()
             .find(|group| group["name"] == "feature-a")
             .cloned();
-        let topology_view =
-            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        let topology_view = build_project_topology(
+            "repo",
+            build_topology_worktrees_from_desktop_state(&state),
+            None,
+        );
         let row = find_topology_worktree_row(&topology_view, "feature-a");
         (group, row)
     };
@@ -2749,8 +2755,11 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
             main_group["recentOutput"], false,
             "its only agent has been quiet for two hours"
         );
-        let topology_view =
-            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        let topology_view = build_project_topology(
+            "repo",
+            build_topology_worktrees_from_desktop_state(&state),
+            None,
+        );
         let row = find_topology_worktree_row(&topology_view, "Main Checkout")
             .expect("the main checkout is in the topology view");
         assert_eq!(
@@ -2815,8 +2824,11 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
             "the checkout has to hold the agent whatever its path is spelled like"
         );
         assert_eq!(group["recentOutput"], false, "and that agent is quiet");
-        let topology_view =
-            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        let topology_view = build_project_topology(
+            "repo",
+            build_topology_worktrees_from_desktop_state(&state),
+            None,
+        );
         let row = find_topology_worktree_row(&topology_view, "feature-a")
             .expect("feature-a is in the topology view");
         assert_eq!(
@@ -2878,8 +2890,11 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
             Some(json!(true)),
             "the card puts the moved agent in the checkout its plane names"
         );
-        let topology_view =
-            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        let topology_view = build_project_topology(
+            "repo",
+            build_topology_worktrees_from_desktop_state(&state),
+            None,
+        );
         for name in ["feature-a", "Main Checkout"] {
             let row = find_topology_worktree_row(&topology_view, name)
                 .unwrap_or_else(|| panic!("{name} is in the topology view"));
@@ -2958,8 +2973,11 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
             "a teammate that just produced output is recent activity in its \
              checkout, whether or not the card gives it a row"
         );
-        let topology_view =
-            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        let topology_view = build_project_topology(
+            "repo",
+            build_topology_worktrees_from_desktop_state(&state),
+            None,
+        );
         let row = find_topology_worktree_row(&topology_view, "feature-a")
             .expect("feature-a is in the topology view");
         assert_eq!(
@@ -3026,8 +3044,11 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
             "the checkout's own agent is quiet, and a busy overseer must not \
              speak for it -- that is what kept the main checkout bold forever"
         );
-        let topology_view =
-            build_project_topology("repo", build_topology_worktrees_from_desktop_state(&state));
+        let topology_view = build_project_topology(
+            "repo",
+            build_topology_worktrees_from_desktop_state(&state),
+            None,
+        );
         assert_eq!(
             find_topology_worktree_row(&topology_view, "feature-a")
                 .map(|row| row["recentOutput"].clone()),

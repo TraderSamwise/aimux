@@ -135,6 +135,14 @@ export function AgentActions({
               : AGENT_ACTION_REFRESH_VIEWS,
           );
           if (opts?.isKill) onKilled?.();
+          // The kill itself succeeded; its reports did not move. Said here
+          // because nothing else will: the registry still has them bound to an
+          // agent that is in the graveyard.
+          const reportsReleaseError = (response as { reportsReleaseError?: unknown })
+            .reportsReleaseError;
+          if (typeof reportsReleaseError === "string" && reportsReleaseError) {
+            return `Killed, but its reports could not be moved up: ${reportsReleaseError}`;
+          }
         },
         onFailed: () => {
           if (localTransition) {

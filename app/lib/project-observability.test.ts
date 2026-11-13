@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { NotificationRecord, TaskSummaryResponse } from "@/lib/api";
 import type { DesktopState } from "@/lib/desktop-state";
-import { buildProjectObservability } from "@/lib/project-observability";
+import { buildProjectObservability, isOpenTask } from "@/lib/project-observability";
 
 function notification(input: Partial<NotificationRecord>): NotificationRecord {
   return {
@@ -56,6 +56,30 @@ describe("project observability model", () => {
     expect(model.completedTasks.map((task) => task.id)).toEqual(["t2"]);
     expect(model.artifactHints.map((item) => item.id)).toContain("notification:n1");
     expect(model.verificationHints.map((item) => item.id)).toContain("notification:n2");
+  });
+
+  // The coordination screen renders the open queue with live claim and
+  // complete controls, so it has to ask this question rather than its own. A
+  // hand-rolled list beside it missed `cancelled`, `abandoned`, `complete`,
+  // `completed` and `closed`, and put finished tasks in front of a person as
+  // work still waiting.
+  it("calls a task open only while it still wants somebody", () => {
+    for (const status of ["pending", "assigned", "in_progress", "blocked", "failed"]) {
+      expect(isOpenTask({ id: "t", status } as TaskSummaryResponse), status).toBe(true);
+    }
+    for (const status of [
+      "done",
+      "complete",
+      "completed",
+      "closed",
+      "cancelled",
+      "canceled",
+      "abandoned",
+      "DONE",
+      " Cancelled ",
+    ]) {
+      expect(isOpenTask({ id: "t", status } as TaskSummaryResponse), status).toBe(false);
+    }
   });
 
   it("keeps cancelled tasks distinct from completed tasks", () => {

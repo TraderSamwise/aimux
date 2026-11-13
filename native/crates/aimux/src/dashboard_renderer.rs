@@ -3543,11 +3543,33 @@ fn topology_row_weight(row: &Value) -> Tone {
 }
 
 fn topology_row_identity(row: &Value, label: &str) -> String {
-    let name = truncate_plain(label, 20);
+    topology_row_identity_within(row, label, 20)
+}
+
+/// The identity with the name capped at `name_width`.
+///
+/// The cap is on the NAME, not on the composed result, because the `(id)`
+/// after it is the thing a person selects by: two agents can share a label,
+/// and truncating the composed string takes the id away first. A deep row has
+/// fewer columns to spend, so it spends them on the name.
+fn topology_row_identity_within(row: &Value, label: &str, name_width: usize) -> String {
+    // No floor at all: when the caller has nothing left to give the name, the
+    // `(id)` alone is the answer, and a floor here returns something wider
+    // than was asked for -- which sends the whole string back to being
+    // clipped, losing the id this exists to keep.
+    let name = truncate_plain(label, name_width);
     let weight = topology_row_weight(row);
     let Some(session_id) = string_at(row, &["sessionId"]) else {
         return style(&name, weight);
     };
+    // Nothing left for the name: the id alone, with no leading space to pay
+    // for.
+    if name.is_empty() {
+        let short = string_at(row, &["tool"])
+            .and_then(|tool| session_id.strip_prefix(&format!("{tool}-")))
+            .unwrap_or(session_id);
+        return style(&format!("({short})"), Tone::Muted);
+    }
     let short_id = string_at(row, &["tool"])
         .and_then(|tool| session_id.strip_prefix(&format!("{tool}-")))
         .unwrap_or(session_id);
@@ -3576,6 +3598,60 @@ fn topology_row_task(row: &Value) -> String {
         ),
         _ => String::new(),
     }
+}
+
+/// Said out loud, because the indent cannot say it: this agent has a manager
+/// and that manager is not among these rows. Drawn flat with no note, it reads
+/// exactly like an agent nobody is watching.
+fn topology_manager_not_shown(row: &Value) -> String {
+    if row
+        .get("managerNotShown")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        format!(" {}", style("↗ manager not shown", Tone::Muted))
+    } else {
+        String::new()
+    }
+}
+
+/// The agent row's identity column, always keeping the space that separates it
+/// from the state beside it.
+///
+/// `pad_visible` supplies that space while the text is shorter than the pad.
+/// The delegation indent is paid for out of this pad, so a deep row meets an
+/// identity that fills it exactly -- and then the two columns run together,
+/// which is what a three-deep tree looked like.
+fn topology_padded_identity(row: &Value, label: &str, width: usize) -> String {
+    let gap = width.saturating_sub(1).max(1);
+    let identity = topology_row_identity(row, label);
+    if visible_width(&identity) <= gap {
+        // Untouched: `truncate_ansi` appends a reset even when it changes
+        // nothing, and these bytes are compared against the Node frame.
+        return pad_visible(&identity, width);
+    }
+    // Spend the shortfall on the name, measured from the name's own width
+    // rather than from the cap it would have had: for a label already shorter
+    // than the cap, subtracting from the cap narrows nothing and the id gets
+    // clipped anyway, which is the thing this exists to prevent.
+    let overflow = visible_width(&identity) - gap;
+    let name_width = visible_width(&truncate_plain(label, 20));
+    let narrowed = topology_row_identity_within(row, label, name_width.saturating_sub(overflow));
+    if visible_width(&narrowed) > gap {
+        pad_visible(&truncate_ansi(&narrowed, gap), width)
+    } else {
+        pad_visible(&narrowed, width)
+    }
+}
+
+/// How far a topology row is indented, in columns, for its delegation depth.
+///
+/// Shared with the Expo app through
+/// `testdata/contracts/v1/topology-depth/surfaces.json`: the service decides
+/// the depth and each surface only multiplies it, so the two cannot drift into
+/// drawing different trees from the same answer.
+pub fn topology_indent_columns(depth: usize) -> usize {
+    2 + depth * 2
 }
 
 fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> Vec<String> {
@@ -3621,7 +3697,10 @@ fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> V
         let label = string_at(row, &["label"]).unwrap_or("");
         let kind = string_at(row, &["kind"]).unwrap_or("");
         let health = string_at(row, &["health"]).unwrap_or("");
-        let indent = if depth > 0 { "    " } else { "  " };
+        // Proportional, because the depth is now the delegation depth rather
+        // than a worktree/child flag. A boolean indent drew a three-level org
+        // as one flat list of peers under its checkout.
+        let indent = " ".repeat(topology_indent_columns(depth));
         let detail = string_at(row, &["detail"])
             .map(|detail| format!(" {}", style(&format!("({detail})"), Tone::Muted)))
             .unwrap_or_default();
@@ -3648,7 +3727,7 @@ fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> V
             ));
         } else {
             lines.push(format!(
-                "{} {indent}{} {} {}{}{}{}{}",
+                "{} {indent}{} {} {}{}{}{}{}{}",
                 if selected {
                     style("▸", Tone::Accent)
                 } else {
@@ -3656,10 +3735,23 @@ fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> V
                 },
                 topology_dot(health),
                 chip(kind, ChipTone::Muted),
-                pad_visible(&topology_row_identity(row, label), 26),
+                // The indent spends columns the identity used to have, so it
+                // is taken back from the identity rather than pushed onto the
+                // task column, which is the one that falls off the right edge.
+                topology_padded_identity(
+                    row,
+                    label,
+                    26usize
+                        .saturating_sub(indent.len().saturating_sub(topology_indent_columns(1)))
+                        .max(14),
+                ),
                 pad_visible(&topology_row_state(row), 10),
                 detail,
                 topology_row_task(row),
+                // After the task, not before it: the note is 20 columns and
+                // what the agent is doing matters more than where its manager
+                // is. On an 80-column terminal the note is what gets cut.
+                topology_manager_not_shown(row),
                 trailing_mark(selected)
             ));
         }
