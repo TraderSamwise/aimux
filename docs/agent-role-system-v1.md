@@ -414,6 +414,22 @@ When an overseer is removed or cleared as a supervisor:
 This preserves Sam's mental model: stopping is temporary, removal changes
 ownership.
 
+When an agent goes to the graveyard on its own -- a kill, an async kill, or the
+dead-agent reaper -- its reports move up to its own manager, and with nothing
+above them they are released. A move that would close a chain is skipped and
+the report is released instead: the deliberate release path refuses such input
+outright, but a departure cannot refuse.
+
+The departing agent keeps its own record and its own incoming edge, because it
+can be resurrected. It comes back childless, which is honest -- nothing was
+watching it while it was gone.
+
+A **worktree** graveyard is the exception and keeps its agents' bindings. It
+takes a checkout's agents together and a resurrect gives them all back
+together, so moving their bindings would be undone silently. Their reports
+therefore keep a binding to an agent that is not running, which is the one
+case where `watchedBy` names a manager nothing will brief.
+
 ## Contracts And API
 
 `src/project-api-contract.ts` should grow typed role/lane fields and routes.

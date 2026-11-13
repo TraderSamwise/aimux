@@ -449,7 +449,7 @@ impl LoopWatcher {
         // as capacity forever and silence idle-fleet briefings. Its own goal
         // is added here instead, so pause extraction and the dwell window
         // cover it without the capacity callers ever seeing it.
-        let mut raw_candidates = find_loop_candidates_with_overseer(input, overseer_id.as_deref());
+        let mut raw_candidates = find_briefing_candidates(input, overseer_id.as_deref());
         if let Some(id) = overseer_id.as_deref() {
             raw_candidates.extend(find_loop_candidates_only(input, id));
         }
@@ -1340,6 +1340,12 @@ impl LoopWatcher {
     ) -> Option<LoopSend> {
         let overseer_id = overseer_id.filter(|id| session_can_receive_loop_send(input, id))?;
         let available = find_idle_loop_capacity(input, Some(overseer_id), paused_candidates);
+        // Work nobody owns is offered to whoever has somebody spare, and
+        // `available` is now the recipient's own part of the org. Routing the
+        // work by position in the tree instead -- to the roots -- stalled it:
+        // a lead whose reports are all managers would see the task and have
+        // nobody to staff it with, while the manager holding the only idle
+        // agent would never hear about the task.
         let (work, unavailable) = match find_visible_unowned_work(input) {
             Ok(work) => (work, None),
             Err(error) => (Vec::new(), Some(error)),
@@ -2096,6 +2102,117 @@ pub fn loop_pause_key_from_loop_metadata(loop_meta: &Value) -> Option<String> {
     Some(since)
 }
 
+/// The project's overseer ids, derived once per scan input rather than once
+/// per candidate.
+///
+/// `watch_scope_contains` asks this for every candidate that nothing manages,
+/// and the answer is the same every time within a tick: a scan of the sessions
+/// and the metadata beside them.
+fn overseer_ids(input: &Value) -> Vec<String> {
+    overseer_session_ids_for_state(
+        array_field(input, "sessions"),
+        input.get("metadata").unwrap_or(&Value::Null),
+    )
+}
+
+/// Who runs this session's loop, as far as the fleet in front of us goes.
+///
+/// The binding chain is walked upward until it reaches a manager that could
+/// actually be briefed, and a manager that could not is walked straight past.
+///
+/// A binding can name an agent nothing will brief: a worktree graveyard takes
+/// a checkout's agents together and keeps their bindings on purpose, and an
+/// overseer that is merely offline gets no recipient engine at all
+/// (`plan_sends` keeps one only for overseers that can receive). Either way a
+/// report left under it would be in nobody's scope and its loop would go
+/// quiet, which is the one outcome worse than being told twice. So it is
+/// treated as unmanaged instead, and surfaces to the top of the org.
+///
+/// Bounded by the number of bindings, so a registry hand-edited into a loop
+/// terminates.
+fn briefable_manager_of(
+    input: &Value,
+    bindings: &Map<String, Value>,
+    session_id: &str,
+) -> Option<String> {
+    let mut current = session_id.to_owned();
+    for _ in 0..bindings.len() {
+        let next = bindings.get(&current).and_then(Value::as_str)?;
+        if next == current {
+            return None;
+        }
+        if session_can_receive_loop_send(input, next) {
+            return Some(next.to_owned());
+        }
+        current = next.to_owned();
+    }
+    None
+}
+
+/// Whether `candidate` is `recipient`'s to act on.
+///
+/// Its own reports, and only its own. Not its reports' reports: a lead that
+/// heard about every agent under its middle managers would be back to the
+/// state this exists to fix, two managers told about one agent and both
+/// nudging it. The lead is told about the manager; the manager is told about
+/// the coders.
+///
+/// An agent nobody manages belongs to the top, because unmanaged work still
+/// has to reach somebody -- so it is in scope for any recipient that has no
+/// manager of its own. An unmanaged *overseer* is in nobody's scope: a peer at
+/// the top of its own tree is not a report.
+///
+/// `None` is every recipient at once, which is the no-live-overseer fallback
+/// and must stay exactly as it was. So is a project with no bindings, which is
+/// every project that has never run `/watch` -- stated as a fast path, though
+/// the general rule below answers the same way for it.
+fn watch_scope_contains(input: &Value, candidate_id: &str, recipient: Option<&str>) -> bool {
+    let Some(recipient) = recipient else {
+        return true;
+    };
+    let Some(bindings) = input
+        .get("watchBindings")
+        .and_then(Value::as_object)
+        .filter(|bindings| !bindings.is_empty())
+    else {
+        return true;
+    };
+    match briefable_manager_of(input, bindings, candidate_id) {
+        Some(manager) => manager == recipient,
+        None => {
+            // Nobody who can be briefed manages it, so it is the top's
+            // business -- unless it is an overseer, which is a peer, not a
+            // report.
+            !overseer_ids(input).iter().any(|id| id == candidate_id)
+                && briefable_manager_of(input, bindings, recipient).is_none()
+        }
+    }
+}
+
+/// The candidates a recipient is briefed about.
+///
+/// Its own reports, and -- for the top of a tree -- the agents nobody manages.
+/// Unlike the capacity set below this keeps a managed overseer, because a lead
+/// whose only report is a middle manager is told about that manager; dropping
+/// every overseer left such a lead with nothing to say at all.
+pub fn find_briefing_candidates(input: &Value, recipient: Option<&str>) -> Vec<Value> {
+    let ids = overseer_ids(input);
+    find_loop_candidates_excluding(input, recipient)
+        .into_iter()
+        .filter(|candidate| {
+            let id = str_field(candidate, "id");
+            // An overseer is a candidate only as somebody's report. Without
+            // this an unmanaged peer would land in the briefing of every root.
+            let managed_overseer = !ids.iter().any(|overseer| overseer == id)
+                || input
+                    .get("watchBindings")
+                    .and_then(Value::as_object)
+                    .is_some_and(|bindings| bindings.contains_key(id));
+            managed_overseer && watch_scope_contains(input, id, recipient)
+        })
+        .collect()
+}
+
 pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&str>) -> Vec<Value> {
     let ids = overseer_session_ids_for_state(
         array_field(input, "sessions"),
@@ -2245,6 +2362,9 @@ pub fn find_loop_exit_candidates_with_overseer(
                 || overseer_ids.iter().any(|overseer| overseer == id)
                 || !is_known_loop_exit_session_status(session)
                 || session_is_parked(input, session)
+                // An exit is news for the manager that holds the agent, not
+                // for every manager in the project.
+                || !watch_scope_contains(input, id, overseer_id)
             {
                 return None;
             }
@@ -2569,6 +2689,10 @@ fn find_idle_loop_capacity(
         .into_iter()
         .filter(|candidate| !paused_ids.contains(str_field(candidate, "id")))
         .filter(|candidate| candidate_condition(candidate) == LoopCandidateCondition::Stopped)
+        // The same part of the org again. Left fleet-wide, this is what the
+        // reconciliation briefing counts as "stopped and idle", so a lead and
+        // a middle manager were both told to assign the same agent.
+        .filter(|candidate| watch_scope_contains(input, str_field(candidate, "id"), overseer_id))
         .collect()
 }
 
@@ -2614,6 +2738,13 @@ fn fleet_worker_sessions<'a>(input: &'a Value, overseer_id: Option<&str>) -> Vec
                 && optional_str(session, "status")
                     .map(|status| matches!(status, "starting" | "running" | "idle"))
                     .unwrap_or(true)
+                // The same part of the org the briefing covers. Measured over
+                // the whole fleet while briefings narrowed, a lead would be
+                // briefed about its middle manager and in the same breath
+                // offered that manager's coders as spare capacity -- and two
+                // managers would staff one agent, which is the thing the
+                // narrowing exists to stop.
+                && watch_scope_contains(input, id, overseer_id)
         })
         .collect()
 }
