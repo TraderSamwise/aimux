@@ -335,6 +335,8 @@ fn reaches_through_bindings(
 pub(super) struct ReportInheritance {
     /// The manager that adopted them, if the departing agent had one.
     pub manager: Option<String>,
+    /// The reports that changed hands.
+    pub inherited: Vec<String>,
     /// Whether the bindings map was written at all.
     pub changed: bool,
 }
@@ -347,13 +349,15 @@ pub(super) struct ReportInheritance {
 /// where nobody is watching to notice. With no manager above, there is nothing
 /// to inherit them and they are released.
 ///
-/// This touches only the reports -- both halves of them, because `watching`
-/// mirrors `watchBindings` and nothing re-derives it after a write: the
-/// departing agent's list loses the reports it no longer holds and the
-/// inheriting manager's gains them. Whether the departing agent keeps its own
-/// record and its own incoming edge is the caller's question: a fork rollback
-/// erases an agent that never existed, while a graveyarded agent can be
-/// restored and keeps both.
+/// This touches only `watchBindings`. The `watching` arrays beside it mirror
+/// the same relationship, and `load_agent_role_registry` re-derives every one
+/// of them from the bindings on every load -- so a reader cannot observe the
+/// two disagreeing, and writing them here only risks rewriting records this
+/// was asked to leave alone.
+///
+/// Whether the departing agent keeps its own record and its own incoming edge
+/// is the caller's question: a fork rollback erases an agent that never
+/// existed, while a graveyarded agent can be restored and keeps both.
 pub(super) fn inherit_reports_from_departing(
     registry: &mut Value,
     departing: &str,
@@ -364,6 +368,7 @@ pub(super) fn inherit_reports_from_departing(
     else {
         return ReportInheritance {
             manager: None,
+            inherited: Vec::new(),
             changed: false,
         };
     };
@@ -375,6 +380,7 @@ pub(super) fn inherit_reports_from_departing(
     let before = bindings.clone();
     bindings
         .retain(|watched, overseer| watched == departing || overseer.as_str() != Some(departing));
+    let mut inherited = Vec::new();
     if let Some(manager) = manager.as_deref() {
         for (watched, overseer) in &before {
             if watched == departing || watched == manager {
@@ -393,74 +399,13 @@ pub(super) fn inherit_reports_from_departing(
                 continue;
             }
             bindings.insert(watched.clone(), Value::String(manager.to_owned()));
+            inherited.push(watched.clone());
         }
     }
-    let moved = ReportInheritance {
+    ReportInheritance {
         changed: before != *bindings,
         manager,
-    };
-    sync_watching_for_move(registry, departing, &moved);
-    moved
-}
-
-/// Keep `watching` saying what `watchBindings` says, for the two entries a
-/// move touches.
-///
-/// `watching` is the other half of the same relationship and nothing
-/// re-derives it after a write, so a move that left it alone had the registry
-/// disagreeing with itself -- invisible on the fork path, which deletes the
-/// entry, and plain on the graveyard path, which keeps it.
-///
-/// `agent_roles::sync_watching_lists` derives the same lists for the whole
-/// registry and is the obvious thing to call here, but it also stamps a
-/// supervisor `lane` on every overseer entry. These writes go to the file
-/// directly rather than through `mutate_agent_role_registry`, so that stamp
-/// would land on a fork rollback that is supposed to leave an unrelated
-/// agent's record byte-for-byte alone. Both affected lists are derived from
-/// the bindings here instead, which is exact without rewriting anything else.
-fn sync_watching_for_move(registry: &mut Value, departing: &str, moved: &ReportInheritance) {
-    if !moved.changed {
-        return;
-    }
-    let watching_for = |overseer: &str| {
-        registry
-            .get("watchBindings")
-            .and_then(Value::as_object)
-            .map(|bindings| {
-                bindings
-                    .iter()
-                    .filter(|(_, bound)| bound.as_str() == Some(overseer))
-                    .map(|(watched, _)| Value::String(watched.clone()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
-    };
-    let derived = [Some(departing.to_owned()), moved.manager.clone()]
-        .into_iter()
-        .flatten()
-        .map(|overseer| {
-            let ids = watching_for(&overseer);
-            (overseer, ids)
-        })
-        .collect::<Vec<_>>();
-    let Some(sessions) = registry.get_mut("sessions").and_then(Value::as_object_mut) else {
-        return;
-    };
-    for (overseer, mut ids) in derived {
-        let Some(entry) = sessions.get_mut(&overseer).and_then(Value::as_object_mut) else {
-            continue;
-        };
-        // An entry that never claimed to watch anyone is left as it was: this
-        // is a move, not a migration of every record it passes.
-        if ids.is_empty() && !entry.contains_key("watching") {
-            continue;
-        }
-        ids.sort_by(|left, right| {
-            left.as_str()
-                .unwrap_or("")
-                .cmp(right.as_str().unwrap_or(""))
-        });
-        entry.insert("watching".to_owned(), Value::Array(ids));
+        inherited,
     }
 }
 
@@ -491,6 +436,40 @@ fn remove_target_registry(value: &mut Value, target_session_id: &str) -> bool {
                 let before = ids.len();
                 ids.retain(|id| id.as_str() != Some(target_session_id));
                 changed |= before != ids.len();
+            }
+        }
+        // `watching` mirrors the bindings, so a report that just changed hands
+        // has to appear on its new manager's list. Retaining ids one by one
+        // can only remove, never add, which would have left the two halves of
+        // the registry disagreeing about the same relationship.
+        //
+        // Only the ids that actually moved, and only on the manager that took
+        // them: `load_agent_role_registry` re-derives every `watching` array
+        // from the bindings on load, so writing more than this would rewrite
+        // records a rollback was asked to leave alone without any reader being
+        // better off.
+        if let Some(manager) = moved.manager.as_deref()
+            && !moved.inherited.is_empty()
+            && let Some(entry) = sessions.get_mut(manager).and_then(Value::as_object_mut)
+        {
+            let ids = entry
+                .entry("watching".to_owned())
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Some(ids) = ids.as_array_mut() {
+                for id in &moved.inherited {
+                    if !ids
+                        .iter()
+                        .any(|existing| existing.as_str() == Some(id.as_str()))
+                    {
+                        ids.push(Value::String(id.clone()));
+                        changed = true;
+                    }
+                }
+                ids.sort_by(|left, right| {
+                    left.as_str()
+                        .unwrap_or("")
+                        .cmp(right.as_str().unwrap_or(""))
+                });
             }
         }
     }

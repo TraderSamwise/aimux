@@ -3593,6 +3593,26 @@ fn topology_manager_not_shown(row: &Value) -> String {
     }
 }
 
+/// The agent row's identity column, always keeping the space that separates it
+/// from the state beside it.
+///
+/// `pad_visible` supplies that space while the text is shorter than the pad.
+/// The delegation indent is paid for out of this pad, so a deep row meets an
+/// identity that fills it exactly -- and then the two columns run together,
+/// which is what a three-deep tree looked like.
+fn topology_padded_identity(row: &Value, label: &str, width: usize) -> String {
+    let identity = topology_row_identity(row, label);
+    // Truncated only when it would actually fill the pad: `truncate_ansi`
+    // appends a reset even when it changes nothing, and these bytes are
+    // compared against the Node frame.
+    let gap = width.saturating_sub(1).max(1);
+    if visible_width(&identity) > gap {
+        pad_visible(&truncate_ansi(&identity, gap), width)
+    } else {
+        pad_visible(&identity, width)
+    }
+}
+
 /// How far a topology row is indented, in columns, for its delegation depth.
 ///
 /// Shared with the Expo app through
@@ -3687,16 +3707,20 @@ fn render_topology_content(resource: Option<&Value>, selected_index: usize) -> V
                 // The indent spends columns the identity used to have, so it
                 // is taken back from the identity rather than pushed onto the
                 // task column, which is the one that falls off the right edge.
-                pad_visible(
-                    &topology_row_identity(row, label),
+                topology_padded_identity(
+                    row,
+                    label,
                     26usize
-                        .saturating_sub(indent.len().saturating_sub(topology_indent_columns(1),))
+                        .saturating_sub(indent.len().saturating_sub(topology_indent_columns(1)))
                         .max(14),
                 ),
                 pad_visible(&topology_row_state(row), 10),
                 detail,
-                topology_manager_not_shown(row),
                 topology_row_task(row),
+                // After the task, not before it: the note is 20 columns and
+                // what the agent is doing matters more than where its manager
+                // is. On an 80-column terminal the note is what gets cut.
+                topology_manager_not_shown(row),
                 trailing_mark(selected)
             ));
         }

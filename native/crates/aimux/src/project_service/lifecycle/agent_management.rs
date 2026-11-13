@@ -846,6 +846,7 @@ pub(super) fn route_graveyard_reap_dead_agents(
         }
     }
 
+    let mut reap_failures = Vec::new();
     if !reaped_ids.is_empty() {
         let result = update_runtime_topology(
             runtime_topology_path(&project_state_dir),
@@ -890,16 +891,28 @@ pub(super) fn route_graveyard_reap_dead_agents(
             // resurrectable, so there is no "they all come back together" to
             // justify leaving its reports bound to it, the way a worktree
             // graveyard can.
-            release_graveyarded_manager_reports(&project_state_dir, session_id);
+            if let Some(error) = release_graveyarded_manager_reports(&project_state_dir, session_id)
+            {
+                // Reported per agent rather than dropped: a lock timeout here
+                // graveyards the agent and leaves its subtree bound to it, and
+                // the single-kill path says so on its response.
+                reap_failures.push(json!({ "sessionId": session_id, "error": error }));
+            }
         }
     }
 
+    let mut body = json!({
+        "status": if reaped.is_empty() { "unchanged" } else { "reaped" },
+        "reaped": reaped,
+        "skipped": skipped,
+    });
+    if !reap_failures.is_empty()
+        && let Some(object) = body.as_object_mut()
+    {
+        object.insert("reportsReleaseErrors".into(), Value::Array(reap_failures));
+    }
     lifecycle_response(
-        json!({
-            "status": if reaped.is_empty() { "unchanged" } else { "reaped" },
-            "reaped": reaped,
-            "skipped": skipped,
-        }),
+        body,
         "graveyard.agent.reapDead",
         "agent",
         requested_session_id.as_deref(),

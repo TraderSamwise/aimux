@@ -411,6 +411,13 @@ pub enum WatchBindingError {
     ScribeCannotBeWatched {
         session_id: String,
     },
+    /// The proposed manager is in the graveyard, so it cannot run anyone's
+    /// loop. A kill moves a dead manager's reports up; without this the very
+    /// next bind could hand it new ones, and the rule would hold for exactly
+    /// as long as nobody tried.
+    OverseerDeparted {
+        session_id: String,
+    },
     WatchCycle {
         watched_session_id: String,
         overseer_session_id: String,
@@ -429,6 +436,7 @@ impl WatchBindingError {
             Self::SessionNotFound { .. } => 404,
             Self::AlreadyWatched { .. } => 409,
             Self::OverseerRequired { .. } | Self::ScribeCannotBeWatched { .. } => 400,
+            Self::OverseerDeparted { .. } => 409,
             Self::WatchCycle { .. } => 409,
             Self::Registry(_) | Self::Metadata(_) => 500,
         }
@@ -439,6 +447,7 @@ impl WatchBindingError {
             Self::SessionNotFound { .. } => "session-not-found",
             Self::OverseerRequired { .. } => "overseer-required",
             Self::ScribeCannotBeWatched { .. } => "scribe-cannot-be-watched",
+            Self::OverseerDeparted { .. } => "overseer-departed",
             Self::WatchCycle { .. } => "watch-cycle",
             Self::AlreadyWatched { .. } => "already-watched",
             Self::Registry(_) => "role-registry-unavailable",
@@ -454,6 +463,9 @@ impl WatchBindingError {
             }
             Self::ScribeCannotBeWatched { session_id } => {
                 format!("the scribe is a project function, not a report: {session_id}")
+            }
+            Self::OverseerDeparted { session_id } => {
+                format!("{session_id} is in the graveyard and cannot run another agent's loop")
             }
             Self::WatchCycle {
                 watched_session_id,
@@ -480,6 +492,9 @@ impl WatchBindingError {
                 json!({ "sessionId": session_id, "role": role })
             }
             Self::ScribeCannotBeWatched { session_id } => {
+                json!({ "sessionId": session_id })
+            }
+            Self::OverseerDeparted { session_id } => {
                 json!({ "sessionId": session_id })
             }
             Self::WatchCycle {
@@ -561,6 +576,9 @@ pub fn bind_watch(
     watched_session_id: &str,
     active: bool,
     now: &str,
+    // Sessions the runtime topology calls graveyarded, which metadata does
+    // not record.
+    departed: &BTreeSet<String>,
 ) -> Result<WatchBindingResult, WatchBindingError> {
     let project_state_dir = project_state_dir.as_ref();
     let registry =
@@ -674,6 +692,16 @@ pub fn bind_watch(
         return Err(WatchBindingError::OverseerRequired {
             session_id: overseer_session_id.to_owned(),
             role: overseer_role,
+        });
+    }
+    // A manager in the graveyard runs nobody's loop. The kill path moves a
+    // dead manager's reports up to its own manager, and without this the next
+    // bind hands it new ones -- the invariant would hold for exactly as long
+    // as nobody tried. The status lives in the runtime topology rather than
+    // metadata, so the caller is asked for it.
+    if departed.contains(overseer_session_id) {
+        return Err(WatchBindingError::OverseerDeparted {
+            session_id: overseer_session_id.to_owned(),
         });
     }
     let watched = metadata.sessions.get(watched_session_id).ok_or_else(|| {

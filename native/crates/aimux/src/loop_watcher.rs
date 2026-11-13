@@ -2149,6 +2149,32 @@ fn briefable_manager_of(
     None
 }
 
+/// Which overseer answers for the agents nobody manages.
+///
+/// The tops of the trees are the candidates for it, and exactly one of them
+/// takes it: offered to every root, an unbound agent is briefed twice and
+/// handed to two managers as spare capacity, which is the double-staffing this
+/// whole narrowing exists to stop. Which root is arbitrary, so it is the
+/// lowest id -- arbitrary but the same answer on every tick and on every
+/// surface, which is what matters.
+///
+/// A binding graph with no root at all is a registry that has been
+/// hand-edited into a cycle of live managers. There is no top to answer, and
+/// the alternative to picking one is that every unbound agent goes unmentioned
+/// for as long as the cycle lasts. So every overseer answers, which is noisy
+/// and was the behaviour before any of this.
+fn unmanaged_work_owner(input: &Value, bindings: &Map<String, Value>) -> Option<String> {
+    let overseers = overseer_ids(input);
+    let mut roots = overseers
+        .iter()
+        .filter(|id| session_can_receive_loop_send(input, id))
+        .filter(|id| briefable_manager_of(input, bindings, id).is_none())
+        .cloned()
+        .collect::<Vec<_>>();
+    roots.sort();
+    roots.into_iter().next()
+}
+
 /// Whether `candidate` is `recipient`'s to act on.
 ///
 /// Its own reports, and only its own. Not its reports' reports: a lead that
@@ -2158,9 +2184,9 @@ fn briefable_manager_of(
 /// the coders.
 ///
 /// An agent nobody manages belongs to the top, because unmanaged work still
-/// has to reach somebody -- so it is in scope for any recipient that has no
-/// manager of its own. An unmanaged *overseer* is in nobody's scope: a peer at
-/// the top of its own tree is not a report.
+/// has to reach somebody -- to one top, see `unmanaged_work_owner`. An
+/// unmanaged *overseer* is in nobody's scope: a peer at the top of its own
+/// tree is not a report.
 ///
 /// `None` is every recipient at once, which is the no-live-overseer fallback
 /// and must stay exactly as it was. So is a project with no bindings, which is
@@ -2183,8 +2209,15 @@ fn watch_scope_contains(input: &Value, candidate_id: &str, recipient: Option<&st
             // Nobody who can be briefed manages it, so it is the top's
             // business -- unless it is an overseer, which is a peer, not a
             // report.
-            !overseer_ids(input).iter().any(|id| id == candidate_id)
-                && briefable_manager_of(input, bindings, recipient).is_none()
+            if overseer_ids(input).iter().any(|id| id == candidate_id) {
+                return false;
+            }
+            match unmanaged_work_owner(input, bindings) {
+                Some(owner) => owner == recipient,
+                // No top at all: a cycle of live managers. Everyone answers,
+                // rather than nobody.
+                None => true,
+            }
         }
     }
 }

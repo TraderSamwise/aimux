@@ -7058,11 +7058,13 @@ fn write_watch_bindings(state_dir: &PathBuf, bindings: &Value) {
     .unwrap();
 }
 
+/// Read the way production reads it.
+///
+/// `watching` mirrors `watchBindings` and the loader re-derives it, so the
+/// bytes on disk lag a write by one load and no reader ever sees them. A test
+/// that read the file directly would be asserting a shape nothing observes.
 fn read_agent_role_registry(state_dir: &Path) -> Value {
-    serde_json::from_str(
-        &fs::read_to_string(state_dir.join("agent-role-registry.json")).expect("read registry"),
-    )
-    .expect("parse registry")
+    aimux::project_service::agent_roles::load_agent_role_registry(state_dir).expect("role registry")
 }
 
 fn read_watch_bindings(state_dir: &Path) -> Value {

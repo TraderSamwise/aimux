@@ -3250,9 +3250,16 @@ fn an_agent_nobody_manages_reaches_the_root_only() {
 }
 
 /// A peer at the top of its own tree is not a report.
+///
+/// The lead carries a loop goal of its own here, or it would never be a
+/// candidate at all and the rule would go unexercised -- which is what an
+/// earlier version of this test did: it passed with both halves of the rule
+/// deleted.
 #[test]
 fn a_root_manager_is_in_nobodys_briefing() {
-    let input = three_level_input(json!({ "stoppedDwellMs": 0 }));
+    let mut input = three_level_input(json!({ "stoppedDwellMs": 0 }));
+    input["metadata"]["sessions"]["lead"]["loop"] =
+        json!({ "active": true, "goal": "run the project", "since": "2026-09-09T00:00:00.000Z" });
     let sends = LoopWatcher::new().plan_sends(&input, NOW);
     for recipient in ["lead", "mid"] {
         assert!(
@@ -3260,7 +3267,77 @@ fn a_root_manager_is_in_nobodys_briefing() {
                 send_to(&sends, recipient, LoopSendKind::OverseerBriefing),
                 "lead"
             ),
-            "the lead answers to nobody, so it is nobody's candidate"
+            "the lead answers to nobody, so it is nobody's candidate: {sends:?}"
+        );
+    }
+    // Its own goal still reaches it, as a direct nudge rather than a briefing
+    // about somebody else.
+    assert!(
+        sends
+            .iter()
+            .any(|send| send.session_id == "lead" && send.kind == LoopSendKind::DirectNudge),
+        "the lead's own goal has to reach it: {sends:?}"
+    );
+}
+
+/// Exactly one top answers for the agents nobody manages.
+///
+/// Offered to every root, an unbound agent is briefed twice and handed to two
+/// managers as spare capacity -- the double-staffing the narrowing exists to
+/// stop, arriving by the other door.
+#[test]
+fn one_root_answers_for_the_agents_nobody_manages() {
+    let mut input = three_level_input(json!({ "stoppedDwellMs": 0 }));
+    // A second tree beside the first, with its own root.
+    let (other, mut other_meta) = non_loop_session("other-lead", "idle");
+    other_meta["overseer"] = json!(true);
+    input["sessions"]
+        .as_array_mut()
+        .expect("sessions")
+        .push(other);
+    input["metadata"]["sessions"]["other-lead"] = other_meta;
+    input["watchBindings"] = json!({
+        "mid": "lead",
+        "coder-a": "mid",
+        "coder-b": "other-lead"
+    });
+
+    let sends = LoopWatcher::new().plan_sends(&input, NOW);
+    let mentions = ["lead", "other-lead"]
+        .into_iter()
+        .filter(|recipient| {
+            sends
+                .iter()
+                .filter(|send| {
+                    send.session_id == *recipient && send.kind == LoopSendKind::OverseerBriefing
+                })
+                .any(|send| briefing_mentions(send, "nobodys"))
+        })
+        .count();
+    assert_eq!(
+        mentions, 1,
+        "exactly one root hears about the unbound agent: {sends:?}"
+    );
+}
+
+/// A cycle of live managers leaves no top, and that must not be silence.
+///
+/// With every overseer reporting to another, no recipient is a root, so the
+/// rule that hands unmanaged work to the top has nobody to hand it to. Going
+/// quiet is the one outcome worse than telling everybody.
+#[test]
+fn a_cycle_of_live_managers_tells_everyone_rather_than_nobody() {
+    let mut input = three_level_input(json!({ "stoppedDwellMs": 0 }));
+    input["watchBindings"] = json!({ "lead": "mid", "mid": "lead" });
+    let sends = LoopWatcher::new().plan_sends(&input, NOW);
+    for recipient in ["lead", "mid"] {
+        assert!(
+            briefing_mentions(
+                send_to(&sends, recipient, LoopSendKind::OverseerBriefing),
+                "nobodys"
+            ),
+            "{recipient} heard nothing about an unbound agent while the \
+             managers pointed at each other: {sends:?}"
         );
     }
 }
@@ -3465,20 +3542,29 @@ fn a_loop_exit_reaches_one_manager_not_every_manager() {
 /// A project that has never bound a watch behaves exactly as it did.
 #[test]
 fn with_no_bindings_every_overseer_still_hears_about_the_whole_fleet() {
-    let input = three_level_input(json!({ "stoppedDwellMs": 0 }));
-    let mut flat = input.clone();
-    flat.as_object_mut()
-        .expect("input object")
-        .remove("watchBindings");
-    let sends = LoopWatcher::new().plan_sends(&flat, NOW);
-    for recipient in ["lead", "mid"] {
-        let send = send_to(&sends, recipient, LoopSendKind::OverseerBriefing);
-        for worker in ["coder-a", "coder-b", "nobodys"] {
-            assert!(
-                briefing_mentions(send, worker),
-                "{recipient} must still hear about {worker}: {:?}",
-                send.text
-            );
+    // Both shapes, because production writes the empty map: an absent registry
+    // loads as `{}` and that is what reaches the scan input. A test that only
+    // removed the key would leave the empty-map fast path unexercised.
+    for empty_map in [false, true] {
+        let mut input = three_level_input(json!({ "stoppedDwellMs": 0 }));
+        if empty_map {
+            input["watchBindings"] = json!({});
+        } else {
+            input
+                .as_object_mut()
+                .expect("input object")
+                .remove("watchBindings");
+        }
+        let sends = LoopWatcher::new().plan_sends(&input, NOW);
+        for recipient in ["lead", "mid"] {
+            let send = send_to(&sends, recipient, LoopSendKind::OverseerBriefing);
+            for worker in ["coder-a", "coder-b", "nobodys"] {
+                assert!(
+                    briefing_mentions(send, worker),
+                    "{recipient} must still hear about {worker} (empty map:                      {empty_map}): {:?}",
+                    send.text
+                );
+            }
         }
     }
 }

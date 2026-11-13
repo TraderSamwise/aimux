@@ -1512,6 +1512,12 @@ export interface ReapDeadAgentsResponse extends ProjectLifecycleTransitionRespon
   status: "reaped" | "unchanged";
   reaped: ReapDeadAgentRecord[];
   skipped: ReapDeadAgentRecord[];
+  /**
+   * Agents that were reaped but whose reports could not be moved up to their
+   * own manager, so the role registry still has them bound to a dead agent.
+   * Present only on that failure; the reaping itself succeeded either way.
+   */
+  reportsReleaseErrors?: Array<{ sessionId: string; error: string }>;
 }
 
 export interface ResurrectAgentResponse extends ProjectLifecycleTransitionResponse {
@@ -1726,6 +1732,8 @@ export type AgentWatchRefusalReason =
   | "session-not-found"
   | "overseer-required"
   | "scribe-cannot-be-watched"
+  /** The proposed manager is in the graveyard, so it runs nobody's loop. */
+  | "overseer-departed"
   | "watch-cycle"
   | "already-watched"
   | "role-registry-unavailable"

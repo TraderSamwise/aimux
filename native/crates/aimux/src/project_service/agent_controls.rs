@@ -4,6 +4,7 @@ use crate::agent_goal::{
     DEFAULT_GOAL_KIND, GOAL_KIND_AGENT, GOAL_KIND_TOKENS, GOAL_KIND_USER, GoalCloseDecision,
     GoalKind, deactivation_operation, goal_close_decision, source_is_human,
 };
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
@@ -17,7 +18,9 @@ use crate::loop_watcher::{
     parked_session_work_key, save_loop_watcher_state, set_parked_session_alerts,
 };
 use crate::project_api_contract::routes;
-use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
+use crate::runtime_topology::{
+    read_runtime_topology, runtime_topology_path, update_runtime_topology,
+};
 
 use super::agent_roles::{
     SupervisorRoleError, SupervisorRoleOptions, WatchBindingError, bind_watch,
@@ -1201,6 +1204,18 @@ fn route_watch(
             return watch_binding_error_response(error);
         }
     };
+    // Who is in the graveyard lives in the runtime topology, not in metadata,
+    // and a bind must not hand a dead manager new reports. A topology that
+    // cannot be read is not "nobody is dead": the bind is refused rather than
+    // granted on a guess.
+    let departed = match graveyarded_session_ids(&context.project_state_dir()) {
+        Ok(departed) => departed,
+        Err(error) => {
+            let error = WatchBindingError::Metadata(error);
+            permit.fail(started_at, error.message());
+            return watch_binding_error_response(error);
+        }
+    };
     match bind_watch(
         context.project_state_dir(),
         &metadata,
@@ -1208,6 +1223,7 @@ fn route_watch(
         &watched_session_id,
         active,
         &now,
+        &departed,
     ) {
         Ok(result) => {
             permit.succeed(started_at);
@@ -1296,6 +1312,26 @@ pub(crate) fn load_metadata_state_if_written(
     };
     serde_json::from_str(&text)
         .map_err(|error| format!("parse metadata state {}: {error}", path.display()))
+}
+
+/// The sessions the runtime topology calls graveyarded.
+///
+/// Read here rather than inside the registry mutation because the two are
+/// separate files with separate locks. A kill that lands between this read and
+/// the registry lock still slips one bind through; the reconciliation on the
+/// next kill or demotion is what catches that, and the common case -- binding
+/// to a manager that has been dead for a while -- is refused outright.
+fn graveyarded_session_ids(project_state_dir: &Path) -> Result<BTreeSet<String>, String> {
+    let topology = read_runtime_topology(runtime_topology_path(project_state_dir))?;
+    Ok(topology
+        .get("sessions")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|session| session.get("status").and_then(Value::as_str) == Some("graveyard"))
+        .filter_map(|session| session.get("id").and_then(Value::as_str).map(str::to_owned))
+        .collect())
 }
 
 fn lifecycle_watch_error_response(error: LifecycleMutationError) -> ProjectServiceDispatchResponse {

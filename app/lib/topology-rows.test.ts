@@ -36,7 +36,7 @@ interface ExpectedRow {
   depth: number;
   tuiIndent: number;
   appIndent: number;
-  managedElsewhere?: boolean;
+  managerNotShown?: boolean;
 }
 
 interface DepthCase {
@@ -76,6 +76,20 @@ describe("topologyRowIndent", () => {
         fixture.indent.appBasePixels + depth * fixture.indent.appPixelsPerDepth,
       );
     }
+  });
+
+  it("covers a real tree, not just the arithmetic", () => {
+    // The arithmetic check above would pass against a fixture with one case
+    // and no tree in it. These are the shapes the service half asserts it
+    // actually produces, so if a case is dropped or its depths change, this
+    // notices.
+    const depths = fixture.cases.flatMap((depthCase) => depthCase.rows.map((row) => row.depth));
+    expect(Math.max(...depths), "a case with a three-level tree").toBeGreaterThanOrEqual(3);
+    expect(fixture.cases.length).toBeGreaterThanOrEqual(5);
+    expect(
+      fixture.cases.some((depthCase) => depthCase.rows.some((row) => row.managerNotShown)),
+      "a case whose manager is not among the rows",
+    ).toBe(true);
   });
 
   it("grows with depth rather than flattening everything below the top", () => {

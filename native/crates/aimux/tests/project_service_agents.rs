@@ -24,7 +24,7 @@ use aimux::runtime_topology::{
 use aimux::tmux::{TmuxTarget, TmuxWindowInfo};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, VecDeque};
-use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
+use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1194,10 +1194,11 @@ fn reaping_a_dead_manager_moves_its_reports_up() {
 
     assert_eq!(response.status, 200, "{:?}", response.body);
     assert_eq!(response.body["reaped"][0]["sessionId"], "mid");
-    let registry: Value = serde_json::from_str(
-        &read_to_string(state_dir.join("agent-role-registry.json")).expect("read registry"),
-    )
-    .expect("parse registry");
+    // Read the way production reads it. `watching` mirrors the bindings and is
+    // re-derived by the loader, so the bytes on disk lag by one load and no
+    // reader ever sees them.
+    let registry = aimux::project_service::agent_roles::load_agent_role_registry(&state_dir)
+        .expect("role registry");
     assert_eq!(
         registry["watchBindings"]["coder"], "lead",
         "the report stayed with a reaped manager: {registry:?}"
