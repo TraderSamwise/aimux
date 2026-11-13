@@ -430,6 +430,36 @@ together, so moving their bindings would be undone silently. Their reports
 therefore keep a binding to an agent that is not running, which is the one
 case where `watchedBy` names a manager nothing will brief.
 
+## What A Manager Is Told
+
+The loop watcher briefs a manager about its own reports, and only its own --
+direct ones. A lead that heard about every agent under its middle managers
+would put two managers on one agent, which is the thing a hierarchy exists to
+prevent.
+
+- An agent nobody manages belongs to the top, and to exactly one top: the
+  lowest-id root overseer. Offered to every root, an unbound agent is briefed
+  twice and handed to two managers as spare capacity.
+- A manager that cannot be briefed is walked straight past. A binding can name
+  an agent nothing will brief -- a worktree graveyard keeps its agents'
+  bindings on purpose, and an offline overseer gets no recipient engine at all
+  -- and a report left under one would be in nobody's scope with its loop gone
+  quiet, which is worse than being told twice.
+- An unmanaged overseer is in nobody's briefing. A peer at the top of its own
+  tree is not a report. A *managed* overseer is, which is why the briefing
+  candidate set is not the capacity one: that set drops every overseer, because
+  an idle overseer under a goal would read as spare capacity forever.
+- A binding graph with no root at all -- a cycle of live managers, which
+  `bind_watch` refuses and only a hand-edited file can produce -- tells every
+  overseer rather than nobody.
+- Spare capacity, loop exits and reconciliation are scoped the same way. Work
+  nobody owns follows capacity rather than position in the tree: routed to the
+  roots instead, it stalls, because a lead whose reports are all managers sees
+  the task with nobody spare while the manager holding the only idle agent
+  never hears about the task.
+- A project with no bindings behaves exactly as it did before any of this,
+  which is every project that has never run `/watch`.
+
 ## Contracts And API
 
 `src/project-api-contract.ts` should grow typed role/lane fields and routes.

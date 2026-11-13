@@ -2164,15 +2164,11 @@ fn briefable_manager_of(
 /// for as long as the cycle lasts. So every overseer answers, which is noisy
 /// and was the behaviour before any of this.
 fn unmanaged_work_owner(input: &Value, bindings: &Map<String, Value>) -> Option<String> {
-    let overseers = overseer_ids(input);
-    let mut roots = overseers
-        .iter()
+    overseer_ids(input)
+        .into_iter()
         .filter(|id| session_can_receive_loop_send(input, id))
         .filter(|id| briefable_manager_of(input, bindings, id).is_none())
-        .cloned()
-        .collect::<Vec<_>>();
-    roots.sort();
-    roots.into_iter().next()
+        .min()
 }
 
 /// Whether `candidate` is `recipient`'s to act on.
