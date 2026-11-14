@@ -295,22 +295,21 @@ export function claimProjectOwner(
   }
 
   const owner: ProjectOwner = { machineId, claimedAt: now };
-  current.projectOwners = { ...(current.projectOwners ?? {}), [rootKey]: owner };
+  const before = { ...(current.projectOwners ?? {}) };
+  current.projectOwners = { ...before, [rootKey]: owner };
   const recorded = normalizeSharingState(current);
-  // Read back rather than assumed: the cap keeps one end of the sorted keys,
-  // so a claim past the ceiling can be normalized away -- and answering `ok`
-  // over a record that was dropped is the shape of lie this codebase keeps
-  // finding.
-  if (!recorded.projectOwners?.[rootKey]) {
+  // Read back rather than assumed, and read back for EVERYBODY. The cap keeps
+  // one end of the sorted keys, so a claim past the ceiling either loses
+  // itself or -- worse, because the route would answer `ok` -- evicts a
+  // record somebody else is relying on. My first version of this checked only
+  // its own key, and the test I wrote for it picked a key that sorted below
+  // all the others, which proved exactly the half that was already safe.
+  const kept = recorded.projectOwners ?? {};
+  const lost = !kept[rootKey] || Object.keys(before).some((key) => !kept[key]);
+  if (lost) {
     return { ok: false, refusal: "too-many-owned-checkouts" };
   }
   return { ok: true, state: recorded, owner, alreadyOwned: false };
-}
-
-/// Who owns this checkout, if anybody has said.
-export function projectOwnerFor(state: SharingState, projectRoot: string): ProjectOwner | undefined {
-  const rootKey = shareProjectRootKey(projectRoot);
-  return rootKey ? normalizeSharingState(state).projectOwners?.[rootKey] : undefined;
 }
 
 /// Note which roots a machine reported, for routing shares that name no host.

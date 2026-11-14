@@ -481,10 +481,20 @@ fn run_projects_claim(
     let machine = crate::machine_identity::load_or_create(&resolver)
         .map_err(|error| format!("Could not read this machine's identity: {error}"))?;
     let mut roots = crate::paths::PathResolver::from_env();
-    let project_root = roots
-        .resolve_repo_root(project.unwrap_or("."))
-        .to_string_lossy()
-        .into_owned();
+    let resolved = roots.resolve_repo_root(project.unwrap_or("."));
+    // Said here rather than by the relay. Outside a checkout the resolver
+    // falls through to the working directory, so the claim went out for a
+    // path that is not a repository and came back "this machine has not
+    // reported that checkout" -- an answer to the wrong question, and one
+    // that sends somebody looking at the relay.
+    if crate::paths::project_root_status(&resolved) != crate::paths::ProjectRootStatus::GitCheckout
+    {
+        return Err(format!(
+            "{} is not a git checkout, so there is nothing to own",
+            resolved.to_string_lossy()
+        ));
+    }
+    let project_root = resolved.to_string_lossy().into_owned();
     let (owner, already) =
         crate::remote::remote_project_owners::claim_project_owner(&project_root, &machine, take)?;
     if json_flag || output_mode == CoreCliOutputMode::Json {
@@ -514,14 +524,22 @@ fn run_projects_owners(
     json_flag: bool,
     output_mode: CoreCliOutputMode,
 ) -> Result<CoreCliExecution, String> {
+    // Read, never created. `read_stored` exists for exactly this and says so:
+    // `load_or_create` is the first thing that can establish an identity, and
+    // on a full or read-only home it caches an ephemeral one for the rest of
+    // the process -- so a listing would decide what this machine connects as.
+    // A machine with no identity simply owns none of these rows, which is
+    // what the listing is for.
     let resolver = crate::paths::PathResolver::from_env();
-    let machine = crate::machine_identity::load_or_create(&resolver)
-        .map_err(|error| format!("Could not read this machine's identity: {error}"))?;
+    let machine_id = crate::machine_identity::read_stored(&resolver)
+        .ok()
+        .flatten()
+        .map(|machine| machine.id);
     let owners = crate::remote::remote_project_owners::list_project_owners()?;
     if json_flag || output_mode == CoreCliOutputMode::Json {
         return Ok(CoreCliExecution::ok(vec![
             serde_json::to_string_pretty(&json!({
-                "thisMachineId": machine.id,
+                "thisMachineId": machine_id,
                 "owners": owners
                     .iter()
                     .map(|owner| json!({
@@ -529,7 +547,7 @@ fn run_projects_owners(
                         "machineId": owner.machine_id,
                         "claimedAt": owner.claimed_at,
                         "online": owner.online,
-                        "thisMachine": owner.machine_id == machine.id,
+                        "thisMachine": Some(&owner.machine_id) == machine_id.as_ref(),
                     }))
                     .collect::<Vec<_>>(),
             }))
@@ -545,7 +563,7 @@ fn run_projects_owners(
         owners
             .iter()
             .map(|owner| {
-                let who = if owner.machine_id == machine.id {
+                let who = if Some(&owner.machine_id) == machine_id.as_ref() {
                     "this machine".to_owned()
                 } else if owner.online {
                     format!("{} (connected)", owner.machine_id)

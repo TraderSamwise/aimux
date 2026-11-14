@@ -1937,6 +1937,12 @@ export class RelayObject extends DurableObject<Env> {
     } catch {
       return json({ ok: false, error: "Invalid JSON" }, 400);
     }
+    // Loaded and saved with nothing awaited in between, which is what makes
+    // this safe without a version check: the durable object's input gate
+    // serializes the whole stretch, so no second claim can read the state
+    // this one is about to replace. The guarantee is positional -- adding an
+    // await below would reinstate a lost update with no test failing -- so it
+    // is written here rather than left to be noticed.
     const state = await loadSharingState(this.ctx.storage);
     const result = claimProjectOwner(state, {
       projectRoot: body.projectRoot ?? "",
@@ -1946,13 +1952,18 @@ export class RelayObject extends DurableObject<Env> {
     });
     if (!result.ok) {
       const refusal = RelayObject.CLAIM_REFUSALS[result.refusal];
+      // The machine goes in the SENTENCE. "Somebody else has it" is only
+      // actionable if you can tell which somebody, and the sentence is the
+      // only part that reaches a person: the CLI's relay client returns
+      // `error` and drops everything beside it, so a name in a sibling field
+      // was a name nobody ever saw -- while this file and the pull request
+      // both said the refusal named it.
+      const error = result.heldBy ? `${refusal.error}: ${result.heldBy.machineId}` : refusal.error;
       return json(
         {
           ok: false,
-          error: refusal.error,
+          error,
           refusal: result.refusal,
-          // Named, because "somebody else has it" is only actionable if you
-          // can tell which somebody.
           ...(result.heldBy ? { heldBy: result.heldBy } : {}),
         },
         refusal.status,
