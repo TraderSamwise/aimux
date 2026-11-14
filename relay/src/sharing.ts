@@ -103,7 +103,38 @@ export interface SharingState {
   /// that reports it, which is a far better answer than "the only one
   /// connected" and the only one that survives a second daemon starting.
   machineProjectRoots?: Record<string, string[]>;
+  /// Which machine owns each checkout, by folded root.
+  ///
+  /// Here, and not in a machine's own project registry, because that registry
+  /// is per machine: an owner written there is one machine's belief, and two
+  /// machines would each write themselves first and never disagree out loud.
+  /// This durable object is the owner's own and the only store both machines
+  /// can read, which also makes the folded root the key -- the same key the
+  /// share routing uses, and the only project identity that spans machines
+  /// (`compute_project_id` hashes the local path, so one repo on two machines
+  /// has two ids).
+  ///
+  /// Absent means nobody has claimed it, and absent must always be permitted:
+  /// a daemon that is not logged in cannot read or write this at all, so a
+  /// rule that required an owner would make offline aimux refuse its own
+  /// user.
+  projectOwners?: Record<string, ProjectOwner>;
 }
+
+export interface ProjectOwner {
+  machineId: string;
+  claimedAt: string;
+}
+
+export type ProjectClaimRefusal =
+  | "machine-unidentified"
+  | "machine-has-not-reported-its-checkouts"
+  | "machine-does-not-hold-checkout"
+  | "held-by-a-connected-machine";
+
+export type ProjectClaimResult =
+  | { ok: true; state: SharingState; owner: ProjectOwner; alreadyOwned: boolean }
+  | { ok: false; refusal: ProjectClaimRefusal; heldBy?: ProjectOwner };
 
 export interface ShareInviteToken {
   token: string;
@@ -176,6 +207,76 @@ export interface AcceptShareInviteInput {
 
 export function emptySharingState(): SharingState {
   return { version: 1, shares: {}, acceptedShares: {} };
+}
+
+/// How many checkouts may have a recorded owner.
+///
+/// An owner is one short record per checkout and an account has a handful of
+/// repositories, so this is far above any real fleet and only bounds a store
+/// that is being written by something other than a person.
+const MAX_OWNED_PROJECTS = 500;
+
+/// Take ownership of a checkout for one machine.
+///
+/// `aimux projects claim` is the deliberate act the plan requires before
+/// anything resolves a ledger to its owner: ownership moves by hand, never by
+/// election, and an offline owner is a refusal rather than a new vote.
+///
+/// It refuses rather than moving while another machine holds the checkout AND
+/// is connected, because a claim that always says yes records nothing anybody
+/// can rely on -- the whole point of the record is that a second machine
+/// learns it is not the owner. `take` is how the owner overrules that, which
+/// is the same shape as the share bind: recoverable by hand, never silent.
+export function claimProjectOwner(
+  state: SharingState,
+  input: {
+    projectRoot: string;
+    machineId: string;
+    /// Machines connected right now, so "held by somebody who is here" can be
+    /// told from "held by a laptop that is shut".
+    connectedMachineIds: readonly string[];
+    take?: boolean;
+    now?: string;
+  },
+): ProjectClaimResult {
+  const now = input.now ?? new Date().toISOString();
+  const rootKey = shareProjectRootKey(input.projectRoot);
+  const machineId = sanitizeShareMachineId(input.machineId);
+  // Refused rather than thrown: `unidentified` is the slot every daemon
+  // without a persisted identity shares, so recording it would name whichever
+  // of them asked last.
+  if (!machineId || !rootKey) {
+    return { ok: false, refusal: "machine-unidentified" };
+  }
+  const current = normalizeSharingState(state);
+  // The same evidence the share bind uses, and the same two refusals: a
+  // machine that has told the relay nothing has not told it that it has this
+  // checkout either.
+  const reported = claimedProjectRoots(current.machineProjectRoots, machineId);
+  if (reported.length === 0) {
+    return { ok: false, refusal: "machine-has-not-reported-its-checkouts" };
+  }
+  if (!reported.includes(rootKey)) {
+    return { ok: false, refusal: "machine-does-not-hold-checkout" };
+  }
+
+  const held = current.projectOwners?.[rootKey];
+  if (held?.machineId === machineId) {
+    return { ok: true, state: current, owner: held, alreadyOwned: true };
+  }
+  if (held && !input.take && input.connectedMachineIds.includes(held.machineId)) {
+    return { ok: false, refusal: "held-by-a-connected-machine", heldBy: held };
+  }
+
+  const owner: ProjectOwner = { machineId, claimedAt: now };
+  current.projectOwners = { ...(current.projectOwners ?? {}), [rootKey]: owner };
+  return { ok: true, state: normalizeSharingState(current), owner, alreadyOwned: false };
+}
+
+/// Who owns this checkout, if anybody has said.
+export function projectOwnerFor(state: SharingState, projectRoot: string): ProjectOwner | undefined {
+  const rootKey = shareProjectRootKey(projectRoot);
+  return rootKey ? normalizeSharingState(state).projectOwners?.[rootKey] : undefined;
 }
 
 /// Note which roots a machine reported, for routing shares that name no host.
@@ -368,7 +469,33 @@ export function normalizeSharingState(state: SharingState): SharingState {
       const machineProjectRoots = normalizeMachineProjectRoots(state.machineProjectRoots);
       return machineProjectRoots ? { machineProjectRoots } : {};
     })(),
+    ...(() => {
+      const projectOwners = normalizeProjectOwners(state.projectOwners);
+      return projectOwners ? { projectOwners } : {};
+    })(),
   };
+}
+
+/// An owner record is two strings, and a record that cannot be read back as
+/// those is not an owner: dropped rather than kept as a shape that would make
+/// `projectOwnerFor` answer with junk.
+function normalizeProjectOwners(owners: SharingState["projectOwners"]): SharingState["projectOwners"] {
+  if (!owners || typeof owners !== "object") return undefined;
+  const entries = Object.entries(owners)
+    .map(([root, owner]) => {
+      const machineId = sanitizeShareMachineId(typeof owner?.machineId === "string" ? owner.machineId : undefined);
+      const claimedAt = typeof owner?.claimedAt === "string" ? owner.claimedAt.trim() : "";
+      return [shareProjectRootKey(root), machineId, claimedAt] as const;
+    })
+    .filter(
+      (entry): entry is readonly [string, string, string] =>
+        Boolean(entry[0]) && Boolean(entry[1]) && Boolean(entry[2]),
+    )
+    .sort(([left], [right]) => left.localeCompare(right))
+    .slice(-MAX_OWNED_PROJECTS);
+  return entries.length === 0
+    ? undefined
+    : Object.fromEntries(entries.map(([root, machineId, claimedAt]) => [root, { machineId, claimedAt }]));
 }
 
 export function getShareChatMode(share: SharedSessionRecord): ShareChatMode {

@@ -120,7 +120,7 @@ export default {
       return addCorsHeaders(await stub.fetch(request));
     }
 
-    if (isOwnerSecurityPath(url.pathname)) {
+    if (isOwnerSecurityPath(url.pathname) || isProjectOwnerPath(url.pathname)) {
       const authHeader = request.headers.get("Authorization");
       const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
       if (!bearerToken) {
@@ -129,6 +129,13 @@ export default {
       const tokenIsDaemon = isDaemonToken(bearerToken);
       if (isOwnerSecurityMutationPath(url.pathname) && !tokenIsDaemon) {
         return corsResponse(JSON.stringify({ ok: false, error: "Device approval requires local CLI auth" }), 403);
+      }
+      // Claiming a checkout is a thing a machine says about itself, so it is
+      // the daemon's token that carries it. A browser session has no machine
+      // to speak for, and allowing one would let a phone claim a laptop's
+      // repository.
+      if (url.pathname === "/projects/claim" && !tokenIsDaemon) {
+        return corsResponse(JSON.stringify({ ok: false, error: "Claiming a project requires the local CLI" }), 403);
       }
       let userId: string;
       try {
@@ -449,6 +456,15 @@ async function handleHostedAttachmentUpload(request: Request, env: Env): Promise
       400,
     );
   }
+}
+
+/// The owner's own project-ownership routes.
+///
+/// Separate from the share routes because those authenticate a person's
+/// browser session, and these are a machine speaking for itself with the
+/// daemon token. `/shares/...` would 401 a CLI holding one.
+function isProjectOwnerPath(pathname: string): boolean {
+  return pathname === "/projects/claim" || pathname === "/projects/owners";
 }
 
 function isOwnerSecurityPath(pathname: string): boolean {
