@@ -1632,6 +1632,30 @@ describe("RelayObject pointing a share at the machine that holds it", () => {
     } as unknown as Env;
   }
 
+  /// The machine has to be connected AND to have reported the checkout, so a
+  /// bind test needs daemon sockets and a report, not just a share.
+  function fleet(machines: string[]) {
+    const sockets = machines.map((id) =>
+      fakeSocket(["daemon", "user:user_owner", `machine:${id}`, `machineName:sam-${id}`]),
+    );
+    return { sockets, storage: storageWithSockets(sockets) };
+  }
+
+  async function reportCheckout(
+    object: RelayObject,
+    socket: ReturnType<typeof fakeSocket>,
+    projectRoot: string,
+    port = 443,
+  ) {
+    await object.webSocketMessage(
+      socket,
+      JSON.stringify({
+        type: "project_endpoints",
+        projects: [{ projectRoot, host: "relay.aimux.app", port }],
+      }),
+    );
+  }
+
   function bind(object: RelayObject, body: Record<string, unknown>, userId = "user_owner"): Promise<Response> {
     return object.fetch(
       request("https://relay.aimux.app/shares/bind", {
@@ -1645,17 +1669,17 @@ describe("RelayObject pointing a share at the machine that holds it", () => {
   }
 
   it("binds the share the guests already hold, and tells them it is routable", async () => {
-    const storage = new MemoryStorage();
     const upserted: { userId: string; hostBound?: boolean }[] = [];
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
     const object = createObject(storage, envRecording(upserted));
     const shareId = await createAcceptedShareInOwnerObject(object);
+    await reportCheckout(object, mbp, "/Users/sam/cs/scratch");
     upserted.length = 0;
 
-    const bound = await bind(object, {
-      projectRoot: "/Users/sam/cs/scratch",
-      sessionId: "claude-k4lihz",
-      machineId: "mbp",
-    });
+    const bound = await bind(object, { shareId, machineId: "mbp" });
 
     expect(bound.status).toBe(200);
     expect(await bound.json()).toMatchObject({
@@ -1671,15 +1695,18 @@ describe("RelayObject pointing a share at the machine that holds it", () => {
   // A second press must not bump the version and push every guest a refresh
   // of a record that did not change.
   it("writes nothing when the share already points there", async () => {
-    const storage = new MemoryStorage();
     const upserted: { userId: string; hostBound?: boolean }[] = [];
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
     const object = createObject(storage, envRecording(upserted));
-    await createAcceptedShareInOwnerObject(object);
-    const body = { projectRoot: "/Users/sam/cs/scratch", sessionId: "claude-k4lihz", machineId: "mbp" };
-    expect((await bind(object, body)).status).toBe(200);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    await reportCheckout(object, mbp, "/Users/sam/cs/scratch");
+    expect((await bind(object, { shareId, machineId: "mbp" })).status).toBe(200);
     upserted.length = 0;
 
-    const again = await bind(object, body);
+    const again = await bind(object, { shareId, machineId: "mbp" });
 
     expect(again.status).toBe(200);
     expect(await again.json()).toMatchObject({ ok: true, alreadyBound: true });
@@ -1688,49 +1715,38 @@ describe("RelayObject pointing a share at the machine that holds it", () => {
 
   // Defence in depth, said plainly: the worker sends `/shares/bind` to the
   // CALLER's own object, so in production a second account never reaches this
-  // one at all. What this pins is that the object does not rely on that --
-  // the owner scoping inside `bindShareToMachine` is the check, and the
-  // routing is not the only thing standing between two accounts.
+  // one at all. What this pins is that the object does not rely on that.
   it("will not let another account point someone else's share anywhere", async () => {
-    const storage = new MemoryStorage();
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
     const object = createObject(storage, envRecording([]));
     const shareId = await createAcceptedShareInOwnerObject(object);
+    await reportCheckout(object, mbp, "/Users/sam/cs/scratch");
 
-    const refused = await bind(
-      object,
-      { projectRoot: "/Users/sam/cs/scratch", sessionId: "claude-k4lihz", machineId: "theirs" },
-      "user_guest",
-    );
+    const refused = await bind(object, { shareId, machineId: "mbp" }, "user_guest");
 
     expect(refused.status).toBe(404);
-    expect(await refused.json()).toMatchObject({ ok: false, refusal: "no-share-for-session" });
+    expect(await refused.json()).toMatchObject({ ok: false, refusal: "no-such-share" });
     const state = await storage.get<{ shares: Record<string, { machineId?: string }> }>("sharing-state:v1");
     expect(state!.shares[shareId].machineId).toBeUndefined();
   });
 
-  // A bind cannot be taken back any other way: there is no unbind route, and
-  // a re-invite builds a SECOND share rather than rebinding this one. So
-  // refusing a move would make one wrong press permanent, on a share whose
-  // guests go on being refused for as long as it stands.
+  // There is no unbind route and a re-invite builds a second share, so
+  // refusing a move would make one wrong press permanent.
   it("moves a share the owner pointed at the wrong machine", async () => {
-    const storage = new MemoryStorage();
+    const {
+      sockets: [mbp, strix],
+      storage,
+    } = fleet(["mbp", "strix"]);
     const object = createObject(storage, envRecording([]));
     const shareId = await createAcceptedShareInOwnerObject(object);
-    expect(
-      (
-        await bind(object, {
-          projectRoot: "/Users/sam/cs/scratch",
-          sessionId: "claude-k4lihz",
-          machineId: "strix",
-        })
-      ).status,
-    ).toBe(200);
+    await reportCheckout(object, mbp, "/Users/sam/cs/scratch");
+    await reportCheckout(object, strix, "/Users/sam/cs/scratch", 444);
+    expect((await bind(object, { shareId, machineId: "strix" })).status).toBe(200);
 
-    const corrected = await bind(object, {
-      projectRoot: "/Users/sam/cs/scratch",
-      sessionId: "claude-k4lihz",
-      machineId: "mbp",
-    });
+    const corrected = await bind(object, { shareId, machineId: "mbp" });
 
     expect(corrected.status).toBe(200);
     expect(await corrected.json()).toMatchObject({ ok: true, alreadyBound: false });
@@ -1738,24 +1754,188 @@ describe("RelayObject pointing a share at the machine that holds it", () => {
     expect(state!.shares[shareId].machineId).toBe("mbp");
   });
 
-  it("refuses by name when it cannot tell which share was meant", async () => {
-    const storage = new MemoryStorage();
+  // A bind onto a machine that is not here would report success and leave the
+  // share refusing every guest until that machine came back.
+  it("refuses a machine that is not connected", async () => {
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
     const object = createObject(storage, envRecording([]));
-    // Two machines with the same checkout each make their own share of the
-    // same session id. Asked to bind that checkout, there is no answer.
-    await createAcceptedShareInOwnerObject(object, "mbp");
-    await createInvite(object, "strix");
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    await reportCheckout(object, mbp, "/Users/sam/cs/scratch");
 
-    const refused = await bind(object, {
-      projectRoot: "/Users/sam/cs/scratch",
-      sessionId: "claude-k4lihz",
-      machineId: "mini",
-    });
+    const refused = await bind(object, { shareId, machineId: "strix" });
+
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ ok: false, refusal: "machine-offline" });
+  });
+
+  // Connected, and has never said it has this checkout. Nothing else says the
+  // target holds the project, let alone the session.
+  it("refuses a machine that has not reported the share's checkout", async () => {
+    const {
+      sockets: [mbp, strix],
+      storage,
+    } = fleet(["mbp", "strix"]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    await reportCheckout(object, mbp, "/Users/sam/cs/scratch");
+    await reportCheckout(object, strix, "/Users/sam/cs/something-else", 444);
+
+    const refused = await bind(object, { shareId, machineId: "strix" });
 
     expect(refused.status).toBe(409);
     expect(await refused.json()).toMatchObject({
       ok: false,
-      refusal: "several-shares-for-checkout",
+      refusal: "machine-does-not-hold-checkout",
+    });
+  });
+});
+
+// A report loads the sharing state, then spends up to twenty cross-object
+// fetches pushing summaries to guests, then saves. Anything written in that
+// window was being saved over -- and a bind pressed while a machine reports
+// is the common case, because a report goes out on every connect.
+describe("RelayObject saving a report over what landed while it ran", () => {
+  it("keeps a bind that was pressed while the report was pushing summaries", async () => {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const storage = storageWithSockets([mbp]);
+    let bindDuringFanOut: (() => Promise<void>) | undefined;
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({
+          fetch: vi.fn(async (url: string) => {
+            // The window itself: one of the report's own awaits, with the
+            // owner pressing the button inside it.
+            if (String(url).includes("/internal/accepted-shares/upsert")) {
+              const pressing = bindDuringFanOut;
+              bindDuringFanOut = undefined;
+              if (pressing) await pressing();
+            }
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    // The machine reports the checkout once, so the bind has its evidence.
+    await object.webSocketMessage(
+      mbp,
+      JSON.stringify({
+        type: "project_endpoints",
+        projects: [{ projectRoot: "/Users/sam/cs/scratch", host: "relay.aimux.app", port: 443 }],
+      }),
+    );
+
+    bindDuringFanOut = async () => {
+      const bound = await object.fetch(
+        request("https://relay.aimux.app/shares/bind", {
+          method: "POST",
+          userId: "user_owner",
+          name: "Owner",
+          email: "owner@example.com",
+          body: { shareId, machineId: "mbp", projectRoot: "/Users/sam/cs/scratch" },
+        }),
+      );
+      expect(bound.status, "the premise: the bind succeeded").toBe(200);
+    };
+
+    // A second report, on a moved port, so there is a fan-out to land inside.
+    await object.webSocketMessage(
+      mbp,
+      JSON.stringify({
+        type: "project_endpoints",
+        projects: [{ projectRoot: "/Users/sam/cs/scratch", host: "relay.aimux.app", port: 8443 }],
+      }),
+    );
+
+    const state = await storage.get<{
+      shares: Record<string, { machineId?: string; serviceEndpoint?: { port: number } }>;
+    }>("sharing-state:v1");
+    expect(state!.shares[shareId].machineId, "the bind survived the report").toBe("mbp");
+    // And the report still did its own job.
+    expect(state!.shares[shareId].serviceEndpoint?.port).toBe(8443);
+  });
+
+  it("keeps the roots another machine reported while this report ran", async () => {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const strix = fakeSocket(["daemon", "user:user_owner", "machine:strix", "machineName:sam-strix"]);
+    const storage = storageWithSockets([mbp, strix]);
+    let reportDuringFanOut: (() => Promise<void>) | undefined;
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({
+          fetch: vi.fn(async (url: string) => {
+            if (String(url).includes("/internal/accepted-shares/upsert")) {
+              const interleaved = reportDuringFanOut;
+              reportDuringFanOut = undefined;
+              if (interleaved) await interleaved();
+            }
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+
+    const reportRoots = (
+      socket: ReturnType<typeof fakeSocket>,
+      projects: Array<{ projectRoot: string; port: number }>,
+    ) =>
+      object.webSocketMessage(
+        socket,
+        JSON.stringify({
+          type: "project_endpoints",
+          projects: projects.map(({ projectRoot, port }) => ({
+            projectRoot,
+            host: "relay.aimux.app",
+            port,
+          })),
+        }),
+      );
+    const report = (socket: ReturnType<typeof fakeSocket>, projectRoot: string, port: number) =>
+      reportRoots(socket, [{ projectRoot, port }]);
+
+    // The share has to be bound for a report to speak for it at all: with two
+    // machines connected, one that names no host is deliberately left alone.
+    await report(mbp, "/Users/sam/cs/scratch", 443);
+    const bound = await object.fetch(
+      request("https://relay.aimux.app/shares/bind", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+        body: { shareId, machineId: "mbp", projectRoot: "/Users/sam/cs/scratch" },
+      }),
+    );
+    expect(bound.status, "the premise: the share is bound to mbp").toBe(200);
+
+    // strix has reported nothing when mbp's next report loads its snapshot,
+    // and reports for the first time inside mbp's fan-out.
+    let interleavedRan = false;
+    reportDuringFanOut = async () => {
+      interleavedRan = true;
+      await report(strix, "/Users/sam/cs/other", 444);
+    };
+    // Two roots, so this report moves an endpoint AND teaches something: the
+    // index is only rewritten when a report learned something, so a test that
+    // only moves a port never reaches the line under test.
+    await reportRoots(mbp, [
+      { projectRoot: "/Users/sam/cs/scratch", port: 8443 },
+      { projectRoot: "/Users/sam/cs/extra", port: 9443 },
+    ]);
+    expect(interleavedRan, "the premise: strix reported inside mbp's fan-out").toBe(true);
+
+    const state = await storage.get<{ machineProjectRoots?: Record<string, string[]> }>("sharing-state:v1");
+    // Assigning the index wholesale from mbp's snapshot reverted strix -- and
+    // a machine's roots are how a share that names no host is routed, so the
+    // revert aimed a guest at a host without the checkout.
+    expect(state!.machineProjectRoots).toEqual({
+      mbp: ["/Users/sam/cs/extra", "/Users/sam/cs/scratch"],
+      strix: ["/Users/sam/cs/other"],
     });
   });
 });

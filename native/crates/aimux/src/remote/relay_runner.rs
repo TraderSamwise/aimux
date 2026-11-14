@@ -153,6 +153,15 @@ pub struct RelayRunner {
     /// dropping the sender is how it learns that rather than hanging.
     peer_waiters: Arc<Mutex<HashMap<String, oneshot::Sender<PeerAnswer>>>>,
     peer_request_seq: AtomicUsize,
+    /// The frame currently being written, if one is.
+    ///
+    /// It stays at the front of the outbox across the write, deliberately, so
+    /// an aborted pump leaves it queued for the next one. That makes queue
+    /// membership a bad answer to "has this been sent yet": a request giving
+    /// up during a slow write would take the frame out from under the writer
+    /// and then report that the peer was never asked, while the bytes were
+    /// already on the wire.
+    writing_frame: Arc<Mutex<Option<String>>>,
 }
 
 /// What a peer actually said, or why it did not say it.
@@ -248,6 +257,7 @@ impl RelayRunner {
             outbox_high_water: AtomicUsize::new(0),
             peer_waiters: Arc::new(Mutex::new(HashMap::new())),
             peer_request_seq: AtomicUsize::new(0),
+            writing_frame: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -782,21 +792,16 @@ impl RelayRunner {
 
     /// Remove a queued frame by its id. True when it had not been sent yet.
     fn drop_outbox_frame(&self, id: &str) -> bool {
+        // Being written right now: the queue still holds it, and taking it out
+        // would be withdrawing something already on the wire.
+        if self.is_writing_frame_id(id) {
+            return false;
+        }
         let Ok(mut outbox) = self.outbox.lock() else {
             return false;
         };
         let before = outbox.len();
-        outbox.retain(|frame| {
-            serde_json::from_str::<Value>(frame)
-                .ok()
-                .and_then(|parsed| {
-                    parsed
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .map(|frame_id| frame_id != id)
-                })
-                .unwrap_or(true)
-        });
+        outbox.retain(|frame| !frame_id_is(frame, id));
         let dropped = outbox.len() < before;
         let depth = outbox.len();
         drop(outbox);
@@ -887,9 +892,31 @@ impl RelayRunner {
         };
         // Remove only after send_text completes. If this task is aborted mid-write, the
         // frame remains queued for the next pump.
-        writer.send_text(&frame).await?;
+        //
+        // Marked while that is true, so a caller giving up cannot withdraw a
+        // frame whose bytes are already going out and then report that its
+        // peer was never asked.
+        self.mark_writing(Some(frame.clone()));
+        let written = writer.send_text(&frame).await;
+        self.mark_writing(None);
+        written?;
         self.remove_outbox_front_if_matches(&frame);
         Ok(true)
+    }
+
+    fn mark_writing(&self, frame: Option<String>) {
+        if let Ok(mut writing) = self.writing_frame.lock() {
+            *writing = frame;
+        }
+    }
+
+    /// Whether a frame with this id is being written right now.
+    fn is_writing_frame_id(&self, id: &str) -> bool {
+        self.writing_frame
+            .lock()
+            .ok()
+            .and_then(|writing| writing.clone())
+            .is_some_and(|frame| frame_id_is(&frame, id))
     }
 
     fn peek_outbox_frame(&self) -> Option<String> {
@@ -1061,6 +1088,20 @@ enum SubscriptionPollItem {
 #[derive(Default)]
 struct SubscriptionDelivery {
     frames: Vec<String>,
+}
+
+/// Whether a queued frame carries this id. A frame that will not parse is
+/// nobody's: saying it is would withdraw somebody else's work.
+fn frame_id_is(frame: &str, id: &str) -> bool {
+    serde_json::from_str::<Value>(frame)
+        .ok()
+        .and_then(|parsed| {
+            parsed
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|frame_id| frame_id == id)
+        })
+        .unwrap_or(false)
 }
 
 fn push_outbox_frame(outbox: &mut VecDeque<String>, frame: String) -> Result<(), String> {

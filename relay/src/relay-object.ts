@@ -100,17 +100,12 @@ const MAX_PEER_REQUESTS_PER_TARGET = 16;
 /// What a refused bind is, over the wire and to the person reading it.
 ///
 /// A bind is an owner repairing their own share, so unlike a guest-facing
-/// refusal there is nothing to withhold: the owner is told which of the four
-/// it was, because each one has a different fix.
+/// refusal there is nothing to withhold: each one has a different fix.
 const BIND_SHARE_REFUSALS: Record<BindShareRefusal, { status: number; error: string }> = {
-  "no-share-for-session": { status: 404, error: "No share for that session" },
-  "no-share-for-checkout": {
-    status: 404,
-    error: "No share for that session was made from this checkout",
-  },
-  "several-shares-for-checkout": {
+  "no-such-share": { status: 404, error: "No share of yours by that id" },
+  "machine-does-not-hold-checkout": {
     status: 409,
-    error: "More than one share for that session was made from this checkout",
+    error: "That machine has not reported the checkout this share names",
   },
 };
 /// How many project endpoints one `project_endpoints` frame may report.
@@ -762,20 +757,44 @@ export class RelayObject extends DurableObject<Env> {
     // undone, after the owner had been told it worked and every guest had
     // been pushed the bound summary.
     //
-    // Only what this path is the authority on is carried over: the endpoint
-    // a daemon just reported, and the refresh bookkeeping. Never
-    // `machineId`, which belongs to the bind and the invite, and never a
-    // share this does not still find -- one revoked in the window stays
-    // revoked.
+    // Field by field and share by share, over the ones this report actually
+    // touched. Copying every share in the snapshot was the same bug one layer
+    // in: it carried `staleReceivers: undefined` onto a share a bind had just
+    // marked, losing the one guest that bind could not reach, and carried a
+    // stale endpoint over one a re-invite had just corrected.
     const fresh = await loadSharingState(this.ctx.storage);
-    for (const reported of Object.values(state.shares)) {
-      const held = fresh.shares[reported.id];
-      if (!held) continue;
-      if (reported.serviceEndpoint) held.serviceEndpoint = { ...reported.serviceEndpoint };
+    for (const id of updated) {
+      const held = fresh.shares[id];
+      const reported = state.shares[id];
+      // The daemon is the authority on where its own service is listening,
+      // and `updated` is exactly the set whose endpoint this report moved.
+      if (held && reported?.serviceEndpoint) held.serviceEndpoint = { ...reported.serviceEndpoint };
+    }
+    for (const id of refresh) {
+      const held = fresh.shares[id];
+      const reported = state.shares[id];
+      if (!held || !reported) continue;
+      // Both of these are this path's own bookkeeping: who is owed a refresh,
+      // and whose turn it has had. Nothing else writes them.
       held.lastReceiverRefreshAt = reported.lastReceiverRefreshAt;
       held.staleReceivers = reported.staleReceivers;
     }
-    fresh.machineProjectRoots = state.machineProjectRoots;
+    // One machine's entry, not the whole index. Assigning the map wholesale
+    // reverted whatever another machine had reported in the window -- and a
+    // machine's roots are how an unbound share is routed, so the revert aimed
+    // a guest at a host that no longer has the checkout.
+    if (learnedSomething) {
+      const roots = state.machineProjectRoots?.[machineId ?? ""];
+      const index = { ...(fresh.machineProjectRoots ?? {}) };
+      if (machineId) {
+        if (roots) {
+          index[machineId] = roots;
+        } else {
+          delete index[machineId];
+        }
+      }
+      fresh.machineProjectRoots = Object.keys(index).length > 0 ? index : undefined;
+    }
     await saveSharingState(this.ctx.storage, fresh);
   }
 
@@ -1803,20 +1822,28 @@ export class RelayObject extends DurableObject<Env> {
   private async bindShareMachine(request: Request): Promise<Response> {
     const owner = this.actorFromHeaders(request, "owner");
     if (!owner) return json({ ok: false, error: "Missing owner context" }, 401);
-    let body: { projectRoot?: string; sessionId?: string; machineId?: string };
+    let body: { shareId?: string; machineId?: string; projectRoot?: string };
     try {
       body = (await request.json()) as typeof body;
     } catch {
       return json({ ok: false, error: "Invalid JSON" }, 400);
+    }
+    const machineId = body.machineId?.trim() ?? "";
+    // Asked here rather than in the rule, because only this object knows who
+    // is connected right now. A bind onto a machine that is not here would
+    // leave the share refusing every guest until that machine came back, and
+    // the owner pressed a button that reported success.
+    if (machineId && !this.onlineMachines().some((machine) => machine.id === machineId)) {
+      return json({ ok: false, error: `Machine ${machineId} is not connected`, refusal: "machine-offline" }, 409);
     }
     const state = await loadSharingState(this.ctx.storage);
     let result: ReturnType<typeof bindShareToMachine>;
     try {
       result = bindShareToMachine(state, {
         owner,
-        projectRoot: body.projectRoot ?? "",
-        sessionId: body.sessionId ?? "",
-        machineId: body.machineId ?? "",
+        shareId: body.shareId ?? "",
+        machineId,
+        ...(body.projectRoot ? { projectRoot: body.projectRoot } : {}),
       });
     } catch (error) {
       return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);

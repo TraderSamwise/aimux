@@ -147,6 +147,51 @@ impl WebSocketReader for FakeReader {
     }
 }
 
+/// A socket that takes the frames and then just sits there.
+///
+/// `FakeReader` closes as soon as its script runs out, which ends the
+/// connection -- so a request that leaves and is never answered came back as
+/// `ConnectionLost` and the "asked, and nobody answered" ending was never
+/// reachable in a test at all.
+struct SilentReader {
+    events: Vec<WebSocketEvent>,
+}
+
+impl WebSocketReader for SilentReader {
+    fn next_event<'a>(&'a mut self) -> BoxFuture<'a, Result<WebSocketEvent, WebSocketError>> {
+        if self.events.is_empty() {
+            return Box::pin(std::future::poll_fn(|_: &mut Context<'_>| Poll::Pending));
+        }
+        let event = self.events.remove(0);
+        Box::pin(async move { Ok(event) })
+    }
+}
+
+/// One connection, held open, whose writer records what went out.
+struct SilentConnector {
+    recorder: Arc<Recorder>,
+    opened: Arc<Mutex<usize>>,
+}
+
+impl WebSocketConnector for SilentConnector {
+    fn connect<'a>(
+        &'a mut self,
+        _url: &'a str,
+        _subprotocols: &'a [String],
+    ) -> BoxFuture<'a, Result<WebSocketConnectionParts, WebSocketError>> {
+        Box::pin(async move {
+            *self.opened.lock().unwrap() += 1;
+            Ok(WebSocketConnectionParts {
+                reader: Box::new(SilentReader { events: Vec::new() }),
+                writer: Box::new(FakeWriter {
+                    recorder: Arc::clone(&self.recorder),
+                    send_text_error: None,
+                }),
+            })
+        })
+    }
+}
+
 struct FakeWriter {
     recorder: Arc<Recorder>,
     send_text_error: Option<WebSocketError>,
@@ -833,8 +878,13 @@ fn a_peer_that_was_never_asked_is_not_reported_as_silent() {
 
 /// A frame that was already written cannot be recalled, and the error says so
 /// rather than claiming the work did not happen.
+///
+/// The socket stays up for this, which is the whole point: with a connection
+/// that drops, `ConnectionLost` answers and the ending under test is never
+/// reached. Here the request leaves, nothing answers, and the deadline passes
+/// while the link is fine.
 #[test]
-fn a_request_that_left_is_reported_as_unanswered_not_as_undone() {
+fn a_request_that_left_is_reported_as_asked_and_unanswered() {
     let recorder = Arc::new(Recorder::default());
     let runner = RelayRunner::new(
         "wss://relay.example/",
@@ -846,22 +896,19 @@ fn a_request_that_left_is_reported_as_unanswered_not_as_undone() {
             subscribe_pending: false,
         }),
     );
-    // One socket that takes the frame and answers nothing.
-    let mut connector = FakeConnector {
-        scripts: vec![Ok(Vec::new())],
-        attempts: Arc::new(Mutex::new(0)),
+    let mut connector = SilentConnector {
         recorder: Arc::clone(&recorder),
-        writer_failures: Vec::new(),
+        opened: Arc::new(Mutex::new(0)),
     };
 
     aimux::async_runtime::init_process_runtime().expect("runtime initialized");
     let asking = Arc::clone(&runner);
-    let backoff_handle = runner.handle();
+    let stop_when_answered = runner.handle();
     // aimux-async-seam: test - a peer request that leaves and is not answered
     let (answer, ()) = aimux::async_runtime::block_on_named("test:relay-peer-silent", async move {
         tokio::join!(
             async move {
-                asking
+                let answer = asking
                     .request_peer(
                         "strix",
                         "POST",
@@ -869,33 +916,20 @@ fn a_request_that_left_is_reported_as_unanswered_not_as_undone() {
                         &json!({}),
                         Duration::from_millis(50),
                     )
-                    .await
+                    .await;
+                stop_when_answered.stop();
+                answer
             },
             async {
                 runner
-                    .run_with_sleep(
-                        &mut connector,
-                        &mut |_| {
-                            backoff_handle.stop();
-                            Box::pin(async {})
-                        },
-                        &mut |_| 0,
-                    )
+                    .run_with_sleep(&mut connector, &mut |_| Box::pin(async {}), &mut |_| 0)
                     .await;
             }
         )
     });
 
-    // Either ending is honest about the same fact -- the request left and no
-    // answer came -- and neither of them is `TimedOut`, which claims the peer
-    // was never asked.
-    assert!(
-        matches!(
-            answer,
-            Err(PeerRequestError::AnsweredNothing) | Err(PeerRequestError::ConnectionLost)
-        ),
-        "{answer:?}"
-    );
+    // Not `TimedOut`, which says the peer was never asked. It was asked.
+    assert_eq!(answer, Err(PeerRequestError::AnsweredNothing));
     assert!(
         recorder
             .sent

@@ -461,16 +461,32 @@ export function findShareForSession(
 
 /// Why an existing share could not be bound to a machine.
 ///
-/// Named rather than collapsed into one 404, because the cases have different
-/// fixes: make a share first, invite from the host that holds the checkout,
-/// or say which of several shares of that checkout was meant.
-export type BindShareRefusal = "no-share-for-session" | "no-share-for-checkout" | "several-shares-for-checkout";
+/// Two, because there are two ways to be wrong: the share is not the owner's
+/// to move, or the machine does not look like it holds that checkout.
+export type BindShareRefusal = "no-such-share" | "machine-does-not-hold-checkout";
 
 export interface BindShareMachineInput {
   owner: ShareActor;
-  sessionId: string;
-  projectRoot: string;
+  /// Which share, by id.
+  ///
+  /// Named rather than looked up from the session and the checkout, which is
+  /// how the first draft did it. Two machines with the same path each make
+  /// their own share of one session id, so that lookup had to choose -- and
+  /// the surface offering the repair is showing ONE share, whose id it
+  /// already has. Asking it to describe the share instead of naming it meant
+  /// the share displayed and the share moved could differ, and a renamed
+  /// checkout made its own share unfindable.
+  shareId: string;
   machineId: string;
+  /// The checkout the caller is looking at, when it has one.
+  ///
+  /// A checkout that was renamed or moved leaves the stored root behind, and
+  /// the target machine reports the new one -- so checking against the stored
+  /// root would refuse the repair for ever, on exactly the share that needs
+  /// it. Given, it is what the machine must have reported and what the share
+  /// records afterwards; this is the same thing an invite does with the root
+  /// it came from, and for the same reason.
+  projectRoot?: string;
   now?: string;
 }
 
@@ -478,68 +494,61 @@ export type BindShareMachineResult =
   | { ok: true; state: SharingState; share: SharedSessionRecord; alreadyBound: boolean }
   | { ok: false; refusal: BindShareRefusal };
 
-/// Bind a share that already exists to the machine holding its session.
+/// Point a share that already exists at the machine holding its session.
 ///
 /// A share made before machines existed names no host, and the route then
 /// refuses it -- with the host sitting right there. Re-inviting repairs it,
 /// but costs a new token and another email to someone who already accepted.
-/// This is that repair without the email, and it reuses the adoption rule
-/// `createShareInvite` already applies rather than inventing a second one:
-/// same owner, same session, same folded checkout, exactly one candidate.
+/// This is that repair without the email.
+///
+/// It moves a share that already names a machine, rather than refusing: there
+/// is no unbind route and a re-invite builds a SECOND share, so a refusal
+/// would make one wrong press permanent. What stops a wrong press going
+/// somewhere useless is the check below, not a refusal to move.
 export function bindShareToMachine(state: SharingState, input: BindShareMachineInput): BindShareMachineResult {
   const now = input.now ?? new Date().toISOString();
   const owner = sanitizeActor(input.owner, "owner");
-  const sessionId = sanitizeRequiredText(input.sessionId, 160, "sessionId");
-  const projectRoot = sanitizeRequiredText(input.projectRoot, MAX_PROJECT_ROOT_CHARS, "projectRoot");
+  const shareId = sanitizeRequiredText(input.shareId, 160, "shareId");
   // Binding to nothing is not a bind. An unusable id here would quietly write
   // `undefined` and report success over a share that still cannot be routed.
   const machineId = sanitizeShareMachineId(input.machineId);
   if (!machineId) throw new Error("machineId is required");
 
   const current = normalizeSharingState(state);
-  const candidates = Object.values(current.shares).filter(
-    (share) => share.ownerUserId === owner.userId && share.sessionId === sessionId,
-  );
-  if (candidates.length === 0) return { ok: false, refusal: "no-share-for-session" };
+  const share = current.shares[shareId];
+  // One refusal for "no such share" and "not yours", because they are the
+  // same answer from here: nothing of the caller's by that id.
+  if (!share || share.ownerUserId !== owner.userId) {
+    return { ok: false, refusal: "no-such-share" };
+  }
 
-  // The checkout narrows first, and everything after it is asked of that
-  // checkout alone. A session id names a session on one host, so one owner
-  // can hold a `claude-1` on two of them, and asking the whole set answered
-  // about the wrong share: an unrelated `claude-1` elsewhere made this one
-  // report it was bound elsewhere, a share that really was bound elsewhere
-  // reported a checkout mismatch, and -- worst of the three -- one already
-  // bound to the wanted machine reported success while the share actually
-  // asked about stayed unbound and went on being refused.
-  const wantedRoot = shareProjectRootKey(projectRoot);
-  const sameCheckout = candidates.filter((share) => shareProjectRootKey(share.projectRoot) === wantedRoot);
-  if (sameCheckout.length === 0) return { ok: false, refusal: "no-share-for-checkout" };
+  // The machine has to look like it holds the checkout. Without this a bind
+  // is a free hand: nothing else says the target has that project, let alone
+  // that session, so one press from the wrong machine could hand accepted
+  // guests a different agent's transcript -- which is worse than the refusal
+  // it replaced, not better.
+  //
+  // The evidence is the endpoint report, which is what the routing already
+  // narrows on. Nothing reported at all means nothing to check against -- an
+  // older daemon, or a relay that has just restarted -- and in that case this
+  // can only refuse every bind, so it allows and the routing stays as unsure
+  // as it was.
+  const wantedRoot = shareProjectRootKey(input.projectRoot?.trim() || share.projectRoot);
+  const reported = current.machineProjectRoots ?? {};
+  if (Object.keys(reported).length > 0 && !claimedProjectRoots(reported, machineId).includes(wantedRoot)) {
+    return { ok: false, refusal: "machine-does-not-hold-checkout" };
+  }
 
-  // Picking between two is a coin flip that strands the other one's guests,
-  // so it is a question rather than an answer. Two shares of one checkout and
-  // session is a real state, not a hypothetical: two machines with the same
-  // path each make their own.
-  const adoptable = sameCheckout.filter((share) => !sanitizeShareMachineId(share.machineId));
-  if (adoptable.length > 1) return { ok: false, refusal: "several-shares-for-checkout" };
-  // Asked in this order rather than before the adoption: a checkout holding
-  // both a share already on this machine and an unbound one would otherwise
-  // answer "already bound" and leave the unbound one refusing its guests.
-  const share =
-    adoptable[0] ??
-    sameCheckout.find((held) => sanitizeShareMachineId(held.machineId) === machineId) ??
-    // Bound somewhere else, which makes this a move rather than a refusal. A
-    // bind cannot be taken back any other way -- there is no unbind route,
-    // and a re-invite builds a SECOND share rather than rebinding this one --
-    // so refusing here would make one wrong press permanent, on a share whose
-    // guests are then refused for ever. Moving is recoverable: the owner
-    // presses it again from the machine that really holds the session.
-    (sameCheckout.length === 1 ? sameCheckout[0] : undefined);
-  if (!share) return { ok: false, refusal: "several-shares-for-checkout" };
+  const movedCheckout = wantedRoot !== shareProjectRootKey(share.projectRoot) ? input.projectRoot?.trim() : undefined;
   // Nothing to write, so nothing is written: a repeated bind must not bump the
   // version every time and hand every guest a pointless refresh.
-  if (sanitizeShareMachineId(share.machineId) === machineId) {
+  if (!movedCheckout && sanitizeShareMachineId(share.machineId) === machineId) {
     return { ok: true, state: current, share, alreadyBound: true };
   }
 
+  if (movedCheckout) {
+    share.projectRoot = sanitizeRequiredText(movedCheckout, MAX_PROJECT_ROOT_CHARS, "projectRoot");
+  }
   share.machineId = machineId;
   share.updatedAt = now;
   share.version += 1;

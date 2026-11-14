@@ -1655,14 +1655,14 @@ export async function createShareInvite(
  * second email to someone who already accepted.
  */
 export async function bindShareMachine(
-  projectRoot: string,
-  sessionId: string,
+  shareId: string,
   machineId: string,
+  projectRoot: string,
   opts?: ApiOpts,
 ): Promise<ShareBindResponse> {
   return callJson<ShareBindResponse>(
     `${relayHttpUrl()}/shares/bind`,
-    { method: "POST", body: JSON.stringify({ projectRoot, sessionId, machineId }) },
+    { method: "POST", body: JSON.stringify({ shareId, machineId, projectRoot }) },
     opts,
   );
 }

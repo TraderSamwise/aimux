@@ -726,7 +726,8 @@ export default function ChatScreen() {
   );
   // What a repair would bind the share to, named rather than called "this
   // machine": the endpoint is the project service actually serving this
-  // session, and a bind cannot be moved afterwards.
+  // session, and the owner has to see which machine they are picking --
+  // opening the same checkout from another machine offers that one.
   const bindTarget = serviceEndpoint?.machineId
     ? (project?.machineName ?? serviceEndpoint.machineId)
     : null;
@@ -2341,11 +2342,19 @@ export default function ChatScreen() {
   /// first one.
   async function handleBindShareMachine() {
     const machineId = serviceEndpoint?.machineId;
-    if (!canManageShare || !token || !project?.path || !sessionId || !machineId || bindBusy) return;
+    // By id, because this panel is showing one share and knows which: asking
+    // the relay to find it from the session and the checkout meant the share
+    // displayed and the share moved could be different ones.
+    const shareId = shareSummary?.id;
+    if (!canManageShare || !token || !shareId || !machineId || !project?.path || bindBusy) return;
     setBindBusy(true);
     setInviteStatus(null);
     try {
-      const result = await bindShareMachine(project.path, sessionId, machineId, { token });
+      // The checkout this chat is open on travels too: a renamed or moved
+      // checkout leaves the stored root behind, and the machine reports the
+      // new one, so without it the repair is refused on exactly the share
+      // that needs it.
+      const result = await bindShareMachine(shareId, machineId, project.path, { token });
       setShareSummary(result.share);
       setInviteStatus(
         result.alreadyBound
@@ -3087,15 +3096,14 @@ export default function ChatScreen() {
                       )}
                       {bindTarget ? (
                         // Named rather than "this machine", because the owner
-                        // has to be able to see which one they are picking.
+                        // has to see which one they are picking, and because
+                        // the press is repeatable from the right one.
                         <Button
                           size="sm"
                           variant="outline"
                           className="mt-2 self-start"
                           label={bindBusy ? "Pointing..." : `Point it at ${bindTarget}`}
-                          disabled={
-                            bindBusy || !token || !relayConfigured || !project?.path || !sessionId
-                          }
+                          disabled={bindBusy || !token || !relayConfigured || !project?.path}
                           onPress={handleBindShareMachine}
                         />
                       ) : (

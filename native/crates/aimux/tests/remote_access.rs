@@ -709,10 +709,13 @@ fn a_peer_machine_may_do_nothing_yet() {
     }
 }
 
-/// The same request from the owner's own app is allowed, which is the point:
-/// the role is the difference, not the route.
+/// The role is the difference, not the route: the request the peer is refused
+/// is the one the owner's own app makes all day.
+///
+/// Asserted as a pair rather than on its own -- "the owner may do this" is
+/// true of every route and proves nothing by itself.
 #[test]
-fn the_owners_own_app_is_not_held_to_the_peer_allowlist() {
+fn the_same_route_turns_on_who_is_asking() {
     let owner = RemoteActor {
         role: RemoteActorRole::Owner,
         declared_role: Some("owner".into()),
@@ -724,15 +727,29 @@ fn the_owners_own_app_is_not_held_to_the_peer_allowlist() {
         peer_machine_id: None,
         principal: None,
     };
-    let allowed = allow(
+    let route = port_path(project_routes::tasks::ASSIGN);
+    let body = json!({ "taskId": "t1" });
+
+    let as_owner = allow(
         Some(&owner),
         "POST",
-        &port_path(project_routes::tasks::ASSIGN),
+        &route,
         "",
-        Some(&json!({ "taskId": "t1" })),
+        Some(&body),
         Some(PROJECT_ROOT),
     );
-    assert!(allowed.ok, "{:?}", allowed.error);
+    let as_peer = allow(
+        Some(&peer(Some("mbp"))),
+        "POST",
+        &route,
+        "",
+        Some(&body),
+        Some(PROJECT_ROOT),
+    );
+
+    assert!(as_owner.ok, "{:?}", as_owner.error);
+    assert!(!as_peer.ok);
+    assert_eq!(as_peer.status, Some(403));
 }
 
 /// The relay stamps the origin machine from the socket the frame arrived on,

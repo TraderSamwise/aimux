@@ -590,6 +590,15 @@ describe("binding a share that already exists", () => {
     });
   }
 
+  /// The endpoint report is the evidence a machine holds a checkout, and it
+  /// is what the routing already narrows on.
+  function reporting(state: SharingState, machines: Record<string, string[]>): SharingState {
+    return Object.entries(machines).reduce(
+      (carried, [machineId, roots]) => rememberMachineProjectRoots(carried, machineId, roots),
+      state,
+    );
+  }
+
   // The case the whole phase exists for: a share made before a share recorded
   // its host, with its guest already accepted, repaired without a new token
   // and a second email.
@@ -599,18 +608,18 @@ describe("binding a share that already exists", () => {
       token: legacy.token.token,
       actor: { userId: "user_guest", displayName: "Guest", email: "guest@example.com", role: "guest" },
     });
+    const shareId = legacy.token.share.id;
 
-    const bound = bindShareToMachine(accepted.state, {
+    const bound = bindShareToMachine(reporting(accepted.state, { mbp: ["/repo/aimux"] }), {
       owner,
-      sessionId: "claude-1",
-      projectRoot: "/repo/aimux",
+      shareId,
       machineId: "mbp",
     });
 
     expect(bound.ok).toBe(true);
     if (!bound.ok) return;
     expect(bound.alreadyBound).toBe(false);
-    expect(bound.share.id).toBe(legacy.token.share.id);
+    expect(bound.share.id).toBe(shareId);
     expect(bound.share.machineId).toBe("mbp");
     // The guest it already has is still on it: a repair, not a new share.
     expect(Object.keys(bound.state.shares)).toHaveLength(1);
@@ -623,12 +632,10 @@ describe("binding a share that already exists", () => {
   it("is what makes the route pick a host while a second machine claims the checkout", async () => {
     const legacy = await invite(emptySharingState(), undefined);
     const share = Object.values(legacy.state.shares)[0];
-    const claimed = rememberMachineProjectRoots(
-      rememberMachineProjectRoots(legacy.state, "mbp", ["/repo/aimux"]),
-      "strix",
-      ["/repo/aimux"],
-    );
-
+    const claimed = reporting(legacy.state, {
+      mbp: ["/repo/aimux"],
+      strix: ["/repo/aimux"],
+    });
     const online = [
       { id: "mbp", name: "mbp" },
       { id: "strix", name: "strix" },
@@ -638,12 +645,7 @@ describe("binding a share that already exists", () => {
     expect(before.ok).toBe(false);
     if (!before.ok) expect(before.refusal).toBe("share-names-no-machine");
 
-    const bound = bindShareToMachine(claimed, {
-      owner,
-      sessionId: "claude-1",
-      projectRoot: "/repo/aimux",
-      machineId: "mbp",
-    });
+    const bound = bindShareToMachine(claimed, { owner, shareId: share.id, machineId: "mbp" });
     expect(bound.ok).toBe(true);
     if (!bound.ok) return;
 
@@ -656,10 +658,9 @@ describe("binding a share that already exists", () => {
 
   it("writes nothing when the share already names that machine", async () => {
     const first = await invite(emptySharingState(), "mbp");
-    const again = bindShareToMachine(first.state, {
+    const again = bindShareToMachine(reporting(first.state, { mbp: ["/repo/aimux"] }), {
       owner,
-      sessionId: "claude-1",
-      projectRoot: "/repo/aimux",
+      shareId: first.token.share.id,
       machineId: "mbp",
     });
 
@@ -672,108 +673,123 @@ describe("binding a share that already exists", () => {
     expect(again.share.updatedAt).toBe(first.token.share.updatedAt);
   });
 
-  // The owner can press this from the wrong machine -- the same checkout on
-  // two machines means opening the chat can resolve to either one -- and
-  // there is no unbind route and no re-invite that rebinds. Refusing a move
-  // would make that one press permanent, on a share whose guests are then
-  // refused for as long as it stands.
+  // There is no unbind route and a re-invite builds a SECOND share, so
+  // refusing to move would make one wrong press permanent -- on a share
+  // whose guests go on being refused for as long as it stands.
   it("moves a share that was pointed at the wrong machine", async () => {
     const first = await invite(emptySharingState(), "strix");
-    const corrected = bindShareToMachine(first.state, {
+    const corrected = bindShareToMachine(reporting(first.state, { mbp: ["/repo/aimux"], strix: ["/repo/aimux"] }), {
       owner,
-      sessionId: "claude-1",
-      projectRoot: "/repo/aimux",
+      shareId: first.token.share.id,
       machineId: "mbp",
     });
 
     expect(corrected.ok).toBe(true);
     if (!corrected.ok) return;
     expect(corrected.alreadyBound).toBe(false);
-    expect(corrected.share.id).toBe(first.token.share.id);
     expect(corrected.share.machineId).toBe("mbp");
     expect(Object.keys(corrected.state.shares)).toHaveLength(1);
   });
 
-  // Same rule the invite adoption applies: "unbound" says nothing about which
-  // host made it, so the checkout is the evidence.
-  it("refuses an unbound share of a different checkout", async () => {
-    const legacy = await invite(emptySharingState(), undefined, "/Users/sam/cs/aimux");
-    const bound = bindShareToMachine(legacy.state, {
-      owner,
-      sessionId: "claude-1",
-      projectRoot: "/home/sam/aimux",
-      machineId: "strix",
+  // And this is what makes moving safe rather than a free hand. Nothing else
+  // says the target has the project, let alone the session, so without it one
+  // press from the wrong machine could hand accepted guests a different
+  // agent's transcript -- worse than the refusal it replaced.
+  it("will not point a share at a machine that has not reported its checkout", async () => {
+    const first = await invite(emptySharingState(), "mbp");
+    const elsewhere = reporting(first.state, {
+      mbp: ["/repo/aimux"],
+      strix: ["/repo/something-else"],
     });
 
-    expect(bound).toEqual({ ok: false, refusal: "no-share-for-checkout" });
-    expect(Object.values(legacy.state.shares)[0].machineId).toBeUndefined();
-  });
-
-  // A session id names a session on one host, so one owner can hold a
-  // `claude-1` on two checkouts. Asking "is anything unbound?" across both
-  // answered with the other checkout's situation: a share bound elsewhere
-  // reported a checkout mismatch, and an unrelated share on another checkout
-  // made this one report it was bound elsewhere. Neither wrote anything;
-  // both sent the owner looking in the wrong place.
-  it("names the checkout as the reason when this checkout has no share", async () => {
-    const elsewhere = await invite(emptySharingState(), "mbp", "/repo/a");
-
     expect(
-      bindShareToMachine(elsewhere.state, {
+      bindShareToMachine(elsewhere, {
         owner,
-        sessionId: "claude-1",
-        projectRoot: "/repo/b",
+        shareId: first.token.share.id,
         machineId: "strix",
       }),
-    ).toEqual({ ok: false, refusal: "no-share-for-checkout" });
+    ).toEqual({ ok: false, refusal: "machine-does-not-hold-checkout" });
+    expect(Object.values(elsewhere.shares)[0].machineId).toBe("mbp");
   });
 
-  // Two machines with the same checkout each make their own share of one
-  // session id, which is an ordinary state and not a hypothetical. Asked to
-  // bind that checkout, there is no answer -- picking one would strand the
-  // other one's guests.
-  it("refuses when it cannot tell which of a checkout's shares was meant", async () => {
-    const first = await invite(emptySharingState(), "mbp", "/repo/a");
-    const second = await invite(first.state, "strix", "/repo/a");
-    expect(Object.keys(second.state.shares), "the premise: two shares").toHaveLength(2);
+  // A checkout that was renamed or moved leaves the stored root behind, and
+  // the machine reports the new one -- so checking the stored root would
+  // refuse the repair for ever, on exactly the share that needs it. The
+  // caller says which checkout it is looking at, as an invite does.
+  it("re-points a share whose checkout was renamed", async () => {
+    const first = await invite(emptySharingState(), undefined, "/repo/old-name");
+    const renamed = reporting(first.state, { mbp: ["/repo/new-name"] });
 
-    expect(
-      bindShareToMachine(second.state, {
-        owner,
-        sessionId: "claude-1",
-        projectRoot: "/repo/a",
-        machineId: "mini",
-      }),
-    ).toEqual({ ok: false, refusal: "several-shares-for-checkout" });
+    const bound = bindShareToMachine(renamed, {
+      owner,
+      shareId: first.token.share.id,
+      machineId: "mbp",
+      projectRoot: "/repo/new-name",
+    });
+
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) return;
+    expect(bound.share.machineId).toBe("mbp");
+    expect(bound.share.projectRoot).toBe("/repo/new-name");
+    expect(Object.keys(bound.state.shares), "still one share").toHaveLength(1);
   });
 
-  it("refuses when the session has no share at all", async () => {
-    const other = await invite(emptySharingState(), undefined, "/repo/aimux", "claude-2");
+  // And the caller's checkout is still checked against the report, so a
+  // rename is not a way to point a share anywhere at all.
+  it("refuses a checkout the machine has not reported either", async () => {
+    const first = await invite(emptySharingState(), undefined, "/repo/old-name");
+    const renamed = reporting(first.state, { mbp: ["/repo/new-name"] });
 
     expect(
-      bindShareToMachine(other.state, {
+      bindShareToMachine(renamed, {
         owner,
-        sessionId: "claude-1",
-        projectRoot: "/repo/aimux",
+        shareId: first.token.share.id,
         machineId: "mbp",
+        projectRoot: "/repo/somewhere-else",
       }),
-    ).toEqual({ ok: false, refusal: "no-share-for-session" });
+    ).toEqual({ ok: false, refusal: "machine-does-not-hold-checkout" });
+    expect(Object.values(renamed.shares)[0].projectRoot).toBe("/repo/old-name");
   });
 
-  // The scoping IS the authorization: there is no owner check anywhere else
-  // on this path, so another user asking must find nothing to bind.
-  it("will not bind another owner's share", async () => {
+  // Nothing reported at all is nothing to check against -- an older daemon,
+  // or a relay that has just restarted. Refusing every bind then would leave
+  // the repair unavailable exactly when the routing is least sure.
+  it("allows a bind when no machine has reported anything yet", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+
+    const bound = bindShareToMachine(legacy.state, {
+      owner,
+      shareId: legacy.token.share.id,
+      machineId: "mbp",
+    });
+
+    expect(bound.ok).toBe(true);
+  });
+
+  it("refuses a share id that is not the caller's", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+    const reported = reporting(legacy.state, { theirs: ["/repo/aimux"] });
+
+    expect(
+      bindShareToMachine(reported, {
+        owner: { userId: "user_someone_else", displayName: "Someone", role: "owner" },
+        shareId: legacy.token.share.id,
+        machineId: "theirs",
+      }),
+    ).toEqual({ ok: false, refusal: "no-such-share" });
+    expect(Object.values(reported.shares)[0].machineId).toBeUndefined();
+  });
+
+  it("refuses a share id nothing holds", async () => {
     const legacy = await invite(emptySharingState(), undefined);
 
     expect(
-      bindShareToMachine(legacy.state, {
-        owner: { userId: "user_someone_else", displayName: "Someone", role: "owner" },
-        sessionId: "claude-1",
-        projectRoot: "/repo/aimux",
-        machineId: "theirs",
+      bindShareToMachine(reporting(legacy.state, { mbp: ["/repo/aimux"] }), {
+        owner,
+        shareId: "share_does_not_exist",
+        machineId: "mbp",
       }),
-    ).toEqual({ ok: false, refusal: "no-share-for-session" });
-    expect(Object.values(legacy.state.shares)[0].machineId).toBeUndefined();
+    ).toEqual({ ok: false, refusal: "no-such-share" });
   });
 
   it("refuses a machine id it cannot use rather than reporting a bind", async () => {
@@ -782,8 +798,7 @@ describe("binding a share that already exists", () => {
     expect(() =>
       bindShareToMachine(legacy.state, {
         owner,
-        sessionId: "claude-1",
-        projectRoot: "/repo/aimux",
+        shareId: legacy.token.share.id,
         machineId: "   ",
       }),
     ).toThrow(/machineId is required/);
@@ -795,8 +810,7 @@ describe("binding a share that already exists", () => {
 
     const bound = bindShareToMachine(legacy.state, {
       owner,
-      sessionId: "claude-1",
-      projectRoot: "/repo/aimux",
+      shareId: legacy.token.share.id,
       machineId: "mbp",
     });
     expect(bound.ok).toBe(true);
