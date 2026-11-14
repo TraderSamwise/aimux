@@ -237,6 +237,9 @@ pub fn shared_chat_remote_actor_prompt(actor: &RemoteActor, text: &str) -> Optio
         RemoteActorRole::Owner => "owner",
         RemoteActorRole::Guest => "guest",
         RemoteActorRole::Operator => "operator",
+        // A peer is a machine, not somebody typing. Attributing its input to
+        // a person in the transcript would put a name on a line nobody said.
+        RemoteActorRole::Peer => "peer",
     };
     if role != "owner" && role != "guest" || shared_chat_trim(text).is_empty() {
         return None;
@@ -669,6 +672,7 @@ mod tests {
             email: None,
             share_id: Some("share-1".to_owned()),
             share_session_id: Some("claude-psmp2r".to_owned()),
+            peer_machine_id: None,
             principal: None,
         };
         for text in [

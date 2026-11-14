@@ -112,6 +112,60 @@ export type DaemonTargetResolution =
       refusal?: SharedDaemonRefusal;
     };
 
+/// Why one daemon could not reach another.
+///
+/// A peer request is a machine acting on its own, with nobody watching it
+/// resolve, so every one of these is said plainly: there is no person here to
+/// read a deliberately vague message, and the daemon that asked has to be able
+/// to tell "name a machine" from "that machine is not here".
+export type PeerDaemonRefusal = "peer-target-unnamed" | "peer-target-offline" | "peer-target-is-self";
+
+export type PeerDaemonTargetResolution =
+  | { ok: true; machineId: string }
+  | { ok: false; status: number; error: string; refusal: PeerDaemonRefusal };
+
+/// Which machine a daemon's request goes to. Only ever the one it named.
+///
+/// Deliberately without the "only one connected" fallback `resolveDaemonTarget`
+/// gives a person: a client is a human who can be asked which machine they
+/// meant, and a daemon is not. A peer request that silently went to whoever
+/// happened to be online is the defect the share routing just had, one layer
+/// down and with nobody to notice it.
+export function resolvePeerDaemonTarget(
+  machines: readonly MachineInfo[],
+  originMachineId: string | undefined,
+  requestedMachineId: string | undefined,
+): PeerDaemonTargetResolution {
+  const requested = requestedMachineId?.trim();
+  if (!requested) {
+    return {
+      ok: false,
+      status: 400,
+      error: "A peer request must name the machine it is for",
+      refusal: "peer-target-unnamed",
+    };
+  }
+  // Through the relay and back into the same process: a loop with a timeout on
+  // it rather than a route. Refused by name so the daemon that did it can say
+  // so, instead of waiting out the pending TTL for its own answer.
+  if (requested === originMachineId?.trim()) {
+    return {
+      ok: false,
+      status: 400,
+      error: "A peer request cannot name the machine that sent it",
+      refusal: "peer-target-is-self",
+    };
+  }
+  return machines.some((machine) => machine.id === requested)
+    ? { ok: true, machineId: requested }
+    : {
+        ok: false,
+        status: 503,
+        error: `Machine ${requested} is not connected`,
+        refusal: "peer-target-offline",
+      };
+}
+
 // A client that names no machine is answered, not guessed at: one machine is
 // unambiguous, several is a question only the client can settle. Guessing would
 // route a kill to the wrong host.

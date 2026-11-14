@@ -5,6 +5,7 @@ import {
   isValidMachineId,
   machineFromConnectUrl,
   machineFromTags,
+  resolvePeerDaemonTarget,
   resolveDaemonTarget,
   resolveSharedDaemonTarget,
   sanitizeMachineName,
@@ -215,5 +216,52 @@ describe("what a guest's indicator says versus what its requests do", () => {
   it("agrees with routing for a bound share whose host is away", () => {
     expect(sharedHostOnline([MBP], STRIX.id)).toBe(false);
     expect(sharedHostOnline([MBP], MBP.id)).toBe(true);
+  });
+});
+
+// A person who names no machine can be asked which one they meant. A daemon
+// cannot, so the fallback a client gets is exactly what a peer must not have:
+// a request that silently went to whoever was online is the share-routing
+// defect one layer down, with nobody there to notice it.
+describe("which machine a daemon's request goes to", () => {
+  const fleet = [MBP, STRIX];
+
+  it("goes to the machine it named, while another is connected", () => {
+    expect(resolvePeerDaemonTarget(fleet, MBP.id, STRIX.id)).toEqual({ ok: true, machineId: STRIX.id });
+  });
+
+  it("refuses to pick one, even when only one could be meant", () => {
+    const refused = resolvePeerDaemonTarget([STRIX], MBP.id, undefined);
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal).toBe("peer-target-unnamed");
+    // Not the 503 an absent machine gets: nothing is missing, the request
+    // just did not say what it wanted.
+    expect(refused.status).toBe(400);
+  });
+
+  it("refuses a machine that is not connected, by name", () => {
+    const refused = resolvePeerDaemonTarget([MBP], MBP.id, STRIX.id);
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal).toBe("peer-target-offline");
+    expect(refused.status).toBe(503);
+  });
+
+  // Through the relay and back into the same process is a loop with a timeout
+  // on it. Refused now, rather than waiting out the pending TTL for its own
+  // answer.
+  it("refuses a machine naming itself", () => {
+    const refused = resolvePeerDaemonTarget(fleet, MBP.id, MBP.id);
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal).toBe("peer-target-is-self");
+  });
+
+  it("still calls it self when one side came with spaces around it", () => {
+    const refused = resolvePeerDaemonTarget(fleet, " mbp ", "mbp ");
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal).toBe("peer-target-is-self");
   });
 });

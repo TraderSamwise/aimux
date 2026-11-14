@@ -2,8 +2,8 @@
 
 use aimux::remote::relay_client::{
     CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close,
-    decide_connect_error, handle_frame, notification_push_frame, project_event_frame,
-    project_events_error_frame, split_sse_frames,
+    decide_connect_error, handle_frame, notification_push_frame, peer_request_frame,
+    project_event_frame, project_events_error_frame, split_sse_frames,
 };
 use aimux::remote::websocket::WebSocketError;
 use serde_json::json;
@@ -292,4 +292,78 @@ fn an_error_frame_carries_its_status_through() {
         serde_json::from_str(&project_events_error_frame("s1", 404, "gone")).unwrap();
     assert_eq!(value["status"], 404);
     assert_eq!(value["message"], "gone");
+}
+
+/// A peer's answer used to fall through to `Ignore`.
+///
+/// Which is not a quiet no-op for a request and its reply: every answer,
+/// every swept timeout and every "that machine is not connected" was dropped
+/// on the floor, and the only thing a caller could ever report was its own
+/// deadline passing.
+#[test]
+fn an_answer_from_a_peer_is_carried_back_to_whoever_asked() {
+    assert_eq!(
+        handle_frame(r#"{"type":"response","id":"peer-1","status":200,"body":{"ok":true}}"#),
+        RelayAction::PeerResponse {
+            id: "peer-1".to_owned(),
+            status: 200,
+            body: json!({ "ok": true }),
+        }
+    );
+}
+
+/// A refusal the relay made on the caller's behalf is an answer too, and it
+/// is the one that says the peer was never reached.
+#[test]
+fn a_relay_refusal_reaches_the_caller_as_itself() {
+    assert_eq!(
+        handle_frame(
+            r#"{"type":"response","id":"peer-2","status":503,"body":{"ok":false,"refusal":"peer-target-offline"}}"#
+        ),
+        RelayAction::PeerResponse {
+            id: "peer-2".to_owned(),
+            status: 503,
+            body: json!({ "ok": false, "refusal": "peer-target-offline" }),
+        }
+    );
+}
+
+/// A status that cannot be read is not a success. Defaulting to 200 would
+/// turn a malformed refusal into a result the caller acts on.
+#[test]
+fn an_answer_with_no_usable_status_is_not_read_as_success() {
+    let RelayAction::PeerResponse { status, .. } =
+        handle_frame(r#"{"type":"response","id":"peer-3","body":{}}"#)
+    else {
+        panic!("a response frame is a response");
+    };
+    assert_eq!(status, 502);
+
+    let RelayAction::PeerResponse { status, .. } =
+        handle_frame(r#"{"type":"response","id":"peer-4","status":"fine","body":{}}"#)
+    else {
+        panic!("a response frame is a response");
+    };
+    assert_eq!(status, 502);
+}
+
+/// The machine is named, always. The relay gives a peer no "whoever is
+/// online" fallback, so a frame that leaves without one comes straight back
+/// refused.
+#[test]
+fn a_peer_request_names_the_machine_it_is_for() {
+    let frame: serde_json::Value = serde_json::from_str(&peer_request_frame(
+        "peer-1",
+        "strix",
+        "POST",
+        "/tasks/assign",
+        &json!({ "taskId": "t1" }),
+    ))
+    .expect("a frame is json");
+    assert_eq!(frame["type"], "request");
+    assert_eq!(frame["id"], "peer-1");
+    assert_eq!(frame["machineId"], "strix");
+    assert_eq!(frame["method"], "POST");
+    assert_eq!(frame["path"], "/tasks/assign");
+    assert_eq!(frame["body"]["taskId"], "t1");
 }

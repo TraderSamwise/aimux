@@ -35,8 +35,10 @@ export interface RelayRequest {
   path: string;
   headers?: Record<string, string>;
   body?: unknown;
-  // Which machine should answer. Absent is a question, not a default: the
-  // relay resolves it only when there is exactly one machine to mean.
+  // Which machine should answer. Absent is a question, not a default: for a
+  // person's client the relay resolves it only when there is exactly one
+  // machine to mean, and for a daemon asking a peer it does not resolve it at
+  // all -- a daemon is not somebody who can be asked which one it meant.
   machineId?: string;
 }
 

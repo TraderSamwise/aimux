@@ -41,6 +41,7 @@ fn operator(grants: Vec<RemoteOperatorGrant>) -> RemoteActor {
         email: None,
         share_id: None,
         share_session_id: None,
+        peer_machine_id: None,
         principal: Some(principal(grants)),
     }
 }
@@ -54,6 +55,21 @@ fn guest(session_id: &str) -> RemoteActor {
         email: Some("ada@example.com".into()),
         share_id: Some("share-1".into()),
         share_session_id: Some(session_id.into()),
+        peer_machine_id: None,
+        principal: None,
+    }
+}
+
+fn peer(machine_id: Option<&str>) -> RemoteActor {
+    RemoteActor {
+        role: RemoteActorRole::Peer,
+        declared_role: Some("peer".into()),
+        user_id: None,
+        display_name: None,
+        email: None,
+        share_id: None,
+        share_session_id: None,
+        peer_machine_id: machine_id.map(str::to_owned),
         principal: None,
     }
 }
@@ -117,6 +133,7 @@ fn owner_and_local_callers_are_allowed() {
         email: None,
         share_id: None,
         share_session_id: None,
+        peer_machine_id: None,
         principal: None,
     };
     assert!(
@@ -651,4 +668,112 @@ fn operator_stream_gate_is_separate_from_buffered_proxy_gate() {
         )
         .ok
     );
+}
+
+/// Being on the account is not being at the keyboard.
+///
+/// The owner's own app is stamped `owner`, and the daemon hands those straight
+/// to its whole API. A peer carrying that stamp would be every machine holding
+/// every other machine's keyboard, so a peer has its own allowlist and this is
+/// the second direction of it: the route next to the allowed one stays shut.
+#[test]
+fn a_peer_machine_may_hand_over_work_and_nothing_else() {
+    let handing_over = allow(
+        Some(&peer(Some("mbp"))),
+        "POST",
+        &port_path(project_routes::tasks::ASSIGN),
+        "",
+        Some(&json!({ "taskId": "t1" })),
+        Some(PROJECT_ROOT),
+    );
+    assert!(handing_over.ok, "{:?}", handing_over.error);
+
+    // The allowlist says WHAT may be asked; the project binding says of whom.
+    // The proxy target pins the host and not the port, so without this a peer
+    // chooses which local service answers -- its own JSON, posted by this
+    // machine, at whatever happens to be listening on a port it picked.
+    let unbound = allow(
+        Some(&peer(Some("mbp"))),
+        "POST",
+        &port_path(project_routes::tasks::ASSIGN),
+        "",
+        Some(&json!({ "taskId": "t1" })),
+        None,
+    );
+    assert!(!unbound.ok);
+    assert_eq!(unbound.status, Some(403));
+
+    // The route beside it, which the owner's app may post to and a peer may
+    // not. An allowlist with no refused neighbour proves nothing.
+    let killing = allow(
+        Some(&peer(Some("mbp"))),
+        "POST",
+        &port_path(project_routes::agents::KILL),
+        "",
+        Some(&json!({ "sessionId": SESSION })),
+        Some(PROJECT_ROOT),
+    );
+    assert!(!killing.ok);
+    assert_eq!(killing.status, Some(403));
+
+    // Reading is not granted either: nothing needs it yet, and an allowlist
+    // that grants what nobody asked for is the widening this phase was
+    // warned about.
+    let reading = allow(
+        Some(&peer(Some("mbp"))),
+        "GET",
+        &port_path(project_routes::tasks::LIST),
+        "",
+        None,
+        Some(PROJECT_ROOT),
+    );
+    assert!(!reading.ok);
+}
+
+/// The relay stamps the origin machine from the socket the frame arrived on,
+/// which is exactly why the caller cannot choose it. A peer role without one
+/// did not come from where it claims.
+#[test]
+fn a_peer_that_names_no_machine_is_refused() {
+    let anonymous = allow(
+        Some(&peer(None)),
+        "POST",
+        &port_path(project_routes::tasks::ASSIGN),
+        "",
+        Some(&json!({ "taskId": "t1" })),
+        Some(PROJECT_ROOT),
+    );
+    assert!(!anonymous.ok);
+    assert_eq!(anonymous.status, Some(403));
+
+    let blank = allow(
+        Some(&peer(Some("   "))),
+        "POST",
+        &port_path(project_routes::tasks::ASSIGN),
+        "",
+        Some(&json!({ "taskId": "t1" })),
+        Some(PROJECT_ROOT),
+    );
+    assert!(!blank.ok);
+}
+
+/// A role nobody recognizes must not fall into the peer arm, and the peer
+/// header alone must not mint one: the role is what grants, and the machine
+/// id only says which peer it is.
+#[test]
+fn only_the_declared_peer_role_is_a_peer() {
+    let actor = parse_remote_actor(&BTreeMap::from([
+        ("x-aimux-actor-role".into(), "peer".into()),
+        ("x-aimux-peer-machine-id".into(), "strix".into()),
+    ]))
+    .expect("peer actor");
+    assert_eq!(actor.role, RemoteActorRole::Peer);
+    assert_eq!(actor.peer_machine_id.as_deref(), Some("strix"));
+
+    let impostor = parse_remote_actor(&BTreeMap::from([
+        ("x-aimux-actor-role".into(), "peerish".into()),
+        ("x-aimux-peer-machine-id".into(), "strix".into()),
+    ]))
+    .expect("unrecognized actor");
+    assert_eq!(impostor.role, RemoteActorRole::Guest);
 }

@@ -42,8 +42,17 @@ pub fn build_daemon_route_context_for_actor(
     projects: &[ProjectsRouteProject],
 ) -> DaemonRouteRequestContext {
     let route_url = DaemonRouteUrl::parse(path);
+    // A peer is bound to a project the same way an operator is, and for the
+    // same reason: the proxy target pins the host but not the port, so
+    // without this a caller chooses which local service answers. The route
+    // allowlist narrows WHAT may be asked; this narrows of WHOM.
     let project_root = actor
-        .filter(|actor| actor.role == RemoteActorRole::Operator)
+        .filter(|actor| {
+            matches!(
+                actor.role,
+                RemoteActorRole::Operator | RemoteActorRole::Peer
+            )
+        })
         .and_then(|_| {
             resolve_project_root_for_service_target(
                 projects,

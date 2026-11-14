@@ -4,7 +4,8 @@ use aimux::backlog_metrics::BacklogMetricStatus;
 use aimux::machine_identity::MachineIdentity;
 use aimux::remote::relay_client::RelayStatus;
 use aimux::remote::relay_runner::{
-    DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem, RelayRunner,
+    DaemonRelayBridge, DaemonRouteResponse, PeerRequestError, ProjectEventStream,
+    ProjectEventStreamItem, RelayRunner,
 };
 use aimux::remote::websocket::{
     BoxFuture, WebSocketConnectionParts, WebSocketConnector, WebSocketError, WebSocketEvent,
@@ -699,4 +700,168 @@ fn test_machine() -> MachineIdentity {
         id: "testmachine01".to_owned(),
         name: "test-host".to_owned(),
     }
+}
+
+/// Asking one of the owner's other machines something, and hearing back.
+///
+/// Both futures are joined rather than raced: the ask registers its waiter
+/// before the loop is first polled, so the answer cannot arrive before there
+/// is anybody to give it to. That ordering is the test, not a timing hope.
+#[test]
+fn a_peer_answer_reaches_whoever_asked_for_it() {
+    let recorder = Arc::new(Recorder::default());
+    let runner = RelayRunner::new(
+        "wss://relay.example/",
+        "tok",
+        test_machine(),
+        Arc::new(FakeBridge {
+            recorder: Arc::clone(&recorder),
+            subscribe_error: None,
+            subscribe_pending: false,
+        }),
+    );
+    let mut connector = FakeConnector {
+        // The id is the first one this runner mints, which is what lets the
+        // script answer it without guessing.
+        scripts: vec![Ok(vec![
+            text(
+                json!({ "type": "response", "id": "peer-0", "status": 200, "body": { "ok": true } }),
+            ),
+            closed(1000),
+        ])],
+        attempts: Arc::new(Mutex::new(0)),
+        recorder: Arc::clone(&recorder),
+        writer_failures: Vec::new(),
+    };
+
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    let asked = Arc::clone(&runner);
+    // The loop reconnects until it is stopped, and this test scripts one
+    // socket. Stopping from inside the backoff is how the existing harness
+    // ends it; a sleep that returns immediately and never stops starves the
+    // other half of the join instead of ending the test.
+    let backoff_handle = runner.handle();
+    // aimux-async-seam: test - a peer request and the loop that carries it
+    let (answer, ()) = aimux::async_runtime::block_on_named("test:relay-peer", async move {
+        tokio::join!(
+            async move {
+                asked
+                    .request_peer(
+                        "strix",
+                        "POST",
+                        "/tasks/assign",
+                        &json!({ "taskId": "t1" }),
+                        Duration::from_secs(5),
+                    )
+                    .await
+            },
+            async {
+                runner
+                    .run_with_sleep(
+                        &mut connector,
+                        &mut |_| {
+                            backoff_handle.stop();
+                            Box::pin(async {})
+                        },
+                        &mut |_| 0,
+                    )
+                    .await;
+            }
+        )
+    });
+
+    let answer = answer.expect("the peer answered");
+    assert_eq!(answer.status, 200);
+    assert_eq!(answer.body, json!({ "ok": true }));
+
+    let sent = recorder.sent.lock().unwrap().clone();
+    let request: Value = sent
+        .iter()
+        .map(|frame| serde_json::from_str::<Value>(frame).expect("a frame is json"))
+        .find(|frame| frame["type"] == "request")
+        .expect("the request left the machine");
+    assert_eq!(request["machineId"], "strix");
+    assert_eq!(request["path"], "/tasks/assign");
+}
+
+/// No answer is not an empty answer.
+///
+/// With nothing draining the outbox there is no peer and no refusal, and the
+/// caller has to be told which of those it was rather than handed a default
+/// it would act on.
+#[test]
+fn a_peer_that_never_answers_is_reported_as_a_timeout() {
+    let runner = RelayRunner::new(
+        "wss://relay.example/",
+        "tok",
+        test_machine(),
+        Arc::new(FakeBridge {
+            recorder: Arc::new(Recorder::default()),
+            subscribe_error: None,
+            subscribe_pending: false,
+        }),
+    );
+
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    // aimux-async-seam: test - a peer request with nothing to carry it
+    let answer = aimux::async_runtime::block_on_named("test:relay-peer-timeout", async move {
+        runner
+            .request_peer(
+                "strix",
+                "POST",
+                "/tasks/assign",
+                &json!({}),
+                Duration::from_millis(30),
+            )
+            .await
+    });
+
+    assert_eq!(answer, Err(PeerRequestError::TimedOut));
+    assert_eq!(
+        PeerRequestError::TimedOut.message(),
+        "peer did not answer in time"
+    );
+    // Three outcomes, and each one says which it is: collapsing the last two
+    // into an empty body is the failure this crate keeps finding.
+    assert_eq!(
+        PeerRequestError::ConnectionLost.message(),
+        "relay connection was lost before the peer answered"
+    );
+    assert_eq!(
+        PeerRequestError::NotSent("outbox full".to_owned()).message(),
+        "peer request was not sent: outbox full"
+    );
+}
+
+/// A caller that goes away takes its place in the queue with it.
+///
+/// A `select!` that loses the race drops the request future where none of its
+/// own code runs again, so without a guard on the registration the entry stays
+/// for ever and nothing later would collect it.
+#[test]
+fn a_caller_that_gives_up_leaves_nothing_behind() {
+    let runner = RelayRunner::new(
+        "wss://relay.example/",
+        "tok",
+        test_machine(),
+        Arc::new(FakeBridge {
+            recorder: Arc::new(Recorder::default()),
+            subscribe_error: None,
+            subscribe_pending: false,
+        }),
+    );
+
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    let asking = Arc::clone(&runner);
+    let body = json!({});
+    // aimux-async-seam: test - a peer request abandoned mid-await
+    aimux::async_runtime::block_on_named("test:relay-peer-cancel", async move {
+        tokio::select! {
+            _ = asking.request_peer("strix", "POST", "/tasks/assign", &body, Duration::from_secs(30)) =>
+                panic!("nothing can answer it"),
+            () = async {} => {}
+        }
+    });
+
+    assert_eq!(runner.peer_waiter_count(), 0);
 }

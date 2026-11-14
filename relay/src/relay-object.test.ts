@@ -166,6 +166,143 @@ describe("RelayObject request hibernation", () => {
   });
 });
 
+// Two of the owner's machines, both connected to the object that belongs to
+// that owner. The account boundary is therefore closed by construction rather
+// than by a check -- which is why the tests here are about the SECOND
+// boundary: being on the account is not being at the keyboard.
+describe("RelayObject letting one machine ask another", () => {
+  function fleet() {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const strix = fakeSocket(["daemon", "user:user_owner", "machine:strix", "machineName:sam-strix"]);
+    return { mbp, strix, storage: storageWithSockets([mbp, strix]) };
+  }
+
+  function ask(machineId: string | undefined, id = "peer-1") {
+    return JSON.stringify({
+      id,
+      type: "request",
+      ...(machineId ? { machineId } : {}),
+      method: "POST",
+      path: "/tasks/assign",
+      body: { taskId: "t1" },
+      headers: { "X-Aimux-Actor-Role": "owner" },
+    });
+  }
+
+  it("carries the request to the machine it named, and back again", async () => {
+    const { mbp, strix, storage } = fleet();
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(mbp, ask("strix"));
+
+    const forwarded = JSON.parse(String(strix.send.mock.calls.at(-1)?.[0])) as {
+      id: string;
+      headers: Record<string, string>;
+    };
+    // Not `owner`. The owner's own app is stamped that, and the daemon hands
+    // those to its whole API -- a peer carrying it would be every machine
+    // holding every other machine's keyboard. What the caller claimed is
+    // stripped, and the origin is stamped from the socket, not the frame.
+    expect(forwarded.headers["X-Aimux-Actor-Role"]).toBe("peer");
+    expect(forwarded.headers["X-Aimux-Peer-Machine-Id"]).toBe("mbp");
+
+    await object.webSocketMessage(
+      strix,
+      JSON.stringify({ id: forwarded.id, type: "response", status: 200, body: { ok: true } }),
+    );
+
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      id: "peer-1",
+      type: "response",
+      status: 200,
+      body: { ok: true },
+    });
+  });
+
+  // Every message rebuilds the live maps from the sockets, and the rebuild
+  // used to read only the clients' attachments: a peer request died on the
+  // next frame of any kind, a pong included.
+  it("still knows who asked after the object has hibernated", async () => {
+    const { mbp, strix, storage } = fleet();
+    const object = createObject(storage, {} as unknown as Env);
+    await object.webSocketMessage(mbp, ask("strix"));
+    const forwarded = JSON.parse(String(strix.send.mock.calls.at(-1)?.[0])) as { id: string };
+
+    const woken = createObject(storage, {} as unknown as Env);
+    // A pong is the cheapest frame there is, and it was enough to lose it.
+    await woken.webSocketMessage(mbp, JSON.stringify({ type: "pong" }));
+    await woken.webSocketMessage(
+      strix,
+      JSON.stringify({ id: forwarded.id, type: "response", status: 200, body: { ok: true } }),
+    );
+
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      id: "peer-1",
+      status: 200,
+    });
+  });
+
+  it("refuses a request that names no machine, rather than picking one", async () => {
+    const { mbp, strix, storage } = fleet();
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(mbp, ask(undefined));
+
+    expect(strix.send).not.toHaveBeenCalled();
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      id: "peer-1",
+      status: 400,
+      body: { refusal: "peer-target-unnamed" },
+    });
+  });
+
+  it("refuses a machine naming itself, instead of looping", async () => {
+    const { mbp, storage } = fleet();
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(mbp, ask("mbp"));
+
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      status: 400,
+      body: { refusal: "peer-target-is-self" },
+    });
+  });
+
+  it("refuses a machine that is not connected", async () => {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const object = createObject(storageWithSockets([mbp]), {} as unknown as Env);
+
+    await object.webSocketMessage(mbp, ask("strix"));
+
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      status: 503,
+      body: { refusal: "peer-target-offline" },
+    });
+  });
+
+  // A daemon answers its socket one request at a time, and the owner's own
+  // app shares that socket. A peer sending faster than its target can answer
+  // is not going faster; it is queueing work in front of the person.
+  it("stops one machine filling another's queue", async () => {
+    const { mbp, strix, storage } = fleet();
+    const object = createObject(storage, {} as unknown as Env);
+
+    for (let index = 0; index < 8; index += 1) {
+      await object.webSocketMessage(mbp, ask("strix", `peer-${index}`));
+    }
+    expect(strix.send).toHaveBeenCalledTimes(8);
+
+    await object.webSocketMessage(mbp, ask("strix", "peer-over"));
+
+    expect(strix.send).toHaveBeenCalledTimes(8);
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      id: "peer-over",
+      status: 429,
+      body: { refusal: "peer-too-many-in-flight" },
+    });
+  });
+});
+
 describe("RelayObject sharing index repair", () => {
   let storage: MemoryStorage;
   let receiverFetch: ReturnType<typeof vi.fn>;

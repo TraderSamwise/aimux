@@ -10,6 +10,7 @@ import {
   machineNameTag,
   machineTag,
   resolveDaemonTarget,
+  resolvePeerDaemonTarget,
   resolveSharedDaemonTarget,
   sharedHostOnline,
 } from "./machines.js";
@@ -79,6 +80,14 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 // requesting client only. Entries are cleared on response, client close, or
 // after this TTL — bounds memory if a request never completes.
 const PENDING_REQUEST_TTL_MS = 60_000;
+/// How many requests one machine may have in flight to its peers at once.
+///
+/// A daemon answers its relay socket one request at a time, so a peer that
+/// sends faster than its target can answer is not going faster -- it is
+/// queueing work in front of the owner's own app, which shares that socket.
+/// Low on purpose: a handoff is one call, and anything needing more than this
+/// at once is a loop, which is the failure this bounds.
+const MAX_PEER_REQUESTS_IN_FLIGHT = 8;
 /// What a refused bind is, over the wire and to the person reading it.
 ///
 /// A bind is an owner repairing their own share, so unlike a guest-facing
@@ -429,6 +438,8 @@ export class RelayObject extends DurableObject<Env> {
       } else {
         this.reportUnmatchedDaemonResponse(ws, parsed.id);
       }
+    } else if (isDaemon && parsed.type === "request") {
+      await this.forwardPeerDaemonRequest(ws, tags, parsed);
     } else if (!isDaemon && parsed.type === "project_events_subscribe") {
       await this.handleClientProjectEventsSubscribe(ws, parsed);
     } else if (!isDaemon && parsed.type === "project_events_unsubscribe") {
@@ -880,6 +891,13 @@ export class RelayObject extends DurableObject<Env> {
         this.failPendingRequests("Daemon connection lost", 502, closingMachineId);
         this.failProjectEventSubscriptions("Daemon connection lost", 502, closingMachineId);
       }
+      // A daemon's own peer requests go with it. The live map has already
+      // dropped them -- the rebuild above excludes this socket -- but the
+      // attachment they were rebuilt FROM has not, and that is what every
+      // later rebuild reads. `failPendingRequests` does not reach these: it
+      // is keyed on the machine an entry is FOR, and these are the entries
+      // this socket was waiting ON.
+      this.clearClientPendingRequests(ws);
       // Rehydration already dropped this machine from both maps.
       if (!replacementDaemon) {
         await this.broadcastMachineStatus();
@@ -1369,6 +1387,83 @@ export class RelayObject extends DurableObject<Env> {
       return { ok: false, status: 403, error: "Not a participant in this shared chat" };
     }
     return { ok: true, userId, share, participant };
+  }
+
+  /// One of the owner's machines asking another one something.
+  ///
+  /// Both sockets are in this durable object, which is the owner's own, so a
+  /// peer request cannot cross accounts by construction rather than by a
+  /// check. What it must not do is arrive looking like the owner: the app's
+  /// requests are stamped `owner` and the daemon loops those straight back
+  /// into its whole API, so a peer carries its own role and the machine it
+  /// came from, and the daemon decides from those.
+  private async forwardPeerDaemonRequest(
+    ws: WebSocket,
+    tags: readonly string[],
+    parsed: Extract<RelayMessage, { type: "request" }>,
+  ): Promise<void> {
+    this.sweepExpiredPending();
+    const origin = machineFromTags(tags).id;
+    const target = resolvePeerDaemonTarget(this.onlineMachines(), origin, parsed.machineId);
+    if (!target.ok) {
+      this.send(ws, {
+        id: parsed.id,
+        type: "response",
+        status: target.status,
+        body: { ok: false, error: target.error, refusal: target.refusal },
+      });
+      return;
+    }
+    const inFlight = [...this.pendingRequests.values()].filter((entry) => entry.client === ws).length;
+    if (inFlight >= MAX_PEER_REQUESTS_IN_FLIGHT) {
+      this.send(ws, {
+        id: parsed.id,
+        type: "response",
+        status: 429,
+        body: {
+          ok: false,
+          error: `No more than ${MAX_PEER_REQUESTS_IN_FLIGHT} peer requests at once`,
+          refusal: "peer-too-many-in-flight",
+        },
+      });
+      return;
+    }
+    const daemon = this.daemonSockets.get(target.machineId)!;
+    const relayRequestId = this.nextRelayRequestId();
+    const expiresAt = Date.now() + PENDING_REQUEST_TTL_MS;
+    this.pendingRequests.set(relayRequestId, {
+      client: ws,
+      clientRequestId: parsed.id,
+      expiresAt,
+      machineId: target.machineId,
+    });
+    // Written to the asking socket's own attachment, because every message
+    // this object handles rebuilds the live maps from the sockets and their
+    // attachments. Without this the entry survives exactly until the next
+    // frame of any kind, including a pong.
+    this.attachClientPendingRequest(ws, relayRequestId, parsed.id, expiresAt, target.machineId);
+    try {
+      daemon.send(
+        JSON.stringify({
+          ...parsed,
+          id: relayRequestId,
+          headers: {
+            ...stripTrustedAimuxHeaders(parsed.headers),
+            "X-Aimux-Actor-Role": "peer",
+            "X-Aimux-Peer-Machine-Id": origin,
+          },
+        }),
+      );
+    } catch {
+      this.pendingRequests.delete(relayRequestId);
+      this.detachClientPendingRequest(ws, relayRequestId);
+      this.send(ws, {
+        id: parsed.id,
+        type: "response",
+        status: 502,
+        body: { ok: false, error: "Peer machine connection lost", refusal: "peer-target-offline" },
+      });
+    }
   }
 
   private async prepareClientRequest(
@@ -2019,6 +2114,10 @@ export class RelayObject extends DurableObject<Env> {
         if (keepsIncumbent) continue;
         this.daemonSockets.set(machine.id, ws);
         this.daemonMachineNames.set(machine.id, machine.name);
+        // A daemon waits on answers of its own now, and this runs at the top
+        // of every message: rebuilding only the clients' entries left a peer
+        // request alive until the next frame of any kind, a pong included.
+        this.rebuildPendingRequests(ws, unroutable);
       } else if (tags.includes("client")) {
         this.clientSockets.add(ws);
         const deviceId = this.deviceIdFromTags(ws);
@@ -2042,38 +2141,7 @@ export class RelayObject extends DurableObject<Env> {
             machineId: subscription.machineId,
           });
         }
-        for (const [relayRequestId, pending] of Object.entries(this.clientSocketAttachment(ws).pendingRequests ?? {})) {
-          if (!isPendingRequestAttachment(pending)) {
-            // An attachment we cannot read is a request we cannot route, which
-            // is the same outcome as one naming no machine -- so it gets the
-            // same 502 rather than being dropped for the client to time out.
-            // The id is salvaged when it is there to salvage; when it is not,
-            // detaching is all that can be done, and leaving it would have it
-            // rebuilt on every future rehydrate.
-            unroutable.push({
-              client: ws,
-              id: relayRequestId,
-              kind: "request",
-              clientId: salvagedClientRequestId(pending) ?? relayRequestId,
-            });
-            continue;
-          }
-          if (!pending.machineId) {
-            unroutable.push({
-              client: ws,
-              id: relayRequestId,
-              kind: "request",
-              clientId: pending.clientRequestId,
-            });
-            continue;
-          }
-          this.pendingRequests.set(relayRequestId, {
-            client: ws,
-            clientRequestId: pending.clientRequestId,
-            expiresAt: pending.expiresAt,
-            machineId: pending.machineId,
-          });
-        }
+        this.rebuildPendingRequests(ws, unroutable);
       }
     }
     this.failUnroutableRebuiltWork(unroutable);
@@ -2181,6 +2249,49 @@ export class RelayObject extends DurableObject<Env> {
     try {
       this.send(daemon, { id, type: "project_events_unsubscribe" });
     } catch {}
+  }
+
+  /// Put one socket's in-flight requests back after hibernation.
+  ///
+  /// Used for a client waiting on a daemon and for a daemon waiting on a
+  /// peer: the entry is the same either way, and so is what makes it
+  /// unroutable.
+  private rebuildPendingRequests(
+    ws: WebSocket,
+    unroutable: { client: WebSocket; id: string; kind: "request" | "subscription"; clientId: string }[],
+  ): void {
+    for (const [relayRequestId, pending] of Object.entries(this.clientSocketAttachment(ws).pendingRequests ?? {})) {
+      if (!isPendingRequestAttachment(pending)) {
+        // An attachment we cannot read is a request we cannot route, which is
+        // the same outcome as one naming no machine -- so it gets the same 502
+        // rather than being dropped for the caller to time out. The id is
+        // salvaged when it is there to salvage; when it is not, detaching is
+        // all that can be done, and leaving it would have it rebuilt on every
+        // future rehydrate.
+        unroutable.push({
+          client: ws,
+          id: relayRequestId,
+          kind: "request",
+          clientId: salvagedClientRequestId(pending) ?? relayRequestId,
+        });
+        continue;
+      }
+      if (!pending.machineId) {
+        unroutable.push({
+          client: ws,
+          id: relayRequestId,
+          kind: "request",
+          clientId: pending.clientRequestId,
+        });
+        continue;
+      }
+      this.pendingRequests.set(relayRequestId, {
+        client: ws,
+        clientRequestId: pending.clientRequestId,
+        expiresAt: pending.expiresAt,
+        machineId: pending.machineId,
+      });
+    }
   }
 
   private clientSocketAttachment(ws: WebSocket): ClientSocketAttachment {

@@ -34,6 +34,7 @@ fn operator(project_root: &str, session_id: &str) -> RemoteActor {
         email: None,
         share_id: None,
         share_session_id: None,
+        peer_machine_id: None,
         principal: Some(RemoteOperatorPrincipal {
             id: "prn_1".into(),
             label: "one".into(),
