@@ -791,11 +791,19 @@ export class RelayObject extends DurableObject<Env> {
       // never read. Both are owed another push, and the version is what says
       // so: it is bumped by every write that changes a share.
       //
+      // Compared against the version this report LOADED, which is the only
+      // thing that answers "did somebody else write?". Its own snapshot would
+      // answer the same today only because moving an endpoint does not bump
+      // the version -- and that is a fact about another function, not an
+      // invariant this one should lean on. No test can tell the two apart
+      // while that holds, so there is no gate here, just the comparison that
+      // says what it means.
+      //
       // A plain union would not do: it can only grow, and the rule that a
       // landed refresh stops being retried is what keeps a report from
       // writing storage every thirty seconds for ever.
       held.staleReceivers =
-        held.version === reported.version
+        held.version === stored.shares[id]?.version
           ? reported.staleReceivers
           : unionReceivers(shareReceivers(held), reported.staleReceivers);
       // The later of the two stamps, for the same reason: two reports from one
