@@ -15,9 +15,12 @@ pub fn handle_daemon_runtime_request(
         request,
         |method, path, body, headers| {
             let actor = parse_remote_actor(headers);
-            let needs_project_binding = actor
-                .as_ref()
-                .is_some_and(|actor| actor.role == RemoteActorRole::Operator);
+            let needs_project_binding = actor.as_ref().is_some_and(|actor| {
+                matches!(
+                    actor.role,
+                    RemoteActorRole::Operator | RemoteActorRole::Peer
+                )
+            });
             if needs_project_binding {
                 match runtime.borrow().try_list_projects_for_route() {
                     Ok(projects) => {

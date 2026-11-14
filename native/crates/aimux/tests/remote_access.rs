@@ -674,17 +674,23 @@ fn operator_stream_gate_is_separate_from_buffered_proxy_gate() {
 ///
 /// The owner's own app is stamped `owner`, and the daemon hands those straight
 /// to its whole API. A peer gets its own role so that it can be given routes
-/// deliberately -- and right now it has none, because the first two that
-/// looked narrow were not: a task's description is read back to an overseer as
-/// a briefing, which makes posting one a way to type into the agent that
-/// spawns agents.
+/// deliberately -- and it has exactly one, because the first two that looked
+/// narrow were not: a task's description is read back to an overseer as a
+/// briefing, which makes posting one a way to type into the agent that spawns
+/// agents.
 #[test]
-fn a_peer_machine_may_do_nothing_yet() {
+fn a_peer_machine_may_only_submit_agent_input() {
     for (method, route) in [
         ("POST", project_routes::tasks::ASSIGN),
         ("POST", project_routes::tasks::ACCEPT),
         ("POST", project_routes::agents::KILL),
         ("GET", project_routes::tasks::LIST),
+        // The same handler as the one open route, and still shut: this is the
+        // door a shared guest writes to, and its guest arm keys on a share
+        // session a peer does not have.
+        ("POST", project_routes::live_pane::INPUT),
+        // The right route, the wrong verb.
+        ("GET", project_routes::agents::INPUT),
     ] {
         let refused = allow(
             Some(&peer(Some("mbp"))),
@@ -697,7 +703,7 @@ fn a_peer_machine_may_do_nothing_yet() {
         assert!(!refused.ok, "{method} {route} was allowed");
         assert_eq!(refused.status, Some(403));
         // The refusal names the route rather than saying "denied": a peer is
-        // a program, and the next phase opens exactly one of these.
+        // a program, and one of these is open.
         assert!(
             refused
                 .error
@@ -706,6 +712,164 @@ fn a_peer_machine_may_do_nothing_yet() {
             "{method} {route}: {:?}",
             refused.error
         );
+    }
+
+    let allowed = allow(
+        Some(&peer(Some("mbp"))),
+        "POST",
+        &port_path(project_routes::agents::INPUT),
+        "",
+        Some(&json!({ "sessionId": "claude-abc", "text": "look at the shard numbers" })),
+        Some(PROJECT_ROOT),
+    );
+    assert!(allowed.ok, "{:?}", allowed.error);
+}
+
+/// The allowlist accepts exactly the method spelling the body parser does.
+///
+/// `daemon/server.rs` reads a JSON body on `method == "POST"` and nothing
+/// else, so a case-insensitive compare here would hand this function a
+/// request whose body was never read -- and every body refusal would then
+/// pass by being asked about `None`. Vacuous rather than wrong, which is the
+/// harder kind to notice.
+#[test]
+fn a_peer_route_is_open_on_the_same_post_the_body_parser_reads() {
+    let body = json!({ "sessionId": "claude-abc", "text": "hi" });
+    let route = port_path(project_routes::agents::INPUT);
+    assert!(
+        allow(
+            Some(&peer(Some("mbp"))),
+            "POST",
+            &route,
+            "",
+            Some(&body),
+            Some(PROJECT_ROOT),
+        )
+        .ok
+    );
+    for spelling in ["post", "Post", "pOsT", "GET", "PUT", "DELETE"] {
+        let refused = allow(
+            Some(&peer(Some("mbp"))),
+            spelling,
+            &route,
+            "",
+            Some(&body),
+            Some(PROJECT_ROOT),
+        );
+        assert!(!refused.ok, "{spelling} was allowed");
+        assert_eq!(refused.status, Some(403), "{spelling}");
+        // WHICH refusal, because the method check and the route check used to
+        // share one sentence -- so this test stayed green with either rule
+        // deleted, as long as the other still refused.
+        assert_eq!(
+            refused.error.as_deref(),
+            Some(
+                format!(
+                    "peer machine mbp may only POST to {}",
+                    project_routes::agents::INPUT
+                )
+                .as_str()
+            ),
+            "{spelling}"
+        );
+    }
+}
+
+/// The proxy validates the HOST and not the port, so without a project the
+/// route reaches any loopback port that answers `POST /agents/input` --
+/// including something that is not an Aimux project service at all.
+///
+/// `project_root` is resolved from this daemon's own project list, which is
+/// why a peer is excluded from the proxy fast path: that path builds its
+/// context with an empty list, and an empty list answers "not ours" for every
+/// port including the right one.
+#[test]
+fn a_peer_must_name_a_project_service_this_machine_runs() {
+    let refused = allow(
+        Some(&peer(Some("mbp"))),
+        "POST",
+        &port_path(project_routes::agents::INPUT),
+        "",
+        Some(&json!({ "sessionId": "claude-abc", "text": "hello" })),
+        None,
+    );
+    assert!(!refused.ok);
+    assert_eq!(refused.status, Some(403));
+    assert!(
+        refused
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("not one of this machine's project services")),
+        "{:?}",
+        refused.error
+    );
+}
+
+/// Three things a peer may not put in the body of the one route it has.
+///
+/// Each is refused by its own name, because "403" on an input send sends
+/// somebody reading the allowlist rather than the field they set.
+#[test]
+fn a_peer_may_not_force_attach_or_sign_its_input() {
+    for (field, body, expected) in [
+        (
+            "force",
+            json!({ "sessionId": "claude-abc", "text": "hi", "force": true }),
+            "cannot force unattended delivery",
+        ),
+        (
+            "attachmentIds",
+            json!({ "sessionId": "claude-abc", "text": "hi", "attachmentIds": ["att_1"] }),
+            "cannot attach this machine's files",
+        ),
+        (
+            "sharedChatActor",
+            json!({
+                "sessionId": "claude-abc",
+                "text": "hi",
+                "sharedChatActor": { "role": "owner", "displayName": "Sam" }
+            }),
+            "cannot name the author of its own input",
+        ),
+    ] {
+        let refused = allow(
+            Some(&peer(Some("mbp"))),
+            "POST",
+            &port_path(project_routes::agents::INPUT),
+            "",
+            Some(&body),
+            Some(PROJECT_ROOT),
+        );
+        assert!(!refused.ok, "{field} was allowed");
+        assert_eq!(refused.status, Some(403), "{field}");
+        assert!(
+            refused
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains(expected)),
+            "{field}: {:?}",
+            refused.error
+        );
+    }
+
+    // And the inverse, so the refusals above are not passing on the route
+    // alone: the same route with none of those fields is allowed, and an
+    // absent or false `force` is not a `force`.
+    for body in [
+        json!({ "sessionId": "claude-abc", "text": "hi" }),
+        json!({ "sessionId": "claude-abc", "text": "hi", "force": false }),
+        json!({ "sessionId": "claude-abc", "text": "hi", "attachmentIds": [] }),
+        json!({ "sessionId": "claude-abc", "text": "hi", "sharedChatActor": null }),
+    ] {
+        let allowed = allow(
+            Some(&peer(Some("mbp"))),
+            "POST",
+            &port_path(project_routes::agents::INPUT),
+            "",
+            Some(&body),
+            Some(PROJECT_ROOT),
+        );
+        assert!(allowed.ok, "{body:?}: {:?}", allowed.error);
     }
 }
 
@@ -757,44 +921,53 @@ fn the_same_route_turns_on_who_is_asking() {
 /// did not come from where it claims.
 #[test]
 fn a_peer_that_names_no_machine_is_refused() {
-    let anonymous = allow(
-        Some(&peer(None)),
-        "POST",
-        &port_path(project_routes::tasks::ASSIGN),
-        "",
-        Some(&json!({ "taskId": "t1" })),
-        Some(PROJECT_ROOT),
-    );
+    // On the OPEN route, deliberately. Asserted against a closed route this
+    // test held with the stamp check deleted -- the route was refusing it,
+    // and the thing being tested was never asked. The stamp has to be the
+    // only reason left for a refusal.
+    let open_route = port_path(project_routes::agents::INPUT);
+    let body = json!({ "sessionId": "claude-abc", "text": "hi" });
+    let as_machine = |machine: Option<&str>| {
+        allow(
+            Some(&peer(machine)),
+            "POST",
+            &open_route,
+            "",
+            Some(&body),
+            Some(PROJECT_ROOT),
+        )
+    };
+
+    // The control: a real machine id on this exact request is allowed, so
+    // every refusal below is the stamp and not the route.
+    assert!(as_machine(Some("mbp")).ok);
+
+    let anonymous = as_machine(None);
     assert!(!anonymous.ok);
     assert_eq!(anonymous.status, Some(403));
 
-    let blank = allow(
-        Some(&peer(Some("   "))),
-        "POST",
-        &port_path(project_routes::tasks::ASSIGN),
-        "",
-        Some(&json!({ "taskId": "t1" })),
-        Some(PROJECT_ROOT),
-    );
-    assert!(!blank.ok);
-
-    // `unidentified` is the slot every daemon with no persisted identity
-    // shares, so it is a label rather than a name -- and the refusal has to
-    // say that it did not learn where the frame came from, not quote it back
-    // as though it had.
-    let shared_slot = allow(
-        Some(&peer(Some("unidentified"))),
-        "POST",
-        &port_path(project_routes::tasks::ASSIGN),
-        "",
-        Some(&json!({ "taskId": "t1" })),
-        Some(PROJECT_ROOT),
-    );
-    assert!(!shared_slot.ok);
-    assert_eq!(
-        shared_slot.error.as_deref(),
-        Some("peer request did not say which machine it came from")
-    );
+    // Not merely "non-empty". The stamp is about to be written into the text
+    // an agent reads, and these are the spellings that are not machine ids:
+    // uppercase, a separator, a space, a bracket, and the shared slot every
+    // daemon with no persisted identity uses -- which is a label rather than
+    // a name, so the refusal must say it did not learn where the frame came
+    // from instead of quoting it back as though it had.
+    for stamp in [
+        "   ",
+        "unidentified",
+        "Mbp",
+        "mbp/strix",
+        "mbp strix",
+        "a]b",
+    ] {
+        let refused = as_machine(Some(stamp));
+        assert!(!refused.ok, "{stamp:?} was accepted as a machine id");
+        assert_eq!(
+            refused.error.as_deref(),
+            Some("peer request did not say which machine it came from"),
+            "{stamp:?}"
+        );
+    }
 }
 
 /// A role nobody recognizes must not fall into the peer arm, and the peer

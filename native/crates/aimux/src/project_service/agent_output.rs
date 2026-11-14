@@ -46,8 +46,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use super::agent_input::{
-    agent_sender_prompt, format_agent_input_with_attachments, shared_chat_body_actor_prompt,
-    shared_chat_remote_actor_prompt, shared_chat_trim,
+    agent_input_sender_label, agent_sender_prompt, format_agent_input_with_attachments,
+    looks_like_agent_command, shared_chat_body_actor_prompt, shared_chat_remote_actor_prompt,
+    shared_chat_trim, spans_more_than_one_line,
 };
 use super::agent_input_delivery::{
     AGENT_INPUT_DELIVERY_TASK_NAME, AgentInputDeliveryDecision, AgentInputWindowActivity,
@@ -57,7 +58,9 @@ use super::agent_input_delivery::{
 };
 use super::agent_output_projection::insert_projection_fields;
 use super::attachments::{get_attachment, get_attachment_record};
-use super::coordination_mutations::record_task_input;
+use super::coordination_mutations::{
+    TaskInputTargetCheck, record_task_input, task_input_target_exists,
+};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{
     parse_integer_value, parse_optional_integer, parse_positive_integer_value, query_params,
@@ -2099,6 +2102,63 @@ fn input_live_pane_route(
         // user saw a hard 400 for something the composer let them send.
         return json_error(400, "text is required");
     }
+    // A peer this service cannot identify is refused, not delivered anonymously.
+    //
+    // The daemon already refuses a stamp that is not a machine id, and the
+    // first version of this let such a peer through here and delivered its
+    // text unattributed, on the reasoning that unattributed is honest. It is
+    // not the honest answer: for input from an unidentifiable peer the honest
+    // answer is the one the daemon gives. Delivering it meant the two layers
+    // disagreed with the INNER one more permissive -- and it left the composer
+    // a peer with no label to compose, which is how body `from` came to be the
+    // fallback for "I could not tell who this is".
+    //
+    // WHY IDENTITY IS MIRRORED HERE AND POLICY IS NOT. The daemon also refuses
+    // a peer's `force`, `attachmentIds` and `sharedChatActor`, and those are
+    // deliberately NOT repeated here, so this layer is still the more
+    // permissive one for them. The difference is that this layer composes the
+    // label, so it cannot attribute a peer it cannot identify -- identity is
+    // its own business, and it had to agree. The three fields are policy about
+    // what a peer may ask for, and a second copy of policy is a second thing
+    // to drift. Nothing is lost by it: reaching this service directly means
+    // being on the machine already, and a local caller that simply omits the
+    // peer role is granted MORE than any of those fields would give it.
+    if let Some(peer) = remote_actor
+        .as_ref()
+        .filter(|actor| actor.role == RemoteActorRole::Peer)
+        && !peer
+            .peer_machine_id
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(crate::machine_identity::is_valid_machine_id)
+    {
+        return json_error(403, "peer request did not say which machine it came from");
+    }
+    // A peer's input must be attributed in the pane, and a command cannot be.
+    //
+    // `looks_like_agent_command` text is delivered WITHOUT the sender prefix,
+    // because `[mbp/claude-x] /clear` is read as prose and the command never
+    // runs. For a local sender that is the right trade. For a peer it is the
+    // whole hazard back: `!rm -rf ~/work` from another machine would reach the
+    // pane byte-identical to Sam typing it, and the task row is no backstop
+    // because it is only written when the caller itself names a `task`.
+    //
+    // So the class that cannot carry its attribution is refused rather than
+    // delivered anonymously, which makes "a peer's input is named" true of
+    // every peer input instead of most of them. Decided HERE, next to the
+    // prefix, so the refusal and the prefix cannot disagree about what a
+    // command is -- the same `looks_like_agent_command`, not a second copy in
+    // the daemon's allowlist.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && looks_like_agent_command(&text)
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send a command, because a command carries no sender",
+        );
+    }
     let mut attachments = Vec::new();
     for attachment_id in &attachment_ids {
         let Some(record) = get_attachment_record(
@@ -2116,22 +2176,6 @@ fn input_live_pane_route(
         Err(error) => return json_error(500, error),
     };
     let project_state_dir = context.project_state_dir();
-    // Before the send, so a task id that does not exist refuses the whole
-    // request rather than delivering and recording nothing. A typo that
-    // silently skipped the ledger would reproduce the gap this closes.
-    if let Some(task_id) = body
-        .get("task")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|task_id| !task_id.is_empty())
-        && let Err(error) = record_task_input(
-            &project_state_dir,
-            task_id,
-            body.get("from").and_then(Value::as_str),
-        )
-    {
-        return json_error(400, error);
-    }
     let prompt = compose_prompt_for_delivery(PromptForDelivery {
         attachments: &attachments,
         body,
@@ -2140,6 +2184,64 @@ fn input_live_pane_route(
         session_id: &session_id,
         text,
     });
+    // A peer may not send a SECOND line to a receiver whose lines we cannot
+    // vouch for -- measured on the COMPOSED PROMPT, which is the string that
+    // is actually typed.
+    //
+    // The attribution prefix shields position zero of line one, and that is
+    // all it shields. Where later lines are executed, each one arrives at a
+    // fresh prompt as its own command: `"thanks\nrm -rf ~/work"` is not a
+    // command to `looks_like_agent_command` -- which gives up the moment it
+    // finds a break -- so it was delivered, and line two ran unprefixed.
+    //
+    // Two things were wrong with the first version of this rule, and both were
+    // about asking the question in the wrong place.
+    //
+    // It measured the request's `text` while delivery sends `prompt`, and
+    // `format_agent_input_with_attachments` turns one line plus an attachment
+    // into several. So "one line to a shell is safe" was false for a one-line
+    // peer message carrying `attachmentIds`.
+    //
+    // And it keyed on the literal tool name `shell`, which is one spelling of
+    // a receiver that executes lines. A session whose command is `zsh`, or a
+    // user-defined tool, or anything with no recognized `toolConfigKey`,
+    // resolves to its own command name and was treated as an agent composer.
+    // The question is answered POSITIVELY instead, by the same
+    // `prompt_paste_mode` that delivery itself uses: `claude` and `codex` take
+    // a framed whole body, so their later lines are prose inside one
+    // attributed message, and every other receiver is one whose lines we
+    // cannot vouch for. One list, in the module that owns the distinction.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && spans_more_than_one_line(&prompt)
+        && crate::agent_prompt_delivery::prompt_paste_mode(&prompt, target.tool.as_deref())
+            != crate::agent_prompt_delivery::PromptPasteMode::Framed
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send more than one line to this receiver, because only the first line carries its sender",
+        );
+    }
+    // Rejected here, before the activity probe below, because that probe is a
+    // tmux subprocess and a task id that does not exist should not cost one.
+    // The STAMP still happens after every refusal -- this is the read half of
+    // the same question.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+    {
+        match task_input_target_exists(&project_state_dir, task_id) {
+            TaskInputTargetCheck::Present => {}
+            // The caller's id is wrong.
+            TaskInputTargetCheck::Missing(error) => return json_error(400, error),
+            // This machine's ledger is unreadable, which is not the caller's
+            // fault and not a thing they can fix by correcting anything.
+            TaskInputTargetCheck::Unreadable(error) => return json_error(500, error),
+        }
+    }
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();
     let activity = if force {
@@ -2148,6 +2250,62 @@ fn input_live_pane_route(
         runtime.agent_input_window_activity(&target.window_id)
     };
     let decision = decide_agent_input_delivery(force, activity, now_ms, now_ms);
+    // Never queued, for a peer with more than one line. The rule above asked
+    // about the tool resolved NOW, and a queued delivery re-resolves it at
+    // send time (`resolve_queued_delivery_target`) from a record that carries
+    // no role and no tool -- so a hold is a window in which an agent receiver
+    // can become one whose lines execute, with the multi-line prompt already
+    // approved. Refused rather than re-checked later, because the re-check
+    // would need the role threaded through the queue to be worth anything.
+    //
+    // Matched by REFERENCE so the decision survives for the branch below, and
+    // placed here rather than inside it so that this refusal, like every
+    // other, happens before the ledger write.
+    if let AgentInputDeliveryDecision::Hold { reason, .. } = &decision
+        && remote_actor
+            .as_ref()
+            .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && spans_more_than_one_line(&prompt)
+    {
+        return json_error(
+            409,
+            format!("a peer machine cannot hold more than one line for later delivery ({reason})"),
+        );
+    }
+    // Written only once the request is going to be delivered or held, and
+    // still before the send, so a task id that does not exist refuses the
+    // whole request rather than delivering and recording nothing.
+    //
+    // The ORDER here is the fix round five found. Moving the peer line rule
+    // after the composer (so that it could measure the prompt that is
+    // actually typed) moved it past this write, so a refused peer message
+    // stamped `lastInputBy` and un-paused the agent's loop alerts for input
+    // that never reached the pane -- a ledger row claiming a delegation that
+    // did not happen, and a way for a peer to keep un-silencing a looping
+    // agent with messages this service refuses. Every refusal now precedes
+    // every write.
+    // Still a 400 here, unlike the check above, and not by oversight:
+    // `record_task_input` returns one string for "no such row" and for "could
+    // not read", so this call cannot tell them apart. By this point the ledger
+    // was readable moments ago, which makes the row having been deleted in
+    // between the likelier of the two -- and that is the caller's 400.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+        && let Err(error) = record_task_input(
+            &project_state_dir,
+            task_id,
+            // The same derivation the prefix uses, so the ledger and the pane
+            // cannot name different senders -- and the only record of origin
+            // at all when the text is a bare command, which is delivered
+            // without a prefix because a prefixed command would not run.
+            agent_input_sender_label(body, remote_actor.as_ref()).as_deref(),
+        )
+    {
+        return json_error(400, error);
+    }
     if let Err(error) = clear_loop_alert_pause_for_work(&project_state_dir, &session_id) {
         return json_error(
             500,
@@ -2261,19 +2419,41 @@ struct PromptForDelivery<'a> {
 
 /// Compose context, attribution and attachments before the shared delivery boundary.
 fn compose_prompt_for_delivery(input: PromptForDelivery<'_>) -> String {
-    let input_text = match input
+    // A peer is composed from its stamp and from NOTHING in the body, which is
+    // why it is its own branch rather than the first link of the chain below.
+    //
+    // As a link it was still reachable. The chain ends at
+    // `shared_chat_body_actor_prompt` -- the `sharedChatActor` field, which is
+    // not alphabet-filtered the way a sender id is, so a name in it can close
+    // the bracket and keep writing -- and a peer that reached that arm would
+    // be choosing the name on its own line. The guard against that was an
+    // `or_else` AFTER the peer's own label, so it only ran when the label was
+    // absent; the label helper then fell back to body `from`, came back
+    // `Some("claude-utymep")`, and the guard never ran at all. A local-looking
+    // name on input from a machine whose identity could not be established is
+    // worse than no name.
+    //
+    // The route refuses a peer whose stamp is unusable, so a peer arriving
+    // here has one. If that ever stops being true this delivers the words
+    // unattributed, never under a borrowed name.
+    let input_text = if let Some(peer) = input
         .remote_actor
-        .filter(|actor| actor.role == RemoteActorRole::Guest)
-        .and_then(|actor| shared_chat_remote_actor_prompt(actor, &input.text))
-        .or_else(|| shared_chat_body_actor_prompt(input.body, &input.text))
-        // Last, because a shared-chat guest is the stronger claim about who is
-        // speaking. This one covers the local channel -- one agent sending to
-        // another through `aimux input`, which until now said nothing at all
-        // about where the words came from.
-        .or_else(|| agent_sender_prompt(input.body, &input.text))
+        .filter(|actor| actor.role == RemoteActorRole::Peer)
     {
-        Some(value) => value,
-        None => input.text,
+        agent_sender_prompt(input.body, Some(peer), &input.text)
+            .unwrap_or_else(|| shared_chat_trim(&input.text).to_owned())
+    } else {
+        input
+            .remote_actor
+            .filter(|actor| actor.role == RemoteActorRole::Guest)
+            .and_then(|actor| shared_chat_remote_actor_prompt(actor, &input.text))
+            .or_else(|| shared_chat_body_actor_prompt(input.body, &input.text))
+            // Last, because a shared-chat guest is the stronger claim about who
+            // is speaking. This one covers the local channel -- one agent
+            // sending to another through `aimux input`, which until this phase
+            // said nothing at all about where the words came from.
+            .or_else(|| agent_sender_prompt(input.body, None, &input.text))
+            .unwrap_or(input.text)
     };
     let formatted_text = format_agent_input_with_attachments(&input_text, input.attachments);
     let prompt_context = get_prompt_context_text(input.project_state_dir, input.session_id);
@@ -2732,6 +2912,63 @@ async fn input_live_pane_route_async(
         // user saw a hard 400 for something the composer let them send.
         return json_error(400, "text is required");
     }
+    // A peer this service cannot identify is refused, not delivered anonymously.
+    //
+    // The daemon already refuses a stamp that is not a machine id, and the
+    // first version of this let such a peer through here and delivered its
+    // text unattributed, on the reasoning that unattributed is honest. It is
+    // not the honest answer: for input from an unidentifiable peer the honest
+    // answer is the one the daemon gives. Delivering it meant the two layers
+    // disagreed with the INNER one more permissive -- and it left the composer
+    // a peer with no label to compose, which is how body `from` came to be the
+    // fallback for "I could not tell who this is".
+    //
+    // WHY IDENTITY IS MIRRORED HERE AND POLICY IS NOT. The daemon also refuses
+    // a peer's `force`, `attachmentIds` and `sharedChatActor`, and those are
+    // deliberately NOT repeated here, so this layer is still the more
+    // permissive one for them. The difference is that this layer composes the
+    // label, so it cannot attribute a peer it cannot identify -- identity is
+    // its own business, and it had to agree. The three fields are policy about
+    // what a peer may ask for, and a second copy of policy is a second thing
+    // to drift. Nothing is lost by it: reaching this service directly means
+    // being on the machine already, and a local caller that simply omits the
+    // peer role is granted MORE than any of those fields would give it.
+    if let Some(peer) = remote_actor
+        .as_ref()
+        .filter(|actor| actor.role == RemoteActorRole::Peer)
+        && !peer
+            .peer_machine_id
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(crate::machine_identity::is_valid_machine_id)
+    {
+        return json_error(403, "peer request did not say which machine it came from");
+    }
+    // A peer's input must be attributed in the pane, and a command cannot be.
+    //
+    // `looks_like_agent_command` text is delivered WITHOUT the sender prefix,
+    // because `[mbp/claude-x] /clear` is read as prose and the command never
+    // runs. For a local sender that is the right trade. For a peer it is the
+    // whole hazard back: `!rm -rf ~/work` from another machine would reach the
+    // pane byte-identical to Sam typing it, and the task row is no backstop
+    // because it is only written when the caller itself names a `task`.
+    //
+    // So the class that cannot carry its attribution is refused rather than
+    // delivered anonymously, which makes "a peer's input is named" true of
+    // every peer input instead of most of them. Decided HERE, next to the
+    // prefix, so the refusal and the prefix cannot disagree about what a
+    // command is -- the same `looks_like_agent_command`, not a second copy in
+    // the daemon's allowlist.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && looks_like_agent_command(&text)
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send a command, because a command carries no sender",
+        );
+    }
     let mut attachments = Vec::new();
     for attachment_id in &attachment_ids {
         let Some(record) = get_attachment_record(
@@ -2749,22 +2986,6 @@ async fn input_live_pane_route_async(
         Err(error) => return json_error(500, error),
     };
     let project_state_dir = context.project_state_dir();
-    // Before the send, so a task id that does not exist refuses the whole
-    // request rather than delivering and recording nothing. A typo that
-    // silently skipped the ledger would reproduce the gap this closes.
-    if let Some(task_id) = body
-        .get("task")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|task_id| !task_id.is_empty())
-        && let Err(error) = record_task_input(
-            &project_state_dir,
-            task_id,
-            body.get("from").and_then(Value::as_str),
-        )
-    {
-        return json_error(400, error);
-    }
     let prompt = compose_prompt_for_delivery(PromptForDelivery {
         attachments: &attachments,
         body,
@@ -2773,6 +2994,64 @@ async fn input_live_pane_route_async(
         session_id: &session_id,
         text,
     });
+    // A peer may not send a SECOND line to a receiver whose lines we cannot
+    // vouch for -- measured on the COMPOSED PROMPT, which is the string that
+    // is actually typed.
+    //
+    // The attribution prefix shields position zero of line one, and that is
+    // all it shields. Where later lines are executed, each one arrives at a
+    // fresh prompt as its own command: `"thanks\nrm -rf ~/work"` is not a
+    // command to `looks_like_agent_command` -- which gives up the moment it
+    // finds a break -- so it was delivered, and line two ran unprefixed.
+    //
+    // Two things were wrong with the first version of this rule, and both were
+    // about asking the question in the wrong place.
+    //
+    // It measured the request's `text` while delivery sends `prompt`, and
+    // `format_agent_input_with_attachments` turns one line plus an attachment
+    // into several. So "one line to a shell is safe" was false for a one-line
+    // peer message carrying `attachmentIds`.
+    //
+    // And it keyed on the literal tool name `shell`, which is one spelling of
+    // a receiver that executes lines. A session whose command is `zsh`, or a
+    // user-defined tool, or anything with no recognized `toolConfigKey`,
+    // resolves to its own command name and was treated as an agent composer.
+    // The question is answered POSITIVELY instead, by the same
+    // `prompt_paste_mode` that delivery itself uses: `claude` and `codex` take
+    // a framed whole body, so their later lines are prose inside one
+    // attributed message, and every other receiver is one whose lines we
+    // cannot vouch for. One list, in the module that owns the distinction.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && spans_more_than_one_line(&prompt)
+        && crate::agent_prompt_delivery::prompt_paste_mode(&prompt, target.tool.as_deref())
+            != crate::agent_prompt_delivery::PromptPasteMode::Framed
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send more than one line to this receiver, because only the first line carries its sender",
+        );
+    }
+    // Rejected here, before the activity probe below, because that probe is a
+    // tmux subprocess and a task id that does not exist should not cost one.
+    // The STAMP still happens after every refusal -- this is the read half of
+    // the same question.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+    {
+        match task_input_target_exists(&project_state_dir, task_id) {
+            TaskInputTargetCheck::Present => {}
+            // The caller's id is wrong.
+            TaskInputTargetCheck::Missing(error) => return json_error(400, error),
+            // This machine's ledger is unreadable, which is not the caller's
+            // fault and not a thing they can fix by correcting anything.
+            TaskInputTargetCheck::Unreadable(error) => return json_error(500, error),
+        }
+    }
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();
     let activity = if force {
@@ -2781,6 +3060,62 @@ async fn input_live_pane_route_async(
         tmux_agent_input_window_activity_async(&target.window_id, TMUX_COMMAND_TIMEOUT).await
     };
     let decision = decide_agent_input_delivery(force, activity, now_ms, now_ms);
+    // Never queued, for a peer with more than one line. The rule above asked
+    // about the tool resolved NOW, and a queued delivery re-resolves it at
+    // send time (`resolve_queued_delivery_target`) from a record that carries
+    // no role and no tool -- so a hold is a window in which an agent receiver
+    // can become one whose lines execute, with the multi-line prompt already
+    // approved. Refused rather than re-checked later, because the re-check
+    // would need the role threaded through the queue to be worth anything.
+    //
+    // Matched by REFERENCE so the decision survives for the branch below, and
+    // placed here rather than inside it so that this refusal, like every
+    // other, happens before the ledger write.
+    if let AgentInputDeliveryDecision::Hold { reason, .. } = &decision
+        && remote_actor
+            .as_ref()
+            .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && spans_more_than_one_line(&prompt)
+    {
+        return json_error(
+            409,
+            format!("a peer machine cannot hold more than one line for later delivery ({reason})"),
+        );
+    }
+    // Written only once the request is going to be delivered or held, and
+    // still before the send, so a task id that does not exist refuses the
+    // whole request rather than delivering and recording nothing.
+    //
+    // The ORDER here is the fix round five found. Moving the peer line rule
+    // after the composer (so that it could measure the prompt that is
+    // actually typed) moved it past this write, so a refused peer message
+    // stamped `lastInputBy` and un-paused the agent's loop alerts for input
+    // that never reached the pane -- a ledger row claiming a delegation that
+    // did not happen, and a way for a peer to keep un-silencing a looping
+    // agent with messages this service refuses. Every refusal now precedes
+    // every write.
+    // Still a 400 here, unlike the check above, and not by oversight:
+    // `record_task_input` returns one string for "no such row" and for "could
+    // not read", so this call cannot tell them apart. By this point the ledger
+    // was readable moments ago, which makes the row having been deleted in
+    // between the likelier of the two -- and that is the caller's 400.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+        && let Err(error) = record_task_input(
+            &project_state_dir,
+            task_id,
+            // The same derivation the prefix uses, so the ledger and the pane
+            // cannot name different senders -- and the only record of origin
+            // at all when the text is a bare command, which is delivered
+            // without a prefix because a prefixed command would not run.
+            agent_input_sender_label(body, remote_actor.as_ref()).as_deref(),
+        )
+    {
+        return json_error(400, error);
+    }
     if let Err(error) = clear_loop_alert_pause_for_work(&project_state_dir, &session_id) {
         return json_error(
             500,
