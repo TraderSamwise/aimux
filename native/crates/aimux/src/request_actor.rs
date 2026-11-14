@@ -188,7 +188,16 @@ pub fn assert_remote_access_allowed(
 /// `POST /agents/input` -- including something that is not an Aimux project
 /// service at all. `context.project_root` is resolved from this daemon's real
 /// project list, so a port that is not one of this machine's project services
-/// has no project root and is refused.
+/// has no project root and is refused. What `Some` proves is narrow and
+/// enough: exactly one registry project of this daemon, with a live service,
+/// records this host and port.
+///
+/// It does NOT consult the project-owner records, and that is deliberate
+/// rather than overlooked. Ownership says which machine owns a checkout, so
+/// that a session is steered from one place; it does not say which of this
+/// account's own machines may speak to an agent this machine is already
+/// running. Every peer here is one of Sam's Macs, and the question this gate
+/// answers is "is the thing on that port mine", not "whose checkout is it".
 fn assert_peer_allowed(
     actor: &RemoteActor,
     method: &str,
@@ -221,12 +230,16 @@ fn assert_peer_allowed(
     let refuse_route = || {
         RemoteAccessDecision::deny(
             403,
-            format!("no route is open to peer machine {origin} yet: {route}"),
+            format!("no route is open to peer machine {origin}: {route}"),
         )
     };
-    if !method.eq_ignore_ascii_case("POST")
-        || proxy_sub_path.as_deref() != Some(project_routes::agents::INPUT)
-    {
+    // `== "POST"`, not a case-insensitive compare, because the body parser is
+    // exact (`daemon/server.rs:56`) and the two must agree about what a POST
+    // is. Accepting `post` here would hand this function a request whose body
+    // was never read, which makes every body check below pass by being asked
+    // about `None` -- the field refusals would be vacuous rather than wrong,
+    // which is harder to notice.
+    if method != "POST" || proxy_sub_path.as_deref() != Some(project_routes::agents::INPUT) {
         // `live_pane::INPUT` shares a handler with the route above and is
         // deliberately NOT here: it is the door a shared guest writes to, and
         // its guest arm keys on a share session a peer does not have.

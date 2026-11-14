@@ -725,6 +725,42 @@ fn a_peer_machine_may_only_submit_agent_input() {
     assert!(allowed.ok, "{:?}", allowed.error);
 }
 
+/// The allowlist accepts exactly the method spelling the body parser does.
+///
+/// `daemon/server.rs` reads a JSON body on `method == "POST"` and nothing
+/// else, so a case-insensitive compare here would hand this function a
+/// request whose body was never read -- and every body refusal would then
+/// pass by being asked about `None`. Vacuous rather than wrong, which is the
+/// harder kind to notice.
+#[test]
+fn a_peer_route_is_open_on_the_same_post_the_body_parser_reads() {
+    let body = json!({ "sessionId": "claude-abc", "text": "hi" });
+    let route = port_path(project_routes::agents::INPUT);
+    assert!(
+        allow(
+            Some(&peer(Some("mbp"))),
+            "POST",
+            &route,
+            "",
+            Some(&body),
+            Some(PROJECT_ROOT),
+        )
+        .ok
+    );
+    for spelling in ["post", "Post", "pOsT"] {
+        let refused = allow(
+            Some(&peer(Some("mbp"))),
+            spelling,
+            &route,
+            "",
+            Some(&body),
+            Some(PROJECT_ROOT),
+        );
+        assert!(!refused.ok, "{spelling} was allowed");
+        assert_eq!(refused.status, Some(403), "{spelling}");
+    }
+}
+
 /// The proxy validates the HOST and not the port, so without a project the
 /// route reaches any loopback port that answers `POST /agents/input` --
 /// including something that is not an Aimux project service at all.

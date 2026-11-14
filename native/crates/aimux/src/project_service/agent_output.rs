@@ -47,7 +47,8 @@ use std::time::{Duration, Instant};
 
 use super::agent_input::{
     agent_input_sender_label, agent_sender_prompt, format_agent_input_with_attachments,
-    shared_chat_body_actor_prompt, shared_chat_remote_actor_prompt, shared_chat_trim,
+    looks_like_agent_command, shared_chat_body_actor_prompt, shared_chat_remote_actor_prompt,
+    shared_chat_trim,
 };
 use super::agent_input_delivery::{
     AGENT_INPUT_DELIVERY_TASK_NAME, AgentInputDeliveryDecision, AgentInputWindowActivity,
@@ -2099,6 +2100,31 @@ fn input_live_pane_route(
         // user saw a hard 400 for something the composer let them send.
         return json_error(400, "text is required");
     }
+    // A peer's input must be attributed in the pane, and a command cannot be.
+    //
+    // `looks_like_agent_command` text is delivered WITHOUT the sender prefix,
+    // because `[mbp/claude-x] /clear` is read as prose and the command never
+    // runs. For a local sender that is the right trade. For a peer it is the
+    // whole hazard back: `!rm -rf ~/work` from another machine would reach the
+    // pane byte-identical to Sam typing it, and the task row is no backstop
+    // because it is only written when the caller itself names a `task`.
+    //
+    // So the class that cannot carry its attribution is refused rather than
+    // delivered anonymously, which makes "a peer's input is named" true of
+    // every peer input instead of most of them. Decided HERE, next to the
+    // prefix, so the refusal and the prefix cannot disagree about what a
+    // command is -- the same `looks_like_agent_command`, not a second copy in
+    // the daemon's allowlist.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && looks_like_agent_command(&text)
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send a command, because a command carries no sender",
+        );
+    }
     let mut attachments = Vec::new();
     for attachment_id in &attachment_ids {
         let Some(record) = get_attachment_record(
@@ -2272,11 +2298,19 @@ fn compose_prompt_for_delivery(input: PromptForDelivery<'_>) -> String {
     // the way a sender id is, so the name could close the bracket and keep
     // writing. The allowlist refuses such a body as well; this is the half
     // that does not depend on the route it arrived by.
-    let peer_sender = input
+    let peer = input
         .remote_actor
-        .filter(|actor| actor.role == RemoteActorRole::Peer)
-        .and_then(|actor| agent_sender_prompt(input.body, Some(actor), &input.text));
+        .filter(|actor| actor.role == RemoteActorRole::Peer);
+    let peer_sender =
+        peer.and_then(|actor| agent_sender_prompt(input.body, Some(actor), &input.text));
+    // A peer whose stamp is unusable gets NO author from the body either. The
+    // chain below ends at `shared_chat_body_actor_prompt`, the field that is
+    // not alphabet-filtered, so falling through would hand exactly the caller
+    // whose identity could not be established the one prefix it can write
+    // freely. Unattributed is the honest answer there; the label is absent
+    // rather than borrowed.
     let input_text = match peer_sender
+        .or_else(|| peer.map(|_| shared_chat_trim(&input.text).to_owned()))
         .or_else(|| {
             input
                 .remote_actor
@@ -2749,6 +2783,31 @@ async fn input_live_pane_route_async(
         // refused a `"\u{85}"`-only line that the app had accepted, so the
         // user saw a hard 400 for something the composer let them send.
         return json_error(400, "text is required");
+    }
+    // A peer's input must be attributed in the pane, and a command cannot be.
+    //
+    // `looks_like_agent_command` text is delivered WITHOUT the sender prefix,
+    // because `[mbp/claude-x] /clear` is read as prose and the command never
+    // runs. For a local sender that is the right trade. For a peer it is the
+    // whole hazard back: `!rm -rf ~/work` from another machine would reach the
+    // pane byte-identical to Sam typing it, and the task row is no backstop
+    // because it is only written when the caller itself names a `task`.
+    //
+    // So the class that cannot carry its attribution is refused rather than
+    // delivered anonymously, which makes "a peer's input is named" true of
+    // every peer input instead of most of them. Decided HERE, next to the
+    // prefix, so the refusal and the prefix cannot disagree about what a
+    // command is -- the same `looks_like_agent_command`, not a second copy in
+    // the daemon's allowlist.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && looks_like_agent_command(&text)
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send a command, because a command carries no sender",
+        );
     }
     let mut attachments = Vec::new();
     for attachment_id in &attachment_ids {
