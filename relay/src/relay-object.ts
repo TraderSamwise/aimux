@@ -107,6 +107,10 @@ const BIND_SHARE_REFUSALS: Record<BindShareRefusal, { status: number; error: str
     status: 409,
     error: "That machine has not reported the checkout this share names",
   },
+  "machine-still-holds-the-stored-checkout": {
+    status: 409,
+    error: "That machine still has the checkout this share names, so this is not a rename",
+  },
 };
 /// How many project endpoints one `project_endpoints` frame may report.
 ///
@@ -768,16 +772,36 @@ export class RelayObject extends DurableObject<Env> {
       const reported = state.shares[id];
       // The daemon is the authority on where its own service is listening,
       // and `updated` is exactly the set whose endpoint this report moved.
-      if (held && reported?.serviceEndpoint) held.serviceEndpoint = { ...reported.serviceEndpoint };
+      // `updatedAt` travels with it, because it is the stamp that move set
+      // and it is what orders the records when the store is trimmed.
+      if (held && reported?.serviceEndpoint) {
+        held.serviceEndpoint = { ...reported.serviceEndpoint };
+        held.updatedAt = reported.updatedAt;
+      }
     }
     for (const id of refresh) {
       const held = fresh.shares[id];
       const reported = state.shares[id];
       if (!held || !reported) continue;
-      // Both of these are this path's own bookkeeping: who is owed a refresh,
-      // and whose turn it has had. Nothing else writes them.
-      held.lastReceiverRefreshAt = reported.lastReceiverRefreshAt;
-      held.staleReceivers = reported.staleReceivers;
+      // What this report could not reach -- unless the record changed while it
+      // was reaching. Every summary it pushed was built from its own snapshot,
+      // so a bind landing in the window means the guests it "successfully
+      // refreshed" were handed the copy from before that bind, and the ones
+      // the bind itself could not reach were recorded on a record this path
+      // never read. Both are owed another push, and the version is what says
+      // so: it is bumped by every write that changes a share.
+      //
+      // A plain union would not do: it can only grow, and the rule that a
+      // landed refresh stops being retried is what keeps a report from
+      // writing storage every thirty seconds for ever.
+      held.staleReceivers =
+        held.version === reported.version
+          ? reported.staleReceivers
+          : unionReceivers(shareReceivers(held), reported.staleReceivers);
+      // The later of the two stamps, for the same reason: two reports from one
+      // machine overlap on connect-plus-reminder, and taking whichever
+      // finished last would move the fairness cursor backwards.
+      held.lastReceiverRefreshAt = laterTimestamp(held.lastReceiverRefreshAt, reported.lastReceiverRefreshAt);
     }
     // One machine's entry, not the whole index. Assigning the map wholesale
     // reverted whatever another machine had reported in the window -- and a
@@ -2513,6 +2537,23 @@ function shareReceivers(share: SharedSessionRecord): string[] {
 /// order, so on a share whose guests were accepted out of alphabetical order
 /// an unsorted comparison reads as a change every time -- a storage write
 /// every thirty seconds, for ever, recording the same failures.
+/// Everyone owed a copy once a record changed underneath a report.
+///
+/// Over-retrying costs a subrequest; under-retrying leaves a guest holding a
+/// copy nothing will ever correct.
+function unionReceivers(held?: string[], reported?: string[]): string[] | undefined {
+  const owed = [...new Set([...(held ?? []), ...(reported ?? [])])].sort();
+  return owed.length > 0 ? owed : undefined;
+}
+
+/// The later of two stamps, with absence meaning "no turn yet" rather than
+/// "a turn at the beginning of time".
+function laterTimestamp(held?: string, reported?: string): string | undefined {
+  if (!held) return reported;
+  if (!reported) return held;
+  return Date.parse(reported) > Date.parse(held) ? reported : held;
+}
+
 function recordStaleReceivers(share: SharedSessionRecord, receivers: string[]): boolean {
   const stale = [...receivers].sort();
   const held = share.staleReceivers ?? [];

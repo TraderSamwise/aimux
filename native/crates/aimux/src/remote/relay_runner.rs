@@ -395,6 +395,12 @@ impl RelayRunner {
                     // senders; otherwise each one waits out its whole
                     // deadline for an answer that can no longer arrive.
                     self.fail_peer_waiters();
+                    // And nothing is being written any more. Left set -- which
+                    // an aborted pump does -- the marker makes the NEXT
+                    // request's frame unwithdrawable, so a frame that never
+                    // left would be reported as one that might have acted,
+                    // and then sent for real on the reconnect.
+                    self.mark_writing(None);
                     // The ladder resets on a connection that HELD, not on one
                     // that opened. Resetting on Ok meant a socket dying a
                     // second later reset it too, so the backoff never engaged

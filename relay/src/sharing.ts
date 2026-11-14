@@ -461,9 +461,14 @@ export function findShareForSession(
 
 /// Why an existing share could not be bound to a machine.
 ///
-/// Two, because there are two ways to be wrong: the share is not the owner's
-/// to move, or the machine does not look like it holds that checkout.
-export type BindShareRefusal = "no-such-share" | "machine-does-not-hold-checkout";
+/// Three ways to be wrong: the share is not the owner's to move, the machine
+/// does not look like it holds that checkout, or the checkout is being
+/// changed on a machine that still has the one the share names -- which is a
+/// relocation dressed as a rename.
+export type BindShareRefusal =
+  | "no-such-share"
+  | "machine-does-not-hold-checkout"
+  | "machine-still-holds-the-stored-checkout";
 
 export interface BindShareMachineInput {
   owner: ShareActor;
@@ -523,10 +528,20 @@ export function bindShareToMachine(state: SharingState, input: BindShareMachineI
   }
 
   // The machine has to look like it holds the checkout. Without this a bind
-  // is a free hand: nothing else says the target has that project, let alone
-  // that session, so one press from the wrong machine could hand accepted
-  // guests a different agent's transcript -- which is worse than the refusal
-  // it replaced, not better.
+  // is a free hand: nothing here says the target has the project at all, so a
+  // press from a machine that does not could point a share at a service that
+  // has never heard of it.
+  //
+  // It does NOT establish that the target has that SESSION, and it cannot: a
+  // session id is unique within a project service, not across the fleet, so
+  // one checkout on two machines can hold two different `claude-1`s and this
+  // passes for both. Pointing a share at the wrong one hands its guests the
+  // other agent's transcript. Nothing available here tells them apart -- the
+  // relay knows machines, roots and ports, never sessions -- so what stands
+  // between the owner and that mistake is the button naming the machine it
+  // would pick, and the press being repeatable from the right one. Written
+  // out because the first version of this comment claimed the check stopped
+  // it.
   //
   // The evidence is the endpoint report, which is what the routing already
   // narrows on. Asked per machine, not of the index as a whole: a machine
@@ -535,13 +550,25 @@ export function bindShareToMachine(state: SharingState, input: BindShareMachineI
   // come -- and refusing those withholds the repair on the strength of an
   // absence. A machine that HAS reported and did not name this checkout is a
   // different answer, and a refusal.
+  const storedRoot = shareProjectRootKey(share.projectRoot);
   const wantedRoot = shareProjectRootKey(input.projectRoot?.trim() || share.projectRoot);
   const reported = claimedProjectRoots(current.machineProjectRoots, machineId);
   if (reported.length > 0 && !reported.includes(wantedRoot)) {
     return { ok: false, refusal: "machine-does-not-hold-checkout" };
   }
 
-  const movedCheckout = wantedRoot !== shareProjectRootKey(share.projectRoot) ? input.projectRoot?.trim() : undefined;
+  // Changing the share's checkout is for one case: the path moved or was
+  // renamed, so the machine reports a root the share has never heard of while
+  // the one it stores is gone. If the target still HAS the stored root this is
+  // not a rename -- it is being told to carry the share's guests into another
+  // project on the same machine, which they never accepted and nobody asked
+  // for. With no report from that machine at all there is no evidence either
+  // way, so the root stays and only the machine moves.
+  const changingRoot = wantedRoot !== storedRoot;
+  if (changingRoot && (reported.length === 0 || reported.includes(storedRoot))) {
+    return { ok: false, refusal: "machine-still-holds-the-stored-checkout" };
+  }
+  const movedCheckout = changingRoot ? input.projectRoot?.trim() : undefined;
   // Nothing to write, so nothing is written: a repeated bind must not bump the
   // version every time and hand every guest a pointless refresh.
   if (!movedCheckout && sanitizeShareMachineId(share.machineId) === machineId) {

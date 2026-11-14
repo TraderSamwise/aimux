@@ -709,7 +709,10 @@ describe("binding a share that already exists", () => {
         machineId: "strix",
       }),
     ).toEqual({ ok: false, refusal: "machine-does-not-hold-checkout" });
-    expect(Object.values(elsewhere.shares)[0].machineId).toBe("mbp");
+    // Read back from the store, not from the object handed in: the rule works
+    // on a normalized clone, so asserting the input proves only that the
+    // input was not mutated -- which it would not have been either way.
+    expect(normalizeSharingState(elsewhere).shares[first.token.share.id].machineId).toBe("mbp");
   });
 
   // A checkout that was renamed or moved leaves the stored root behind, and
@@ -734,6 +737,40 @@ describe("binding a share that already exists", () => {
     expect(Object.keys(bound.state.shares), "still one share").toHaveLength(1);
   });
 
+  // A machine that still has the checkout the share names is not a machine
+  // whose checkout was renamed. Allowing the change there would carry the
+  // share's guests into another project on the same machine -- one they never
+  // accepted, and nobody asked for.
+  it("refuses to change the checkout on a machine that still has the stored one", async () => {
+    const first = await invite(emptySharingState(), "mbp", "/repo/aimux");
+    const both = reporting(first.state, { mbp: ["/repo/aimux", "/repo/other"] });
+
+    expect(
+      bindShareToMachine(both, {
+        owner,
+        shareId: first.token.share.id,
+        machineId: "mbp",
+        projectRoot: "/repo/other",
+      }),
+    ).toEqual({ ok: false, refusal: "machine-still-holds-the-stored-checkout" });
+    expect(normalizeSharingState(both).shares[first.token.share.id].projectRoot).toBe("/repo/aimux");
+  });
+
+  // And with nothing reported there is no evidence either way, so the root
+  // stays where it is rather than following a claim nothing supports.
+  it("refuses to change the checkout on the word of a machine that reports nothing", async () => {
+    const first = await invite(emptySharingState(), undefined, "/repo/aimux");
+
+    expect(
+      bindShareToMachine(first.state, {
+        owner,
+        shareId: first.token.share.id,
+        machineId: "mbp",
+        projectRoot: "/repo/somewhere-else",
+      }),
+    ).toEqual({ ok: false, refusal: "machine-still-holds-the-stored-checkout" });
+  });
+
   // And the caller's checkout is still checked against the report, so a
   // rename is not a way to point a share anywhere at all.
   it("refuses a checkout the machine has not reported either", async () => {
@@ -748,7 +785,7 @@ describe("binding a share that already exists", () => {
         projectRoot: "/repo/somewhere-else",
       }),
     ).toEqual({ ok: false, refusal: "machine-does-not-hold-checkout" });
-    expect(Object.values(renamed.shares)[0].projectRoot).toBe("/repo/old-name");
+    expect(normalizeSharingState(renamed).shares[first.token.share.id].projectRoot).toBe("/repo/old-name");
   });
 
   // Nothing reported at all is nothing to check against -- an older daemon,
@@ -797,7 +834,7 @@ describe("binding a share that already exists", () => {
         machineId: "theirs",
       }),
     ).toEqual({ ok: false, refusal: "no-such-share" });
-    expect(Object.values(reported.shares)[0].machineId).toBeUndefined();
+    expect(normalizeSharingState(reported).shares[legacy.token.share.id].machineId).toBeUndefined();
   });
 
   it("refuses a share id nothing holds", async () => {

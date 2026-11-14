@@ -1859,6 +1859,74 @@ describe("RelayObject saving a report over what landed while it ran", () => {
     expect(state!.shares[shareId].serviceEndpoint?.port).toBe(8443);
   });
 
+  // The bind pushes the same summary to the same guests, and records the ones
+  // it could not reach. This path cannot see that, and carrying its own
+  // snapshot over the top lost them -- so the guest kept an unroutable copy
+  // and nothing was owed, which no later report would notice because the
+  // endpoint matches by then.
+  it("keeps the guests a bind in the window could not reach", async () => {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const storage = storageWithSockets([mbp]);
+    let bindDuringFanOut: (() => Promise<void>) | undefined;
+    // The bind's own push fails; the report's succeeds. That is the ordering
+    // that loses a guest.
+    let failTheUpsert = false;
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({
+          fetch: vi.fn(async (url: string) => {
+            if (!String(url).includes("/internal/accepted-shares/upsert")) {
+              return new Response("{}", { status: 200 });
+            }
+            if (failTheUpsert) return new Response("nope", { status: 500 });
+            const pressing = bindDuringFanOut;
+            bindDuringFanOut = undefined;
+            if (pressing) await pressing();
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const report = (port: number) =>
+      object.webSocketMessage(
+        mbp,
+        JSON.stringify({
+          type: "project_endpoints",
+          projects: [{ projectRoot: "/Users/sam/cs/scratch", host: "relay.aimux.app", port }],
+        }),
+      );
+    await report(443);
+
+    let bindRan = false;
+    bindDuringFanOut = async () => {
+      bindRan = true;
+      failTheUpsert = true;
+      const bound = await object.fetch(
+        request("https://relay.aimux.app/shares/bind", {
+          method: "POST",
+          userId: "user_owner",
+          name: "Owner",
+          email: "owner@example.com",
+          body: { shareId, machineId: "mbp", projectRoot: "/Users/sam/cs/scratch" },
+        }),
+      );
+      expect(bound.status, "the premise: the bind succeeded").toBe(200);
+      expect(await bound.json(), "the premise: its push failed").toMatchObject({
+        staleReceivers: ["user_guest"],
+      });
+      failTheUpsert = false;
+    };
+    await report(8443);
+    expect(bindRan, "the premise: the bind landed inside the fan-out").toBe(true);
+
+    const state = await storage.get<{
+      shares: Record<string, { staleReceivers?: string[] }>;
+    }>("sharing-state:v1");
+    expect(state!.shares[shareId].staleReceivers, "the guest is still owed a copy").toEqual(["user_guest"]);
+  });
+
   it("keeps the roots another machine reported while this report ran", async () => {
     const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
     const strix = fakeSocket(["daemon", "user:user_owner", "machine:strix", "machineName:sam-strix"]);
