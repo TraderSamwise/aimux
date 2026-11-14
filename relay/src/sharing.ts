@@ -529,13 +529,15 @@ export function bindShareToMachine(state: SharingState, input: BindShareMachineI
   // it replaced, not better.
   //
   // The evidence is the endpoint report, which is what the routing already
-  // narrows on. Nothing reported at all means nothing to check against -- an
-  // older daemon, or a relay that has just restarted -- and in that case this
-  // can only refuse every bind, so it allows and the routing stays as unsure
-  // as it was.
+  // narrows on. Asked per machine, not of the index as a whole: a machine
+  // that has told us nothing is a machine we know nothing about -- an older
+  // daemon, or one that connected a moment ago whose first report is still to
+  // come -- and refusing those withholds the repair on the strength of an
+  // absence. A machine that HAS reported and did not name this checkout is a
+  // different answer, and a refusal.
   const wantedRoot = shareProjectRootKey(input.projectRoot?.trim() || share.projectRoot);
-  const reported = current.machineProjectRoots ?? {};
-  if (Object.keys(reported).length > 0 && !claimedProjectRoots(reported, machineId).includes(wantedRoot)) {
+  const reported = claimedProjectRoots(current.machineProjectRoots, machineId);
+  if (reported.length > 0 && !reported.includes(wantedRoot)) {
     return { ok: false, refusal: "machine-does-not-hold-checkout" };
   }
 

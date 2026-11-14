@@ -766,6 +766,26 @@ describe("binding a share that already exists", () => {
     expect(bound.ok).toBe(true);
   });
 
+  // Asked per machine rather than of the index as a whole. A machine that has
+  // just connected has not reported yet, and its first report is up to thirty
+  // seconds away -- refusing it because OTHER machines have reported would
+  // withhold the repair on the strength of an absence, and the owner pressing
+  // again a moment later is not a fix, it is a coin toss.
+  it("allows a bind to a machine that has not reported, while others have", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+    const othersReported = reporting(legacy.state, { strix: ["/repo/aimux"] });
+
+    const bound = bindShareToMachine(othersReported, {
+      owner,
+      shareId: legacy.token.share.id,
+      machineId: "mbp",
+    });
+
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) return;
+    expect(bound.share.machineId).toBe("mbp");
+  });
+
   it("refuses a share id that is not the caller's", async () => {
     const legacy = await invite(emptySharingState(), undefined);
     const reported = reporting(legacy.state, { theirs: ["/repo/aimux"] });
