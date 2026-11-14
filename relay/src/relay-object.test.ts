@@ -247,6 +247,10 @@ describe("RelayObject recording which machine owns a checkout", () => {
       ok: false,
       refusal: "held-by-a-connected-machine",
       heldBy: { machineId: "mbp" },
+      // In the sentence, because the sentence is the only part that reaches a
+      // person: the CLI's relay client returns `error` and drops every field
+      // beside it, so the name in `heldBy` was a name nobody ever saw.
+      error: "Another machine owns that checkout and is connected right now: mbp",
     });
   });
 

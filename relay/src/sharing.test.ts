@@ -1923,10 +1923,37 @@ describe("which machine owns a checkout", () => {
         connectedMachineIds: ["mbp"],
       }),
     ).toEqual({ ok: false, refusal: "too-many-owned-checkouts" });
-    // The record that would have been dropped is still there, and the one
-    // that would have replaced it never arrived.
-    expect(full.projectOwners?.["/mm/repo-0000"]).toBeDefined();
-    expect(full.projectOwners?.["/zz/above-them-all"]).toBeUndefined();
+  });
+
+  // These keys are paths a daemon reported, so a plain property read answers
+  // from the prototype: a checkout called `constructor` made the read-back see
+  // a record that was never stored, and the route said "this machine now owns
+  // constructor". The hazard is documented in the same file for the same
+  // reason, and the first version of this check used the plain read anyway.
+  it("is not fooled by a checkout named after something on Object", () => {
+    // The prototype-named key has to be the one the ceiling DROPS, and the
+    // five hundred already there have to survive -- otherwise the eviction
+    // half of the check catches it and the prototype read is never asked the
+    // question. My first attempt at this test got that backwards and passed
+    // with the plain read restored.
+    const owners = Object.fromEntries(
+      Array.from({ length: 500 }, (_, index) => [
+        `zz/repo-${String(index).padStart(4, "0")}`,
+        { machineId: "mbp", claimedAt: "2026-11-15T00:00:00.000Z" },
+      ]),
+    );
+    const full = {
+      ...reported({ mbp: ["constructor"] }),
+      projectOwners: owners,
+    } as SharingState;
+
+    expect(
+      claimProjectOwner(full, {
+        projectRoot: "constructor",
+        machineId: "mbp",
+        connectedMachineIds: ["mbp"],
+      }),
+    ).toEqual({ ok: false, refusal: "too-many-owned-checkouts" });
   });
 
   // `unidentified` is the slot every daemon without a persisted identity

@@ -305,7 +305,13 @@ export function claimProjectOwner(
   // its own key, and the test I wrote for it picked a key that sorted below
   // all the others, which proved exactly the half that was already safe.
   const kept = recorded.projectOwners ?? {};
-  const lost = !kept[rootKey] || Object.keys(before).some((key) => !kept[key]);
+  // `Object.hasOwn`, because these keys are paths a daemon reported and a
+  // plain read answers from the prototype: a checkout called `constructor`
+  // made this see a record that was never stored, and the route then said
+  // "this machine now owns constructor". The hazard is documented in this
+  // same file for the same reason, seventy lines up, and I still wrote the
+  // plain read.
+  const lost = !Object.hasOwn(kept, rootKey) || Object.keys(before).some((key) => !Object.hasOwn(kept, key));
   if (lost) {
     return { ok: false, refusal: "too-many-owned-checkouts" };
   }

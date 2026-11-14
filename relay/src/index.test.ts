@@ -270,6 +270,26 @@ describe("relay CORS", () => {
     );
     expect(fromBrowser.status).toBe(403);
     expect(objectFetch).toHaveBeenCalledTimes(1);
+
+    // The read too, not only the claim: its answer is machine ids and
+    // absolute paths, and the CLI is the only thing that asks.
+    const readFromBrowser = await relay.fetch(
+      new Request("https://relay.aimux.app/projects/owners", {
+        method: "GET",
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+      env,
+    );
+    expect(readFromBrowser.status).toBe(403);
+
+    const readFromCli = await relay.fetch(
+      new Request("https://relay.aimux.app/projects/owners", {
+        method: "GET",
+        headers: { Authorization: `Bearer ${daemonToken}` },
+      }),
+      env,
+    );
+    expect(readFromCli.status).toBe(200);
   });
 
   it("allows Clerk tokens to read but not mutate owner device security", async () => {
