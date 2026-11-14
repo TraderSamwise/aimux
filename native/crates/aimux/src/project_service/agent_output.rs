@@ -58,7 +58,7 @@ use super::agent_input_delivery::{
 };
 use super::agent_output_projection::insert_projection_fields;
 use super::attachments::{get_attachment, get_attachment_record};
-use super::coordination_mutations::record_task_input;
+use super::coordination_mutations::{record_task_input, task_input_target_exists};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{
     parse_integer_value, parse_optional_integer, parse_positive_integer_value, query_params,
@@ -2221,6 +2221,19 @@ fn input_live_pane_route(
             "a peer machine cannot send more than one line to this receiver, because only the first line carries its sender",
         );
     }
+    // Rejected here, before the activity probe below, because that probe is a
+    // tmux subprocess and a task id that does not exist should not cost one.
+    // The STAMP still happens after every refusal -- this is the read half of
+    // the same question.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+        && let Err(error) = task_input_target_exists(&project_state_dir, task_id)
+    {
+        return json_error(400, error);
+    }
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();
     let activity = if force {
@@ -3006,6 +3019,19 @@ async fn input_live_pane_route_async(
             403,
             "a peer machine cannot send more than one line to this receiver, because only the first line carries its sender",
         );
+    }
+    // Rejected here, before the activity probe below, because that probe is a
+    // tmux subprocess and a task id that does not exist should not cost one.
+    // The STAMP still happens after every refusal -- this is the read half of
+    // the same question.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+        && let Err(error) = task_input_target_exists(&project_state_dir, task_id)
+    {
+        return json_error(400, error);
     }
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();

@@ -3257,7 +3257,18 @@ fn agent_input_holds_for_recent_active_client_then_flushes_from_queue() {
     let queued = agent_input_delivery_backlog_snapshot(&state_dir);
     assert_eq!(queued.status, BacklogMetricStatus::Ok);
     assert_eq!(queued.current_depth, Some(1));
-    assert_eq!(queued.high_water_mark, Some(1));
+    // At least one, for the reason this file already gives twenty lines below
+    // about the drained mark: the high-water mark lives in a registry keyed by
+    // metric NAME and shared by every test in this binary, so any other test
+    // holding a queued entry at the same moment raises it. As an equality this
+    // passed only while nothing else in the file ever queued anything, and it
+    // went red on CI -- under a different thread interleaving -- the moment a
+    // peer-hold test did. `current_depth` above is the per-project number and
+    // is the one that says this request was queued.
+    assert!(
+        queued.high_water_mark.is_some_and(|mark| mark >= 1),
+        "the queue was filled: {queued:?}"
+    );
 
     runtime
         .input_activity

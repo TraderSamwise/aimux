@@ -20,7 +20,9 @@ use super::agent_output::{
 use super::agents::{resolve_direct_teammates, topology_desktop_verified_session_list_for_context};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
-use super::runtime_exchange::{runtime_exchange_path, update_runtime_exchange};
+use super::runtime_exchange::{
+    read_runtime_exchange, runtime_exchange_path, update_runtime_exchange,
+};
 use super::scheduler::scheduler_now_ms;
 use super::team::load_team_config;
 
@@ -1036,6 +1038,28 @@ fn task_lifecycle(
 ///
 /// A task id that does not exist is an ERROR, not a silent no-op. A typo that
 /// quietly records nothing would reproduce exactly the hole this closes.
+/// Whether a task id names a real row, without writing anything.
+///
+/// `record_task_input` answers the same question, but it answers it by
+/// writing. The input route has to reject a bad task id BEFORE it probes tmux
+/// for window activity -- that probe is a subprocess, and a typo should not
+/// cost one -- while the stamp itself has to happen after every refusal, so
+/// that a refused message never leaves a row claiming it was delivered. One
+/// question, asked in two places, because the answer is needed at two
+/// different costs.
+pub fn task_input_target_exists(project_state_dir: &Path, task_id: &str) -> Result<(), String> {
+    let task_id = task_id.trim();
+    if task_id.is_empty() {
+        return Err("task id is required".into());
+    }
+    let exchange = read_runtime_exchange(runtime_exchange_path(project_state_dir));
+    // The same sentence `record_task_input` gives, so moving the check earlier
+    // did not change what a caller is told.
+    find_by_id(&exchange, "tasks", task_id)
+        .map(|_| ())
+        .ok_or_else(|| format!("task not found: {task_id}"))
+}
+
 pub fn record_task_input(
     project_state_dir: &Path,
     task_id: &str,
