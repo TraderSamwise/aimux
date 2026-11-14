@@ -2173,32 +2173,6 @@ fn input_live_pane_route(
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
-    // A peer may not send a SECOND line to a receiver that executes lines.
-    //
-    // The attribution prefix shields position zero of line one, and that is
-    // all it shields. On a `shell` receiver delivery is a paste followed by a
-    // carriage return, so every line after the first arrives at a fresh
-    // prompt as its own command: `"thanks\nrm -rf ~/work"` is not a command to
-    // `looks_like_agent_command` -- which gives up the moment it finds a break
-    // -- so it was delivered, and line two ran unprefixed and unattributed.
-    // "Every peer input is named" was true of line one only.
-    //
-    // Keyed on the receiver's tool, the same value
-    // `prompt_submit_mode_for_tool` reads, rather than on whether the text
-    // looks dangerous: an agent receiver takes the whole paste as one prompt,
-    // so its later lines are prose inside an attributed message and need no
-    // rule. A shell executes them.
-    if remote_actor
-        .as_ref()
-        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
-        && prompt_submit_mode_for_tool(target.tool.as_deref()) == PromptSubmitMode::DirectShell
-        && spans_more_than_one_line(&text)
-    {
-        return json_error(
-            403,
-            "a peer machine cannot send more than one line to a shell, because only the first line carries its sender",
-        );
-    }
     let project_state_dir = context.project_state_dir();
     // Before the send, so a task id that does not exist refuses the whole
     // request rather than delivering and recording nothing. A typo that
@@ -2228,6 +2202,45 @@ fn input_live_pane_route(
         session_id: &session_id,
         text,
     });
+    // A peer may not send a SECOND line to a receiver whose lines we cannot
+    // vouch for -- measured on the COMPOSED PROMPT, which is the string that
+    // is actually typed.
+    //
+    // The attribution prefix shields position zero of line one, and that is
+    // all it shields. Where later lines are executed, each one arrives at a
+    // fresh prompt as its own command: `"thanks\nrm -rf ~/work"` is not a
+    // command to `looks_like_agent_command` -- which gives up the moment it
+    // finds a break -- so it was delivered, and line two ran unprefixed.
+    //
+    // Two things were wrong with the first version of this rule, and both were
+    // about asking the question in the wrong place.
+    //
+    // It measured the request's `text` while delivery sends `prompt`, and
+    // `format_agent_input_with_attachments` turns one line plus an attachment
+    // into several. So "one line to a shell is safe" was false for a one-line
+    // peer message carrying `attachmentIds`.
+    //
+    // And it keyed on the literal tool name `shell`, which is one spelling of
+    // a receiver that executes lines. A session whose command is `zsh`, or a
+    // user-defined tool, or anything with no recognized `toolConfigKey`,
+    // resolves to its own command name and was treated as an agent composer.
+    // The question is answered POSITIVELY instead, by the same
+    // `prompt_paste_mode` that delivery itself uses: `claude` and `codex` take
+    // a framed whole body, so their later lines are prose inside one
+    // attributed message, and every other receiver is one whose lines we
+    // cannot vouch for. One list, in the module that owns the distinction.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && spans_more_than_one_line(&prompt)
+        && crate::agent_prompt_delivery::prompt_paste_mode(&prompt, target.tool.as_deref())
+            != crate::agent_prompt_delivery::PromptPasteMode::Framed
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send more than one line to this receiver, because only the first line carries its sender",
+        );
+    }
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();
     let activity = if force {
@@ -2248,6 +2261,26 @@ fn input_live_pane_route(
         retry_after_ms,
     } = decision
     {
+        // Never queued, for a peer with more than one line. The rule above
+        // asked about the tool resolved NOW, and a queued delivery re-resolves
+        // it at send time (`resolve_queued_delivery_target`) from a record
+        // that carries no role and no tool -- so a hold is a window in which
+        // an agent receiver can become one whose lines execute, with the
+        // multi-line prompt already approved. Refused rather than re-checked
+        // later, because the re-check would need the role threaded through the
+        // queue to be worth anything.
+        if remote_actor
+            .as_ref()
+            .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+            && spans_more_than_one_line(&prompt)
+        {
+            return json_error(
+                409,
+                format!(
+                    "a peer machine cannot hold more than one line for later delivery ({reason})"
+                ),
+            );
+        }
         let pending = match enqueue_agent_input_delivery(
             context,
             &session_id,
@@ -2915,32 +2948,6 @@ async fn input_live_pane_route_async(
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
-    // A peer may not send a SECOND line to a receiver that executes lines.
-    //
-    // The attribution prefix shields position zero of line one, and that is
-    // all it shields. On a `shell` receiver delivery is a paste followed by a
-    // carriage return, so every line after the first arrives at a fresh
-    // prompt as its own command: `"thanks\nrm -rf ~/work"` is not a command to
-    // `looks_like_agent_command` -- which gives up the moment it finds a break
-    // -- so it was delivered, and line two ran unprefixed and unattributed.
-    // "Every peer input is named" was true of line one only.
-    //
-    // Keyed on the receiver's tool, the same value
-    // `prompt_submit_mode_for_tool` reads, rather than on whether the text
-    // looks dangerous: an agent receiver takes the whole paste as one prompt,
-    // so its later lines are prose inside an attributed message and need no
-    // rule. A shell executes them.
-    if remote_actor
-        .as_ref()
-        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
-        && prompt_submit_mode_for_tool(target.tool.as_deref()) == PromptSubmitMode::DirectShell
-        && spans_more_than_one_line(&text)
-    {
-        return json_error(
-            403,
-            "a peer machine cannot send more than one line to a shell, because only the first line carries its sender",
-        );
-    }
     let project_state_dir = context.project_state_dir();
     // Before the send, so a task id that does not exist refuses the whole
     // request rather than delivering and recording nothing. A typo that
@@ -2970,6 +2977,45 @@ async fn input_live_pane_route_async(
         session_id: &session_id,
         text,
     });
+    // A peer may not send a SECOND line to a receiver whose lines we cannot
+    // vouch for -- measured on the COMPOSED PROMPT, which is the string that
+    // is actually typed.
+    //
+    // The attribution prefix shields position zero of line one, and that is
+    // all it shields. Where later lines are executed, each one arrives at a
+    // fresh prompt as its own command: `"thanks\nrm -rf ~/work"` is not a
+    // command to `looks_like_agent_command` -- which gives up the moment it
+    // finds a break -- so it was delivered, and line two ran unprefixed.
+    //
+    // Two things were wrong with the first version of this rule, and both were
+    // about asking the question in the wrong place.
+    //
+    // It measured the request's `text` while delivery sends `prompt`, and
+    // `format_agent_input_with_attachments` turns one line plus an attachment
+    // into several. So "one line to a shell is safe" was false for a one-line
+    // peer message carrying `attachmentIds`.
+    //
+    // And it keyed on the literal tool name `shell`, which is one spelling of
+    // a receiver that executes lines. A session whose command is `zsh`, or a
+    // user-defined tool, or anything with no recognized `toolConfigKey`,
+    // resolves to its own command name and was treated as an agent composer.
+    // The question is answered POSITIVELY instead, by the same
+    // `prompt_paste_mode` that delivery itself uses: `claude` and `codex` take
+    // a framed whole body, so their later lines are prose inside one
+    // attributed message, and every other receiver is one whose lines we
+    // cannot vouch for. One list, in the module that owns the distinction.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && spans_more_than_one_line(&prompt)
+        && crate::agent_prompt_delivery::prompt_paste_mode(&prompt, target.tool.as_deref())
+            != crate::agent_prompt_delivery::PromptPasteMode::Framed
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send more than one line to this receiver, because only the first line carries its sender",
+        );
+    }
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();
     let activity = if force {
@@ -2990,6 +3036,26 @@ async fn input_live_pane_route_async(
         retry_after_ms,
     } = decision
     {
+        // Never queued, for a peer with more than one line. The rule above
+        // asked about the tool resolved NOW, and a queued delivery re-resolves
+        // it at send time (`resolve_queued_delivery_target`) from a record
+        // that carries no role and no tool -- so a hold is a window in which
+        // an agent receiver can become one whose lines execute, with the
+        // multi-line prompt already approved. Refused rather than re-checked
+        // later, because the re-check would need the role threaded through the
+        // queue to be worth anything.
+        if remote_actor
+            .as_ref()
+            .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+            && spans_more_than_one_line(&prompt)
+        {
+            return json_error(
+                409,
+                format!(
+                    "a peer machine cannot hold more than one line for later delivery ({reason})"
+                ),
+            );
+        }
         let pending = match enqueue_agent_input_delivery(
             context,
             &session_id,

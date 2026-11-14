@@ -2532,7 +2532,7 @@ fn a_peer_cannot_send_a_second_line_to_a_receiver_that_executes_lines() {
             assert_eq!(refused.status, 403, "{route} {text:?}: {:?}", refused.body);
             assert_eq!(
                 refused.body["error"],
-                "a peer machine cannot send more than one line to a shell, because only the first line carries its sender",
+                "a peer machine cannot send more than one line to this receiver, because only the first line carries its sender",
                 "{route} {text:?}"
             );
             assert!(
@@ -2543,7 +2543,10 @@ fn a_peer_cannot_send_a_second_line_to_a_receiver_that_executes_lines() {
         }
     }
 
-    // An agent receiver takes the whole paste as one prompt.
+    // An agent receiver takes the whole paste as one prompt. Asserted on the
+    // DELIVERED TEXT and not on the status: a 200 is also what a held
+    // delivery returns, and an unprefixed delivery is a 200 too, so the status
+    // alone would have let both through.
     let mut runtime = FakeCaptureRuntime::default();
     let to_agent = route_agent_output_request_with_runtime(
         &peer,
@@ -2558,6 +2561,13 @@ fn a_peer_cannot_send_a_second_line_to_a_receiver_that_executes_lines() {
     )
     .unwrap();
     assert_eq!(to_agent.status, 200, "{:?}", to_agent.body);
+    assert_eq!(
+        runtime.actions.first(),
+        Some(&FakeRuntimeAction::Text(
+            "@1".into(),
+            "[mbp/claude-utymep] thanks\nrm -rf ~/work".into()
+        ))
+    );
 
     // The local multi-line inverse cannot assert a delivery here: multi-line
     // text takes the GUARDED paste path and this file's fake runtime refuses
@@ -2612,6 +2622,205 @@ fn a_peer_cannot_send_a_second_line_to_a_receiver_that_executes_lines() {
         locally.status,
         &locally.body,
         "multi-line from a local sender",
+    );
+
+    cleanup(project);
+}
+
+/// The three ways the first version of this rule asked its question in the
+/// wrong place.
+///
+/// Each is the SAME hazard -- a line a peer sent arriving at a receiver that
+/// executes it, with no sender on it -- reached by a route the rule did not
+/// look down.
+#[test]
+fn the_peer_line_rule_measures_the_prompt_and_identifies_the_receiver() {
+    let project = temp_project("peer-line-rule-corners");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let peer = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_request_headers([
+            ("x-aimux-actor-role", "peer"),
+            ("x-aimux-peer-machine-id", "mbp"),
+        ]);
+    let refusal = "a peer machine cannot send more than one line to this receiver, because only the first line carries its sender";
+
+    // ONE: a receiver that executes lines without being spelled `shell`.
+    // `zsh-1` has `toolConfigKey: "bash"`, so the tool resolves to its own
+    // command and the old rule read it as an agent composer.
+    let mut runtime = FakeCaptureRuntime::default();
+    let not_called_shell = route_agent_output_request_with_runtime(
+        &peer,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({
+            "sessionId": "zsh-1",
+            "text": "thanks\nrm -rf ~/work",
+            "from": "claude-utymep"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(not_called_shell.status, 403, "{:?}", not_called_shell.body);
+    assert_eq!(not_called_shell.body["error"], refusal);
+    assert!(runtime.actions.is_empty(), "{:?}", runtime.actions);
+
+    // TWO: one line of text that BECOMES several in the prompt. An attachment
+    // appends its own lines, so the rule has to measure what is typed rather
+    // than what was sent. (The daemon refuses a peer's attachments; this is
+    // the layer that composes, so it measures the composed string.)
+    write_attachment(
+        &project,
+        "att_1",
+        "shell-1",
+        "notes.md",
+        "text/markdown",
+        42,
+    );
+    let mut runtime = FakeCaptureRuntime::default();
+    let one_line_several_lines = route_agent_output_request_with_runtime(
+        &peer,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({
+            "sessionId": "shell-1",
+            "text": "have a look",
+            "from": "claude-utymep",
+            "attachmentIds": ["att_1"]
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(
+        one_line_several_lines.status, 403,
+        "{:?}",
+        one_line_several_lines.body
+    );
+    assert_eq!(one_line_several_lines.body["error"], refusal);
+    assert!(runtime.actions.is_empty(), "{:?}", runtime.actions);
+
+    // THREE: `claude` and `codex` are still allowed their whole body, and the
+    // delivered text still carries the label on line one. Without this the
+    // rule could pass by refusing every multi-line peer message, which is a
+    // different product.
+    let mut runtime = FakeCaptureRuntime::default();
+    let to_agent = route_agent_output_request_with_runtime(
+        &peer,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "text": "two things\nsecond thing",
+            "from": "claude-utymep"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(to_agent.status, 200, "{:?}", to_agent.body);
+    assert_eq!(
+        runtime.actions.first(),
+        Some(&FakeRuntimeAction::Text(
+            "@1".into(),
+            "[mbp/claude-utymep] two things\nsecond thing".into()
+        )),
+        "the body must arrive whole AND labelled"
+    );
+
+    cleanup(project);
+}
+
+/// A peer's multi-line prompt is never QUEUED, because a hold is a window in
+/// which the receiver can change.
+///
+/// The rule above asks about the tool resolved NOW. A queued delivery
+/// re-resolves it at send time from a record that carries no role and no tool
+/// -- `PendingAgentInputDelivery` is session, window, prompt and timestamps --
+/// so a multi-line body approved against `codex` could be delivered to
+/// whatever the window has become. Refused rather than re-checked later: the
+/// re-check would need the role threaded through the queue to mean anything.
+///
+/// The inverses matter as much as the refusal. A local sender still holds
+/// multi-line input, and a peer's ONE line still holds, so the rule is about
+/// a peer's second line and not about peers or about holding.
+#[test]
+fn a_peers_second_line_is_refused_rather_than_held_for_later() {
+    let project = temp_project("peer-hold-multiline");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    let attended = || FakeActivityRuntime {
+        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::Attended {
+            active_clients: 1,
+            latest_activity_ms: now_ms,
+        })]),
+        ..Default::default()
+    };
+
+    let peer = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_request_headers([
+            ("x-aimux-actor-role", "peer"),
+            ("x-aimux-peer-machine-id", "mbp"),
+        ]);
+    let mut runtime = attended();
+    let refused = route_agent_output_request_with_runtime(
+        &peer,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "text": "two things\nsecond thing",
+            "from": "claude-utymep"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(refused.status, 409, "{:?}", refused.body);
+    assert_eq!(
+        refused.body["error"],
+        "a peer machine cannot hold more than one line for later delivery (active-client-recent-input)"
+    );
+    assert_eq!(
+        queued_prompts(&state_dir),
+        Vec::<String>::new(),
+        "a refused hold must leave nothing queued"
+    );
+
+    // A peer's ONE line still holds.
+    let mut runtime = attended();
+    let one_line = route_agent_output_request_with_runtime(
+        &peer,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "one thing", "from": "claude-utymep" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(one_line.status, 200, "{:?}", one_line.body);
+    assert_eq!(one_line.body["delivery"]["state"], "held");
+    assert_eq!(
+        queued_prompts(&state_dir),
+        vec!["[mbp/claude-utymep] one thing".to_owned()]
+    );
+
+    // And a local sender's multi-line still holds.
+    let local = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = attended();
+    let locally = route_agent_output_request_with_runtime(
+        &local,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "two things\nsecond thing" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(locally.status, 200, "{:?}", locally.body);
+    assert_eq!(locally.body["delivery"]["state"], "held");
+    assert!(
+        queued_prompts(&state_dir)
+            .iter()
+            .any(|prompt| prompt == "two things\nsecond thing"),
+        "{:?}",
+        queued_prompts(&state_dir)
     );
 
     cleanup(project);
@@ -5761,18 +5970,21 @@ fn topology_fixture() -> Value {
         "nodes": [
             { "id": "node-live", "rigId": "rig-1", "logicalId": "codex-1", "toolConfigKey": "codex", "createdAt": "2026-09-05T00:00:00.000Z" },
             { "id": "node-offline", "rigId": "rig-1", "logicalId": "codex-offline", "toolConfigKey": "codex", "createdAt": "2026-09-05T00:00:00.000Z" },
-            { "id": "node-shell", "rigId": "rig-1", "logicalId": "shell-1", "toolConfigKey": "shell", "label": "shell", "createdAt": "2026-09-05T00:00:00.000Z" }
+            { "id": "node-shell", "rigId": "rig-1", "logicalId": "shell-1", "toolConfigKey": "shell", "label": "shell", "createdAt": "2026-09-05T00:00:00.000Z" },
+            { "id": "node-zsh", "rigId": "rig-1", "logicalId": "zsh-1", "toolConfigKey": "bash", "label": "bash", "createdAt": "2026-09-05T00:00:00.000Z" }
         ],
         "edges": [],
         "bindings": [
             { "id": "binding-live", "nodeId": "node-live", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" },
             { "id": "binding-offline", "nodeId": "node-offline", "tmuxSession": "aimux-repo", "tmuxWindowId": "@2", "tmuxWindowIndex": 2, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" },
-            { "id": "binding-shell", "nodeId": "node-shell", "tmuxSession": "aimux-repo", "tmuxWindowId": "@3", "tmuxWindowIndex": 3, "tmuxWindowName": "shell", "updatedAt": "2026-09-05T00:00:00.000Z" }
+            { "id": "binding-shell", "nodeId": "node-shell", "tmuxSession": "aimux-repo", "tmuxWindowId": "@3", "tmuxWindowIndex": 3, "tmuxWindowName": "shell", "updatedAt": "2026-09-05T00:00:00.000Z" },
+            { "id": "binding-zsh", "nodeId": "node-zsh", "tmuxSession": "aimux-repo", "tmuxWindowId": "@4", "tmuxWindowIndex": 4, "tmuxWindowName": "bash", "updatedAt": "2026-09-05T00:00:00.000Z" }
         ],
         "sessions": [
             { "id": "codex-1", "nodeId": "node-live", "status": "running", "command": "codex", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" },
             { "id": "codex-offline", "nodeId": "node-offline", "status": "offline", "command": "codex", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" },
-            { "id": "shell-1", "nodeId": "node-shell", "status": "running", "command": "zsh", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+            { "id": "shell-1", "nodeId": "node-shell", "status": "running", "command": "zsh", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" },
+            { "id": "zsh-1", "nodeId": "node-zsh", "status": "running", "command": "zsh", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
         ],
         "services": [],
         "worktrees": [],
@@ -5797,6 +6009,28 @@ fn temp_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+/// What is actually sitting in the queue, in order.
+///
+/// An empty queue is a MISSING file, not an empty list, so the two are told
+/// apart here: a refusal that left no file and a refusal that left an empty
+/// one are the same answer, but a read that panicked on the missing file
+/// would make the refusal look like a crash.
+fn queued_prompts(state_dir: &std::path::Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(agent_input_delivery_queue_path(state_dir)) else {
+        return Vec::new();
+    };
+    let value: Value = serde_json::from_str(&text).expect("queued delivery json");
+    value["pending"]
+        .as_array()
+        .map(|pending| {
+            pending
+                .iter()
+                .filter_map(|entry| entry["prompt"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn queued_max_deliver_at_ms(state_dir: &std::path::Path) -> i64 {
