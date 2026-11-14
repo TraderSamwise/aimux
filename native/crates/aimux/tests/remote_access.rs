@@ -41,6 +41,7 @@ fn operator(grants: Vec<RemoteOperatorGrant>) -> RemoteActor {
         email: None,
         share_id: None,
         share_session_id: None,
+        peer_machine_id: None,
         principal: Some(principal(grants)),
     }
 }
@@ -54,6 +55,21 @@ fn guest(session_id: &str) -> RemoteActor {
         email: Some("ada@example.com".into()),
         share_id: Some("share-1".into()),
         share_session_id: Some(session_id.into()),
+        peer_machine_id: None,
+        principal: None,
+    }
+}
+
+fn peer(machine_id: Option<&str>) -> RemoteActor {
+    RemoteActor {
+        role: RemoteActorRole::Peer,
+        declared_role: Some("peer".into()),
+        user_id: None,
+        display_name: None,
+        email: None,
+        share_id: None,
+        share_session_id: None,
+        peer_machine_id: machine_id.map(str::to_owned),
         principal: None,
     }
 }
@@ -117,6 +133,7 @@ fn owner_and_local_callers_are_allowed() {
         email: None,
         share_id: None,
         share_session_id: None,
+        peer_machine_id: None,
         principal: None,
     };
     assert!(
@@ -651,4 +668,152 @@ fn operator_stream_gate_is_separate_from_buffered_proxy_gate() {
         )
         .ok
     );
+}
+
+/// Being on the account is not being at the keyboard.
+///
+/// The owner's own app is stamped `owner`, and the daemon hands those straight
+/// to its whole API. A peer gets its own role so that it can be given routes
+/// deliberately -- and right now it has none, because the first two that
+/// looked narrow were not: a task's description is read back to an overseer as
+/// a briefing, which makes posting one a way to type into the agent that
+/// spawns agents.
+#[test]
+fn a_peer_machine_may_do_nothing_yet() {
+    for (method, route) in [
+        ("POST", project_routes::tasks::ASSIGN),
+        ("POST", project_routes::tasks::ACCEPT),
+        ("POST", project_routes::agents::KILL),
+        ("GET", project_routes::tasks::LIST),
+    ] {
+        let refused = allow(
+            Some(&peer(Some("mbp"))),
+            method,
+            &port_path(route),
+            "",
+            Some(&json!({ "taskId": "t1" })),
+            Some(PROJECT_ROOT),
+        );
+        assert!(!refused.ok, "{method} {route} was allowed");
+        assert_eq!(refused.status, Some(403));
+        // The refusal names the route rather than saying "denied": a peer is
+        // a program, and the next phase opens exactly one of these.
+        assert!(
+            refused
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains(route)),
+            "{method} {route}: {:?}",
+            refused.error
+        );
+    }
+}
+
+/// The role is the difference, not the route: the request the peer is refused
+/// is the one the owner's own app makes all day.
+///
+/// Asserted as a pair rather than on its own -- "the owner may do this" is
+/// true of every route and proves nothing by itself.
+#[test]
+fn the_same_route_turns_on_who_is_asking() {
+    let owner = RemoteActor {
+        role: RemoteActorRole::Owner,
+        declared_role: Some("owner".into()),
+        user_id: None,
+        display_name: None,
+        email: None,
+        share_id: None,
+        share_session_id: None,
+        peer_machine_id: None,
+        principal: None,
+    };
+    let route = port_path(project_routes::tasks::ASSIGN);
+    let body = json!({ "taskId": "t1" });
+
+    let as_owner = allow(
+        Some(&owner),
+        "POST",
+        &route,
+        "",
+        Some(&body),
+        Some(PROJECT_ROOT),
+    );
+    let as_peer = allow(
+        Some(&peer(Some("mbp"))),
+        "POST",
+        &route,
+        "",
+        Some(&body),
+        Some(PROJECT_ROOT),
+    );
+
+    assert!(as_owner.ok, "{:?}", as_owner.error);
+    assert!(!as_peer.ok);
+    assert_eq!(as_peer.status, Some(403));
+}
+
+/// The relay stamps the origin machine from the socket the frame arrived on,
+/// which is exactly why the caller cannot choose it. A peer role without one
+/// did not come from where it claims.
+#[test]
+fn a_peer_that_names_no_machine_is_refused() {
+    let anonymous = allow(
+        Some(&peer(None)),
+        "POST",
+        &port_path(project_routes::tasks::ASSIGN),
+        "",
+        Some(&json!({ "taskId": "t1" })),
+        Some(PROJECT_ROOT),
+    );
+    assert!(!anonymous.ok);
+    assert_eq!(anonymous.status, Some(403));
+
+    let blank = allow(
+        Some(&peer(Some("   "))),
+        "POST",
+        &port_path(project_routes::tasks::ASSIGN),
+        "",
+        Some(&json!({ "taskId": "t1" })),
+        Some(PROJECT_ROOT),
+    );
+    assert!(!blank.ok);
+
+    // `unidentified` is the slot every daemon with no persisted identity
+    // shares, so it is a label rather than a name -- and the refusal has to
+    // say that it did not learn where the frame came from, not quote it back
+    // as though it had.
+    let shared_slot = allow(
+        Some(&peer(Some("unidentified"))),
+        "POST",
+        &port_path(project_routes::tasks::ASSIGN),
+        "",
+        Some(&json!({ "taskId": "t1" })),
+        Some(PROJECT_ROOT),
+    );
+    assert!(!shared_slot.ok);
+    assert_eq!(
+        shared_slot.error.as_deref(),
+        Some("peer request did not say which machine it came from")
+    );
+}
+
+/// A role nobody recognizes must not fall into the peer arm, and the peer
+/// header alone must not mint one: the role is what grants, and the machine
+/// id only says which peer it is.
+#[test]
+fn only_the_declared_peer_role_is_a_peer() {
+    let actor = parse_remote_actor(&BTreeMap::from([
+        ("x-aimux-actor-role".into(), "peer".into()),
+        ("x-aimux-peer-machine-id".into(), "strix".into()),
+    ]))
+    .expect("peer actor");
+    assert_eq!(actor.role, RemoteActorRole::Peer);
+    assert_eq!(actor.peer_machine_id.as_deref(), Some("strix"));
+
+    let impostor = parse_remote_actor(&BTreeMap::from([
+        ("x-aimux-actor-role".into(), "peerish".into()),
+        ("x-aimux-peer-machine-id".into(), "strix".into()),
+    ]))
+    .expect("unrecognized actor");
+    assert_eq!(impostor.role, RemoteActorRole::Guest);
 }

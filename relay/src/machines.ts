@@ -92,9 +92,95 @@ export function machineFromTags(tags: readonly string[]): MachineInfo {
   return { id, name: machineNameFromTags(tags) ?? id };
 }
 
+/// Why a share could not be routed, for the log and for the owner.
+///
+/// The `error` text a guest sees is deliberately the same for all of these --
+/// the shape of the fleet is not a guest's business. This says which one it
+/// actually was, so a report of "the machine hosting this shared chat is not
+/// connected" can be told apart from a share that never named a machine, which
+/// is a different problem with a different fix and sent one investigation
+/// looking at connectivity while the host was sitting right there.
+export type SharedDaemonRefusal = "no-daemon-connected" | "bound-machine-offline" | "share-names-no-machine";
+
 export type DaemonTargetResolution =
   | { ok: true; machineId: string }
-  | { ok: false; status: number; error: string; machines: MachineInfo[] };
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      machines: MachineInfo[];
+      refusal?: SharedDaemonRefusal;
+    };
+
+/// Why one daemon could not reach another.
+///
+/// A peer request is a machine acting on its own, with nobody watching it
+/// resolve, so every one of these is said plainly: there is no person here to
+/// read a deliberately vague message, and the daemon that asked has to be able
+/// to tell "name a machine" from "that machine is not here".
+export type PeerDaemonRefusal =
+  | "peer-target-unnamed"
+  | "peer-target-offline"
+  | "peer-target-is-self"
+  | "peer-target-unidentified";
+
+export type PeerDaemonTargetResolution =
+  | { ok: true; machineId: string }
+  | { ok: false; status: number; error: string; refusal: PeerDaemonRefusal };
+
+/// Which machine a daemon's request goes to. Only ever the one it named.
+///
+/// Deliberately without the "only one connected" fallback `resolveDaemonTarget`
+/// gives a person: a client is a human who can be asked which machine they
+/// meant, and a daemon is not. A peer request that silently went to whoever
+/// happened to be online is the defect the share routing just had, one layer
+/// down and with nobody to notice it.
+export function resolvePeerDaemonTarget(
+  machines: readonly MachineInfo[],
+  originMachineId: string | undefined,
+  requestedMachineId: string | undefined,
+): PeerDaemonTargetResolution {
+  const requested = requestedMachineId?.trim();
+  if (!requested) {
+    return {
+      ok: false,
+      status: 400,
+      error: "A peer request must name the machine it is for",
+      refusal: "peer-target-unnamed",
+    };
+  }
+  // `unidentified` is the slot every daemon without a persisted identity
+  // shares, so naming it does not name a machine -- it names whichever of
+  // them reached the socket map first. A client asking for it is answered
+  // because a person can see which machine they got; a daemon cannot.
+  if (!isValidMachineId(requested)) {
+    return {
+      ok: false,
+      status: 400,
+      error: "A peer request must name a machine, not the unidentified slot",
+      refusal: "peer-target-unidentified",
+    };
+  }
+  // Through the relay and back into the same process: a loop with a timeout on
+  // it rather than a route. Refused by name so the daemon that did it can say
+  // so, instead of waiting out the pending TTL for its own answer.
+  if (requested === originMachineId?.trim()) {
+    return {
+      ok: false,
+      status: 400,
+      error: "A peer request cannot name the machine that sent it",
+      refusal: "peer-target-is-self",
+    };
+  }
+  return machines.some((machine) => machine.id === requested)
+    ? { ok: true, machineId: requested }
+    : {
+        ok: false,
+        status: 503,
+        error: `Machine ${requested} is not connected`,
+        refusal: "peer-target-offline",
+      };
+}
 
 // A client that names no machine is answered, not guessed at: one machine is
 // unambiguous, several is a question only the client can settle. Guessing would
@@ -142,7 +228,13 @@ export function resolveSharedDaemonTarget(
   shareMachineId: string | undefined,
 ): DaemonTargetResolution {
   if (machines.length === 0) {
-    return { ok: false, status: 503, error: "Daemon not connected", machines: [] };
+    return {
+      ok: false,
+      status: 503,
+      error: "Daemon not connected",
+      machines: [],
+      refusal: "no-daemon-connected",
+    };
   }
   const bound = shareMachineId?.trim();
   if (bound) {
@@ -153,18 +245,21 @@ export function resolveSharedDaemonTarget(
           status: 503,
           error: "The machine hosting this shared chat is not connected",
           machines: [],
+          refusal: "bound-machine-offline",
         };
   }
   if (machines.length === 1) {
     return { ok: true, machineId: machines[0].id };
   }
   // Deliberately the same text as a disconnected host: the number of machines
-  // on the account is not a guest's business either.
+  // on the account is not a guest's business either. The `refusal` says which
+  // it really was, for the owner and the log.
   return {
     ok: false,
     status: 503,
     error: "The machine hosting this shared chat is not connected",
     machines: [],
+    refusal: "share-names-no-machine",
   };
 }
 

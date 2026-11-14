@@ -106,6 +106,21 @@ pub enum RelayAction {
         title: String,
         body: String,
     },
+    /// An answer to something this machine asked one of its peers.
+    ///
+    /// Without this arm the frame fell through to `Ignore`, which is not a
+    /// quiet no-op for a request/response pair: every peer answer, every
+    /// swept timeout and every "that machine is not connected" refusal was
+    /// dropped on the floor, leaving the caller waiting out its own deadline
+    /// with nothing to report but a timeout.
+    PeerResponse {
+        id: String,
+        status: u16,
+        body: Value,
+        /// Set when the relay answered on the peer's behalf rather than
+        /// carrying the peer's own answer.
+        from_relay: bool,
+    },
 }
 
 /// Node answered a ping itself and never surfaced it.
@@ -146,6 +161,25 @@ pub fn handle_frame(data: &str) -> RelayAction {
         "project_events_unsubscribe" => RelayAction::UnsubscribeProjectEvents {
             id: string_field(Some(&message), "id"),
         },
+        "response" => RelayAction::PeerResponse {
+            id: string_field(Some(&message), "id"),
+            // A frame with no usable status is still an answer, and 502 is
+            // what the relay itself uses for an answer it cannot make sense
+            // of. Defaulting to 200 would turn a malformed refusal into a
+            // success, which is the failure this crate keeps finding.
+            status: message
+                .get("status")
+                .and_then(Value::as_u64)
+                .and_then(|status| u16::try_from(status).ok())
+                .unwrap_or(502),
+            body: message.get("body").cloned().unwrap_or(Value::Null),
+            // The relay stamps its own refusals, which otherwise wear the
+            // same 502/503/504 a project service does.
+            from_relay: message
+                .get("source")
+                .and_then(Value::as_str)
+                .is_some_and(|source| source == "relay"),
+        },
         "request" => RelayAction::RouteRequest {
             id: string_field(Some(&message), "id"),
             method: string_field(Some(&message), "method"),
@@ -155,6 +189,29 @@ pub fn handle_frame(data: &str) -> RelayAction {
         },
         _ => RelayAction::Ignore,
     }
+}
+
+/// Ask one of the owner's other machines something.
+///
+/// The machine is named, always: the relay gives a peer no "whoever is
+/// online" fallback, because a daemon is not a person who can be asked which
+/// one it meant.
+pub fn peer_request_frame(
+    id: &str,
+    machine_id: &str,
+    method: &str,
+    path: &str,
+    body: &Value,
+) -> String {
+    json!({
+        "id": id,
+        "type": "request",
+        "machineId": machine_id,
+        "method": method,
+        "path": path,
+        "body": body,
+    })
+    .to_string()
 }
 
 pub fn response_frame(id: &str, status: u16, body: Value) -> String {

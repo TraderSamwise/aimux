@@ -4,7 +4,7 @@
 //! driven by fakes — a relay client that can only be tested against a live
 //! relay is a relay client nobody tests.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::future::poll_fn;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, oneshot};
 
 use crate::backlog_metrics::{
     BacklogMetric, BacklogMetricSnapshot, BacklogMetricStatus, RELAY_OUTBOX_BACKLOG, backlog_metric,
@@ -21,7 +21,7 @@ use crate::debug_logging::{LogLevel, log_always_at};
 use crate::machine_identity::MachineIdentity;
 use crate::remote::relay_client::{
     CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close,
-    decide_connect_error, handle_frame, project_events_error_frame,
+    decide_connect_error, handle_frame, peer_request_frame, project_events_error_frame,
     project_events_subscribed_frame, response_frame,
 };
 use crate::remote::websocket::{
@@ -145,6 +145,86 @@ pub struct RelayRunner {
     outbox_ready: Arc<Notify>,
     outbox_metric: BacklogMetric,
     outbox_high_water: AtomicUsize,
+    /// Who is waiting for which peer answer.
+    ///
+    /// The socket belongs to the pump task, so a caller cannot read its own
+    /// reply off the wire: it leaves an id here and waits on the other end.
+    /// An entry removed without being sent to is a caller that gave up, and
+    /// dropping the sender is how it learns that rather than hanging.
+    peer_waiters: Arc<Mutex<HashMap<String, oneshot::Sender<PeerAnswer>>>>,
+    peer_request_seq: AtomicUsize,
+    /// The frame currently being written, if one is.
+    ///
+    /// It stays at the front of the outbox across the write, deliberately, so
+    /// an aborted pump leaves it queued for the next one. That makes queue
+    /// membership a bad answer to "has this been sent yet": a request giving
+    /// up during a slow write would take the frame out from under the writer
+    /// and then report that the peer was never asked, while the bytes were
+    /// already on the wire.
+    writing_frame: Arc<Mutex<Option<String>>>,
+}
+
+/// What a peer actually said, or why it did not say it.
+///
+/// Three outcomes, not two: an answer, a refusal the relay made on the
+/// caller's behalf, and no answer at all. Collapsing the last two into an
+/// empty body is the failure this crate keeps finding.
+/// Holds a place in the waiter table for exactly as long as its caller lives.
+///
+/// A `select!` that loses the race drops the request future where no code in
+/// it runs again, so the entry has to come out on drop or it never comes out.
+struct PeerWaiterGuard {
+    waiters: Arc<Mutex<HashMap<String, oneshot::Sender<PeerAnswer>>>>,
+    id: String,
+}
+
+impl Drop for PeerWaiterGuard {
+    fn drop(&mut self) {
+        if let Ok(mut waiters) = self.waiters.lock() {
+            waiters.remove(&self.id);
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PeerAnswer {
+    pub status: u16,
+    pub body: Value,
+    /// Whether the relay answered instead of the peer.
+    ///
+    /// The relay synthesises refusals with the same statuses a project
+    /// service uses -- 502, 503, 504 -- so without this a caller cannot tell
+    /// "the peer's service is down" from "the relay would not carry it", and
+    /// those have different fixes. The relay marks its own.
+    pub from_relay: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PeerRequestError {
+    /// The socket is down, or the frame could not be queued. Nothing left.
+    NotSent(String),
+    /// Nothing came back inside the deadline, and the frame never left: the
+    /// peer was never asked, so nothing happened there.
+    TimedOut,
+    /// The frame was written and no answer came inside the deadline. Whether
+    /// the peer did the work is genuinely unknown, which is a different thing
+    /// to report than "it did not happen".
+    AnsweredNothing,
+    /// The connection went away while the answer was outstanding.
+    ConnectionLost,
+}
+
+impl PeerRequestError {
+    pub fn message(&self) -> String {
+        match self {
+            Self::NotSent(reason) => format!("peer request was not sent: {reason}"),
+            Self::TimedOut => "peer was never asked, so it did not answer".to_owned(),
+            Self::AnsweredNothing => {
+                "peer was asked and did not answer in time; whether it acted is unknown".to_owned()
+            }
+            Self::ConnectionLost => "relay connection was lost before the peer answered".to_owned(),
+        }
+    }
 }
 
 impl RelayRunner {
@@ -175,6 +255,9 @@ impl RelayRunner {
             outbox_ready: Arc::new(Notify::new()),
             outbox_metric: backlog_metric(RELAY_OUTBOX_BACKLOG, Some(MAX_RELAY_OUTBOX_FRAMES)),
             outbox_high_water: AtomicUsize::new(0),
+            peer_waiters: Arc::new(Mutex::new(HashMap::new())),
+            peer_request_seq: AtomicUsize::new(0),
+            writing_frame: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -262,6 +345,21 @@ impl RelayRunner {
         sleep: &mut (dyn FnMut(Duration) -> BoxFuture<'static, ()> + Send),
         elapsed_ms: &mut (dyn FnMut(Instant) -> u64 + Send),
     ) {
+        self.connect_until_stopped(connector, sleep, elapsed_ms)
+            .await;
+        // Whatever ended the loop -- a stop, a refused handshake, a dead
+        // credential -- nothing is going to carry an answer now. The loop
+        // leaves by several routes and this is the one place all of them
+        // pass, so a caller is told rather than waiting out its deadline.
+        self.fail_peer_waiters();
+    }
+
+    async fn connect_until_stopped(
+        self: &Arc<Self>,
+        connector: &mut dyn WebSocketConnector,
+        sleep: &mut (dyn FnMut(Duration) -> BoxFuture<'static, ()> + Send),
+        elapsed_ms: &mut (dyn FnMut(Instant) -> u64 + Send),
+    ) {
         let mut retry_ms = INITIAL_RETRY_MS;
         let url = daemon_connect_url(&self.relay_url, &self.machine);
         let subprotocols = relay_subprotocols(&self.token);
@@ -292,6 +390,17 @@ impl RelayRunner {
                     self.set_status(RelayStatus::Connected, None);
                     let connected_at = Instant::now();
                     let close = self.pump(connection).await;
+                    // The socket that was going to carry the answers has
+                    // gone. Everyone waiting is told now, by dropping their
+                    // senders; otherwise each one waits out its whole
+                    // deadline for an answer that can no longer arrive.
+                    self.fail_peer_waiters();
+                    // And nothing is being written any more. Left set -- which
+                    // an aborted pump does -- the marker makes the NEXT
+                    // request's frame unwithdrawable, so a frame that never
+                    // left would be reported as one that might have acted,
+                    // and then sent for real on the reconnect.
+                    self.mark_writing(None);
                     // The ladder resets on a connection that HELD, not on one
                     // that opened. Resetting on Ok meant a socket dying a
                     // second later reset it too, so the backoff never engaged
@@ -517,6 +626,24 @@ impl RelayRunner {
             RelayAction::NotifyClientConnected { title, body } => {
                 self.bridge.notify_client_connected(&title, &body).await;
             }
+            RelayAction::PeerResponse {
+                id,
+                status,
+                body,
+                from_relay,
+            } => {
+                // An answer nobody is waiting for is an answer to a request
+                // that already timed out or whose caller went away. There is
+                // nothing to do with it and nothing is wrong, so it is
+                // dropped here rather than reported as an unmatched frame.
+                if let Some(waiter) = self.take_peer_waiter(&id) {
+                    let _ = waiter.send(PeerAnswer {
+                        status,
+                        body,
+                        from_relay,
+                    });
+                }
+            }
             RelayAction::RouteRequest {
                 id,
                 method,
@@ -598,6 +725,123 @@ impl RelayRunner {
         self.queue(frame)
     }
 
+    /// Ask another of this account's machines something, and wait for it.
+    ///
+    /// The machine is named by the caller; there is no "whichever is online"
+    /// here, and the relay refuses a peer request that names none. Every way
+    /// this can fail says which way it was: a frame that never left, a
+    /// deadline that passed, a connection that dropped. None of them is an
+    /// empty answer.
+    pub async fn request_peer(
+        self: &Arc<Self>,
+        machine_id: &str,
+        method: &str,
+        path: &str,
+        body: &Value,
+        timeout: Duration,
+    ) -> Result<PeerAnswer, PeerRequestError> {
+        let id = format!(
+            "peer-{}",
+            self.peer_request_seq.fetch_add(1, Ordering::Relaxed)
+        );
+        let (sender, receiver) = oneshot::channel();
+        match self.peer_waiters.lock() {
+            Ok(mut waiters) => {
+                waiters.insert(id.clone(), sender);
+            }
+            Err(_) => {
+                return Err(PeerRequestError::NotSent(
+                    "peer_waiters_unavailable".to_owned(),
+                ));
+            }
+        }
+        // Takes the entry out on every way out of this function, including the
+        // one no code here can see: a caller inside a `select!` that loses the
+        // race is dropped mid-await, and an entry left behind for it is a leak
+        // that nothing later would ever collect.
+        let _registered = PeerWaiterGuard {
+            waiters: Arc::clone(&self.peer_waiters),
+            id: id.clone(),
+        };
+        if let Err(reason) = self.queue(peer_request_frame(&id, machine_id, method, path, body)) {
+            return Err(PeerRequestError::NotSent(reason));
+        }
+        match tokio::time::timeout(timeout, receiver).await {
+            Ok(Ok(answer)) => Ok(answer),
+            // The sender was dropped without answering, which is what
+            // `fail_peer_waiters` does when the socket goes away.
+            Ok(Err(_)) => Err(self.abandon_peer_request(&id, PeerRequestError::ConnectionLost)),
+            Err(_) => Err(self.abandon_peer_request(&id, PeerRequestError::TimedOut)),
+        }
+    }
+
+    /// Give up on a peer request, taking the frame with it if it can.
+    ///
+    /// Telling a caller the request failed while the frame sat in the outbox
+    /// meant the work landed anyway on the next reconnect, minutes later,
+    /// with the answer going nowhere -- and a caller that retried got two of
+    /// whatever it asked for. A frame still queued is dropped here, which
+    /// makes the common failure honest.
+    ///
+    /// A frame already written cannot be recalled, so that case is reported
+    /// as what it is rather than papered over: the error says the answer
+    /// never came, which is true, and does not claim the work did not happen.
+    fn abandon_peer_request(&self, id: &str, error: PeerRequestError) -> PeerRequestError {
+        if self.drop_outbox_frame(id) {
+            return error;
+        }
+        match error {
+            PeerRequestError::TimedOut => PeerRequestError::AnsweredNothing,
+            other => other,
+        }
+    }
+
+    /// Remove a queued frame by its id. True when it had not been sent yet.
+    fn drop_outbox_frame(&self, id: &str) -> bool {
+        // Being written right now: the queue still holds it, and taking it out
+        // would be withdrawing something already on the wire.
+        if self.is_writing_frame_id(id) {
+            return false;
+        }
+        let Ok(mut outbox) = self.outbox.lock() else {
+            return false;
+        };
+        let before = outbox.len();
+        outbox.retain(|frame| !frame_id_is(frame, id));
+        let dropped = outbox.len() < before;
+        let depth = outbox.len();
+        drop(outbox);
+        if dropped {
+            self.record_outbox_depth(depth);
+        }
+        dropped
+    }
+
+    /// How many callers are waiting on a peer answer.
+    ///
+    /// Here so the drop guard has a failing case: a leak is invisible from
+    /// outside otherwise, and a guard whose failure cannot be written is not
+    /// checking anything.
+    pub fn peer_waiter_count(&self) -> usize {
+        self.peer_waiters
+            .lock()
+            .map(|waiters| waiters.len())
+            .unwrap_or(0)
+    }
+
+    fn take_peer_waiter(&self, id: &str) -> Option<oneshot::Sender<PeerAnswer>> {
+        self.peer_waiters.lock().ok()?.remove(id)
+    }
+
+    /// Tell everyone still waiting that the connection went, by dropping
+    /// their senders. A caller that learns nothing waits out its whole
+    /// deadline for an answer that can no longer arrive.
+    fn fail_peer_waiters(&self) {
+        if let Ok(mut waiters) = self.peer_waiters.lock() {
+            waiters.clear();
+        }
+    }
+
     fn queue(&self, frame: String) -> Result<(), String> {
         let mut outbox = self
             .outbox
@@ -654,9 +898,31 @@ impl RelayRunner {
         };
         // Remove only after send_text completes. If this task is aborted mid-write, the
         // frame remains queued for the next pump.
-        writer.send_text(&frame).await?;
+        //
+        // Marked while that is true, so a caller giving up cannot withdraw a
+        // frame whose bytes are already going out and then report that its
+        // peer was never asked.
+        self.mark_writing(Some(frame.clone()));
+        let written = writer.send_text(&frame).await;
+        self.mark_writing(None);
+        written?;
         self.remove_outbox_front_if_matches(&frame);
         Ok(true)
+    }
+
+    fn mark_writing(&self, frame: Option<String>) {
+        if let Ok(mut writing) = self.writing_frame.lock() {
+            *writing = frame;
+        }
+    }
+
+    /// Whether a frame with this id is being written right now.
+    fn is_writing_frame_id(&self, id: &str) -> bool {
+        self.writing_frame
+            .lock()
+            .ok()
+            .and_then(|writing| writing.clone())
+            .is_some_and(|frame| frame_id_is(&frame, id))
     }
 
     fn peek_outbox_frame(&self) -> Option<String> {
@@ -828,6 +1094,20 @@ enum SubscriptionPollItem {
 #[derive(Default)]
 struct SubscriptionDelivery {
     frames: Vec<String>,
+}
+
+/// Whether a queued frame carries this id. A frame that will not parse is
+/// nobody's: saying it is would withdraw somebody else's work.
+fn frame_id_is(frame: &str, id: &str) -> bool {
+    serde_json::from_str::<Value>(frame)
+        .ok()
+        .and_then(|parsed| {
+            parsed
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|frame_id| frame_id == id)
+        })
+        .unwrap_or(false)
 }
 
 fn push_outbox_frame(outbox: &mut VecDeque<String>, frame: String) -> Result<(), String> {

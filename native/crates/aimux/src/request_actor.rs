@@ -1,4 +1,5 @@
 use crate::daemon::routing::DaemonRouteUrl;
+use crate::machine_identity::RESERVED_UNIDENTIFIED_MACHINE_ID;
 use crate::project_api_contract::routes as project_routes;
 use crate::proxy_project_binding::parse_proxy_target;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,14 @@ pub enum RemoteActorRole {
     Owner,
     Guest,
     Operator,
+    /// Another of this account's own machines, asking through the relay.
+    ///
+    /// Deliberately not Owner. The owner's own app is stamped `owner` and the
+    /// daemon loops those straight back into its whole API, so a peer given
+    /// that stamp would be every machine holding every other machine's
+    /// keyboard. A peer gets its own allowlist, as narrow as the work it is
+    /// for.
+    Peer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +55,10 @@ pub struct RemoteActor {
     pub email: Option<String>,
     pub share_id: Option<String>,
     pub share_session_id: Option<String>,
+    /// Which machine a peer request came from, stamped by the relay from the
+    /// socket it arrived on. Never read from the frame: the point of it is
+    /// that the caller cannot choose it.
+    pub peer_machine_id: Option<String>,
     pub principal: Option<RemoteOperatorPrincipal>,
 }
 
@@ -94,12 +107,14 @@ pub fn parse_remote_actor(headers: &BTreeMap<String, String>) -> Option<RemoteAc
             email: None,
             share_id: None,
             share_session_id: None,
+            peer_machine_id: None,
             principal: None,
         });
     };
     let role = match role_text {
         "owner" => RemoteActorRole::Owner,
         "guest" => RemoteActorRole::Guest,
+        "peer" => RemoteActorRole::Peer,
         _ => RemoteActorRole::Guest,
     };
     Some(RemoteActor {
@@ -120,6 +135,7 @@ pub fn parse_remote_actor(headers: &BTreeMap<String, String>) -> Option<RemoteAc
             .or_else(|| json_actor.as_ref().and_then(|actor| actor.email.clone())),
         share_id: header_value(headers, "x-aimux-share-id").map(str::to_owned),
         share_session_id: header_value(headers, "x-aimux-share-session-id").map(str::to_owned),
+        peer_machine_id: header_value(headers, "x-aimux-peer-machine-id").map(str::to_owned),
         principal: None,
     })
 }
@@ -140,7 +156,52 @@ pub fn assert_remote_access_allowed(
             assert_operator_allowed(actor, method, pathname, route_url, context)
         }
         RemoteActorRole::Guest => assert_guest_allowed(actor, method, pathname, route_url, context),
+        RemoteActorRole::Peer => assert_peer_allowed(actor, pathname),
     }
+}
+
+/// What another of this account's machines may ask this one to do.
+///
+/// Nothing, today. The transport exists and the role exists; no route is open
+/// to it yet, and that is deliberate rather than unfinished.
+///
+/// The first draft of this opened `/tasks/assign` and `/tasks/accept`, which
+/// read as the narrowest thing that could carry a handoff. It is not narrow.
+/// A task's `description` is interpolated verbatim into the reconciliation
+/// briefing the loop types into an overseer's pane, so posting a task is
+/// writing into the agent that spawns other agents -- one hop later and with
+/// nobody's name on it. `from` comes from the body too, so a peer could sign
+/// the work as the person.
+///
+/// None of that says the route cannot exist. It says it has to arrive with
+/// the caller that needs it, carrying the stamped origin machine as the
+/// assigner rather than trusting the body -- which is phase 9's work. Until
+/// then an allowlist that grants what nobody asked for is exactly the
+/// widening this phase was warned about, so it grants nothing, and the
+/// refusal names the route that was tried.
+fn assert_peer_allowed(actor: &RemoteActor, pathname: &str) -> RemoteAccessDecision {
+    let Some(origin) = actor
+        .peer_machine_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|machine| !machine.is_empty() && *machine != RESERVED_UNIDENTIFIED_MACHINE_ID)
+    else {
+        // The relay stamps this beside the role, from the socket the frame
+        // arrived on. A peer role without one did not come from where it
+        // claims -- and `unidentified` is the name every daemon with no
+        // persisted identity shares, which makes it a label, not an identity.
+        return RemoteAccessDecision::deny(
+            403,
+            "peer request did not say which machine it came from",
+        );
+    };
+    let route = parse_proxy_target(pathname)
+        .map(|proxy| proxy.sub_path)
+        .unwrap_or_else(|| pathname.to_owned());
+    RemoteAccessDecision::deny(
+        403,
+        format!("no route is open to peer machine {origin} yet: {route}"),
+    )
 }
 
 pub fn assert_operator_stream_allowed(

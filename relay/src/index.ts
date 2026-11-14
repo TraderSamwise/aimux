@@ -76,6 +76,16 @@ function getWebSocketToken(request: Request): string | null {
   return null;
 }
 
+/// `/shares/<segment>` routes whose segment is a verb, not an owner id.
+///
+/// Every other `/shares/...` path names the owner whose durable object holds
+/// the share, so the first segment picks the object. A verb read as an owner
+/// id picks an object named after the verb instead: empty, shared by every
+/// account, and it answers "share not found" for a share that exists. The
+/// list is here rather than inline so the next such route has one place to
+/// declare itself.
+const SHARE_VERB_SEGMENTS = new Set(["invite", "bind"]);
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -208,10 +218,11 @@ export default {
       }
       const inviteAcceptMatch = url.pathname.match(/^\/shares\/invite\/([^/]+)\/([^/]+)\/accept$/);
       const ownerScopedMatch = url.pathname.match(/^\/shares\/([^/]+)(?:\/|$)/);
+      const ownerScopedSegment = ownerScopedMatch ? decodeURIComponent(ownerScopedMatch[1]) : undefined;
       const ownerUserId = inviteAcceptMatch
         ? decodeURIComponent(inviteAcceptMatch[1])
-        : ownerScopedMatch && decodeURIComponent(ownerScopedMatch[1]) !== "invite"
-          ? decodeURIComponent(ownerScopedMatch[1])
+        : ownerScopedSegment && !SHARE_VERB_SEGMENTS.has(ownerScopedSegment)
+          ? ownerScopedSegment
           : userId;
       const relayId = env.RELAY.idFromName(ownerUserId);
       const stub = env.RELAY.get(relayId);

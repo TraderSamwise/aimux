@@ -4,6 +4,7 @@ import {
   actorDisplayPrefix,
   createShareInvite,
   emptySharingState,
+  bindShareToMachine,
   findShareForSession,
   getShareChatMode,
   isSharedRelayRequestAllowed,
@@ -24,6 +25,7 @@ import {
   type SharedSessionRecord,
   type SharingState,
 } from "./sharing";
+import { resolveSharedDaemonTarget } from "./machines";
 
 const owner = {
   userId: "user_owner",
@@ -40,6 +42,7 @@ describe("sharing state", () => {
       owner,
       projectRoot: "/Users/sam/cs/example",
       serviceEndpoint: { host: "127.0.0.1", port: 43192 },
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "ALEX@EXAMPLE.COM",
       now: activeInviteCreatedAt,
@@ -73,6 +76,7 @@ describe("sharing state", () => {
       owner,
       projectRoot: "/Users/sam/cs/example",
       serviceEndpoint: { host: "127.0.0.1", port: 43192 },
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
       now: activeInviteCreatedAt,
@@ -105,6 +109,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -126,6 +131,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "sam@example.com",
     });
@@ -142,6 +148,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -166,6 +173,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -190,6 +198,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -258,6 +267,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -302,6 +312,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -372,6 +383,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
       now: activeInviteCreatedAt,
@@ -395,6 +407,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      machineId: undefined,
       sessionId: "claude-abc",
       email: "alex@example.com",
     });
@@ -415,6 +428,7 @@ describe("sharing state", () => {
             ownerUserId: owner.userId,
             projectRoot: "/Users/sam/cs/example",
             serviceEndpoint: { host: "", port: 99999 },
+            machineId: undefined,
             sessionId: "claude-abc",
             createdAt: "2026-05-24T00:00:00.000Z",
             updatedAt: "2026-05-24T00:00:00.000Z",
@@ -434,6 +448,7 @@ describe("sharing state", () => {
       {
         owner,
         projectRoot: "/Users/sam/cs/example",
+        machineId: undefined,
         sessionId: "claude-abc",
         email: "alex@example.com",
       },
@@ -515,6 +530,27 @@ describe("which share a new invite extends", () => {
     expect(Object.keys(moved.state.shares)).toHaveLength(1);
   });
 
+  // An invite that cannot say which machine it came from used to adopt an
+  // unbound share of ANY checkout, and `createShareInvite` then rewrote that
+  // share's `projectRoot` -- which moved the guests already on it into a
+  // project nobody had shared with them, and left the share they accepted
+  // unreachable.
+  it("does not move a share's guests into another checkout", async () => {
+    const first = await invite(emptySharingState(), undefined, "/repo/a");
+    const accepted = await acceptShareInvite(first.state, {
+      token: first.token.token,
+      actor: { userId: "user_guest", displayName: "Guest", email: "guest@example.com", role: "guest" },
+    });
+
+    const second = await invite(accepted.state, undefined, "/repo/b");
+
+    expect(second.token.share.id).not.toBe(first.token.share.id);
+    expect(Object.keys(second.state.shares)).toHaveLength(2);
+    const held = second.state.shares[first.token.share.id];
+    expect(held.projectRoot, "the accepted share keeps its own checkout").toBe("/repo/a");
+    expect(held.participants.user_guest?.status).toBe("active");
+  });
+
   it("adopts neither when two unbound shares could be the one", () => {
     const unbound = (id: string): SharedSessionRecord => ({
       id,
@@ -533,6 +569,308 @@ describe("which share a new invite extends", () => {
     };
 
     expect(findShareForSession(state, owner.userId, "claude-1", "strix", "/repo/aimux")).toBeUndefined();
+  });
+});
+
+describe("binding a share that already exists", () => {
+  const owner: ShareActor = { userId: "user_owner", displayName: "Sam", role: "owner" };
+
+  async function invite(
+    state: Parameters<typeof createShareInvite>[0],
+    machineId?: string,
+    projectRoot = "/repo/aimux",
+    sessionId = "claude-1",
+  ) {
+    return createShareInvite(state, {
+      owner,
+      projectRoot,
+      sessionId,
+      email: "guest@example.com",
+      machineId,
+    });
+  }
+
+  /// The endpoint report is the evidence a machine holds a checkout, and it
+  /// is what the routing already narrows on.
+  function reporting(state: SharingState, machines: Record<string, string[]>): SharingState {
+    return Object.entries(machines).reduce(
+      (carried, [machineId, roots]) => rememberMachineProjectRoots(carried, machineId, roots),
+      state,
+    );
+  }
+
+  // The case the whole phase exists for: a share made before a share recorded
+  // its host, with its guest already accepted, repaired without a new token
+  // and a second email.
+  it("points a share that names no machine at the host that has it", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+    const accepted = await acceptShareInvite(legacy.state, {
+      token: legacy.token.token,
+      actor: { userId: "user_guest", displayName: "Guest", email: "guest@example.com", role: "guest" },
+    });
+    const shareId = legacy.token.share.id;
+
+    const bound = bindShareToMachine(reporting(accepted.state, { mbp: ["/repo/aimux"] }), {
+      owner,
+      shareId,
+      machineId: "mbp",
+    });
+
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) return;
+    expect(bound.alreadyBound).toBe(false);
+    expect(bound.share.id).toBe(shareId);
+    expect(bound.share.machineId).toBe("mbp");
+    // The guest it already has is still on it: a repair, not a new share.
+    expect(Object.keys(bound.state.shares)).toHaveLength(1);
+    expect(bound.share.participants.user_guest?.status).toBe("active");
+  });
+
+  // What the guest's 503 actually was. Two Macs with the same checkout both
+  // claim an unbound share, so the route refuses a host that is sitting
+  // right there -- until the share names one.
+  it("is what makes the route pick a host while a second machine claims the checkout", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+    const share = Object.values(legacy.state.shares)[0];
+    const claimed = reporting(legacy.state, {
+      mbp: ["/repo/aimux"],
+      strix: ["/repo/aimux"],
+    });
+    const online = [
+      { id: "mbp", name: "mbp" },
+      { id: "strix", name: "strix" },
+    ];
+
+    const before = resolveSharedDaemonTarget(machinesHostingShare(claimed, share, online), share.machineId);
+    expect(before.ok).toBe(false);
+    if (!before.ok) expect(before.refusal).toBe("share-names-no-machine");
+
+    const bound = bindShareToMachine(claimed, { owner, shareId: share.id, machineId: "mbp" });
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) return;
+
+    const after = resolveSharedDaemonTarget(
+      machinesHostingShare(bound.state, bound.share, online),
+      bound.share.machineId,
+    );
+    expect(after).toEqual({ ok: true, machineId: "mbp" });
+  });
+
+  it("writes nothing when the share already names that machine", async () => {
+    const first = await invite(emptySharingState(), "mbp");
+    const again = bindShareToMachine(reporting(first.state, { mbp: ["/repo/aimux"] }), {
+      owner,
+      shareId: first.token.share.id,
+      machineId: "mbp",
+    });
+
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(again.alreadyBound).toBe(true);
+    // A repeated bind that bumped the version would hand every guest a
+    // refresh of a record that did not change.
+    expect(again.share.version).toBe(first.token.share.version);
+    expect(again.share.updatedAt).toBe(first.token.share.updatedAt);
+  });
+
+  // There is no unbind route and a re-invite builds a SECOND share, so
+  // refusing to move would make one wrong press permanent -- on a share
+  // whose guests go on being refused for as long as it stands.
+  it("moves a share that was pointed at the wrong machine", async () => {
+    const first = await invite(emptySharingState(), "strix");
+    const corrected = bindShareToMachine(reporting(first.state, { mbp: ["/repo/aimux"], strix: ["/repo/aimux"] }), {
+      owner,
+      shareId: first.token.share.id,
+      machineId: "mbp",
+    });
+
+    expect(corrected.ok).toBe(true);
+    if (!corrected.ok) return;
+    expect(corrected.alreadyBound).toBe(false);
+    expect(corrected.share.machineId).toBe("mbp");
+    expect(Object.keys(corrected.state.shares)).toHaveLength(1);
+  });
+
+  // And this is what makes moving safe rather than a free hand. Nothing else
+  // says the target has the project, let alone the session, so without it one
+  // press from the wrong machine could hand accepted guests a different
+  // agent's transcript -- worse than the refusal it replaced.
+  it("will not point a share at a machine that has not reported its checkout", async () => {
+    const first = await invite(emptySharingState(), "mbp");
+    const elsewhere = reporting(first.state, {
+      mbp: ["/repo/aimux"],
+      strix: ["/repo/something-else"],
+    });
+
+    expect(
+      bindShareToMachine(elsewhere, {
+        owner,
+        shareId: first.token.share.id,
+        machineId: "strix",
+      }),
+    ).toEqual({ ok: false, refusal: "machine-does-not-hold-checkout" });
+    // Read back from the store, not from the object handed in: the rule works
+    // on a normalized clone, so asserting the input proves only that the
+    // input was not mutated -- which it would not have been either way.
+    expect(normalizeSharingState(elsewhere).shares[first.token.share.id].machineId).toBe("mbp");
+  });
+
+  // A checkout that was renamed or moved leaves the stored root behind, and
+  // the machine reports the new one -- so checking the stored root would
+  // refuse the repair for ever, on exactly the share that needs it. The
+  // caller says which checkout it is looking at, as an invite does.
+  it("re-points a share whose checkout was renamed", async () => {
+    const first = await invite(emptySharingState(), undefined, "/repo/old-name");
+    const renamed = reporting(first.state, { mbp: ["/repo/new-name"] });
+
+    const bound = bindShareToMachine(renamed, {
+      owner,
+      shareId: first.token.share.id,
+      machineId: "mbp",
+      projectRoot: "/repo/new-name",
+    });
+
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) return;
+    expect(bound.share.machineId).toBe("mbp");
+    expect(bound.share.projectRoot).toBe("/repo/new-name");
+    expect(Object.keys(bound.state.shares), "still one share").toHaveLength(1);
+  });
+
+  // A machine that still has the checkout the share names is not a machine
+  // whose checkout was renamed. Allowing the change there would carry the
+  // share's guests into another project on the same machine -- one they never
+  // accepted, and nobody asked for.
+  it("refuses to change the checkout on a machine that still has the stored one", async () => {
+    const first = await invite(emptySharingState(), "mbp", "/repo/aimux");
+    const both = reporting(first.state, { mbp: ["/repo/aimux", "/repo/other"] });
+
+    expect(
+      bindShareToMachine(both, {
+        owner,
+        shareId: first.token.share.id,
+        machineId: "mbp",
+        projectRoot: "/repo/other",
+      }),
+    ).toEqual({ ok: false, refusal: "machine-still-holds-the-stored-checkout" });
+    expect(normalizeSharingState(both).shares[first.token.share.id].projectRoot).toBe("/repo/aimux");
+  });
+
+  // And the caller's checkout is still checked against the report, so a
+  // rename is not a way to point a share anywhere at all.
+  it("refuses a checkout the machine has not reported either", async () => {
+    const first = await invite(emptySharingState(), undefined, "/repo/old-name");
+    const renamed = reporting(first.state, { mbp: ["/repo/new-name"] });
+
+    expect(
+      bindShareToMachine(renamed, {
+        owner,
+        shareId: first.token.share.id,
+        machineId: "mbp",
+        projectRoot: "/repo/somewhere-else",
+      }),
+    ).toEqual({ ok: false, refusal: "machine-does-not-hold-checkout" });
+    expect(normalizeSharingState(renamed).shares[first.token.share.id].projectRoot).toBe("/repo/old-name");
+  });
+
+  // Silence is its own answer, not a free pass. A daemon with no projects
+  // reports nothing at all, so reading an absence as trust bound a share to a
+  // machine that provably could not serve it -- and said it had worked. A
+  // machine that has just connected is in the same state until its first
+  // report, and the refusal says which absence it is.
+  it("refuses a bind to a machine that has reported nothing", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+
+    expect(
+      bindShareToMachine(legacy.state, {
+        owner,
+        shareId: legacy.token.share.id,
+        machineId: "mbp",
+      }),
+    ).toEqual({ ok: false, refusal: "machine-has-not-reported-its-checkouts" });
+  });
+
+  it("refuses the same way when other machines have reported and this one has not", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+    const othersReported = reporting(legacy.state, { strix: ["/repo/aimux"] });
+
+    expect(
+      bindShareToMachine(othersReported, {
+        owner,
+        shareId: legacy.token.share.id,
+        machineId: "mbp",
+      }),
+    ).toEqual({ ok: false, refusal: "machine-has-not-reported-its-checkouts" });
+  });
+
+  it("refuses a share id that is not the caller's", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+    const reported = reporting(legacy.state, { theirs: ["/repo/aimux"] });
+
+    expect(
+      bindShareToMachine(reported, {
+        owner: { userId: "user_someone_else", displayName: "Someone", role: "owner" },
+        shareId: legacy.token.share.id,
+        machineId: "theirs",
+      }),
+    ).toEqual({ ok: false, refusal: "no-such-share" });
+    expect(normalizeSharingState(reported).shares[legacy.token.share.id].machineId).toBeUndefined();
+  });
+
+  it("refuses a share id nothing holds", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+
+    expect(
+      bindShareToMachine(reporting(legacy.state, { mbp: ["/repo/aimux"] }), {
+        owner,
+        shareId: "share_does_not_exist",
+        machineId: "mbp",
+      }),
+    ).toEqual({ ok: false, refusal: "no-such-share" });
+  });
+
+  it("refuses a machine id it cannot use rather than reporting a bind", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+
+    expect(() =>
+      bindShareToMachine(legacy.state, {
+        owner,
+        shareId: legacy.token.share.id,
+        machineId: "   ",
+      }),
+    ).toThrow(/machineId is required/);
+  });
+
+  it("says whether a summary's share has a host, and never which", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+    expect(summarizeShare(Object.values(legacy.state.shares)[0]).hostBound).toBe(false);
+
+    const bound = bindShareToMachine(reporting(legacy.state, { mbp: ["/repo/aimux"] }), {
+      owner,
+      shareId: legacy.token.share.id,
+      machineId: "mbp",
+    });
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) return;
+    const summary = summarizeShare(bound.share);
+    expect(summary.hostBound).toBe(true);
+    expect(JSON.stringify(summary)).not.toContain("mbp");
+  });
+
+  // Rebuilt field by field, so a field not named there is dropped and the
+  // guest's stored copy goes on saying nothing about its host for ever.
+  it("keeps hostBound on a stored copy", async () => {
+    const legacy = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/repo/aimux",
+      sessionId: "claude-1",
+      email: "guest@example.com",
+      machineId: undefined,
+      serviceEndpoint: { host: "127.0.0.1", port: 4311 },
+    });
+    const stored = upsertAcceptedShare(emptySharingState(), summarizeShare(Object.values(legacy.state.shares)[0]));
+
+    expect(listAcceptedShares(stored)[0].hostBound).toBe(false);
   });
 });
 

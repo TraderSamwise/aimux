@@ -35,8 +35,10 @@ export interface RelayRequest {
   path: string;
   headers?: Record<string, string>;
   body?: unknown;
-  // Which machine should answer. Absent is a question, not a default: the
-  // relay resolves it only when there is exactly one machine to mean.
+  // Which machine should answer. Absent is a question, not a default: for a
+  // person's client the relay resolves it only when there is exactly one
+  // machine to mean, and for a daemon asking a peer it does not resolve it at
+  // all -- a daemon is not somebody who can be asked which one it meant.
   machineId?: string;
 }
 
@@ -79,6 +81,13 @@ export interface RelayResponse {
   id: string;
   type: "response";
   status: number;
+  /// Set to "relay" when the relay answered instead of the machine asked.
+  ///
+  /// A project service refuses with 502 and 503 as well, so an unmarked
+  /// refusal leaves a daemon unable to tell "the peer's service is down" from
+  /// "the relay would not carry this". A person's client ignores it; the
+  /// field exists because a daemon has nobody to ask.
+  source?: "relay";
   body?: unknown;
 }
 

@@ -121,6 +121,20 @@ export interface SharedSessionSummary {
   updatedAt: string;
   version: number;
   mode: ShareChatMode;
+  /**
+   * Whether the share names the machine that holds the session.
+   *
+   * Which machine is never said -- the shape of the account is not a guest's
+   * business -- but whether the share can be routed at all is, because a
+   * share that names none refuses every request with a message about a
+   * disconnected host while the host is sitting right there. The owner needs
+   * it to offer the repair; a guest reading `false` learns why it refuses.
+   *
+   * Absent, not false, on a copy stored before this existed: "nobody knows"
+   * and "no host" are different answers, and only the second one is an offer
+   * to repair something.
+   */
+  hostBound?: boolean;
   participants: ShareParticipantRecord[];
   invites: Array<Omit<ShareInviteRecord, "tokenHash">>;
 }
@@ -129,7 +143,21 @@ export interface CreateShareInviteInput {
   owner: ShareActor;
   projectRoot: string;
   serviceEndpoint?: ShareServiceEndpoint;
-  machineId?: string;
+  /**
+   * Which of the owner's machines hosts the session.
+   *
+   * Required of every caller that can know it, so a new share is never left
+   * for the project-root guess to route -- two machines with the same checkout
+   * path both claim it, and the route then refuses a share whose host is
+   * sitting right there.
+   *
+   * Still `| undefined` rather than absent, because a daemon that connected
+   * without a usable id is tagged `unidentified` and `sanitizeShareMachineId`
+   * folds that to nothing: a hard requirement would take sharing away from
+   * such an owner entirely. The relay accepts the absence and refuses the
+   * route with its own named reason instead.
+   */
+  machineId: string | undefined;
   sessionId: string;
   email: string;
   now?: string;
@@ -358,6 +386,7 @@ export function summarizeShare(share: SharedSessionRecord): SharedSessionSummary
     updatedAt: share.updatedAt,
     version: share.version,
     mode: getShareChatMode(share),
+    hostBound: Boolean(sanitizeShareMachineId(share.machineId)),
     participants: Object.values(share.participants),
     invites: Object.values(share.invites).map(({ tokenHash: _tokenHash, ...invite }) => invite),
   };
@@ -402,21 +431,168 @@ export function findShareForSession(
   // A session id names a session on one host. Matching without the machine
   // would let an invite for strix's `claude-1` rebind the guests of the mbp's
   // share of the same name to strix.
-  const sameMachine = forOwnerSession.find((share) => sanitizeShareMachineId(share.machineId) === wanted);
-  if (sameMachine) return sameMachine;
-  if (!wanted) return undefined;
+  if (wanted) {
+    const sameMachine = forOwnerSession.find((share) => sanitizeShareMachineId(share.machineId) === wanted);
+    if (sameMachine) return sameMachine;
+  }
   // A share made before machines existed is the same share, and adopting it is
   // what lets a re-invite bind it rather than make a second one and strand its
   // guests on the first. But "unbound" says nothing about WHICH host made it,
-  // so the checkout has to match too: otherwise strix's first invite for its
-  // own `claude-1` takes over the mbp's share of that name and rebinds its
-  // guests to the wrong host, which is what the machine binding exists to stop.
+  // so the checkout has to match too -- for a caller that names a machine AND
+  // for one that cannot.
+  //
+  // That second case used to skip the checkout entirely, because an unbound
+  // caller matched an unbound share on the machine comparison alone. An
+  // invite sent from one checkout then adopted another checkout's share and
+  // rewrote its `projectRoot`, which moved the guests already on it into a
+  // project they were never shared.
   //
   // Two unbound candidates is a question, not an answer, so neither is taken.
+  // Folded, not compared raw: `/repo` and `/repo/` are one checkout, and a
+  // trailing slash made the re-invite miss its own share, create a second one,
+  // and strand the first one's guests -- which is the outcome this adoption
+  // exists to prevent.
+  const wantedRoot = shareProjectRootKey(projectRoot);
   const adoptable = forOwnerSession.filter(
-    (share) => !sanitizeShareMachineId(share.machineId) && share.projectRoot === projectRoot,
+    (share) => !sanitizeShareMachineId(share.machineId) && shareProjectRootKey(share.projectRoot) === wantedRoot,
   );
   return adoptable.length === 1 ? adoptable[0] : undefined;
+}
+
+/// Why an existing share could not be bound to a machine.
+///
+/// Four ways to be wrong: the share is not the owner's to move, the machine
+/// has told the relay nothing about what it holds, it has and this checkout
+/// was not in it, or the checkout is being changed on a machine that still
+/// has the one the share names -- which is a relocation dressed as a rename.
+export type BindShareRefusal =
+  | "no-such-share"
+  | "machine-has-not-reported-its-checkouts"
+  | "machine-does-not-hold-checkout"
+  | "machine-still-holds-the-stored-checkout";
+
+export interface BindShareMachineInput {
+  owner: ShareActor;
+  /// Which share, by id.
+  ///
+  /// Named rather than looked up from the session and the checkout, which is
+  /// how the first draft did it. Two machines with the same path each make
+  /// their own share of one session id, so that lookup had to choose -- and
+  /// the surface offering the repair is showing ONE share, whose id it
+  /// already has. Asking it to describe the share instead of naming it meant
+  /// the share displayed and the share moved could differ, and a renamed
+  /// checkout made its own share unfindable.
+  shareId: string;
+  machineId: string;
+  /// The checkout the caller is looking at, when it has one.
+  ///
+  /// A checkout that was renamed or moved leaves the stored root behind, and
+  /// the target machine reports the new one -- so checking against the stored
+  /// root would refuse the repair for ever, on exactly the share that needs
+  /// it. Given, it is what the machine must have reported and what the share
+  /// records afterwards; this is the same thing an invite does with the root
+  /// it came from, and for the same reason.
+  projectRoot?: string;
+  now?: string;
+}
+
+export type BindShareMachineResult =
+  | { ok: true; state: SharingState; share: SharedSessionRecord; alreadyBound: boolean }
+  | { ok: false; refusal: BindShareRefusal };
+
+/// Point a share that already exists at the machine holding its session.
+///
+/// A share made before machines existed names no host, and the route then
+/// refuses it -- with the host sitting right there. Re-inviting repairs it,
+/// but costs a new token and another email to someone who already accepted.
+/// This is that repair without the email.
+///
+/// It moves a share that already names a machine, rather than refusing: there
+/// is no unbind route and a re-invite builds a SECOND share, so a refusal
+/// would make one wrong press permanent. What stops a wrong press going
+/// somewhere useless is the check below, not a refusal to move.
+export function bindShareToMachine(state: SharingState, input: BindShareMachineInput): BindShareMachineResult {
+  const now = input.now ?? new Date().toISOString();
+  const owner = sanitizeActor(input.owner, "owner");
+  const shareId = sanitizeRequiredText(input.shareId, 160, "shareId");
+  // Binding to nothing is not a bind. An unusable id here would quietly write
+  // `undefined` and report success over a share that still cannot be routed.
+  const machineId = sanitizeShareMachineId(input.machineId);
+  if (!machineId) throw new Error("machineId is required");
+
+  const current = normalizeSharingState(state);
+  const share = current.shares[shareId];
+  // One refusal for "no such share" and "not yours", because they are the
+  // same answer from here: nothing of the caller's by that id.
+  if (!share || share.ownerUserId !== owner.userId) {
+    return { ok: false, refusal: "no-such-share" };
+  }
+
+  // The machine has to look like it holds the checkout. Without this a bind
+  // is a free hand: nothing here says the target has the project at all, so a
+  // press from a machine that does not could point a share at a service that
+  // has never heard of it.
+  //
+  // It does NOT establish that the target has that SESSION, and it cannot: a
+  // session id is unique within a project service, not across the fleet, so
+  // one checkout on two machines can hold two different `claude-1`s and this
+  // passes for both. Pointing a share at the wrong one hands its guests the
+  // other agent's transcript. Nothing available here tells them apart -- the
+  // relay knows machines, roots and ports, never sessions -- so what stands
+  // between the owner and that mistake is the button naming the machine it
+  // would pick, and the press being repeatable from the right one. Written
+  // out because the first version of this comment claimed the check stopped
+  // it.
+  //
+  // The evidence is the endpoint report, which is what the routing already
+  // narrows on. Asked per machine, and an absence is its own answer rather
+  // than a free pass: a machine that has told the relay nothing has not told
+  // it that it holds this checkout either, and a daemon with no projects at
+  // all reports nothing, so reading silence as trust would bind a share to a
+  // machine that provably cannot serve it -- and report success doing it. A
+  // machine that has just connected is in that state for up to its first
+  // report; the refusal says which absence it is, and pressing again once it
+  // has reported works.
+  const storedRoot = shareProjectRootKey(share.projectRoot);
+  const wantedRoot = shareProjectRootKey(input.projectRoot?.trim() || share.projectRoot);
+  const reported = claimedProjectRoots(current.machineProjectRoots, machineId);
+  if (reported.length === 0) {
+    return { ok: false, refusal: "machine-has-not-reported-its-checkouts" };
+  }
+  if (!reported.includes(wantedRoot)) {
+    return { ok: false, refusal: "machine-does-not-hold-checkout" };
+  }
+
+  // Changing the share's checkout is for one case: the path moved or was
+  // renamed, so the machine reports a root the share has never heard of while
+  // the one it stores is gone. If the target still HAS the stored root this is
+  // not a rename -- it is being told to carry the share's guests into another
+  // project on the same machine, which they never accepted and nobody asked
+  // for.
+  const changingRoot = wantedRoot !== storedRoot;
+  if (changingRoot && reported.includes(storedRoot)) {
+    return { ok: false, refusal: "machine-still-holds-the-stored-checkout" };
+  }
+  const movedCheckout = changingRoot ? input.projectRoot?.trim() : undefined;
+  // Nothing to write, so nothing is written: a repeated bind must not bump the
+  // version every time and hand every guest a pointless refresh.
+  if (!movedCheckout && sanitizeShareMachineId(share.machineId) === machineId) {
+    return { ok: true, state: current, share, alreadyBound: true };
+  }
+
+  if (movedCheckout) {
+    share.projectRoot = sanitizeRequiredText(movedCheckout, MAX_PROJECT_ROOT_CHARS, "projectRoot");
+  }
+  share.machineId = machineId;
+  share.updatedAt = now;
+  share.version += 1;
+  current.shares[share.id] = normalizeShare(share);
+  return {
+    ok: true,
+    state: normalizeSharingState(current),
+    share: current.shares[share.id],
+    alreadyBound: false,
+  };
 }
 
 export async function createShareInvite(
@@ -666,7 +842,12 @@ function createShare(input: {
   };
 }
 
-function sanitizeShareMachineId(value: string | undefined): string | undefined {
+/// The one filter that decides whether a share names a usable host.
+///
+/// Exported because three things ask that question -- the routing, the
+/// summary's `hostBound`, and a guest's host indicator -- and reading the
+/// field raw in any of them is how one record came to have three answers.
+export function sanitizeShareMachineId(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && isValidMachineId(trimmed) ? trimmed : undefined;
 }
@@ -709,6 +890,9 @@ function normalizeAcceptedShare(share: SharedSessionSummary | undefined): Shared
     updatedAt: sanitizeRequiredText(share.updatedAt, 80, "updatedAt"),
     version: Number.isFinite(share.version) ? share.version : 1,
     mode: share.mode === "multi" ? "multi" : "single",
+    // Rebuilt field by field, so a field not named here is dropped: a stored
+    // copy would go on saying nothing about its host forever.
+    ...(typeof share.hostBound === "boolean" ? { hostBound: share.hostBound } : {}),
     participants: Array.isArray(share.participants) ? share.participants : [],
     invites: Array.isArray(share.invites) ? share.invites : [],
   };
@@ -825,6 +1009,14 @@ export function updateShareServiceEndpoints(
     }
     share.serviceEndpoint = { ...endpoint };
     share.updatedAt = now;
+    // A write that changes the record bumps the version, like every other
+    // one. It used to move the endpoint and leave the version alone, which
+    // made the version blind to this path -- and the report merge decides
+    // whose copy of a summary is stale by asking whether the version moved.
+    // Two overlapping reports therefore looked identical to one, and the
+    // second one's work was saved over: its moved port reverted, and the
+    // guest it could not reach left owed nothing.
+    share.version += 1;
     updated.push(share.id);
   }
   return { state: current, updated, matched };

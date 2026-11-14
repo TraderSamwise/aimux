@@ -10,6 +10,7 @@ import {
   machineNameTag,
   machineTag,
   resolveDaemonTarget,
+  resolvePeerDaemonTarget,
   resolveSharedDaemonTarget,
   sharedHostOnline,
 } from "./machines.js";
@@ -46,10 +47,13 @@ import {
 } from "./security.js";
 import {
   acceptShareInvite,
+  bindShareToMachine,
+  type BindShareRefusal,
   createShareInvite,
   getShareChatMode,
   listAcceptedShares,
   loadSharingState,
+  sanitizeShareMachineId,
   type SharingState,
   removeAcceptedShare,
   removeShareParticipant,
@@ -62,6 +66,7 @@ import {
   nextShareRefreshBatch,
   rememberMachineProjectRoots,
   updateShareServiceEndpoints,
+  type ShareServiceEndpoint,
   upsertAcceptedShare,
 } from "./sharing.js";
 import type { ShareParticipantRecord, SharedSessionRecord, SharedSessionSummary } from "./sharing.js";
@@ -77,6 +82,41 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 // requesting client only. Entries are cleared on response, client close, or
 // after this TTL — bounds memory if a request never completes.
 const PENDING_REQUEST_TTL_MS = 60_000;
+/// How many requests one machine may have in flight to its peers at once.
+///
+/// A daemon answers its relay socket one request at a time, so a peer that
+/// sends faster than its target can answer is not going faster -- it is
+/// queueing work in front of the owner's own app, which shares that socket.
+/// Low on purpose: a handoff is one call, and anything needing more than this
+/// at once is a loop, which is the failure this bounds.
+const MAX_PEER_REQUESTS_IN_FLIGHT = 8;
+/// How many peer requests one machine may be holding at once, from everyone.
+///
+/// The per-origin cap bounds what one machine can send and says nothing about
+/// what one machine can be sent: with several machines on the account, each
+/// politely under its own eight, the target still gets all of them written to
+/// its socket at once and answers them one at a time with the owner's own app
+/// queued behind. This is the bound that protects the machine being asked.
+const MAX_PEER_REQUESTS_PER_TARGET = 16;
+/// What a refused bind is, over the wire and to the person reading it.
+///
+/// A bind is an owner repairing their own share, so unlike a guest-facing
+/// refusal there is nothing to withhold: each one has a different fix.
+const BIND_SHARE_REFUSALS: Record<BindShareRefusal, { status: number; error: string }> = {
+  "no-such-share": { status: 404, error: "No share of yours by that id" },
+  "machine-has-not-reported-its-checkouts": {
+    status: 409,
+    error: "That machine has not told the relay which checkouts it has",
+  },
+  "machine-does-not-hold-checkout": {
+    status: 409,
+    error: "That machine has not reported the checkout this share names",
+  },
+  "machine-still-holds-the-stored-checkout": {
+    status: 409,
+    error: "That machine still has the checkout this share names, so this is not a rename",
+  },
+};
 /// How many project endpoints one `project_endpoints` frame may report.
 ///
 /// Each entry is a pass over every share this object holds, so an unbounded
@@ -209,6 +249,10 @@ export class RelayObject extends DurableObject<Env> {
     }
     if (url.pathname.startsWith("/shares/") && url.pathname.includes("/invites/") && request.method === "DELETE") {
       return this.revokeShareInvite(request, url);
+    }
+    if (url.pathname === "/shares/bind" && request.method === "POST") {
+      if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
+      return this.bindShareMachine(request);
     }
     if (url.pathname === "/shares/invite" && request.method === "POST") {
       if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
@@ -403,6 +447,8 @@ export class RelayObject extends DurableObject<Env> {
       } else {
         this.reportUnmatchedDaemonResponse(ws, parsed.id);
       }
+    } else if (isDaemon && parsed.type === "request") {
+      await this.forwardPeerDaemonRequest(ws, tags, parsed);
     } else if (!isDaemon && parsed.type === "project_events_subscribe") {
       await this.handleClientProjectEventsSubscribe(ws, parsed);
     } else if (!isDaemon && parsed.type === "project_events_unsubscribe") {
@@ -636,6 +682,16 @@ export class RelayObject extends DurableObject<Env> {
     const senderIsOnlyMachine = machines.length === 1 && machines[0].id === machineId;
 
     const stored = await loadSharingState(this.ctx.storage);
+    // Numbers and strings, taken before anything downstream can touch them:
+    // the loaded state's own records do not survive as a snapshot -- the
+    // normalizing and the endpoint move pass through them -- and a comparison
+    // against a record that moved with the work is a comparison with itself.
+    const loadedAt = new Map(
+      Object.values(stored.shares).map((share) => [
+        share.id,
+        { version: share.version, endpoint: share.serviceEndpoint },
+      ]),
+    );
     const loaded = rememberMachineProjectRoots(
       stored,
       machineId,
@@ -711,7 +767,102 @@ export class RelayObject extends DurableObject<Env> {
       if (!share) continue;
       if (recordStaleReceivers(share, shareReceivers(share))) changed = true;
     }
-    if (changed || learnedSomething) await saveSharingState(this.ctx.storage, state);
+    if (!changed && !learnedSomething) return;
+    // Written onto what is stored NOW, not onto the snapshot this started
+    // from. Between that load and here are up to twenty cross-object
+    // fetches, and a write landing inside that window was being erased by
+    // this save: a bind pressed while a machine reported -- which is the
+    // common case, since a report goes out on every connect -- came back
+    // undone, after the owner had been told it worked and every guest had
+    // been pushed the bound summary.
+    //
+    // Field by field and share by share, over the ones this report actually
+    // touched. Copying every share in the snapshot was the same bug one layer
+    // in: it carried `staleReceivers: undefined` onto a share a bind had just
+    // marked, losing the one guest that bind could not reach, and carried a
+    // stale endpoint over one a re-invite had just corrected.
+    const fresh = await loadSharingState(this.ctx.storage);
+    // Whether the stored record moved while this report was fanning out.
+    // Everything below turns on it, because a report that loaded five minutes
+    // of awaits ago is not the authority on a record somebody has written
+    // since -- and the version is bumped by every write that changes a share,
+    // including this path's own endpoint move.
+    //
+    // Compared against the version this report LOADED, never the one in its
+    // own snapshot: its snapshot is the thing it mutated.
+    // Decided once, before anything below writes: the endpoint loop bumps the
+    // version itself, so asking the question again afterwards is asking about
+    // this report's own write -- which marked every guest it had just
+    // refreshed as owed another copy, and turned a bounded fan-out into the
+    // whole list again on the next report.
+    const wroteUnderneath = new Set(
+      Object.keys(fresh.shares).filter((id) => fresh.shares[id].version !== loadedAt.get(id)?.version),
+    );
+
+    for (const id of updated) {
+      const held = fresh.shares[id];
+      const reported = state.shares[id];
+      if (!held || !reported?.serviceEndpoint) continue;
+      // The daemon is the authority on where its own service is listening --
+      // but a LATER write is the authority over an earlier one, and that
+      // includes a later report from the same daemon. So this asks about the
+      // endpoint itself rather than the record: if the stored one is still
+      // what this report read, nothing has moved it and ours is the newest
+      // word. If it has changed, a second report moved it again while this
+      // one was fanning out, and writing ours back reverted a live port to a
+      // dead one.
+      //
+      // Asked of the endpoint and not of the version, because a write that
+      // changed something ELSE -- a bind, an accept -- leaves this report
+      // still the newest word on the port, and skipping it there would leave
+      // the share pointing at the old one until the next report.
+      if (!sameEndpoint(held.serviceEndpoint, loadedAt.get(id)?.endpoint)) continue;
+      held.serviceEndpoint = { ...reported.serviceEndpoint };
+      held.updatedAt = laterTimestamp(held.updatedAt, reported.updatedAt) ?? held.updatedAt;
+      // Bumped on the record being SAVED, not only on the snapshot: the
+      // version is how the next overlapping report learns that this one wrote,
+      // and a bump that stays in the snapshot is a bump nobody reads.
+      held.version += 1;
+    }
+    for (const id of refresh) {
+      const held = fresh.shares[id];
+      const reported = state.shares[id];
+      if (!held || !reported) continue;
+      // What this report could not reach -- unless the record changed while it
+      // was reaching. Every summary it pushed was built from its own snapshot,
+      // so a write landing in the window means the guests it "successfully
+      // refreshed" were handed the copy from before that write, and anyone the
+      // other write could not reach was recorded on a record this path never
+      // read. Both are owed another push.
+      //
+      // A plain union would not do: it can only grow, and the rule that a
+      // landed refresh stops being retried is what stops a report writing
+      // storage every thirty seconds for ever.
+      held.staleReceivers = wroteUnderneath.has(id)
+        ? unionReceivers(shareReceivers(held), reported.staleReceivers)
+        : reported.staleReceivers;
+      // The later of the two stamps, for the same reason: two reports from one
+      // machine overlap on connect-plus-reminder, and taking whichever
+      // finished last would move the fairness cursor backwards.
+      held.lastReceiverRefreshAt = laterTimestamp(held.lastReceiverRefreshAt, reported.lastReceiverRefreshAt);
+    }
+    // One machine's entry, not the whole index. Assigning the map wholesale
+    // reverted whatever another machine had reported in the window -- and a
+    // machine's roots are how an unbound share is routed, so the revert aimed
+    // a guest at a host that no longer has the checkout.
+    if (learnedSomething) {
+      const roots = state.machineProjectRoots?.[machineId ?? ""];
+      const index = { ...(fresh.machineProjectRoots ?? {}) };
+      if (machineId) {
+        if (roots) {
+          index[machineId] = roots;
+        } else {
+          delete index[machineId];
+        }
+      }
+      fresh.machineProjectRoots = Object.keys(index).length > 0 ? index : undefined;
+    }
+    await saveSharingState(this.ctx.storage, fresh);
   }
 
   private async handleDaemonNotificationPush(
@@ -854,6 +1005,13 @@ export class RelayObject extends DurableObject<Env> {
         this.failPendingRequests("Daemon connection lost", 502, closingMachineId);
         this.failProjectEventSubscriptions("Daemon connection lost", 502, closingMachineId);
       }
+      // A daemon's own peer requests go with it. The live map has already
+      // dropped them -- the rebuild above excludes this socket -- but the
+      // attachment they were rebuilt FROM has not, and that is what every
+      // later rebuild reads. `failPendingRequests` does not reach these: it
+      // is keyed on the machine an entry is FOR, and these are the entries
+      // this socket was waiting ON.
+      this.clearClientPendingRequests(ws);
       // Rehydration already dropped this machine from both maps.
       if (!replacementDaemon) {
         await this.broadcastMachineStatus();
@@ -939,7 +1097,10 @@ export class RelayObject extends DurableObject<Env> {
     if (!shareId) return null;
     const share = state.shares[shareId];
     if (!share) return MISSING_SHARE_HOST;
-    return share.machineId ?? "";
+    // The same filter the routing and the summary use. Read raw, this said a
+    // share had a host that `resolveSharedDaemonTarget` would not route and
+    // `hostBound` called unbound -- one record, three answers.
+    return sanitizeShareMachineId(share.machineId) ?? "";
   }
 
   private async broadcastMachineStatus(): Promise<void> {
@@ -1345,6 +1506,100 @@ export class RelayObject extends DurableObject<Env> {
     return { ok: true, userId, share, participant };
   }
 
+  /// One of the owner's machines asking another one something.
+  ///
+  /// Both sockets are in this durable object, which is the owner's own, so a
+  /// peer request cannot cross accounts by construction rather than by a
+  /// check. What it must not do is arrive looking like the owner: the app's
+  /// requests are stamped `owner` and the daemon loops those straight back
+  /// into its whole API, so a peer carries its own role and the machine it
+  /// came from, and the daemon decides from those.
+  private async forwardPeerDaemonRequest(
+    ws: WebSocket,
+    tags: readonly string[],
+    parsed: Extract<RelayMessage, { type: "request" }>,
+  ): Promise<void> {
+    this.sweepExpiredPending();
+    const origin = machineFromTags(tags).id;
+    const target = resolvePeerDaemonTarget(this.onlineMachines(), origin, parsed.machineId);
+    if (!target.ok) {
+      this.sendRelayRefusal(ws, parsed.id, target.status, {
+        error: target.error,
+        refusal: target.refusal,
+      });
+      return;
+    }
+    const pending = [...this.pendingRequests.values()];
+    const fromThisMachine = pending.filter((entry) => entry.client === ws).length;
+    if (fromThisMachine >= MAX_PEER_REQUESTS_IN_FLIGHT) {
+      this.sendRelayRefusal(ws, parsed.id, 429, {
+        error: `No more than ${MAX_PEER_REQUESTS_IN_FLIGHT} peer requests at once`,
+        refusal: "peer-too-many-in-flight",
+      });
+      return;
+    }
+    const toThatMachine = pending.filter(
+      (entry) => entry.machineId === target.machineId && this.ctx.getTags(entry.client).includes("daemon"),
+    ).length;
+    if (toThatMachine >= MAX_PEER_REQUESTS_PER_TARGET) {
+      this.sendRelayRefusal(ws, parsed.id, 429, {
+        error: `Machine ${target.machineId} is already holding ${MAX_PEER_REQUESTS_PER_TARGET} peer requests`,
+        refusal: "peer-target-saturated",
+      });
+      return;
+    }
+    const daemon = this.daemonSockets.get(target.machineId)!;
+    const relayRequestId = this.nextRelayRequestId();
+    const expiresAt = Date.now() + PENDING_REQUEST_TTL_MS;
+    this.pendingRequests.set(relayRequestId, {
+      client: ws,
+      clientRequestId: parsed.id,
+      expiresAt,
+      machineId: target.machineId,
+    });
+    // Written to the asking socket's own attachment, because every message
+    // this object handles rebuilds the live maps from the sockets and their
+    // attachments. Without this the entry survives exactly until the next
+    // frame of any kind, including a pong.
+    this.attachClientPendingRequest(ws, relayRequestId, parsed.id, expiresAt, target.machineId);
+    try {
+      daemon.send(
+        JSON.stringify({
+          ...parsed,
+          id: relayRequestId,
+          headers: {
+            ...stripTrustedAimuxHeaders(parsed.headers),
+            "X-Aimux-Actor-Role": "peer",
+            "X-Aimux-Peer-Machine-Id": origin,
+          },
+        }),
+      );
+    } catch {
+      this.pendingRequests.delete(relayRequestId);
+      this.detachClientPendingRequest(ws, relayRequestId);
+      this.sendRelayRefusal(ws, parsed.id, 502, {
+        error: "Peer machine connection lost",
+        refusal: "peer-target-offline",
+      });
+    }
+  }
+
+  /// An answer the relay made itself, marked as its own.
+  ///
+  /// A project service refuses with 502 and 503 too, so an unmarked refusal
+  /// leaves the asking daemon unable to tell "the peer's service is down"
+  /// from "the relay would not carry this" -- two problems with two different
+  /// fixes, wearing the same number.
+  private sendRelayRefusal(ws: WebSocket, id: string, status: number, body: { error: string; refusal: string }): void {
+    this.send(ws, {
+      id,
+      type: "response",
+      status,
+      source: "relay",
+      body: { ok: false, ...body },
+    });
+  }
+
   private async prepareClientRequest(
     ws: WebSocket,
     request: Extract<RelayMessage, { type: "request" }>,
@@ -1623,6 +1878,80 @@ export class RelayObject extends DurableObject<Env> {
     const result = revokeShareInvite(state, share.id, parsed.inviteId);
     await saveSharingState(this.ctx.storage, result.state);
     return json({ ok: true, share: summarizeShare(result.share ?? share) }, 200);
+  }
+
+  /// Bind a share that already exists to the machine holding its session.
+  ///
+  /// The repair for a share made before machines existed. Re-inviting from
+  /// the hosting Mac fixes it too, but costs a new token and a second email
+  /// to someone who already accepted -- so this says the same thing with no
+  /// invite attached, and refuses by name rather than with one flat 404.
+  private async bindShareMachine(request: Request): Promise<Response> {
+    const owner = this.actorFromHeaders(request, "owner");
+    if (!owner) return json({ ok: false, error: "Missing owner context" }, 401);
+    let body: { shareId?: string; machineId?: string; projectRoot?: string };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return json({ ok: false, error: "Invalid JSON" }, 400);
+    }
+    const machineId = body.machineId?.trim() ?? "";
+    // Asked here rather than in the rule, because only this object knows who
+    // is connected right now. A bind onto a machine that is not here would
+    // leave the share refusing every guest until that machine came back, and
+    // the owner pressed a button that reported success.
+    if (machineId && !this.onlineMachines().some((machine) => machine.id === machineId)) {
+      return json({ ok: false, error: `Machine ${machineId} is not connected`, refusal: "machine-offline" }, 409);
+    }
+    const state = await loadSharingState(this.ctx.storage);
+    let result: ReturnType<typeof bindShareToMachine>;
+    try {
+      result = bindShareToMachine(state, {
+        owner,
+        shareId: body.shareId ?? "",
+        machineId,
+        ...(body.projectRoot ? { projectRoot: body.projectRoot } : {}),
+      });
+    } catch (error) {
+      return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+    if (!result.ok) {
+      const refusal = BIND_SHARE_REFUSALS[result.refusal];
+      return json({ ok: false, error: refusal.error, refusal: result.refusal }, refusal.status);
+    }
+    if (result.alreadyBound) {
+      return json({ ok: true, alreadyBound: true, share: summarizeShare(result.share) }, 200);
+    }
+    // Saved before anyone is told about it: a guest informed of a binding
+    // this object then forgot is worse than a guest told late.
+    await saveSharingState(this.ctx.storage, result.state);
+    // The guests hold their own copy of the summary, and `hostBound` has just
+    // changed in it. Their host indicator is resolved from the record per
+    // socket rather than from a connect-time tag, so it is re-pushed too --
+    // a share that could not be routed a moment ago now can be.
+    const staleReceivers = await this.refreshShareForItsParticipants(result.share);
+    // Owed, not forgotten. A second press of the same button returns
+    // `alreadyBound` and writes nothing, so without recording this the one
+    // guest whose copy did not land would keep `hostBound: false` for good:
+    // no later comparison would notice, because the owner's own record
+    // already says what it should. Recorded even when the list is empty,
+    // which is how an entry this refresh just satisfied gets cleared rather
+    // than costing another retry.
+    const saved = await loadSharingState(this.ctx.storage);
+    const share = saved.shares[result.share.id];
+    if (share && recordStaleReceivers(share, staleReceivers)) {
+      await saveSharingState(this.ctx.storage, saved);
+    }
+    await this.broadcastMachineStatus();
+    return json(
+      {
+        ok: true,
+        alreadyBound: false,
+        share: summarizeShare(result.share),
+        ...(staleReceivers.length > 0 ? { staleReceivers } : {}),
+      },
+      200,
+    );
   }
 
   private async createShareInvite(request: Request): Promise<Response> {
@@ -1927,6 +2256,10 @@ export class RelayObject extends DurableObject<Env> {
         if (keepsIncumbent) continue;
         this.daemonSockets.set(machine.id, ws);
         this.daemonMachineNames.set(machine.id, machine.name);
+        // A daemon waits on answers of its own now, and this runs at the top
+        // of every message: rebuilding only the clients' entries left a peer
+        // request alive until the next frame of any kind, a pong included.
+        this.rebuildPendingRequests(ws, unroutable);
       } else if (tags.includes("client")) {
         this.clientSockets.add(ws);
         const deviceId = this.deviceIdFromTags(ws);
@@ -1950,38 +2283,7 @@ export class RelayObject extends DurableObject<Env> {
             machineId: subscription.machineId,
           });
         }
-        for (const [relayRequestId, pending] of Object.entries(this.clientSocketAttachment(ws).pendingRequests ?? {})) {
-          if (!isPendingRequestAttachment(pending)) {
-            // An attachment we cannot read is a request we cannot route, which
-            // is the same outcome as one naming no machine -- so it gets the
-            // same 502 rather than being dropped for the client to time out.
-            // The id is salvaged when it is there to salvage; when it is not,
-            // detaching is all that can be done, and leaving it would have it
-            // rebuilt on every future rehydrate.
-            unroutable.push({
-              client: ws,
-              id: relayRequestId,
-              kind: "request",
-              clientId: salvagedClientRequestId(pending) ?? relayRequestId,
-            });
-            continue;
-          }
-          if (!pending.machineId) {
-            unroutable.push({
-              client: ws,
-              id: relayRequestId,
-              kind: "request",
-              clientId: pending.clientRequestId,
-            });
-            continue;
-          }
-          this.pendingRequests.set(relayRequestId, {
-            client: ws,
-            clientRequestId: pending.clientRequestId,
-            expiresAt: pending.expiresAt,
-            machineId: pending.machineId,
-          });
-        }
+        this.rebuildPendingRequests(ws, unroutable);
       }
     }
     this.failUnroutableRebuiltWork(unroutable);
@@ -2089,6 +2391,49 @@ export class RelayObject extends DurableObject<Env> {
     try {
       this.send(daemon, { id, type: "project_events_unsubscribe" });
     } catch {}
+  }
+
+  /// Put one socket's in-flight requests back after hibernation.
+  ///
+  /// Used for a client waiting on a daemon and for a daemon waiting on a
+  /// peer: the entry is the same either way, and so is what makes it
+  /// unroutable.
+  private rebuildPendingRequests(
+    ws: WebSocket,
+    unroutable: { client: WebSocket; id: string; kind: "request" | "subscription"; clientId: string }[],
+  ): void {
+    for (const [relayRequestId, pending] of Object.entries(this.clientSocketAttachment(ws).pendingRequests ?? {})) {
+      if (!isPendingRequestAttachment(pending)) {
+        // An attachment we cannot read is a request we cannot route, which is
+        // the same outcome as one naming no machine -- so it gets the same 502
+        // rather than being dropped for the caller to time out. The id is
+        // salvaged when it is there to salvage; when it is not, detaching is
+        // all that can be done, and leaving it would have it rebuilt on every
+        // future rehydrate.
+        unroutable.push({
+          client: ws,
+          id: relayRequestId,
+          kind: "request",
+          clientId: salvagedClientRequestId(pending) ?? relayRequestId,
+        });
+        continue;
+      }
+      if (!pending.machineId) {
+        unroutable.push({
+          client: ws,
+          id: relayRequestId,
+          kind: "request",
+          clientId: pending.clientRequestId,
+        });
+        continue;
+      }
+      this.pendingRequests.set(relayRequestId, {
+        client: ws,
+        clientRequestId: pending.clientRequestId,
+        expiresAt: pending.expiresAt,
+        machineId: pending.machineId,
+      });
+    }
   }
 
   private clientSocketAttachment(ws: WebSocket): ClientSocketAttachment {
@@ -2235,6 +2580,36 @@ function shareReceivers(share: SharedSessionRecord): string[] {
 /// order, so on a share whose guests were accepted out of alphabetical order
 /// an unsorted comparison reads as a change every time -- a storage write
 /// every thirty seconds, for ever, recording the same failures.
+/// Whether two service endpoints are the same place.
+///
+/// Absence is a value here: a share that had no endpoint and now has one HAS
+/// moved, and treating two absences as a difference would skip the first
+/// report that ever placed it.
+function sameEndpoint(held?: ShareServiceEndpoint, loaded?: ShareServiceEndpoint): boolean {
+  if (!held || !loaded) return !held && !loaded;
+  return held.host === loaded.host && held.port === loaded.port;
+}
+
+/// Everyone owed a copy once a record changed underneath a report.
+///
+/// Over-retrying costs a subrequest; under-retrying leaves a guest holding a
+/// copy nothing will ever correct.
+///
+/// (The comment that used to sit here belongs to `recordStaleReceivers`, two
+/// functions down, and went back to it.)
+function unionReceivers(held?: string[], reported?: string[]): string[] | undefined {
+  const owed = [...new Set([...(held ?? []), ...(reported ?? [])])].sort();
+  return owed.length > 0 ? owed : undefined;
+}
+
+/// The later of two stamps, with absence meaning "no turn yet" rather than
+/// "a turn at the beginning of time".
+function laterTimestamp(held?: string, reported?: string): string | undefined {
+  if (!held) return reported;
+  if (!reported) return held;
+  return Date.parse(reported) > Date.parse(held) ? reported : held;
+}
+
 function recordStaleReceivers(share: SharedSessionRecord, receivers: string[]): boolean {
   const stale = [...receivers].sort();
   const held = share.staleReceivers ?? [];
