@@ -1860,6 +1860,46 @@ describe("which machine owns a checkout", () => {
     ).toEqual({ ok: false, refusal: "machine-does-not-hold-checkout" });
   });
 
+  // A claim arrives over HTTP, where nothing binds the request to a socket:
+  // the token says which account is asking and never which machine. Naming a
+  // machine is therefore a claim in itself, and the least this can do is
+  // require that machine to be here -- which stops ownership being parked on
+  // a laptop that is shut and cannot be asked about it.
+  it("refuses to name a machine that is not connected", () => {
+    expect(
+      claimProjectOwner(reported({ strix: ["/repo/aimux"] }), {
+        projectRoot: "/repo/aimux",
+        machineId: "strix",
+        connectedMachineIds: ["mbp"],
+      }),
+    ).toEqual({ ok: false, refusal: "machine-is-not-connected" });
+  });
+
+  // The ceiling keeps one end of the sorted keys, so a claim past it can be
+  // normalized away -- and answering `ok` over a record that was dropped is
+  // the shape of lie this codebase keeps finding.
+  it("refuses a claim the ceiling would throw away", () => {
+    // Five hundred owners whose keys all sort above the one being claimed.
+    const owners = Object.fromEntries(
+      Array.from({ length: 500 }, (_, index) => [
+        `/zz/repo-${String(index).padStart(4, "0")}`,
+        { machineId: "mbp", claimedAt: "2026-11-15T00:00:00.000Z" },
+      ]),
+    );
+    const full = {
+      ...reported({ mbp: ["/aa/first"] }),
+      projectOwners: owners,
+    } as SharingState;
+
+    expect(
+      claimProjectOwner(full, {
+        projectRoot: "/aa/first",
+        machineId: "mbp",
+        connectedMachineIds: ["mbp"],
+      }),
+    ).toEqual({ ok: false, refusal: "too-many-owned-checkouts" });
+  });
+
   // `unidentified` is the slot every daemon without a persisted identity
   // shares, so recording it would name whichever of them asked last.
   it("refuses a machine with no identity of its own", () => {

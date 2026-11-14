@@ -82,10 +82,17 @@ pub(super) fn has_help<S: AsRef<str>>(args: &[S]) -> bool {
 pub(super) fn is_projects_claim_args<S: AsRef<str>>(args: &[S]) -> bool {
     let mut positionals = 0;
     for arg in args {
-        if let Some(flag) = arg.as_ref().strip_prefix("--") {
+        let arg = arg.as_ref();
+        if let Some(flag) = arg.strip_prefix("--") {
             if !matches!(flag, "take" | "json") {
                 return false;
             }
+        } else if arg.starts_with('-') {
+            // `-h` is somebody asking for help, not a checkout called `-h`.
+            // Read as a positional it became `$cwd/-h`, and the claim then
+            // failed with "that machine has not reported that checkout" --
+            // an answer about the wrong question entirely.
+            return false;
         } else {
             positionals += 1;
         }

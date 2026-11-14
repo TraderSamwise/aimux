@@ -2028,6 +2028,8 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["projects", "list", "extra", "--json"],
         vec!["projects", "owners", "/repo"],
         vec!["projects", "claim", "--force"],
+        // Somebody asking for help, not a checkout called `-h`.
+        vec!["projects", "claim", "-h"],
         vec!["remote", "enable", "--json"],
         vec!["remote", "disable", "extra"],
         vec!["remote", "enable", "--help"],

@@ -257,6 +257,10 @@ export class RelayObject extends DurableObject<Env> {
       return this.claimProjectOwner(request);
     }
     if (url.pathname === "/projects/owners" && request.method === "GET") {
+      // Gated like its neighbours: the answer is machine ids and absolute
+      // paths, which is the shape of thing a locked-down account should stop
+      // handing out even though reading it changes nothing.
+      if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
       return this.listProjectOwners();
     }
     if (url.pathname === "/shares/bind" && request.method === "POST") {
@@ -1895,9 +1899,17 @@ export class RelayObject extends DurableObject<Env> {
       status: 409,
       error: "This machine has no stable identity yet, so it cannot own a checkout",
     },
+    "machine-is-not-connected": {
+      status: 409,
+      error: "That machine is not connected to the relay right now",
+    },
     "machine-has-not-reported-its-checkouts": {
       status: 409,
       error: "This machine has not told the relay which checkouts it has",
+    },
+    "too-many-owned-checkouts": {
+      status: 409,
+      error: "Too many checkouts already have a recorded owner",
     },
     "machine-does-not-hold-checkout": {
       status: 409,

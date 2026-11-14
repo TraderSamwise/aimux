@@ -103,16 +103,28 @@ export interface SharingState {
   /// that reports it, which is a far better answer than "the only one
   /// connected" and the only one that survives a second daemon starting.
   machineProjectRoots?: Record<string, string[]>;
-  /// Which machine owns each checkout, by folded root.
+  /// Which machine owns each checkout, keyed by its folded path.
   ///
   /// Here, and not in a machine's own project registry, because that registry
   /// is per machine: an owner written there is one machine's belief, and two
   /// machines would each write themselves first and never disagree out loud.
   /// This durable object is the owner's own and the only store both machines
-  /// can read, which also makes the folded root the key -- the same key the
-  /// share routing uses, and the only project identity that spans machines
-  /// (`compute_project_id` hashes the local path, so one repo on two machines
-  /// has two ids).
+  /// can read.
+  ///
+  /// The key is the path, folded only for a trailing slash -- which means two
+  /// machines agree about a checkout exactly when they have it at the same
+  /// path. That is deliberate and it is the case this work is for: both of
+  /// this account's Macs keep the repository at the same place, which is
+  /// precisely why the share routing could not tell them apart. It is also
+  /// the limit: a repository at `~/cs/aimux` on one machine and `~/code/aimux`
+  /// on another is two records here, and ownership says nothing useful about
+  /// it -- `projects owners` shows both rows rather than pretending.
+  ///
+  /// A key that did span any pair of checkouts would have to come from the
+  /// repository rather than its path -- a remote URL or the root commit --
+  /// and the ledger work that resolves reads and writes to an owner is what
+  /// forces that. It is not invented here on the strength of nobody needing
+  /// it yet.
   ///
   /// Absent means nobody has claimed it, and absent must always be permitted:
   /// a daemon that is not logged in cannot read or write this at all, so a
@@ -128,9 +140,11 @@ export interface ProjectOwner {
 
 export type ProjectClaimRefusal =
   | "machine-unidentified"
+  | "machine-is-not-connected"
   | "machine-has-not-reported-its-checkouts"
   | "machine-does-not-hold-checkout"
-  | "held-by-a-connected-machine";
+  | "held-by-a-connected-machine"
+  | "too-many-owned-checkouts";
 
 export type ProjectClaimResult =
   | { ok: true; state: SharingState; owner: ProjectOwner; alreadyOwned: boolean }
@@ -248,6 +262,18 @@ export function claimProjectOwner(
   if (!machineId || !rootKey) {
     return { ok: false, refusal: "machine-unidentified" };
   }
+  // A claim arrives over HTTP, where nothing binds the request to a socket:
+  // the token says which ACCOUNT is asking and never which machine. So the
+  // machine a claim names is a claim in itself, and the least this can do is
+  // require that machine to be here -- which stops ownership being parked on
+  // a laptop that is shut, and leaves only the case of one of the owner's own
+  // connected machines naming another of them. Those two are the same person
+  // with the same repository and the same agents; there is no boundary
+  // between them to cross, and the relay says so rather than implying a
+  // guarantee it cannot give.
+  if (!input.connectedMachineIds.includes(machineId)) {
+    return { ok: false, refusal: "machine-is-not-connected" };
+  }
   const current = normalizeSharingState(state);
   // The same evidence the share bind uses, and the same two refusals: a
   // machine that has told the relay nothing has not told it that it has this
@@ -270,7 +296,15 @@ export function claimProjectOwner(
 
   const owner: ProjectOwner = { machineId, claimedAt: now };
   current.projectOwners = { ...(current.projectOwners ?? {}), [rootKey]: owner };
-  return { ok: true, state: normalizeSharingState(current), owner, alreadyOwned: false };
+  const recorded = normalizeSharingState(current);
+  // Read back rather than assumed: the cap keeps one end of the sorted keys,
+  // so a claim past the ceiling can be normalized away -- and answering `ok`
+  // over a record that was dropped is the shape of lie this codebase keeps
+  // finding.
+  if (!recorded.projectOwners?.[rootKey]) {
+    return { ok: false, refusal: "too-many-owned-checkouts" };
+  }
+  return { ok: true, state: recorded, owner, alreadyOwned: false };
 }
 
 /// Who owns this checkout, if anybody has said.
