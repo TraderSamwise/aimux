@@ -747,7 +747,7 @@ fn a_peer_route_is_open_on_the_same_post_the_body_parser_reads() {
         )
         .ok
     );
-    for spelling in ["post", "Post", "pOsT"] {
+    for spelling in ["post", "Post", "pOsT", "GET", "PUT", "DELETE"] {
         let refused = allow(
             Some(&peer(Some("mbp"))),
             spelling,
@@ -758,6 +758,20 @@ fn a_peer_route_is_open_on_the_same_post_the_body_parser_reads() {
         );
         assert!(!refused.ok, "{spelling} was allowed");
         assert_eq!(refused.status, Some(403), "{spelling}");
+        // WHICH refusal, because the method check and the route check used to
+        // share one sentence -- so this test stayed green with either rule
+        // deleted, as long as the other still refused.
+        assert_eq!(
+            refused.error.as_deref(),
+            Some(
+                format!(
+                    "peer machine mbp may only POST to {}",
+                    project_routes::agents::INPUT
+                )
+                .as_str()
+            ),
+            "{spelling}"
+        );
     }
 }
 

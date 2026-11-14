@@ -2100,6 +2100,27 @@ fn input_live_pane_route(
         // user saw a hard 400 for something the composer let them send.
         return json_error(400, "text is required");
     }
+    // A peer this service cannot identify is refused, not delivered anonymously.
+    //
+    // The daemon already refuses a stamp that is not a machine id, and the
+    // first version of this let such a peer through here and delivered its
+    // text unattributed, on the reasoning that unattributed is honest. It is
+    // not the honest answer: for input from an unidentifiable peer the honest
+    // answer is the one the daemon gives. Delivering it meant the two layers
+    // disagreed with the INNER one more permissive -- and it left the composer
+    // a peer with no label to compose, which is how body `from` came to be the
+    // fallback for "I could not tell who this is".
+    if let Some(peer) = remote_actor
+        .as_ref()
+        .filter(|actor| actor.role == RemoteActorRole::Peer)
+        && !peer
+            .peer_machine_id
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(crate::machine_identity::is_valid_machine_id)
+    {
+        return json_error(403, "peer request did not say which machine it came from");
+    }
     // A peer's input must be attributed in the pane, and a command cannot be.
     //
     // `looks_like_agent_command` text is delivered WITHOUT the sender prefix,
@@ -2291,41 +2312,41 @@ struct PromptForDelivery<'a> {
 
 /// Compose context, attribution and attachments before the shared delivery boundary.
 fn compose_prompt_for_delivery(input: PromptForDelivery<'_>) -> String {
-    // A stamped peer FIRST, ahead of both body sources. The machine came from
-    // the socket the frame arrived on; `sharedChatActor` and `from` came from
-    // the sender. A peer posting `sharedChatActor` used to win this ordering
-    // and put any name on the line -- and that field is not alphabet-filtered
-    // the way a sender id is, so the name could close the bracket and keep
-    // writing. The allowlist refuses such a body as well; this is the half
-    // that does not depend on the route it arrived by.
-    let peer = input
+    // A peer is composed from its stamp and from NOTHING in the body, which is
+    // why it is its own branch rather than the first link of the chain below.
+    //
+    // As a link it was still reachable. The chain ends at
+    // `shared_chat_body_actor_prompt` -- the `sharedChatActor` field, which is
+    // not alphabet-filtered the way a sender id is, so a name in it can close
+    // the bracket and keep writing -- and a peer that reached that arm would
+    // be choosing the name on its own line. The guard against that was an
+    // `or_else` AFTER the peer's own label, so it only ran when the label was
+    // absent; the label helper then fell back to body `from`, came back
+    // `Some("claude-utymep")`, and the guard never ran at all. A local-looking
+    // name on input from a machine whose identity could not be established is
+    // worse than no name.
+    //
+    // The route refuses a peer whose stamp is unusable, so a peer arriving
+    // here has one. If that ever stops being true this delivers the words
+    // unattributed, never under a borrowed name.
+    let input_text = if let Some(peer) = input
         .remote_actor
-        .filter(|actor| actor.role == RemoteActorRole::Peer);
-    let peer_sender =
-        peer.and_then(|actor| agent_sender_prompt(input.body, Some(actor), &input.text));
-    // A peer whose stamp is unusable gets NO author from the body either. The
-    // chain below ends at `shared_chat_body_actor_prompt`, the field that is
-    // not alphabet-filtered, so falling through would hand exactly the caller
-    // whose identity could not be established the one prefix it can write
-    // freely. Unattributed is the honest answer there; the label is absent
-    // rather than borrowed.
-    let input_text = match peer_sender
-        .or_else(|| peer.map(|_| shared_chat_trim(&input.text).to_owned()))
-        .or_else(|| {
-            input
-                .remote_actor
-                .filter(|actor| actor.role == RemoteActorRole::Guest)
-                .and_then(|actor| shared_chat_remote_actor_prompt(actor, &input.text))
-        })
-        .or_else(|| shared_chat_body_actor_prompt(input.body, &input.text))
-        // Last of the three, because a shared-chat guest is the stronger claim
-        // about who is speaking. This one covers the local channel -- one
-        // agent sending to another through `aimux input`, which until now said
-        // nothing at all about where the words came from.
-        .or_else(|| agent_sender_prompt(input.body, None, &input.text))
+        .filter(|actor| actor.role == RemoteActorRole::Peer)
     {
-        Some(value) => value,
-        None => input.text,
+        agent_sender_prompt(input.body, Some(peer), &input.text)
+            .unwrap_or_else(|| shared_chat_trim(&input.text).to_owned())
+    } else {
+        input
+            .remote_actor
+            .filter(|actor| actor.role == RemoteActorRole::Guest)
+            .and_then(|actor| shared_chat_remote_actor_prompt(actor, &input.text))
+            .or_else(|| shared_chat_body_actor_prompt(input.body, &input.text))
+            // Last, because a shared-chat guest is the stronger claim about who
+            // is speaking. This one covers the local channel -- one agent
+            // sending to another through `aimux input`, which until this phase
+            // said nothing at all about where the words came from.
+            .or_else(|| agent_sender_prompt(input.body, None, &input.text))
+            .unwrap_or(input.text)
     };
     let formatted_text = format_agent_input_with_attachments(&input_text, input.attachments);
     let prompt_context = get_prompt_context_text(input.project_state_dir, input.session_id);
@@ -2783,6 +2804,27 @@ async fn input_live_pane_route_async(
         // refused a `"\u{85}"`-only line that the app had accepted, so the
         // user saw a hard 400 for something the composer let them send.
         return json_error(400, "text is required");
+    }
+    // A peer this service cannot identify is refused, not delivered anonymously.
+    //
+    // The daemon already refuses a stamp that is not a machine id, and the
+    // first version of this let such a peer through here and delivered its
+    // text unattributed, on the reasoning that unattributed is honest. It is
+    // not the honest answer: for input from an unidentifiable peer the honest
+    // answer is the one the daemon gives. Delivering it meant the two layers
+    // disagreed with the INNER one more permissive -- and it left the composer
+    // a peer with no label to compose, which is how body `from` came to be the
+    // fallback for "I could not tell who this is".
+    if let Some(peer) = remote_actor
+        .as_ref()
+        .filter(|actor| actor.role == RemoteActorRole::Peer)
+        && !peer
+            .peer_machine_id
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(crate::machine_identity::is_valid_machine_id)
+    {
+        return json_error(403, "peer request did not say which machine it came from");
     }
     // A peer's input must be attributed in the pane, and a command cannot be.
     //

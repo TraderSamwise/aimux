@@ -233,17 +233,28 @@ fn assert_peer_allowed(
             format!("no route is open to peer machine {origin}: {route}"),
         )
     };
+    if proxy_sub_path.as_deref() != Some(project_routes::agents::INPUT) {
+        // `live_pane::INPUT` shares a handler with the route above and is
+        // deliberately NOT here: it is the door a shared guest writes to, and
+        // its guest arm keys on a share session a peer does not have.
+        return refuse_route();
+    }
+    // Its own sentence, separate from the route refusal above. Sharing one
+    // made the test for this indistinguishable from the test for the route:
+    // both asserted a 403 carrying the same words, so a change to either rule
+    // kept the other's test green.
+    //
     // `== "POST"`, not a case-insensitive compare, because the body parser is
     // exact (`daemon/server.rs:56`) and the two must agree about what a POST
     // is. Accepting `post` here would hand this function a request whose body
     // was never read, which makes every body check below pass by being asked
     // about `None` -- the field refusals would be vacuous rather than wrong,
     // which is harder to notice.
-    if method != "POST" || proxy_sub_path.as_deref() != Some(project_routes::agents::INPUT) {
-        // `live_pane::INPUT` shares a handler with the route above and is
-        // deliberately NOT here: it is the door a shared guest writes to, and
-        // its guest arm keys on a share session a peer does not have.
-        return refuse_route();
+    if method != "POST" {
+        return RemoteAccessDecision::deny(
+            403,
+            format!("peer machine {origin} may only POST to {route}"),
+        );
     }
     if context.project_root.is_none() {
         return RemoteAccessDecision::deny(

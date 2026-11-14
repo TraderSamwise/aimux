@@ -219,23 +219,32 @@ pub fn agent_sender_prompt(
 /// A stamped peer wins over everything in the body. The machine came from the
 /// socket the frame arrived on and the body came from the sender, so when they
 /// disagree the stamp is the one that is evidence.
+///
+/// And a peer whose stamp is NOT a machine id gets no label at all -- not the
+/// name the body claimed. Written as a three-way match rather than a fallback
+/// chain because the chain is what got this wrong: an invalid stamp fell
+/// through to `from`, so the caller whose identity could not be established
+/// was labelled `[claude-utymep]`, which is indistinguishable from a local
+/// agent's input. The fallback for "I could not tell who this is" must not be
+/// "whoever they said they were".
 pub fn agent_input_sender_label(
     body: &Value,
     remote_actor: Option<&RemoteActor>,
 ) -> Option<String> {
-    let machine = remote_actor
-        .filter(|actor| actor.role == RemoteActorRole::Peer)
-        .and_then(|actor| actor.peer_machine_id.as_deref())
+    let claimed = || {
+        body.get("from")
+            .and_then(Value::as_str)
+            .and_then(sanitize_agent_sender)
+    };
+    let Some(peer) = remote_actor.filter(|actor| actor.role == RemoteActorRole::Peer) else {
+        return claimed();
+    };
+    let machine = peer
+        .peer_machine_id
+        .as_deref()
         .map(str::trim)
-        .filter(|machine| crate::machine_identity::is_valid_machine_id(machine));
-    let claimed = body
-        .get("from")
-        .and_then(Value::as_str)
-        .and_then(sanitize_agent_sender);
-    match (machine, claimed) {
-        (Some(machine), claimed) => Some(compound_sender_label(machine, claimed.as_deref())),
-        (None, claimed) => claimed,
-    }
+        .filter(|machine| crate::machine_identity::is_valid_machine_id(machine))?;
+    Some(compound_sender_label(machine, claimed().as_deref()))
 }
 
 /// `machine/agent`, within one line's budget.
@@ -836,7 +845,15 @@ mod tests {
         );
     }
 
-    /// The stamp is only a stamp when it is a machine id.
+    /// The stamp is only a stamp when it is a machine id -- and then the label
+    /// is NOTHING, not the name the body claimed.
+    ///
+    /// This test's name was right and its assertion was wrong: it expected
+    /// `claude-utymep`, the body's own `from`, which is a local agent's
+    /// spelling. So input from a machine whose identity could not be
+    /// established was labelled exactly like input from an agent on this one.
+    /// The fallback for "I could not tell who this is" must not be "whoever
+    /// they said they were".
     #[test]
     fn a_stamp_that_is_not_a_machine_id_names_nobody() {
         for stamp in [
@@ -849,12 +866,26 @@ mod tests {
             "a]b",
         ] {
             assert_eq!(
-                agent_input_sender_label(&json!({ "from": "claude-utymep" }), Some(&peer(stamp)))
-                    .as_deref(),
-                Some("claude-utymep"),
-                "{stamp:?} is not a machine id, so it must not become the trusted half"
+                agent_input_sender_label(&json!({ "from": "claude-utymep" }), Some(&peer(stamp))),
+                None,
+                "{stamp:?} is not a machine id, so it may name nobody at all"
+            );
+            // Not even with nothing claimed -- there is no degenerate label.
+            assert_eq!(
+                agent_input_sender_label(&json!({}), Some(&peer(stamp))),
+                None,
+                "{stamp:?}"
             );
         }
+
+        // The control: the SAME body with no peer role still gets its claimed
+        // sender. The rule is about an unidentified peer, not about `from`, and
+        // a version that simply dropped `from` would pass the half above while
+        // breaking every local send.
+        assert_eq!(
+            agent_input_sender_label(&json!({ "from": "claude-utymep" }), None).as_deref(),
+            Some("claude-utymep")
+        );
     }
 
     /// The ROLE is what makes the stamp mean anything. An actor carrying the
