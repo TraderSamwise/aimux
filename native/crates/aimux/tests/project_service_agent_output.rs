@@ -2977,6 +2977,61 @@ fn a_refused_peer_send_leaves_the_ledger_and_the_loop_pause_alone() {
     }
 }
 
+/// A wrong task id is the caller's 400; an unreadable ledger is this
+/// machine's 500.
+///
+/// Both came back as 400 while the check returned one `Err(String)` for the
+/// two, which told whoever read it to go and fix their task id when the real
+/// fault was a corrupt file here. Every other route that reads the exchange
+/// already answers 500 for that.
+///
+/// Asserted on the ROUTE rather than on the helper, because the status is the
+/// route's decision and a helper-level test would not have noticed it.
+#[test]
+fn an_unreadable_ledger_is_a_server_error_and_a_wrong_task_id_is_not() {
+    let project = temp_project("task-check-statuses");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let send = |runtime: &mut FakeCaptureRuntime, task: &str| {
+        route_agent_output_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::INPUT,
+            Some(&json!({ "sessionId": "codex-1", "text": "do the thing", "task": task })),
+            runtime,
+        )
+        .unwrap()
+    };
+
+    // The caller's mistake.
+    let mut runtime = FakeCaptureRuntime::default();
+    let wrong_id = send(&mut runtime, "task-nope");
+    assert_eq!(wrong_id.status, 400, "{:?}", wrong_id.body);
+    assert_eq!(wrong_id.body["error"], "task not found: task-nope");
+    assert!(runtime.actions.is_empty());
+
+    // This machine's problem. The same request, with the ledger corrupted.
+    write(
+        runtime_exchange_path(&state_dir),
+        b"{not valid exchange yaml",
+    )
+    .expect("write corrupt exchange");
+    let mut runtime = FakeCaptureRuntime::default();
+    let unreadable = send(&mut runtime, "task-nope");
+    assert_eq!(unreadable.status, 500, "{:?}", unreadable.body);
+    assert!(
+        unreadable.body["error"]
+            .as_str()
+            .is_some_and(|error| !error.contains("task not found")),
+        "a corrupt ledger must not be reported as a missing row: {:?}",
+        unreadable.body
+    );
+    assert!(runtime.actions.is_empty());
+
+    cleanup(project);
+}
+
 /// Both input routes preserve a numbered list in one delivery per turn.
 #[test]
 fn input_for_a_task_that_does_not_exist_is_refused_rather_than_sent() {
@@ -3268,9 +3323,12 @@ fn agent_input_holds_for_recent_active_client_then_flushes_from_queue() {
     // `current_depth` above is the assertion that says this request was
     // queued, and NOT because it is per-project: it is the same shared slot.
     // It is trustworthy because `agent_input_delivery_backlog_snapshot` stores
-    // this project's queue length and reads it back inside one call, so no
-    // other test can get between the two. The high-water mark has no such
-    // store -- it only ever rises -- which is the whole difference.
+    // this project's queue length and reads it back inside one call, which
+    // makes the window two instructions wide rather than the whole test. Not
+    // closed -- a dozen other sites store the same slot and one could land in
+    // between -- just narrow enough to have never been seen. The high-water
+    // mark has no such store at all; it only ever rises, which is why that one
+    // cannot be an equality and this one can.
     //
     // `status` shares that registry too, including its error slot, so a test
     // that deliberately corrupts a queue file could in principle flip it here.

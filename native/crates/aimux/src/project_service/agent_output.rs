@@ -58,7 +58,9 @@ use super::agent_input_delivery::{
 };
 use super::agent_output_projection::insert_projection_fields;
 use super::attachments::{get_attachment, get_attachment_record};
-use super::coordination_mutations::{record_task_input, task_input_target_exists};
+use super::coordination_mutations::{
+    TaskInputTargetCheck, record_task_input, task_input_target_exists,
+};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{
     parse_integer_value, parse_optional_integer, parse_positive_integer_value, query_params,
@@ -2230,9 +2232,15 @@ fn input_live_pane_route(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|task_id| !task_id.is_empty())
-        && let Err(error) = task_input_target_exists(&project_state_dir, task_id)
     {
-        return json_error(400, error);
+        match task_input_target_exists(&project_state_dir, task_id) {
+            TaskInputTargetCheck::Present => {}
+            // The caller's id is wrong.
+            TaskInputTargetCheck::Missing(error) => return json_error(400, error),
+            // This machine's ledger is unreadable, which is not the caller's
+            // fault and not a thing they can fix by correcting anything.
+            TaskInputTargetCheck::Unreadable(error) => return json_error(500, error),
+        }
     }
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();
@@ -2276,6 +2284,11 @@ fn input_live_pane_route(
     // did not happen, and a way for a peer to keep un-silencing a looping
     // agent with messages this service refuses. Every refusal now precedes
     // every write.
+    // Still a 400 here, unlike the check above, and not by oversight:
+    // `record_task_input` returns one string for "no such row" and for "could
+    // not read", so this call cannot tell them apart. By this point the ledger
+    // was readable moments ago, which makes the row having been deleted in
+    // between the likelier of the two -- and that is the caller's 400.
     if let Some(task_id) = body
         .get("task")
         .and_then(Value::as_str)
@@ -3029,9 +3042,15 @@ async fn input_live_pane_route_async(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|task_id| !task_id.is_empty())
-        && let Err(error) = task_input_target_exists(&project_state_dir, task_id)
     {
-        return json_error(400, error);
+        match task_input_target_exists(&project_state_dir, task_id) {
+            TaskInputTargetCheck::Present => {}
+            // The caller's id is wrong.
+            TaskInputTargetCheck::Missing(error) => return json_error(400, error),
+            // This machine's ledger is unreadable, which is not the caller's
+            // fault and not a thing they can fix by correcting anything.
+            TaskInputTargetCheck::Unreadable(error) => return json_error(500, error),
+        }
     }
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();
@@ -3075,6 +3094,11 @@ async fn input_live_pane_route_async(
     // did not happen, and a way for a peer to keep un-silencing a looping
     // agent with messages this service refuses. Every refusal now precedes
     // every write.
+    // Still a 400 here, unlike the check above, and not by oversight:
+    // `record_task_input` returns one string for "no such row" and for "could
+    // not read", so this call cannot tell them apart. By this point the ledger
+    // was readable moments ago, which makes the row having been deleted in
+    // between the likelier of the two -- and that is the caller's 400.
     if let Some(task_id) = body
         .get("task")
         .and_then(Value::as_str)

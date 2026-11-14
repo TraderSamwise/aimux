@@ -1,4 +1,6 @@
-use aimux::project_service::coordination_mutations::{record_task_input, task_input_target_exists};
+use aimux::project_service::coordination_mutations::{
+    TaskInputTargetCheck, record_task_input, task_input_target_exists,
+};
 use aimux::project_service::exchange_reads::{
     list_tasks, list_thread_summaries, read_message_snapshot,
 };
@@ -116,14 +118,17 @@ fn checking_a_task_id_tells_an_unreadable_ledger_apart_from_a_missing_row() {
         .as_str()
         .expect("task id")
         .to_owned();
-    assert_eq!(task_input_target_exists(&state_dir, &task_id), Ok(()));
+    assert_eq!(
+        task_input_target_exists(&state_dir, &task_id),
+        TaskInputTargetCheck::Present
+    );
     assert_eq!(
         task_input_target_exists(&state_dir, "task-nope"),
-        Err("task not found: task-nope".to_owned())
+        TaskInputTargetCheck::Missing("task not found: task-nope".to_owned())
     );
     assert_eq!(
         task_input_target_exists(&state_dir, "   "),
-        Err("task id is required".to_owned())
+        TaskInputTargetCheck::Missing("task id is required".to_owned())
     );
 
     // Now make the ledger unreadable. The SAME id that existed a line ago must
@@ -133,15 +138,22 @@ fn checking_a_task_id_tells_an_unreadable_ledger_apart_from_a_missing_row() {
         b"{not valid exchange yaml",
     )
     .expect("write corrupt exchange");
-    let error = task_input_target_exists(&state_dir, &task_id)
-        .expect_err("an unreadable ledger is an error");
+    let unreadable = task_input_target_exists(&state_dir, &task_id);
+    let TaskInputTargetCheck::Unreadable(error) = &unreadable else {
+        panic!("an unreadable ledger is its own outcome, got {unreadable:?}");
+    };
     assert!(
         !error.contains("task not found"),
         "a ledger that cannot be read must not be reported as a missing row: {error}"
     );
+    // Names the FILE. The first version of this allowed `contains("exchange")`
+    // as one of three alternatives, which every error satisfies by embedding a
+    // path ending in `runtime-exchange.yaml` -- so that half of the assertion
+    // could never fail. The path is the useful part of the sentence anyway:
+    // it says which file to go and look at.
     assert!(
-        error.contains("parse") || error.contains("read") || error.contains("exchange"),
-        "the refusal must name the real cause: {error}"
+        error.contains(runtime_exchange_path(&state_dir).to_string_lossy().as_ref()),
+        "the refusal must name the file it could not read: {error}"
     );
 
     // And the write path agrees -- it is where this answer came from.

@@ -1045,17 +1045,36 @@ fn task_lifecycle(
 /// different answers, and the write path propagates the real cause -- so
 /// swallowing it here would have made the early check the less honest of the
 /// two while its comment claimed they agreed.
-pub fn task_input_target_exists(project_state_dir: &Path, task_id: &str) -> Result<(), String> {
+pub fn task_input_target_exists(project_state_dir: &Path, task_id: &str) -> TaskInputTargetCheck {
     let task_id = task_id.trim();
     if task_id.is_empty() {
-        return Err("task id is required".into());
+        return TaskInputTargetCheck::Missing("task id is required".into());
     }
-    let exchange = try_read_runtime_exchange(runtime_exchange_path(project_state_dir))?;
+    let exchange = match try_read_runtime_exchange(runtime_exchange_path(project_state_dir)) {
+        Ok(exchange) => exchange,
+        Err(error) => return TaskInputTargetCheck::Unreadable(error),
+    };
     // The same sentence `record_task_input` gives, so moving the check earlier
     // did not change what a caller is told.
-    find_by_id(&exchange, "tasks", task_id)
-        .map(|_| ())
-        .ok_or_else(|| format!("task not found: {task_id}"))
+    match find_by_id(&exchange, "tasks", task_id) {
+        Some(_) => TaskInputTargetCheck::Present,
+        None => TaskInputTargetCheck::Missing(format!("task not found: {task_id}")),
+    }
+}
+
+/// Three outcomes, because two of them are different kinds of failure.
+///
+/// A task id that names no row is the CALLER's mistake and a 400. A ledger
+/// this service cannot read is the SERVICE's problem and a 500, and every
+/// other route that reads the exchange already says 500 for it. Returned as
+/// one `Err(String)` these collapsed, and the route answered 400 -- telling
+/// whoever read it to go and check their task id when the real fault was a
+/// corrupt file on this machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskInputTargetCheck {
+    Present,
+    Missing(String),
+    Unreadable(String),
 }
 
 /// Record that input for a task was actually sent to its assignee.
