@@ -512,18 +512,25 @@ export function bindShareToMachine(state: SharingState, input: BindShareMachineI
   const sameCheckout = candidates.filter((share) => shareProjectRootKey(share.projectRoot) === wantedRoot);
   if (sameCheckout.length === 0) return { ok: false, refusal: "no-share-for-checkout" };
 
-  const alreadyHere = sameCheckout.find((share) => sanitizeShareMachineId(share.machineId) === machineId);
-  // Nothing to write, so nothing is written: a repeated bind must not bump the
-  // version every time and hand every guest a pointless refresh.
-  if (alreadyHere) return { ok: true, state: current, share: alreadyHere, alreadyBound: true };
-
   // Two unbound shares of one session is a question, not an answer -- the same
   // rule adoption applies, for the same reason: picking one is a coin flip
   // that strands the other one's guests.
   const adoptable = sameCheckout.filter((share) => !sanitizeShareMachineId(share.machineId));
   if (adoptable.length > 1) return { ok: false, refusal: "ambiguous-unbound-shares" };
   const share = adoptable[0];
-  if (!share) return { ok: false, refusal: "bound-to-another-machine" };
+  if (!share) {
+    // Nothing left to bind, so either this is the second press of the same
+    // button or the share belongs to another machine. Asked in this order
+    // rather than before the adoption: a checkout holding both a share
+    // already on this machine and an unbound one would otherwise answer
+    // "already bound" and leave the unbound one refusing its own guests.
+    const alreadyHere = sameCheckout.find((held) => sanitizeShareMachineId(held.machineId) === machineId);
+    // Nothing to write, so nothing is written: a repeated bind must not bump
+    // the version every time and hand every guest a pointless refresh.
+    return alreadyHere
+      ? { ok: true, state: current, share: alreadyHere, alreadyBound: true }
+      : { ok: false, refusal: "bound-to-another-machine" };
+  }
 
   share.machineId = machineId;
   share.updatedAt = now;

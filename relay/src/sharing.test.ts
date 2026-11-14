@@ -651,6 +651,41 @@ describe("binding a share that already exists", () => {
     expect(again.share.updatedAt).toBe(first.token.share.updatedAt);
   });
 
+  // The last of the family. One checkout holding both a share already on this
+  // machine and an unbound one answered "already bound" -- true of the share
+  // it looked at, and no help at all to the one still refusing its guests.
+  it("binds the unbound share rather than reporting the bound one", () => {
+    const held = (id: string, machineId?: string): SharedSessionRecord => ({
+      id,
+      ownerUserId: owner.userId,
+      projectRoot: "/repo/aimux",
+      sessionId: "claude-1",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+      version: 1,
+      invites: {},
+      participants: {},
+      ...(machineId ? { machineId } : {}),
+    });
+    const state: SharingState = {
+      ...emptySharingState(),
+      shares: { bound: held("bound", "mbp"), loose: held("loose") },
+    };
+
+    const bound = bindShareToMachine(state, {
+      owner,
+      sessionId: "claude-1",
+      projectRoot: "/repo/aimux",
+      machineId: "mbp",
+    });
+
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) return;
+    expect(bound.alreadyBound).toBe(false);
+    expect(bound.share.id).toBe("loose");
+    expect(bound.share.machineId).toBe("mbp");
+  });
+
   it("refuses to move a share off the machine it names", async () => {
     const first = await invite(emptySharingState(), "mbp");
     const moved = bindShareToMachine(first.state, {

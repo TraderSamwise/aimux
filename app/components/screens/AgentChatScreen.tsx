@@ -3079,7 +3079,9 @@ export default function ChatScreen() {
                           variant="outline"
                           className="mt-2 self-start"
                           label={bindBusy ? "Pointing..." : `Point it at ${bindTarget}`}
-                          disabled={bindBusy || !token || !relayConfigured}
+                          disabled={
+                            bindBusy || !token || !relayConfigured || !project?.path || !sessionId
+                          }
                           onPress={handleBindShareMachine}
                         />
                       ) : (

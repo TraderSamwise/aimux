@@ -1693,17 +1693,17 @@ export class RelayObject extends DurableObject<Env> {
     // socket rather than from a connect-time tag, so it is re-pushed too --
     // a share that could not be routed a moment ago now can be.
     const staleReceivers = await this.refreshShareForItsParticipants(result.share);
-    if (staleReceivers.length > 0) {
-      // Owed, not forgotten. A second press of the same button returns
-      // `alreadyBound` and writes nothing, so without recording this the one
-      // guest whose copy did not land would keep `hostBound: false` for good:
-      // no later comparison would notice, because the owner's own record
-      // already says what it should.
-      const saved = await loadSharingState(this.ctx.storage);
-      const share = saved.shares[result.share.id];
-      if (share && recordStaleReceivers(share, staleReceivers)) {
-        await saveSharingState(this.ctx.storage, saved);
-      }
+    // Owed, not forgotten. A second press of the same button returns
+    // `alreadyBound` and writes nothing, so without recording this the one
+    // guest whose copy did not land would keep `hostBound: false` for good:
+    // no later comparison would notice, because the owner's own record
+    // already says what it should. Recorded even when the list is empty,
+    // which is how an entry this refresh just satisfied gets cleared rather
+    // than costing another retry.
+    const saved = await loadSharingState(this.ctx.storage);
+    const share = saved.shares[result.share.id];
+    if (share && recordStaleReceivers(share, staleReceivers)) {
+      await saveSharingState(this.ctx.storage, saved);
     }
     await this.broadcastMachineStatus();
     return json(
