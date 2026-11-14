@@ -1575,6 +1575,14 @@ export interface SharedSessionSummary {
   updatedAt: string;
   version: number;
   mode: "single" | "multi";
+  /**
+   * Whether the share names the machine that holds the session.
+   *
+   * Which machine is never said. Absent rather than false on a copy stored
+   * before the relay sent it: "nobody knows" is not an offer to repair
+   * anything, and only `false` is.
+   */
+  hostBound?: boolean;
   participants: ShareParticipant[];
   invites: ShareInvite[];
 }
@@ -1589,6 +1597,13 @@ export interface ShareInviteResponse {
 
 export interface ShareResponse {
   ok: boolean;
+  share: SharedSessionSummary;
+}
+
+export interface ShareBindResponse {
+  ok: boolean;
+  /** True when the share already named that machine and nothing was written. */
+  alreadyBound: boolean;
   share: SharedSessionSummary;
 }
 
@@ -1627,6 +1642,27 @@ export async function createShareInvite(
           : serviceEndpoint,
       }),
     },
+    opts,
+  );
+}
+
+/**
+ * Bind a share that already exists to the machine holding its session.
+ *
+ * The repair for a share made before a share recorded its host: it refuses
+ * every guest request with a message about a disconnected host while the host
+ * is online. Re-inviting repairs it too, at the cost of a new token and a
+ * second email to someone who already accepted.
+ */
+export async function bindShareMachine(
+  projectRoot: string,
+  sessionId: string,
+  machineId: string,
+  opts?: ApiOpts,
+): Promise<ShareBindResponse> {
+  return callJson<ShareBindResponse>(
+    `${relayHttpUrl()}/shares/bind`,
+    { method: "POST", body: JSON.stringify({ projectRoot, sessionId, machineId }) },
     opts,
   );
 }

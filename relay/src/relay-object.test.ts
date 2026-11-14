@@ -1419,6 +1419,126 @@ describe("RelayObject refreshing a share its guests already hold", () => {
 // left it proxying to a port nothing was listening on -- the daemon connected,
 // the agent working, every request from that share refused -- and the only
 // repair was issuing another invite, which emails somebody.
+// A share made before a share recorded its host names no machine, so the
+// route refuses every guest request with a message about a disconnected host
+// -- while the host is online. Re-inviting repairs it and emails somebody who
+// already accepted; this route says the same thing with no invite attached.
+describe("RelayObject pointing a share at the machine that holds it", () => {
+  function envRecording(upserted: { userId: string; hostBound?: boolean }[]) {
+    return {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn((id: { name: string }) => ({
+          fetch: vi.fn(async (url: string, init?: RequestInit) => {
+            if (String(url).includes("/internal/accepted-shares/upsert")) {
+              const body = JSON.parse(String(init?.body)) as { share: { hostBound?: boolean } };
+              upserted.push({ userId: id.name, hostBound: body.share.hostBound });
+            }
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env;
+  }
+
+  function bind(object: RelayObject, body: Record<string, unknown>, userId = "user_owner"): Promise<Response> {
+    return object.fetch(
+      request("https://relay.aimux.app/shares/bind", {
+        method: "POST",
+        userId,
+        name: "Owner",
+        email: "owner@example.com",
+        body,
+      }),
+    );
+  }
+
+  it("binds the share the guests already hold, and tells them it is routable", async () => {
+    const storage = new MemoryStorage();
+    const upserted: { userId: string; hostBound?: boolean }[] = [];
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    upserted.length = 0;
+
+    const bound = await bind(object, {
+      projectRoot: "/Users/sam/cs/scratch",
+      sessionId: "claude-k4lihz",
+      machineId: "mbp",
+    });
+
+    expect(bound.status).toBe(200);
+    expect(await bound.json()).toMatchObject({
+      ok: true,
+      alreadyBound: false,
+      share: { id: shareId, hostBound: true },
+    });
+    const state = await storage.get<{ shares: Record<string, { machineId?: string }> }>("sharing-state:v1");
+    expect(state!.shares[shareId].machineId).toBe("mbp");
+    expect(upserted).toEqual([{ userId: "user_guest", hostBound: true }]);
+  });
+
+  // A second press must not bump the version and push every guest a refresh
+  // of a record that did not change.
+  it("writes nothing when the share already points there", async () => {
+    const storage = new MemoryStorage();
+    const upserted: { userId: string; hostBound?: boolean }[] = [];
+    const object = createObject(storage, envRecording(upserted));
+    await createAcceptedShareInOwnerObject(object);
+    const body = { projectRoot: "/Users/sam/cs/scratch", sessionId: "claude-k4lihz", machineId: "mbp" };
+    expect((await bind(object, body)).status).toBe(200);
+    upserted.length = 0;
+
+    const again = await bind(object, body);
+
+    expect(again.status).toBe(200);
+    expect(await again.json()).toMatchObject({ ok: true, alreadyBound: true });
+    expect(upserted).toEqual([]);
+  });
+
+  // The owner scoping IS the authorization on this route -- there is no other
+  // check -- so a second account must find nothing of the first one's to bind.
+  it("will not let another account point someone else's share anywhere", async () => {
+    const storage = new MemoryStorage();
+    const object = createObject(storage, envRecording([]));
+    const shareId = await createAcceptedShareInOwnerObject(object);
+
+    const refused = await bind(
+      object,
+      { projectRoot: "/Users/sam/cs/scratch", sessionId: "claude-k4lihz", machineId: "theirs" },
+      "user_guest",
+    );
+
+    expect(refused.status).toBe(404);
+    expect(await refused.json()).toMatchObject({ ok: false, refusal: "no-share-for-session" });
+    const state = await storage.get<{ shares: Record<string, { machineId?: string }> }>("sharing-state:v1");
+    expect(state!.shares[shareId].machineId).toBeUndefined();
+  });
+
+  it("refuses by name rather than with one flat not-found", async () => {
+    const storage = new MemoryStorage();
+    const object = createObject(storage, envRecording([]));
+    await createAcceptedShareInOwnerObject(object);
+    expect(
+      (
+        await bind(object, {
+          projectRoot: "/Users/sam/cs/scratch",
+          sessionId: "claude-k4lihz",
+          machineId: "mbp",
+        })
+      ).status,
+    ).toBe(200);
+
+    const moved = await bind(object, {
+      projectRoot: "/Users/sam/cs/scratch",
+      sessionId: "claude-k4lihz",
+      machineId: "strix",
+    });
+
+    expect(moved.status).toBe(409);
+    expect(await moved.json()).toMatchObject({ ok: false, refusal: "bound-to-another-machine" });
+  });
+});
+
 describe("RelayObject following a project service onto its new port", () => {
   function envRecording(
     upserted: { userId: string; port?: number }[],

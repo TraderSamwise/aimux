@@ -121,6 +121,20 @@ export interface SharedSessionSummary {
   updatedAt: string;
   version: number;
   mode: ShareChatMode;
+  /**
+   * Whether the share names the machine that holds the session.
+   *
+   * Which machine is never said -- the shape of the account is not a guest's
+   * business -- but whether the share can be routed at all is, because a
+   * share that names none refuses every request with a message about a
+   * disconnected host while the host is sitting right there. The owner needs
+   * it to offer the repair; a guest reading `false` learns why it refuses.
+   *
+   * Absent, not false, on a copy stored before this existed: "nobody knows"
+   * and "no host" are different answers, and only the second one is an offer
+   * to repair something.
+   */
+  hostBound?: boolean;
   participants: ShareParticipantRecord[];
   invites: Array<Omit<ShareInviteRecord, "tokenHash">>;
 }
@@ -372,6 +386,7 @@ export function summarizeShare(share: SharedSessionRecord): SharedSessionSummary
     updatedAt: share.updatedAt,
     version: share.version,
     mode: getShareChatMode(share),
+    hostBound: Boolean(sanitizeShareMachineId(share.machineId)),
     participants: Object.values(share.participants),
     invites: Object.values(share.invites).map(({ tokenHash: _tokenHash, ...invite }) => invite),
   };
@@ -436,6 +451,90 @@ export function findShareForSession(
     (share) => !sanitizeShareMachineId(share.machineId) && shareProjectRootKey(share.projectRoot) === wantedRoot,
   );
   return adoptable.length === 1 ? adoptable[0] : undefined;
+}
+
+/// Why an existing share could not be bound to a machine.
+///
+/// Named rather than collapsed into one 404, because the cases have different
+/// fixes: make a share first, invite from the host that holds the checkout,
+/// unbind the other machine, or clean up a duplicate.
+export type BindShareRefusal =
+  | "no-share-for-session"
+  | "no-share-for-checkout"
+  | "bound-to-another-machine"
+  | "ambiguous-unbound-shares";
+
+export interface BindShareMachineInput {
+  owner: ShareActor;
+  sessionId: string;
+  projectRoot: string;
+  machineId: string;
+  now?: string;
+}
+
+export type BindShareMachineResult =
+  | { ok: true; state: SharingState; share: SharedSessionRecord; alreadyBound: boolean }
+  | { ok: false; refusal: BindShareRefusal };
+
+/// Bind a share that already exists to the machine holding its session.
+///
+/// A share made before machines existed names no host, and the route then
+/// refuses it -- with the host sitting right there. Re-inviting repairs it,
+/// but costs a new token and another email to someone who already accepted.
+/// This is that repair without the email, and it reuses the adoption rule
+/// `createShareInvite` already applies rather than inventing a second one:
+/// same owner, same session, same folded checkout, exactly one candidate.
+export function bindShareToMachine(state: SharingState, input: BindShareMachineInput): BindShareMachineResult {
+  const now = input.now ?? new Date().toISOString();
+  const owner = sanitizeActor(input.owner, "owner");
+  const sessionId = sanitizeRequiredText(input.sessionId, 160, "sessionId");
+  const projectRoot = sanitizeRequiredText(input.projectRoot, MAX_PROJECT_ROOT_CHARS, "projectRoot");
+  // Binding to nothing is not a bind. An unusable id here would quietly write
+  // `undefined` and report success over a share that still cannot be routed.
+  const machineId = sanitizeShareMachineId(input.machineId);
+  if (!machineId) throw new Error("machineId is required");
+
+  const current = normalizeSharingState(state);
+  const candidates = Object.values(current.shares).filter(
+    (share) => share.ownerUserId === owner.userId && share.sessionId === sessionId,
+  );
+  if (candidates.length === 0) return { ok: false, refusal: "no-share-for-session" };
+
+  // The checkout narrows first, and everything after it is asked of that
+  // checkout alone. A session id names a session on one host, so one owner
+  // can hold a `claude-1` on two of them, and asking the whole set answered
+  // about the wrong share: an unrelated `claude-1` elsewhere made this one
+  // report it was bound elsewhere, a share that really was bound elsewhere
+  // reported a checkout mismatch, and -- worst of the three -- one already
+  // bound to the wanted machine reported success while the share actually
+  // asked about stayed unbound and went on being refused.
+  const wantedRoot = shareProjectRootKey(projectRoot);
+  const sameCheckout = candidates.filter((share) => shareProjectRootKey(share.projectRoot) === wantedRoot);
+  if (sameCheckout.length === 0) return { ok: false, refusal: "no-share-for-checkout" };
+
+  const alreadyHere = sameCheckout.find((share) => sanitizeShareMachineId(share.machineId) === machineId);
+  // Nothing to write, so nothing is written: a repeated bind must not bump the
+  // version every time and hand every guest a pointless refresh.
+  if (alreadyHere) return { ok: true, state: current, share: alreadyHere, alreadyBound: true };
+
+  // Two unbound shares of one session is a question, not an answer -- the same
+  // rule adoption applies, for the same reason: picking one is a coin flip
+  // that strands the other one's guests.
+  const adoptable = sameCheckout.filter((share) => !sanitizeShareMachineId(share.machineId));
+  if (adoptable.length > 1) return { ok: false, refusal: "ambiguous-unbound-shares" };
+  const share = adoptable[0];
+  if (!share) return { ok: false, refusal: "bound-to-another-machine" };
+
+  share.machineId = machineId;
+  share.updatedAt = now;
+  share.version += 1;
+  current.shares[share.id] = normalizeShare(share);
+  return {
+    ok: true,
+    state: normalizeSharingState(current),
+    share: current.shares[share.id],
+    alreadyBound: false,
+  };
 }
 
 export async function createShareInvite(
@@ -728,6 +827,9 @@ function normalizeAcceptedShare(share: SharedSessionSummary | undefined): Shared
     updatedAt: sanitizeRequiredText(share.updatedAt, 80, "updatedAt"),
     version: Number.isFinite(share.version) ? share.version : 1,
     mode: share.mode === "multi" ? "multi" : "single",
+    // Rebuilt field by field, so a field not named here is dropped: a stored
+    // copy would go on saying nothing about its host forever.
+    ...(typeof share.hostBound === "boolean" ? { hostBound: share.hostBound } : {}),
     participants: Array.isArray(share.participants) ? share.participants : [],
     invites: Array.isArray(share.invites) ? share.invites : [],
   };

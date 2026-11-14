@@ -200,6 +200,39 @@ describe("relay CORS", () => {
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
   });
 
+  // The first segment of a `/shares/...` path is the owner whose object holds
+  // the share -- except when it is a verb. Read as an owner id, `bind` picks a
+  // durable object named "bind": empty, shared by every account, and it
+  // answers "no share for that session" for a share that exists.
+  it("sends a verb-shaped sharing route to the caller's own object", async () => {
+    authMocks.verifyWsToken.mockResolvedValueOnce("user_owner");
+    authMocks.fetchClerkUserProfile.mockResolvedValueOnce({
+      userId: "user_owner",
+      displayName: "Sam",
+      email: "sam@example.com",
+    });
+    const objectFetch = vi.fn(async (_request: Request) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const idFromName = vi.fn(() => ({ name: "user_owner" }));
+    const env = {
+      CLERK_SECRET_KEY: "sk_test",
+      RELAY: { idFromName, get: vi.fn(() => ({ fetch: objectFetch })) },
+    } as unknown as Env;
+
+    const response = await relay.fetch(
+      new Request("https://relay.aimux.app/shares/bind", {
+        method: "POST",
+        headers: { Origin: "https://aimux.app", Authorization: "Bearer clerk-token" },
+        body: JSON.stringify({ projectRoot: "/repo", sessionId: "claude-1", machineId: "mbp" }),
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(idFromName).toHaveBeenCalledWith("user_owner");
+    // Nothing is a share owned by someone else, so nothing claims it is.
+    expect(objectFetch.mock.calls[0][0].headers.get("X-Aimux-Share-Owner-Id")).toBeNull();
+  });
+
   it("allows Clerk tokens to read but not mutate owner device security", async () => {
     authMocks.verifyWsToken.mockResolvedValue("user_owner");
     const objectFetch = vi.fn(async (_request: Request) => {

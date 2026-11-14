@@ -91,6 +91,7 @@ import {
   shouldFocusComposerOnOpen,
 } from "@/lib/chat-keyboard-intent";
 import {
+  bindShareMachine,
   createShareInvite,
   getShare,
   leaveShare,
@@ -619,6 +620,7 @@ export default function ChatScreen() {
   const [shareDetailsExpanded, setShareDetailsExpanded] = useState(false);
   const [managePanelOpen, setManagePanelOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
+  const [bindBusy, setBindBusy] = useState(false);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteStatus, setInviteStatus] = useState<string | null>(null);
   const [shareSummary, setShareSummary] = useState<SharedSessionSummary | null>(null);
@@ -722,6 +724,12 @@ export default function ChatScreen() {
   const canManageShare = Boolean(
     shareSummary?.ownerUserId && user?.id === shareSummary.ownerUserId,
   );
+  // What a repair would bind the share to, named rather than called "this
+  // machine": the endpoint is the project service actually serving this
+  // session, and a bind cannot be moved afterwards.
+  const bindTarget = serviceEndpoint?.machineId
+    ? (project?.machineName ?? serviceEndpoint.machineId)
+    : null;
   // The settings read is deliberately NOT part of this. `shareSummaryCheckedKey`
   // is the owner's SEND gate through `ownerShareStatusPending`, so a read that
   // never answers must not keep this effect from running: gating it here left
@@ -2324,6 +2332,33 @@ export default function ChatScreen() {
     }
   }
 
+  /// Bind this share to the machine that holds the session.
+  ///
+  /// A share made before a share recorded its host names no machine, so every
+  /// guest request is refused with a message about a disconnected host --
+  /// while the host is online. This repairs the record the guests already
+  /// hold, rather than issuing a second invite to someone who accepted the
+  /// first one.
+  async function handleBindShareMachine() {
+    const machineId = serviceEndpoint?.machineId;
+    if (!canManageShare || !token || !project?.path || !sessionId || !machineId || bindBusy) return;
+    setBindBusy(true);
+    setInviteStatus(null);
+    try {
+      const result = await bindShareMachine(project.path, sessionId, machineId, { token });
+      setShareSummary(result.share);
+      setInviteStatus(
+        result.alreadyBound
+          ? "This chat already points at this machine."
+          : "This chat now points at this machine.",
+      );
+    } catch (err) {
+      setInviteStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBindBusy(false);
+    }
+  }
+
   async function handleRemoveParticipant(participantUserId: string) {
     if (!canManageShare || !token || !shareSummary || shareAction) return;
     setShareAction(participantUserId);
@@ -3030,6 +3065,30 @@ export default function ChatScreen() {
                       />
                     </View>
                   )}
+                  {canManageShare && shareSummary?.hostBound === false ? (
+                    <View className="mt-3 border-t border-border pt-3">
+                      <Text className="text-xs text-muted-foreground">
+                        This chat does not say which machine holds the session, so it is refused
+                        even while the host is online.
+                      </Text>
+                      {bindTarget ? (
+                        // Named, because a bind does not move: pointing it at
+                        // the wrong machine cannot be undone from here.
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-2 self-start"
+                          label={bindBusy ? "Pointing..." : `Point it at ${bindTarget}`}
+                          disabled={bindBusy || !token || !relayConfigured}
+                          onPress={handleBindShareMachine}
+                        />
+                      ) : (
+                        <Text className="mt-2 text-xs text-muted-foreground">
+                          Open this chat from the machine that holds it to point it there.
+                        </Text>
+                      )}
+                    </View>
+                  ) : null}
                   {shareSummary && (!activeShare || shareDetailsExpanded) ? (
                     <View className="mt-3 border-t border-border pt-3">
                       <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">

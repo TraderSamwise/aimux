@@ -4,6 +4,7 @@ import {
   actorDisplayPrefix,
   createShareInvite,
   emptySharingState,
+  bindShareToMachine,
   findShareForSession,
   getShareChatMode,
   isSharedRelayRequestAllowed,
@@ -24,6 +25,7 @@ import {
   type SharedSessionRecord,
   type SharingState,
 } from "./sharing";
+import { resolveSharedDaemonTarget } from "./machines";
 
 const owner = {
   userId: "user_owner",
@@ -546,6 +548,290 @@ describe("which share a new invite extends", () => {
     };
 
     expect(findShareForSession(state, owner.userId, "claude-1", "strix", "/repo/aimux")).toBeUndefined();
+  });
+});
+
+describe("binding a share that already exists", () => {
+  const owner: ShareActor = { userId: "user_owner", displayName: "Sam", role: "owner" };
+
+  async function invite(
+    state: Parameters<typeof createShareInvite>[0],
+    machineId?: string,
+    projectRoot = "/repo/aimux",
+    sessionId = "claude-1",
+  ) {
+    return createShareInvite(state, {
+      owner,
+      projectRoot,
+      sessionId,
+      email: "guest@example.com",
+      machineId,
+    });
+  }
+
+  // The case the whole phase exists for: a share made before a share recorded
+  // its host, with its guest already accepted, repaired without a new token
+  // and a second email.
+  it("points a share that names no machine at the host that has it", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+    const accepted = await acceptShareInvite(legacy.state, {
+      token: legacy.token.token,
+      actor: { userId: "user_guest", displayName: "Guest", email: "guest@example.com", role: "guest" },
+    });
+
+    const bound = bindShareToMachine(accepted.state, {
+      owner,
+      sessionId: "claude-1",
+      projectRoot: "/repo/aimux",
+      machineId: "mbp",
+    });
+
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) return;
+    expect(bound.alreadyBound).toBe(false);
+    expect(bound.share.id).toBe(legacy.token.share.id);
+    expect(bound.share.machineId).toBe("mbp");
+    // The guest it already has is still on it: a repair, not a new share.
+    expect(Object.keys(bound.state.shares)).toHaveLength(1);
+    expect(bound.share.participants.user_guest?.status).toBe("active");
+  });
+
+  // What the guest's 503 actually was. Two Macs with the same checkout both
+  // claim an unbound share, so the route refuses a host that is sitting
+  // right there -- until the share names one.
+  it("is what makes the route pick a host while a second machine claims the checkout", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+    const share = Object.values(legacy.state.shares)[0];
+    const claimed = rememberMachineProjectRoots(
+      rememberMachineProjectRoots(legacy.state, "mbp", ["/repo/aimux"]),
+      "strix",
+      ["/repo/aimux"],
+    );
+
+    const online = [
+      { id: "mbp", name: "mbp" },
+      { id: "strix", name: "strix" },
+    ];
+
+    const before = resolveSharedDaemonTarget(machinesHostingShare(claimed, share, online), share.machineId);
+    expect(before.ok).toBe(false);
+    if (!before.ok) expect(before.refusal).toBe("share-names-no-machine");
+
+    const bound = bindShareToMachine(claimed, {
+      owner,
+      sessionId: "claude-1",
+      projectRoot: "/repo/aimux",
+      machineId: "mbp",
+    });
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) return;
+
+    const after = resolveSharedDaemonTarget(
+      machinesHostingShare(bound.state, bound.share, online),
+      bound.share.machineId,
+    );
+    expect(after).toEqual({ ok: true, machineId: "mbp" });
+  });
+
+  it("writes nothing when the share already names that machine", async () => {
+    const first = await invite(emptySharingState(), "mbp");
+    const again = bindShareToMachine(first.state, {
+      owner,
+      sessionId: "claude-1",
+      projectRoot: "/repo/aimux",
+      machineId: "mbp",
+    });
+
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(again.alreadyBound).toBe(true);
+    // A repeated bind that bumped the version would hand every guest a
+    // refresh of a record that did not change.
+    expect(again.share.version).toBe(first.token.share.version);
+    expect(again.share.updatedAt).toBe(first.token.share.updatedAt);
+  });
+
+  it("refuses to move a share off the machine it names", async () => {
+    const first = await invite(emptySharingState(), "mbp");
+    const moved = bindShareToMachine(first.state, {
+      owner,
+      sessionId: "claude-1",
+      projectRoot: "/repo/aimux",
+      machineId: "strix",
+    });
+
+    expect(moved).toEqual({ ok: false, refusal: "bound-to-another-machine" });
+    expect(Object.values(first.state.shares)[0].machineId).toBe("mbp");
+  });
+
+  // Same rule the invite adoption applies: "unbound" says nothing about which
+  // host made it, so the checkout is the evidence.
+  it("refuses an unbound share of a different checkout", async () => {
+    const legacy = await invite(emptySharingState(), undefined, "/Users/sam/cs/aimux");
+    const bound = bindShareToMachine(legacy.state, {
+      owner,
+      sessionId: "claude-1",
+      projectRoot: "/home/sam/aimux",
+      machineId: "strix",
+    });
+
+    expect(bound).toEqual({ ok: false, refusal: "no-share-for-checkout" });
+    expect(Object.values(legacy.state.shares)[0].machineId).toBeUndefined();
+  });
+
+  // A session id names a session on one host, so one owner can hold a
+  // `claude-1` on two checkouts. Asking "is anything unbound?" across both
+  // answered with the other checkout's situation: a share bound elsewhere
+  // reported a checkout mismatch, and an unrelated share on another checkout
+  // made this one report it was bound elsewhere. Neither wrote anything;
+  // both sent the owner looking in the wrong place.
+  // The worst of the three: a `claude-1` on another checkout that is already
+  // bound to this machine reported success, while the share actually asked
+  // about stayed unbound and went on being refused -- a repair that said it
+  // had happened and had not.
+  it("does not let another checkout's share report this one as already bound", async () => {
+    const elsewhere = await invite(emptySharingState(), "mbp", "/repo/a");
+    const here = await invite(elsewhere.state, undefined, "/repo/b");
+
+    const bound = bindShareToMachine(here.state, {
+      owner,
+      sessionId: "claude-1",
+      projectRoot: "/repo/b",
+      machineId: "mbp",
+    });
+
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) return;
+    expect(bound.alreadyBound).toBe(false);
+    expect(bound.share.id).toBe(here.token.share.id);
+    expect(bound.share.projectRoot).toBe("/repo/b");
+    expect(bound.share.machineId).toBe("mbp");
+  });
+
+  it("names the checkout as the reason when this checkout has no share", async () => {
+    const elsewhere = await invite(emptySharingState(), "mbp", "/repo/a");
+
+    expect(
+      bindShareToMachine(elsewhere.state, {
+        owner,
+        sessionId: "claude-1",
+        projectRoot: "/repo/b",
+        machineId: "strix",
+      }),
+    ).toEqual({ ok: false, refusal: "no-share-for-checkout" });
+  });
+
+  it("names the binding as the reason when this checkout's share is bound elsewhere", async () => {
+    const bound = await invite(emptySharingState(), "strix", "/repo/a");
+    const unrelated = await invite(bound.state, undefined, "/repo/b");
+
+    expect(
+      bindShareToMachine(unrelated.state, {
+        owner,
+        sessionId: "claude-1",
+        projectRoot: "/repo/a",
+        machineId: "mbp",
+      }),
+    ).toEqual({ ok: false, refusal: "bound-to-another-machine" });
+  });
+
+  it("refuses when two unbound shares could be the one", () => {
+    const unbound = (id: string): SharedSessionRecord => ({
+      id,
+      ownerUserId: owner.userId,
+      projectRoot: "/repo/aimux",
+      sessionId: "claude-1",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+      version: 1,
+      invites: {},
+      participants: {},
+    });
+    const state: SharingState = { ...emptySharingState(), shares: { a: unbound("a"), b: unbound("b") } };
+
+    expect(
+      bindShareToMachine(state, {
+        owner,
+        sessionId: "claude-1",
+        projectRoot: "/repo/aimux",
+        machineId: "mbp",
+      }),
+    ).toEqual({ ok: false, refusal: "ambiguous-unbound-shares" });
+  });
+
+  it("refuses when the session has no share at all", async () => {
+    const other = await invite(emptySharingState(), undefined, "/repo/aimux", "claude-2");
+
+    expect(
+      bindShareToMachine(other.state, {
+        owner,
+        sessionId: "claude-1",
+        projectRoot: "/repo/aimux",
+        machineId: "mbp",
+      }),
+    ).toEqual({ ok: false, refusal: "no-share-for-session" });
+  });
+
+  // The scoping IS the authorization: there is no owner check anywhere else
+  // on this path, so another user asking must find nothing to bind.
+  it("will not bind another owner's share", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+
+    expect(
+      bindShareToMachine(legacy.state, {
+        owner: { userId: "user_someone_else", displayName: "Someone", role: "owner" },
+        sessionId: "claude-1",
+        projectRoot: "/repo/aimux",
+        machineId: "theirs",
+      }),
+    ).toEqual({ ok: false, refusal: "no-share-for-session" });
+    expect(Object.values(legacy.state.shares)[0].machineId).toBeUndefined();
+  });
+
+  it("refuses a machine id it cannot use rather than reporting a bind", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+
+    expect(() =>
+      bindShareToMachine(legacy.state, {
+        owner,
+        sessionId: "claude-1",
+        projectRoot: "/repo/aimux",
+        machineId: "   ",
+      }),
+    ).toThrow(/machineId is required/);
+  });
+
+  it("says whether a summary's share has a host, and never which", async () => {
+    const legacy = await invite(emptySharingState(), undefined);
+    expect(summarizeShare(Object.values(legacy.state.shares)[0]).hostBound).toBe(false);
+
+    const bound = bindShareToMachine(legacy.state, {
+      owner,
+      sessionId: "claude-1",
+      projectRoot: "/repo/aimux",
+      machineId: "mbp",
+    });
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) return;
+    const summary = summarizeShare(bound.share);
+    expect(summary.hostBound).toBe(true);
+    expect(JSON.stringify(summary)).not.toContain("mbp");
+  });
+
+  // Rebuilt field by field, so a field not named there is dropped and the
+  // guest's stored copy goes on saying nothing about its host for ever.
+  it("keeps hostBound on a stored copy", async () => {
+    const legacy = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/repo/aimux",
+      sessionId: "claude-1",
+      email: "guest@example.com",
+      machineId: undefined,
+      serviceEndpoint: { host: "127.0.0.1", port: 4311 },
+    });
+    const stored = upsertAcceptedShare(emptySharingState(), summarizeShare(Object.values(legacy.state.shares)[0]));
+
+    expect(listAcceptedShares(stored)[0].hostBound).toBe(false);
   });
 });
 

@@ -46,6 +46,8 @@ import {
 } from "./security.js";
 import {
   acceptShareInvite,
+  bindShareToMachine,
+  type BindShareRefusal,
   createShareInvite,
   getShareChatMode,
   listAcceptedShares,
@@ -77,6 +79,26 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 // requesting client only. Entries are cleared on response, client close, or
 // after this TTL — bounds memory if a request never completes.
 const PENDING_REQUEST_TTL_MS = 60_000;
+/// What a refused bind is, over the wire and to the person reading it.
+///
+/// A bind is an owner repairing their own share, so unlike a guest-facing
+/// refusal there is nothing to withhold: the owner is told which of the four
+/// it was, because each one has a different fix.
+const BIND_SHARE_REFUSALS: Record<BindShareRefusal, { status: number; error: string }> = {
+  "no-share-for-session": { status: 404, error: "No share for that session" },
+  "no-share-for-checkout": {
+    status: 404,
+    error: "No share for that session was made from this checkout",
+  },
+  "bound-to-another-machine": {
+    status: 409,
+    error: "That share is already bound to another machine",
+  },
+  "ambiguous-unbound-shares": {
+    status: 409,
+    error: "More than one share for that session names no machine",
+  },
+};
 /// How many project endpoints one `project_endpoints` frame may report.
 ///
 /// Each entry is a pass over every share this object holds, so an unbounded
@@ -209,6 +231,10 @@ export class RelayObject extends DurableObject<Env> {
     }
     if (url.pathname.startsWith("/shares/") && url.pathname.includes("/invites/") && request.method === "DELETE") {
       return this.revokeShareInvite(request, url);
+    }
+    if (url.pathname === "/shares/bind" && request.method === "POST") {
+      if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
+      return this.bindShareMachine(request);
     }
     if (url.pathname === "/shares/invite" && request.method === "POST") {
       if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
@@ -1623,6 +1649,72 @@ export class RelayObject extends DurableObject<Env> {
     const result = revokeShareInvite(state, share.id, parsed.inviteId);
     await saveSharingState(this.ctx.storage, result.state);
     return json({ ok: true, share: summarizeShare(result.share ?? share) }, 200);
+  }
+
+  /// Bind a share that already exists to the machine holding its session.
+  ///
+  /// The repair for a share made before machines existed. Re-inviting from
+  /// the hosting Mac fixes it too, but costs a new token and a second email
+  /// to someone who already accepted -- so this says the same thing with no
+  /// invite attached, and refuses by name rather than with one flat 404.
+  private async bindShareMachine(request: Request): Promise<Response> {
+    const owner = this.actorFromHeaders(request, "owner");
+    if (!owner) return json({ ok: false, error: "Missing owner context" }, 401);
+    let body: { projectRoot?: string; sessionId?: string; machineId?: string };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return json({ ok: false, error: "Invalid JSON" }, 400);
+    }
+    const state = await loadSharingState(this.ctx.storage);
+    let result: ReturnType<typeof bindShareToMachine>;
+    try {
+      result = bindShareToMachine(state, {
+        owner,
+        projectRoot: body.projectRoot ?? "",
+        sessionId: body.sessionId ?? "",
+        machineId: body.machineId ?? "",
+      });
+    } catch (error) {
+      return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+    if (!result.ok) {
+      const refusal = BIND_SHARE_REFUSALS[result.refusal];
+      return json({ ok: false, error: refusal.error, refusal: result.refusal }, refusal.status);
+    }
+    if (result.alreadyBound) {
+      return json({ ok: true, alreadyBound: true, share: summarizeShare(result.share) }, 200);
+    }
+    // Saved before anyone is told about it: a guest informed of a binding
+    // this object then forgot is worse than a guest told late.
+    await saveSharingState(this.ctx.storage, result.state);
+    // The guests hold their own copy of the summary, and `hostBound` has just
+    // changed in it. Their host indicator is resolved from the record per
+    // socket rather than from a connect-time tag, so it is re-pushed too --
+    // a share that could not be routed a moment ago now can be.
+    const staleReceivers = await this.refreshShareForItsParticipants(result.share);
+    if (staleReceivers.length > 0) {
+      // Owed, not forgotten. A second press of the same button returns
+      // `alreadyBound` and writes nothing, so without recording this the one
+      // guest whose copy did not land would keep `hostBound: false` for good:
+      // no later comparison would notice, because the owner's own record
+      // already says what it should.
+      const saved = await loadSharingState(this.ctx.storage);
+      const share = saved.shares[result.share.id];
+      if (share && recordStaleReceivers(share, staleReceivers)) {
+        await saveSharingState(this.ctx.storage, saved);
+      }
+    }
+    await this.broadcastMachineStatus();
+    return json(
+      {
+        ok: true,
+        alreadyBound: false,
+        share: summarizeShare(result.share),
+        ...(staleReceivers.length > 0 ? { staleReceivers } : {}),
+      },
+      200,
+    );
   }
 
   private async createShareInvite(request: Request): Promise<Response> {
