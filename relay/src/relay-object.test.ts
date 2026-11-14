@@ -1899,9 +1899,11 @@ describe("RelayObject saving a report over what landed while it ran", () => {
       );
     await report(443);
 
-    let bindRan = false;
+    // Recorded, not asserted, in here: this runs inside the refresh's own
+    // try/catch, so a failed expectation would be swallowed and the test
+    // would pass on the fallback path instead of the one under test.
+    let bindOutcome: { status: number; body: unknown } | undefined;
     bindDuringFanOut = async () => {
-      bindRan = true;
       failTheUpsert = true;
       const bound = await object.fetch(
         request("https://relay.aimux.app/shares/bind", {
@@ -1912,19 +1914,76 @@ describe("RelayObject saving a report over what landed while it ran", () => {
           body: { shareId, machineId: "mbp", projectRoot: "/Users/sam/cs/scratch" },
         }),
       );
-      expect(bound.status, "the premise: the bind succeeded").toBe(200);
-      expect(await bound.json(), "the premise: its push failed").toMatchObject({
-        staleReceivers: ["user_guest"],
-      });
+      bindOutcome = { status: bound.status, body: await bound.json() };
       failTheUpsert = false;
     };
     await report(8443);
-    expect(bindRan, "the premise: the bind landed inside the fan-out").toBe(true);
+    expect(bindOutcome, "the premise: the bind landed inside the fan-out").toBeDefined();
+    expect(bindOutcome?.status, "the premise: the bind succeeded").toBe(200);
+    expect(bindOutcome?.body, "the premise: its push to the guest failed").toMatchObject({
+      staleReceivers: ["user_guest"],
+    });
 
     const state = await storage.get<{
       shares: Record<string, { staleReceivers?: string[] }>;
     }>("sharing-state:v1");
     expect(state!.shares[shareId].staleReceivers, "the guest is still owed a copy").toEqual(["user_guest"]);
+  });
+
+  // Two reports from ONE machine overlap: the connect frame and the
+  // thirty-second reminder, and the gate opens during the fan-out. The first
+  // one's save used to revert the second one's port -- leaving the share
+  // proxying where nothing listens -- and erase the guest the second one
+  // could not reach, so nothing was owed and no later report noticed.
+  it("does not revert a second report that landed while it was fanning out", async () => {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const storage = storageWithSockets([mbp]);
+    let secondReport: (() => Promise<void>) | undefined;
+    let failTheUpsert = false;
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({
+          fetch: vi.fn(async (url: string) => {
+            if (!String(url).includes("/internal/accepted-shares/upsert")) {
+              return new Response("{}", { status: 200 });
+            }
+            if (failTheUpsert) return new Response("nope", { status: 500 });
+            const interleaved = secondReport;
+            secondReport = undefined;
+            if (interleaved) await interleaved();
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const report = (port: number) =>
+      object.webSocketMessage(
+        mbp,
+        JSON.stringify({
+          type: "project_endpoints",
+          projects: [{ projectRoot: "/Users/sam/cs/scratch", host: "relay.aimux.app", port }],
+        }),
+      );
+    await report(443);
+
+    let secondRan = false;
+    secondReport = async () => {
+      secondRan = true;
+      // The newer port, and its push to the guest fails.
+      failTheUpsert = true;
+      await report(9443);
+      failTheUpsert = false;
+    };
+    await report(8443);
+    expect(secondRan, "the premise: the second report landed inside the first").toBe(true);
+
+    const state = await storage.get<{
+      shares: Record<string, { serviceEndpoint?: { port: number }; staleReceivers?: string[] }>;
+    }>("sharing-state:v1");
+    expect(state!.shares[shareId].serviceEndpoint?.port, "the newer port stands").toBe(9443);
+    expect(state!.shares[shareId].staleReceivers, "and the guest it missed is owed").toEqual(["user_guest"]);
   });
 
   it("keeps the roots another machine reported while this report ran", async () => {

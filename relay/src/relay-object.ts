@@ -66,6 +66,7 @@ import {
   nextShareRefreshBatch,
   rememberMachineProjectRoots,
   updateShareServiceEndpoints,
+  type ShareServiceEndpoint,
   upsertAcceptedShare,
 } from "./sharing.js";
 import type { ShareParticipantRecord, SharedSessionRecord, SharedSessionSummary } from "./sharing.js";
@@ -103,6 +104,10 @@ const MAX_PEER_REQUESTS_PER_TARGET = 16;
 /// refusal there is nothing to withhold: each one has a different fix.
 const BIND_SHARE_REFUSALS: Record<BindShareRefusal, { status: number; error: string }> = {
   "no-such-share": { status: 404, error: "No share of yours by that id" },
+  "machine-has-not-reported-its-checkouts": {
+    status: 409,
+    error: "That machine has not told the relay which checkouts it has",
+  },
   "machine-does-not-hold-checkout": {
     status: 409,
     error: "That machine has not reported the checkout this share names",
@@ -677,6 +682,16 @@ export class RelayObject extends DurableObject<Env> {
     const senderIsOnlyMachine = machines.length === 1 && machines[0].id === machineId;
 
     const stored = await loadSharingState(this.ctx.storage);
+    // Numbers and strings, taken before anything downstream can touch them:
+    // the loaded state's own records do not survive as a snapshot -- the
+    // normalizing and the endpoint move pass through them -- and a comparison
+    // against a record that moved with the work is a comparison with itself.
+    const loadedAt = new Map(
+      Object.values(stored.shares).map((share) => [
+        share.id,
+        { version: share.version, endpoint: share.serviceEndpoint },
+      ]),
+    );
     const loaded = rememberMachineProjectRoots(
       stored,
       machineId,
@@ -767,17 +782,47 @@ export class RelayObject extends DurableObject<Env> {
     // marked, losing the one guest that bind could not reach, and carried a
     // stale endpoint over one a re-invite had just corrected.
     const fresh = await loadSharingState(this.ctx.storage);
+    // Whether the stored record moved while this report was fanning out.
+    // Everything below turns on it, because a report that loaded five minutes
+    // of awaits ago is not the authority on a record somebody has written
+    // since -- and the version is bumped by every write that changes a share,
+    // including this path's own endpoint move.
+    //
+    // Compared against the version this report LOADED, never the one in its
+    // own snapshot: its snapshot is the thing it mutated.
+    // Decided once, before anything below writes: the endpoint loop bumps the
+    // version itself, so asking the question again afterwards is asking about
+    // this report's own write -- which marked every guest it had just
+    // refreshed as owed another copy, and turned a bounded fan-out into the
+    // whole list again on the next report.
+    const wroteUnderneath = new Set(
+      Object.keys(fresh.shares).filter((id) => fresh.shares[id].version !== loadedAt.get(id)?.version),
+    );
+
     for (const id of updated) {
       const held = fresh.shares[id];
       const reported = state.shares[id];
-      // The daemon is the authority on where its own service is listening,
-      // and `updated` is exactly the set whose endpoint this report moved.
-      // `updatedAt` travels with it, because it is the stamp that move set
-      // and it is what orders the records when the store is trimmed.
-      if (held && reported?.serviceEndpoint) {
-        held.serviceEndpoint = { ...reported.serviceEndpoint };
-        held.updatedAt = reported.updatedAt;
-      }
+      if (!held || !reported?.serviceEndpoint) continue;
+      // The daemon is the authority on where its own service is listening --
+      // but a LATER write is the authority over an earlier one, and that
+      // includes a later report from the same daemon. So this asks about the
+      // endpoint itself rather than the record: if the stored one is still
+      // what this report read, nothing has moved it and ours is the newest
+      // word. If it has changed, a second report moved it again while this
+      // one was fanning out, and writing ours back reverted a live port to a
+      // dead one.
+      //
+      // Asked of the endpoint and not of the version, because a write that
+      // changed something ELSE -- a bind, an accept -- leaves this report
+      // still the newest word on the port, and skipping it there would leave
+      // the share pointing at the old one until the next report.
+      if (!sameEndpoint(held.serviceEndpoint, loadedAt.get(id)?.endpoint)) continue;
+      held.serviceEndpoint = { ...reported.serviceEndpoint };
+      held.updatedAt = laterTimestamp(held.updatedAt, reported.updatedAt) ?? held.updatedAt;
+      // Bumped on the record being SAVED, not only on the snapshot: the
+      // version is how the next overlapping report learns that this one wrote,
+      // and a bump that stays in the snapshot is a bump nobody reads.
+      held.version += 1;
     }
     for (const id of refresh) {
       const held = fresh.shares[id];
@@ -785,27 +830,17 @@ export class RelayObject extends DurableObject<Env> {
       if (!held || !reported) continue;
       // What this report could not reach -- unless the record changed while it
       // was reaching. Every summary it pushed was built from its own snapshot,
-      // so a bind landing in the window means the guests it "successfully
-      // refreshed" were handed the copy from before that bind, and the ones
-      // the bind itself could not reach were recorded on a record this path
-      // never read. Both are owed another push, and the version is what says
-      // so: it is bumped by every write that changes a share.
-      //
-      // Compared against the version this report LOADED, which is the only
-      // thing that answers "did somebody else write?". Its own snapshot would
-      // answer the same today only because moving an endpoint does not bump
-      // the version -- and that is a fact about another function, not an
-      // invariant this one should lean on. No test can tell the two apart
-      // while that holds, so there is no gate here, just the comparison that
-      // says what it means.
+      // so a write landing in the window means the guests it "successfully
+      // refreshed" were handed the copy from before that write, and anyone the
+      // other write could not reach was recorded on a record this path never
+      // read. Both are owed another push.
       //
       // A plain union would not do: it can only grow, and the rule that a
-      // landed refresh stops being retried is what keeps a report from
-      // writing storage every thirty seconds for ever.
-      held.staleReceivers =
-        held.version === stored.shares[id]?.version
-          ? reported.staleReceivers
-          : unionReceivers(shareReceivers(held), reported.staleReceivers);
+      // landed refresh stops being retried is what stops a report writing
+      // storage every thirty seconds for ever.
+      held.staleReceivers = wroteUnderneath.has(id)
+        ? unionReceivers(shareReceivers(held), reported.staleReceivers)
+        : reported.staleReceivers;
       // The later of the two stamps, for the same reason: two reports from one
       // machine overlap on connect-plus-reminder, and taking whichever
       // finished last would move the fairness cursor backwards.
@@ -2545,10 +2580,23 @@ function shareReceivers(share: SharedSessionRecord): string[] {
 /// order, so on a share whose guests were accepted out of alphabetical order
 /// an unsorted comparison reads as a change every time -- a storage write
 /// every thirty seconds, for ever, recording the same failures.
+/// Whether two service endpoints are the same place.
+///
+/// Absence is a value here: a share that had no endpoint and now has one HAS
+/// moved, and treating two absences as a difference would skip the first
+/// report that ever placed it.
+function sameEndpoint(held?: ShareServiceEndpoint, loaded?: ShareServiceEndpoint): boolean {
+  if (!held || !loaded) return !held && !loaded;
+  return held.host === loaded.host && held.port === loaded.port;
+}
+
 /// Everyone owed a copy once a record changed underneath a report.
 ///
 /// Over-retrying costs a subrequest; under-retrying leaves a guest holding a
 /// copy nothing will ever correct.
+///
+/// (The comment that used to sit here belongs to `recordStaleReceivers`, two
+/// functions down, and went back to it.)
 function unionReceivers(held?: string[], reported?: string[]): string[] | undefined {
   const owed = [...new Set([...(held ?? []), ...(reported ?? [])])].sort();
   return owed.length > 0 ? owed : undefined;

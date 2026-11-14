@@ -461,12 +461,13 @@ export function findShareForSession(
 
 /// Why an existing share could not be bound to a machine.
 ///
-/// Three ways to be wrong: the share is not the owner's to move, the machine
-/// does not look like it holds that checkout, or the checkout is being
-/// changed on a machine that still has the one the share names -- which is a
-/// relocation dressed as a rename.
+/// Four ways to be wrong: the share is not the owner's to move, the machine
+/// has told the relay nothing about what it holds, it has and this checkout
+/// was not in it, or the checkout is being changed on a machine that still
+/// has the one the share names -- which is a relocation dressed as a rename.
 export type BindShareRefusal =
   | "no-such-share"
+  | "machine-has-not-reported-its-checkouts"
   | "machine-does-not-hold-checkout"
   | "machine-still-holds-the-stored-checkout";
 
@@ -544,16 +545,21 @@ export function bindShareToMachine(state: SharingState, input: BindShareMachineI
   // it.
   //
   // The evidence is the endpoint report, which is what the routing already
-  // narrows on. Asked per machine, not of the index as a whole: a machine
-  // that has told us nothing is a machine we know nothing about -- an older
-  // daemon, or one that connected a moment ago whose first report is still to
-  // come -- and refusing those withholds the repair on the strength of an
-  // absence. A machine that HAS reported and did not name this checkout is a
-  // different answer, and a refusal.
+  // narrows on. Asked per machine, and an absence is its own answer rather
+  // than a free pass: a machine that has told the relay nothing has not told
+  // it that it holds this checkout either, and a daemon with no projects at
+  // all reports nothing, so reading silence as trust would bind a share to a
+  // machine that provably cannot serve it -- and report success doing it. A
+  // machine that has just connected is in that state for up to its first
+  // report; the refusal says which absence it is, and pressing again once it
+  // has reported works.
   const storedRoot = shareProjectRootKey(share.projectRoot);
   const wantedRoot = shareProjectRootKey(input.projectRoot?.trim() || share.projectRoot);
   const reported = claimedProjectRoots(current.machineProjectRoots, machineId);
-  if (reported.length > 0 && !reported.includes(wantedRoot)) {
+  if (reported.length === 0) {
+    return { ok: false, refusal: "machine-has-not-reported-its-checkouts" };
+  }
+  if (!reported.includes(wantedRoot)) {
     return { ok: false, refusal: "machine-does-not-hold-checkout" };
   }
 
@@ -562,10 +568,9 @@ export function bindShareToMachine(state: SharingState, input: BindShareMachineI
   // the one it stores is gone. If the target still HAS the stored root this is
   // not a rename -- it is being told to carry the share's guests into another
   // project on the same machine, which they never accepted and nobody asked
-  // for. With no report from that machine at all there is no evidence either
-  // way, so the root stays and only the machine moves.
+  // for.
   const changingRoot = wantedRoot !== storedRoot;
-  if (changingRoot && (reported.length === 0 || reported.includes(storedRoot))) {
+  if (changingRoot && reported.includes(storedRoot)) {
     return { ok: false, refusal: "machine-still-holds-the-stored-checkout" };
   }
   const movedCheckout = changingRoot ? input.projectRoot?.trim() : undefined;
@@ -1004,6 +1009,14 @@ export function updateShareServiceEndpoints(
     }
     share.serviceEndpoint = { ...endpoint };
     share.updatedAt = now;
+    // A write that changes the record bumps the version, like every other
+    // one. It used to move the endpoint and leave the version alone, which
+    // made the version blind to this path -- and the report merge decides
+    // whose copy of a summary is stale by asking whether the version moved.
+    // Two overlapping reports therefore looked identical to one, and the
+    // second one's work was saved over: its moved port reverted, and the
+    // guest it could not reach left owed nothing.
+    share.version += 1;
     updated.push(share.id);
   }
   return { state: current, updated, matched };

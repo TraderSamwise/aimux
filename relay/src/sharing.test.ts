@@ -756,21 +756,6 @@ describe("binding a share that already exists", () => {
     expect(normalizeSharingState(both).shares[first.token.share.id].projectRoot).toBe("/repo/aimux");
   });
 
-  // And with nothing reported there is no evidence either way, so the root
-  // stays where it is rather than following a claim nothing supports.
-  it("refuses to change the checkout on the word of a machine that reports nothing", async () => {
-    const first = await invite(emptySharingState(), undefined, "/repo/aimux");
-
-    expect(
-      bindShareToMachine(first.state, {
-        owner,
-        shareId: first.token.share.id,
-        machineId: "mbp",
-        projectRoot: "/repo/somewhere-else",
-      }),
-    ).toEqual({ ok: false, refusal: "machine-still-holds-the-stored-checkout" });
-  });
-
   // And the caller's checkout is still checked against the report, so a
   // rename is not a way to point a share anywhere at all.
   it("refuses a checkout the machine has not reported either", async () => {
@@ -788,39 +773,34 @@ describe("binding a share that already exists", () => {
     expect(normalizeSharingState(renamed).shares[first.token.share.id].projectRoot).toBe("/repo/old-name");
   });
 
-  // Nothing reported at all is nothing to check against -- an older daemon,
-  // or a relay that has just restarted. Refusing every bind then would leave
-  // the repair unavailable exactly when the routing is least sure.
-  it("allows a bind when no machine has reported anything yet", async () => {
+  // Silence is its own answer, not a free pass. A daemon with no projects
+  // reports nothing at all, so reading an absence as trust bound a share to a
+  // machine that provably could not serve it -- and said it had worked. A
+  // machine that has just connected is in the same state until its first
+  // report, and the refusal says which absence it is.
+  it("refuses a bind to a machine that has reported nothing", async () => {
     const legacy = await invite(emptySharingState(), undefined);
 
-    const bound = bindShareToMachine(legacy.state, {
-      owner,
-      shareId: legacy.token.share.id,
-      machineId: "mbp",
-    });
-
-    expect(bound.ok).toBe(true);
+    expect(
+      bindShareToMachine(legacy.state, {
+        owner,
+        shareId: legacy.token.share.id,
+        machineId: "mbp",
+      }),
+    ).toEqual({ ok: false, refusal: "machine-has-not-reported-its-checkouts" });
   });
 
-  // Asked per machine rather than of the index as a whole. A machine that has
-  // just connected has not reported yet, and its first report is up to thirty
-  // seconds away -- refusing it because OTHER machines have reported would
-  // withhold the repair on the strength of an absence, and the owner pressing
-  // again a moment later is not a fix, it is a coin toss.
-  it("allows a bind to a machine that has not reported, while others have", async () => {
+  it("refuses the same way when other machines have reported and this one has not", async () => {
     const legacy = await invite(emptySharingState(), undefined);
     const othersReported = reporting(legacy.state, { strix: ["/repo/aimux"] });
 
-    const bound = bindShareToMachine(othersReported, {
-      owner,
-      shareId: legacy.token.share.id,
-      machineId: "mbp",
-    });
-
-    expect(bound.ok).toBe(true);
-    if (!bound.ok) return;
-    expect(bound.share.machineId).toBe("mbp");
+    expect(
+      bindShareToMachine(othersReported, {
+        owner,
+        shareId: legacy.token.share.id,
+        machineId: "mbp",
+      }),
+    ).toEqual({ ok: false, refusal: "machine-has-not-reported-its-checkouts" });
   });
 
   it("refuses a share id that is not the caller's", async () => {
@@ -865,7 +845,7 @@ describe("binding a share that already exists", () => {
     const legacy = await invite(emptySharingState(), undefined);
     expect(summarizeShare(Object.values(legacy.state.shares)[0]).hostBound).toBe(false);
 
-    const bound = bindShareToMachine(legacy.state, {
+    const bound = bindShareToMachine(reporting(legacy.state, { mbp: ["/repo/aimux"] }), {
       owner,
       shareId: legacy.token.share.id,
       machineId: "mbp",
