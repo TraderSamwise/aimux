@@ -268,6 +268,54 @@ describe("RelayObject letting one machine ask another", () => {
     });
   });
 
+  // A project service refuses with 502 and 503 as well, so an unmarked
+  // refusal leaves the asking daemon unable to tell "the peer's service is
+  // down" from "the relay would not carry this" -- two problems with two
+  // fixes, wearing the same number.
+  it("signs the refusals it makes itself", async () => {
+    const { mbp, storage } = fleet();
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(mbp, ask(undefined));
+
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      source: "relay",
+      status: 400,
+    });
+  });
+
+  // The per-origin cap bounds what one machine can send and says nothing
+  // about what one machine can be sent: several machines, each politely under
+  // its own eight, still land all of them on one socket at once, and the
+  // owner's own app waits behind them.
+  it("stops a fleet filling one machine's queue between them", async () => {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const mini = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    const strix = fakeSocket(["daemon", "user:user_owner", "machine:strix", "machineName:sam-strix"]);
+    // A third asker, so the refusal cannot be its own eight coming back.
+    const air = fakeSocket(["daemon", "user:user_owner", "machine:air", "machineName:sam-air"]);
+    const object = createObject(storageWithSockets([mbp, mini, strix, air]), {} as unknown as Env);
+
+    for (let index = 0; index < 8; index += 1) {
+      await object.webSocketMessage(mbp, ask("strix", `mbp-${index}`));
+    }
+    for (let index = 0; index < 8; index += 1) {
+      await object.webSocketMessage(mini, ask("strix", `mini-${index}`));
+    }
+    expect(strix.send).toHaveBeenCalledTimes(16);
+
+    // Nothing of its own in flight, and still refused: the limit here is the
+    // machine being asked, not the one asking.
+    await object.webSocketMessage(air, ask("strix", "air-first"));
+
+    expect(strix.send).toHaveBeenCalledTimes(16);
+    expect(JSON.parse(String(air.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      id: "air-first",
+      status: 429,
+      body: { refusal: "peer-target-saturated" },
+    });
+  });
+
   it("refuses a machine that is not connected", async () => {
     const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
     const object = createObject(storageWithSockets([mbp]), {} as unknown as Env);
@@ -1507,7 +1555,11 @@ describe("RelayObject refreshing a share its guests already hold", () => {
         })),
       },
     } as unknown as Env);
-    await createAcceptedShareInOwnerObject(object);
+    // Named, because a checkout that moved and a different checkout look the
+    // same to a caller that cannot say which machine it is: following the one
+    // would adopt the other, and move guests into a project nobody shared
+    // with them. With the machine said, the share is unmistakably the same.
+    await createAcceptedShareInOwnerObject(object, "mbp");
     upserted.length = 0;
 
     const moved = await object.fetch(
@@ -1518,6 +1570,7 @@ describe("RelayObject refreshing a share its guests already hold", () => {
         email: "owner@example.com",
         body: {
           projectRoot: "/Users/sam/code/scratch",
+          machineId: "mbp",
           sessionId: "claude-k4lihz",
           email: "second@example.com",
         },
@@ -1540,6 +1593,7 @@ describe("RelayObject refreshing a share its guests already hold", () => {
         email: "owner@example.com",
         body: {
           projectRoot: "/Users/sam/code/scratch",
+          machineId: "mbp",
           sessionId: "claude-k4lihz",
           email: "third@example.com",
         },
@@ -1632,8 +1686,11 @@ describe("RelayObject pointing a share at the machine that holds it", () => {
     expect(upserted).toEqual([]);
   });
 
-  // The owner scoping IS the authorization on this route -- there is no other
-  // check -- so a second account must find nothing of the first one's to bind.
+  // Defence in depth, said plainly: the worker sends `/shares/bind` to the
+  // CALLER's own object, so in production a second account never reaches this
+  // one at all. What this pins is that the object does not rely on that --
+  // the owner scoping inside `bindShareToMachine` is the check, and the
+  // routing is not the only thing standing between two accounts.
   it("will not let another account point someone else's share anywhere", async () => {
     const storage = new MemoryStorage();
     const object = createObject(storage, envRecording([]));
@@ -1651,28 +1708,55 @@ describe("RelayObject pointing a share at the machine that holds it", () => {
     expect(state!.shares[shareId].machineId).toBeUndefined();
   });
 
-  it("refuses by name rather than with one flat not-found", async () => {
+  // A bind cannot be taken back any other way: there is no unbind route, and
+  // a re-invite builds a SECOND share rather than rebinding this one. So
+  // refusing a move would make one wrong press permanent, on a share whose
+  // guests go on being refused for as long as it stands.
+  it("moves a share the owner pointed at the wrong machine", async () => {
     const storage = new MemoryStorage();
     const object = createObject(storage, envRecording([]));
-    await createAcceptedShareInOwnerObject(object);
+    const shareId = await createAcceptedShareInOwnerObject(object);
     expect(
       (
         await bind(object, {
           projectRoot: "/Users/sam/cs/scratch",
           sessionId: "claude-k4lihz",
-          machineId: "mbp",
+          machineId: "strix",
         })
       ).status,
     ).toBe(200);
 
-    const moved = await bind(object, {
+    const corrected = await bind(object, {
       projectRoot: "/Users/sam/cs/scratch",
       sessionId: "claude-k4lihz",
-      machineId: "strix",
+      machineId: "mbp",
     });
 
-    expect(moved.status).toBe(409);
-    expect(await moved.json()).toMatchObject({ ok: false, refusal: "bound-to-another-machine" });
+    expect(corrected.status).toBe(200);
+    expect(await corrected.json()).toMatchObject({ ok: true, alreadyBound: false });
+    const state = await storage.get<{ shares: Record<string, { machineId?: string }> }>("sharing-state:v1");
+    expect(state!.shares[shareId].machineId).toBe("mbp");
+  });
+
+  it("refuses by name when it cannot tell which share was meant", async () => {
+    const storage = new MemoryStorage();
+    const object = createObject(storage, envRecording([]));
+    // Two machines with the same checkout each make their own share of the
+    // same session id. Asked to bind that checkout, there is no answer.
+    await createAcceptedShareInOwnerObject(object, "mbp");
+    await createInvite(object, "strix");
+
+    const refused = await bind(object, {
+      projectRoot: "/Users/sam/cs/scratch",
+      sessionId: "claude-k4lihz",
+      machineId: "mini",
+    });
+
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      ok: false,
+      refusal: "several-shares-for-checkout",
+    });
   });
 });
 
@@ -2339,8 +2423,8 @@ describe("RelayObject following a project service onto its new port", () => {
   });
 });
 
-async function createAcceptedShareInOwnerObject(object: RelayObject): Promise<string> {
-  const invite = await createInvite(object);
+async function createAcceptedShareInOwnerObject(object: RelayObject, machineId?: string): Promise<string> {
+  const invite = await createInvite(object, machineId);
   const accepted = await object.fetch(
     request(`https://relay.aimux.app/shares/invite/user_owner/${invite.token}/accept`, {
       method: "POST",
@@ -2354,7 +2438,7 @@ async function createAcceptedShareInOwnerObject(object: RelayObject): Promise<st
   return body.share.id;
 }
 
-async function createInvite(object: RelayObject): Promise<{ token: string }> {
+async function createInvite(object: RelayObject, machineId?: string): Promise<{ token: string }> {
   const response = await object.fetch(
     request("https://relay.aimux.app/shares/invite", {
       method: "POST",
@@ -2364,6 +2448,7 @@ async function createInvite(object: RelayObject): Promise<{ token: string }> {
       body: {
         projectRoot: "/Users/sam/cs/scratch",
         serviceEndpoint: { host: "relay.aimux.app", port: 443 },
+        ...(machineId ? { machineId } : {}),
         sessionId: "claude-k4lihz",
         email: "guest@example.com",
       },

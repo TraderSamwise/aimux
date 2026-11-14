@@ -181,14 +181,26 @@ impl Drop for PeerWaiterGuard {
 pub struct PeerAnswer {
     pub status: u16,
     pub body: Value,
+    /// Whether the relay answered instead of the peer.
+    ///
+    /// The relay synthesises refusals with the same statuses a project
+    /// service uses -- 502, 503, 504 -- so without this a caller cannot tell
+    /// "the peer's service is down" from "the relay would not carry it", and
+    /// those have different fixes. The relay marks its own.
+    pub from_relay: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PeerRequestError {
-    /// The socket is down, or the frame could not be queued.
+    /// The socket is down, or the frame could not be queued. Nothing left.
     NotSent(String),
-    /// Nothing came back inside the deadline.
+    /// Nothing came back inside the deadline, and the frame never left: the
+    /// peer was never asked, so nothing happened there.
     TimedOut,
+    /// The frame was written and no answer came inside the deadline. Whether
+    /// the peer did the work is genuinely unknown, which is a different thing
+    /// to report than "it did not happen".
+    AnsweredNothing,
     /// The connection went away while the answer was outstanding.
     ConnectionLost,
 }
@@ -197,7 +209,10 @@ impl PeerRequestError {
     pub fn message(&self) -> String {
         match self {
             Self::NotSent(reason) => format!("peer request was not sent: {reason}"),
-            Self::TimedOut => "peer did not answer in time".to_owned(),
+            Self::TimedOut => "peer was never asked, so it did not answer".to_owned(),
+            Self::AnsweredNothing => {
+                "peer was asked and did not answer in time; whether it acted is unknown".to_owned()
+            }
             Self::ConnectionLost => "relay connection was lost before the peer answered".to_owned(),
         }
     }
@@ -595,13 +610,22 @@ impl RelayRunner {
             RelayAction::NotifyClientConnected { title, body } => {
                 self.bridge.notify_client_connected(&title, &body).await;
             }
-            RelayAction::PeerResponse { id, status, body } => {
+            RelayAction::PeerResponse {
+                id,
+                status,
+                body,
+                from_relay,
+            } => {
                 // An answer nobody is waiting for is an answer to a request
                 // that already timed out or whose caller went away. There is
                 // nothing to do with it and nothing is wrong, so it is
                 // dropped here rather than reported as an unmatched frame.
                 if let Some(waiter) = self.take_peer_waiter(&id) {
-                    let _ = waiter.send(PeerAnswer { status, body });
+                    let _ = waiter.send(PeerAnswer {
+                        status,
+                        body,
+                        from_relay,
+                    });
                 }
             }
             RelayAction::RouteRequest {
@@ -730,9 +754,56 @@ impl RelayRunner {
             Ok(Ok(answer)) => Ok(answer),
             // The sender was dropped without answering, which is what
             // `fail_peer_waiters` does when the socket goes away.
-            Ok(Err(_)) => Err(PeerRequestError::ConnectionLost),
-            Err(_) => Err(PeerRequestError::TimedOut),
+            Ok(Err(_)) => Err(self.abandon_peer_request(&id, PeerRequestError::ConnectionLost)),
+            Err(_) => Err(self.abandon_peer_request(&id, PeerRequestError::TimedOut)),
         }
+    }
+
+    /// Give up on a peer request, taking the frame with it if it can.
+    ///
+    /// Telling a caller the request failed while the frame sat in the outbox
+    /// meant the work landed anyway on the next reconnect, minutes later,
+    /// with the answer going nowhere -- and a caller that retried got two of
+    /// whatever it asked for. A frame still queued is dropped here, which
+    /// makes the common failure honest.
+    ///
+    /// A frame already written cannot be recalled, so that case is reported
+    /// as what it is rather than papered over: the error says the answer
+    /// never came, which is true, and does not claim the work did not happen.
+    fn abandon_peer_request(&self, id: &str, error: PeerRequestError) -> PeerRequestError {
+        if self.drop_outbox_frame(id) {
+            return error;
+        }
+        match error {
+            PeerRequestError::TimedOut => PeerRequestError::AnsweredNothing,
+            other => other,
+        }
+    }
+
+    /// Remove a queued frame by its id. True when it had not been sent yet.
+    fn drop_outbox_frame(&self, id: &str) -> bool {
+        let Ok(mut outbox) = self.outbox.lock() else {
+            return false;
+        };
+        let before = outbox.len();
+        outbox.retain(|frame| {
+            serde_json::from_str::<Value>(frame)
+                .ok()
+                .and_then(|parsed| {
+                    parsed
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(|frame_id| frame_id != id)
+                })
+                .unwrap_or(true)
+        });
+        let dropped = outbox.len() < before;
+        let depth = outbox.len();
+        drop(outbox);
+        if dropped {
+            self.record_outbox_depth(depth);
+        }
+        dropped
     }
 
     /// How many callers are waiting on a peer answer.

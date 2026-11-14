@@ -530,6 +530,27 @@ describe("which share a new invite extends", () => {
     expect(Object.keys(moved.state.shares)).toHaveLength(1);
   });
 
+  // An invite that cannot say which machine it came from used to adopt an
+  // unbound share of ANY checkout, and `createShareInvite` then rewrote that
+  // share's `projectRoot` -- which moved the guests already on it into a
+  // project nobody had shared with them, and left the share they accepted
+  // unreachable.
+  it("does not move a share's guests into another checkout", async () => {
+    const first = await invite(emptySharingState(), undefined, "/repo/a");
+    const accepted = await acceptShareInvite(first.state, {
+      token: first.token.token,
+      actor: { userId: "user_guest", displayName: "Guest", email: "guest@example.com", role: "guest" },
+    });
+
+    const second = await invite(accepted.state, undefined, "/repo/b");
+
+    expect(second.token.share.id).not.toBe(first.token.share.id);
+    expect(Object.keys(second.state.shares)).toHaveLength(2);
+    const held = second.state.shares[first.token.share.id];
+    expect(held.projectRoot, "the accepted share keeps its own checkout").toBe("/repo/a");
+    expect(held.participants.user_guest?.status).toBe("active");
+  });
+
   it("adopts neither when two unbound shares could be the one", () => {
     const unbound = (id: string): SharedSessionRecord => ({
       id,
@@ -651,52 +672,26 @@ describe("binding a share that already exists", () => {
     expect(again.share.updatedAt).toBe(first.token.share.updatedAt);
   });
 
-  // The last of the family. One checkout holding both a share already on this
-  // machine and an unbound one answered "already bound" -- true of the share
-  // it looked at, and no help at all to the one still refusing its guests.
-  it("binds the unbound share rather than reporting the bound one", () => {
-    const held = (id: string, machineId?: string): SharedSessionRecord => ({
-      id,
-      ownerUserId: owner.userId,
-      projectRoot: "/repo/aimux",
-      sessionId: "claude-1",
-      createdAt: "2026-10-01T00:00:00.000Z",
-      updatedAt: "2026-10-01T00:00:00.000Z",
-      version: 1,
-      invites: {},
-      participants: {},
-      ...(machineId ? { machineId } : {}),
-    });
-    const state: SharingState = {
-      ...emptySharingState(),
-      shares: { bound: held("bound", "mbp"), loose: held("loose") },
-    };
-
-    const bound = bindShareToMachine(state, {
+  // The owner can press this from the wrong machine -- the same checkout on
+  // two machines means opening the chat can resolve to either one -- and
+  // there is no unbind route and no re-invite that rebinds. Refusing a move
+  // would make that one press permanent, on a share whose guests are then
+  // refused for as long as it stands.
+  it("moves a share that was pointed at the wrong machine", async () => {
+    const first = await invite(emptySharingState(), "strix");
+    const corrected = bindShareToMachine(first.state, {
       owner,
       sessionId: "claude-1",
       projectRoot: "/repo/aimux",
       machineId: "mbp",
     });
 
-    expect(bound.ok).toBe(true);
-    if (!bound.ok) return;
-    expect(bound.alreadyBound).toBe(false);
-    expect(bound.share.id).toBe("loose");
-    expect(bound.share.machineId).toBe("mbp");
-  });
-
-  it("refuses to move a share off the machine it names", async () => {
-    const first = await invite(emptySharingState(), "mbp");
-    const moved = bindShareToMachine(first.state, {
-      owner,
-      sessionId: "claude-1",
-      projectRoot: "/repo/aimux",
-      machineId: "strix",
-    });
-
-    expect(moved).toEqual({ ok: false, refusal: "bound-to-another-machine" });
-    expect(Object.values(first.state.shares)[0].machineId).toBe("mbp");
+    expect(corrected.ok).toBe(true);
+    if (!corrected.ok) return;
+    expect(corrected.alreadyBound).toBe(false);
+    expect(corrected.share.id).toBe(first.token.share.id);
+    expect(corrected.share.machineId).toBe("mbp");
+    expect(Object.keys(corrected.state.shares)).toHaveLength(1);
   });
 
   // Same rule the invite adoption applies: "unbound" says nothing about which
@@ -720,29 +715,6 @@ describe("binding a share that already exists", () => {
   // reported a checkout mismatch, and an unrelated share on another checkout
   // made this one report it was bound elsewhere. Neither wrote anything;
   // both sent the owner looking in the wrong place.
-  // The worst of the three: a `claude-1` on another checkout that is already
-  // bound to this machine reported success, while the share actually asked
-  // about stayed unbound and went on being refused -- a repair that said it
-  // had happened and had not.
-  it("does not let another checkout's share report this one as already bound", async () => {
-    const elsewhere = await invite(emptySharingState(), "mbp", "/repo/a");
-    const here = await invite(elsewhere.state, undefined, "/repo/b");
-
-    const bound = bindShareToMachine(here.state, {
-      owner,
-      sessionId: "claude-1",
-      projectRoot: "/repo/b",
-      machineId: "mbp",
-    });
-
-    expect(bound.ok).toBe(true);
-    if (!bound.ok) return;
-    expect(bound.alreadyBound).toBe(false);
-    expect(bound.share.id).toBe(here.token.share.id);
-    expect(bound.share.projectRoot).toBe("/repo/b");
-    expect(bound.share.machineId).toBe("mbp");
-  });
-
   it("names the checkout as the reason when this checkout has no share", async () => {
     const elsewhere = await invite(emptySharingState(), "mbp", "/repo/a");
 
@@ -756,42 +728,23 @@ describe("binding a share that already exists", () => {
     ).toEqual({ ok: false, refusal: "no-share-for-checkout" });
   });
 
-  it("names the binding as the reason when this checkout's share is bound elsewhere", async () => {
-    const bound = await invite(emptySharingState(), "strix", "/repo/a");
-    const unrelated = await invite(bound.state, undefined, "/repo/b");
+  // Two machines with the same checkout each make their own share of one
+  // session id, which is an ordinary state and not a hypothetical. Asked to
+  // bind that checkout, there is no answer -- picking one would strand the
+  // other one's guests.
+  it("refuses when it cannot tell which of a checkout's shares was meant", async () => {
+    const first = await invite(emptySharingState(), "mbp", "/repo/a");
+    const second = await invite(first.state, "strix", "/repo/a");
+    expect(Object.keys(second.state.shares), "the premise: two shares").toHaveLength(2);
 
     expect(
-      bindShareToMachine(unrelated.state, {
+      bindShareToMachine(second.state, {
         owner,
         sessionId: "claude-1",
         projectRoot: "/repo/a",
-        machineId: "mbp",
+        machineId: "mini",
       }),
-    ).toEqual({ ok: false, refusal: "bound-to-another-machine" });
-  });
-
-  it("refuses when two unbound shares could be the one", () => {
-    const unbound = (id: string): SharedSessionRecord => ({
-      id,
-      ownerUserId: owner.userId,
-      projectRoot: "/repo/aimux",
-      sessionId: "claude-1",
-      createdAt: "2026-10-01T00:00:00.000Z",
-      updatedAt: "2026-10-01T00:00:00.000Z",
-      version: 1,
-      invites: {},
-      participants: {},
-    });
-    const state: SharingState = { ...emptySharingState(), shares: { a: unbound("a"), b: unbound("b") } };
-
-    expect(
-      bindShareToMachine(state, {
-        owner,
-        sessionId: "claude-1",
-        projectRoot: "/repo/aimux",
-        machineId: "mbp",
-      }),
-    ).toEqual({ ok: false, refusal: "ambiguous-unbound-shares" });
+    ).toEqual({ ok: false, refusal: "several-shares-for-checkout" });
   });
 
   it("refuses when the session has no share at all", async () => {

@@ -3065,15 +3065,29 @@ export default function ChatScreen() {
                       />
                     </View>
                   )}
-                  {canManageShare && shareSummary?.hostBound === false ? (
+                  {canManageShare && shareSummary ? (
                     <View className="mt-3 border-t border-border pt-3">
-                      <Text className="text-xs text-muted-foreground">
-                        This chat does not say which machine holds the session, so it is refused
-                        even while the host is online.
-                      </Text>
+                      {shareSummary.hostBound === false ? (
+                        <Text className="text-xs text-muted-foreground">
+                          This chat does not say which machine holds the session, so it is refused
+                          even while the host is online.
+                        </Text>
+                      ) : (
+                        // Offered whatever the share currently says, because
+                        // this machine is not necessarily the one the route
+                        // resolved: with the same checkout on two machines,
+                        // opening the chat can point at either. A press that
+                        // picked the wrong one has to be correctable from the
+                        // right one, and hiding the control once a share has
+                        // ANY host is what made a wrong bind permanent.
+                        <Text className="text-xs text-muted-foreground">
+                          Guests reach this chat through one machine. Point it at this one if it is
+                          the machine actually holding the session.
+                        </Text>
+                      )}
                       {bindTarget ? (
-                        // Named, because a bind does not move: pointing it at
-                        // the wrong machine cannot be undone from here.
+                        // Named rather than "this machine", because the owner
+                        // has to be able to see which one they are picking.
                         <Button
                           size="sm"
                           variant="outline"

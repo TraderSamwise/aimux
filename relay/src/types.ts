@@ -81,6 +81,13 @@ export interface RelayResponse {
   id: string;
   type: "response";
   status: number;
+  /// Set to "relay" when the relay answered instead of the machine asked.
+  ///
+  /// A project service refuses with 502 and 503 as well, so an unmarked
+  /// refusal leaves a daemon unable to tell "the peer's service is down" from
+  /// "the relay would not carry this". A person's client ignores it; the
+  /// field exists because a daemon has nobody to ask.
+  source?: "relay";
   body?: unknown;
 }
 

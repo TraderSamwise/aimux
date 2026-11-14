@@ -117,6 +117,9 @@ pub enum RelayAction {
         id: String,
         status: u16,
         body: Value,
+        /// Set when the relay answered on the peer's behalf rather than
+        /// carrying the peer's own answer.
+        from_relay: bool,
     },
 }
 
@@ -170,6 +173,12 @@ pub fn handle_frame(data: &str) -> RelayAction {
                 .and_then(|status| u16::try_from(status).ok())
                 .unwrap_or(502),
             body: message.get("body").cloned().unwrap_or(Value::Null),
+            // The relay stamps its own refusals, which otherwise wear the
+            // same 502/503/504 a project service does.
+            from_relay: message
+                .get("source")
+                .and_then(Value::as_str)
+                .is_some_and(|source| source == "relay"),
         },
         "request" => RelayAction::RouteRequest {
             id: string_field(Some(&message), "id"),

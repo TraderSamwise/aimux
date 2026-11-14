@@ -118,7 +118,11 @@ export type DaemonTargetResolution =
 /// resolve, so every one of these is said plainly: there is no person here to
 /// read a deliberately vague message, and the daemon that asked has to be able
 /// to tell "name a machine" from "that machine is not here".
-export type PeerDaemonRefusal = "peer-target-unnamed" | "peer-target-offline" | "peer-target-is-self";
+export type PeerDaemonRefusal =
+  | "peer-target-unnamed"
+  | "peer-target-offline"
+  | "peer-target-is-self"
+  | "peer-target-unidentified";
 
 export type PeerDaemonTargetResolution =
   | { ok: true; machineId: string }
@@ -143,6 +147,18 @@ export function resolvePeerDaemonTarget(
       status: 400,
       error: "A peer request must name the machine it is for",
       refusal: "peer-target-unnamed",
+    };
+  }
+  // `unidentified` is the slot every daemon without a persisted identity
+  // shares, so naming it does not name a machine -- it names whichever of
+  // them reached the socket map first. A client asking for it is answered
+  // because a person can see which machine they got; a daemon cannot.
+  if (!isValidMachineId(requested)) {
+    return {
+      ok: false,
+      status: 400,
+      error: "A peer request must name a machine, not the unidentified slot",
+      refusal: "peer-target-unidentified",
     };
   }
   // Through the relay and back into the same process: a loop with a timeout on

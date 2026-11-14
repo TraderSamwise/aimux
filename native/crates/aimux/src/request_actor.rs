@@ -1,4 +1,5 @@
 use crate::daemon::routing::DaemonRouteUrl;
+use crate::machine_identity::RESERVED_UNIDENTIFIED_MACHINE_ID;
 use crate::project_api_contract::routes as project_routes;
 use crate::proxy_project_binding::parse_proxy_target;
 use serde::{Deserialize, Serialize};
@@ -155,84 +156,51 @@ pub fn assert_remote_access_allowed(
             assert_operator_allowed(actor, method, pathname, route_url, context)
         }
         RemoteActorRole::Guest => assert_guest_allowed(actor, method, pathname, route_url, context),
-        RemoteActorRole::Peer => assert_peer_allowed(actor, method, pathname, context),
+        RemoteActorRole::Peer => assert_peer_allowed(actor, pathname),
     }
 }
 
 /// What another of this account's machines may ask this one to do.
 ///
-/// Scoped to the work that needs it and nothing else. The account boundary is
-/// already closed -- the relay holds each account's daemon sockets in its own
-/// object, so a peer frame cannot come from another account -- and this is the
-/// second boundary: being on the account is not being at the keyboard.
+/// Nothing, today. The transport exists and the role exists; no route is open
+/// to it yet, and that is deliberate rather than unfinished.
 ///
-/// It starts at cross-host handoff, because that is the only caller. A route
-/// added here without a test for the route NEXT to it that must stay refused
-/// is how an allowlist becomes an open door one entry at a time.
-fn assert_peer_allowed(
-    actor: &RemoteActor,
-    method: &str,
-    pathname: &str,
-    context: RemoteAccessContext<'_>,
-) -> RemoteAccessDecision {
+/// The first draft of this opened `/tasks/assign` and `/tasks/accept`, which
+/// read as the narrowest thing that could carry a handoff. It is not narrow.
+/// A task's `description` is interpolated verbatim into the reconciliation
+/// briefing the loop types into an overseer's pane, so posting a task is
+/// writing into the agent that spawns other agents -- one hop later and with
+/// nobody's name on it. `from` comes from the body too, so a peer could sign
+/// the work as the person.
+///
+/// None of that says the route cannot exist. It says it has to arrive with
+/// the caller that needs it, carrying the stamped origin machine as the
+/// assigner rather than trusting the body -- which is phase 9's work. Until
+/// then an allowlist that grants what nobody asked for is exactly the
+/// widening this phase was warned about, so it grants nothing, and the
+/// refusal names the route that was tried.
+fn assert_peer_allowed(actor: &RemoteActor, pathname: &str) -> RemoteAccessDecision {
     let Some(origin) = actor
         .peer_machine_id
         .as_deref()
         .map(str::trim)
-        .filter(|machine| !machine.is_empty())
+        .filter(|machine| !machine.is_empty() && *machine != RESERVED_UNIDENTIFIED_MACHINE_ID)
     else {
         // The relay stamps this beside the role, from the socket the frame
-        // came in on. A peer role without one is a frame that did not come
-        // from where it claims.
+        // arrived on. A peer role without one did not come from where it
+        // claims -- and `unidentified` is the name every daemon with no
+        // persisted identity shares, which makes it a label, not an identity.
         return RemoteAccessDecision::deny(
             403,
             "peer request did not say which machine it came from",
         );
     };
-    let Some(proxy) = parse_proxy_target(pathname) else {
-        return RemoteAccessDecision::deny(403, "peers cannot access daemon routes");
-    };
-    if !method.eq_ignore_ascii_case("POST") {
-        return RemoteAccessDecision::deny(
-            403,
-            "peers may only post to the routes they are allowed",
-        );
-    }
-    if !peer_write_route(&proxy.sub_path) {
-        return RemoteAccessDecision::deny(
-            403,
-            format!("route is not available to peer machine {origin}"),
-        );
-    }
-    // The proxy target pins the host and not the port, so the allowlist alone
-    // says what may be asked without saying of whom: a peer could otherwise
-    // have this machine post its own JSON at whatever is listening on a port
-    // it picked. The root is resolved from the registered project services,
-    // exactly as it is for an operator, and no match is a refusal rather than
-    // a request sent anyway.
-    if context
-        .project_root
-        .filter(|root| !root.is_empty())
-        .is_none()
-    {
-        return RemoteAccessDecision::deny(
-            403,
-            "peer request could not be bound to a project on this machine",
-        );
-    }
-    RemoteAccessDecision::allow()
-}
-
-/// The routes a peer machine may post to.
-///
-/// Handing work to an agent on another host is the whole of it for now:
-/// assigning a task and accepting one. Reading is not here because nothing
-/// needs it yet, and an allowlist that grants what nobody asked for is the
-/// widening this phase was warned about.
-fn peer_write_route(sub_path: &str) -> bool {
-    matches!(
-        sub_path,
-        project_routes::tasks::ASSIGN | project_routes::tasks::ACCEPT
+    let route = parse_proxy_target(pathname)
+        .map(|proxy| proxy.sub_path)
+        .unwrap_or_else(|| pathname.to_owned());
+    RemoteAccessDecision::deny(
+        403,
+        format!("no route is open to peer machine {origin} yet: {route}"),
     )
 }
 

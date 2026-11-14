@@ -431,15 +431,21 @@ export function findShareForSession(
   // A session id names a session on one host. Matching without the machine
   // would let an invite for strix's `claude-1` rebind the guests of the mbp's
   // share of the same name to strix.
-  const sameMachine = forOwnerSession.find((share) => sanitizeShareMachineId(share.machineId) === wanted);
-  if (sameMachine) return sameMachine;
-  if (!wanted) return undefined;
+  if (wanted) {
+    const sameMachine = forOwnerSession.find((share) => sanitizeShareMachineId(share.machineId) === wanted);
+    if (sameMachine) return sameMachine;
+  }
   // A share made before machines existed is the same share, and adopting it is
   // what lets a re-invite bind it rather than make a second one and strand its
   // guests on the first. But "unbound" says nothing about WHICH host made it,
-  // so the checkout has to match too: otherwise strix's first invite for its
-  // own `claude-1` takes over the mbp's share of that name and rebinds its
-  // guests to the wrong host, which is what the machine binding exists to stop.
+  // so the checkout has to match too -- for a caller that names a machine AND
+  // for one that cannot.
+  //
+  // That second case used to skip the checkout entirely, because an unbound
+  // caller matched an unbound share on the machine comparison alone. An
+  // invite sent from one checkout then adopted another checkout's share and
+  // rewrote its `projectRoot`, which moved the guests already on it into a
+  // project they were never shared.
   //
   // Two unbound candidates is a question, not an answer, so neither is taken.
   // Folded, not compared raw: `/repo` and `/repo/` are one checkout, and a
@@ -457,12 +463,8 @@ export function findShareForSession(
 ///
 /// Named rather than collapsed into one 404, because the cases have different
 /// fixes: make a share first, invite from the host that holds the checkout,
-/// unbind the other machine, or clean up a duplicate.
-export type BindShareRefusal =
-  | "no-share-for-session"
-  | "no-share-for-checkout"
-  | "bound-to-another-machine"
-  | "ambiguous-unbound-shares";
+/// or say which of several shares of that checkout was meant.
+export type BindShareRefusal = "no-share-for-session" | "no-share-for-checkout" | "several-shares-for-checkout";
 
 export interface BindShareMachineInput {
   owner: ShareActor;
@@ -512,24 +514,30 @@ export function bindShareToMachine(state: SharingState, input: BindShareMachineI
   const sameCheckout = candidates.filter((share) => shareProjectRootKey(share.projectRoot) === wantedRoot);
   if (sameCheckout.length === 0) return { ok: false, refusal: "no-share-for-checkout" };
 
-  // Two unbound shares of one session is a question, not an answer -- the same
-  // rule adoption applies, for the same reason: picking one is a coin flip
-  // that strands the other one's guests.
+  // Picking between two is a coin flip that strands the other one's guests,
+  // so it is a question rather than an answer. Two shares of one checkout and
+  // session is a real state, not a hypothetical: two machines with the same
+  // path each make their own.
   const adoptable = sameCheckout.filter((share) => !sanitizeShareMachineId(share.machineId));
-  if (adoptable.length > 1) return { ok: false, refusal: "ambiguous-unbound-shares" };
-  const share = adoptable[0];
-  if (!share) {
-    // Nothing left to bind, so either this is the second press of the same
-    // button or the share belongs to another machine. Asked in this order
-    // rather than before the adoption: a checkout holding both a share
-    // already on this machine and an unbound one would otherwise answer
-    // "already bound" and leave the unbound one refusing its own guests.
-    const alreadyHere = sameCheckout.find((held) => sanitizeShareMachineId(held.machineId) === machineId);
-    // Nothing to write, so nothing is written: a repeated bind must not bump
-    // the version every time and hand every guest a pointless refresh.
-    return alreadyHere
-      ? { ok: true, state: current, share: alreadyHere, alreadyBound: true }
-      : { ok: false, refusal: "bound-to-another-machine" };
+  if (adoptable.length > 1) return { ok: false, refusal: "several-shares-for-checkout" };
+  // Asked in this order rather than before the adoption: a checkout holding
+  // both a share already on this machine and an unbound one would otherwise
+  // answer "already bound" and leave the unbound one refusing its guests.
+  const share =
+    adoptable[0] ??
+    sameCheckout.find((held) => sanitizeShareMachineId(held.machineId) === machineId) ??
+    // Bound somewhere else, which makes this a move rather than a refusal. A
+    // bind cannot be taken back any other way -- there is no unbind route,
+    // and a re-invite builds a SECOND share rather than rebinding this one --
+    // so refusing here would make one wrong press permanent, on a share whose
+    // guests are then refused for ever. Moving is recoverable: the owner
+    // presses it again from the machine that really holds the session.
+    (sameCheckout.length === 1 ? sameCheckout[0] : undefined);
+  if (!share) return { ok: false, refusal: "several-shares-for-checkout" };
+  // Nothing to write, so nothing is written: a repeated bind must not bump the
+  // version every time and hand every guest a pointless refresh.
+  if (sanitizeShareMachineId(share.machineId) === machineId) {
+    return { ok: true, state: current, share, alreadyBound: true };
   }
 
   share.machineId = machineId;
@@ -791,7 +799,12 @@ function createShare(input: {
   };
 }
 
-function sanitizeShareMachineId(value: string | undefined): string | undefined {
+/// The one filter that decides whether a share names a usable host.
+///
+/// Exported because three things ask that question -- the routing, the
+/// summary's `hostBound`, and a guest's host indicator -- and reading the
+/// field raw in any of them is how one record came to have three answers.
+export function sanitizeShareMachineId(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && isValidMachineId(trimmed) ? trimmed : undefined;
 }

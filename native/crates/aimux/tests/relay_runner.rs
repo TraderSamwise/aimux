@@ -773,6 +773,9 @@ fn a_peer_answer_reaches_whoever_asked_for_it() {
     let answer = answer.expect("the peer answered");
     assert_eq!(answer.status, 200);
     assert_eq!(answer.body, json!({ "ok": true }));
+    // The relay signs its own refusals, which wear the same 502/503/504 a
+    // project service does. This one is the peer's.
+    assert!(!answer.from_relay);
 
     let sent = recorder.sent.lock().unwrap().clone();
     let request: Value = sent
@@ -784,13 +787,15 @@ fn a_peer_answer_reaches_whoever_asked_for_it() {
     assert_eq!(request["path"], "/tasks/assign");
 }
 
-/// No answer is not an empty answer.
+/// No answer is not an empty answer, and there are two of them.
 ///
-/// With nothing draining the outbox there is no peer and no refusal, and the
-/// caller has to be told which of those it was rather than handed a default
-/// it would act on.
+/// With nothing draining the outbox the frame never left, so the peer was
+/// never asked and nothing happened there -- which is a different thing to
+/// report than a request that WAS written and went unanswered, where whether
+/// the work happened is genuinely unknown. The old version of this test could
+/// not tell either of those from a frame that was never queued at all.
 #[test]
-fn a_peer_that_never_answers_is_reported_as_a_timeout() {
+fn a_peer_that_was_never_asked_is_not_reported_as_silent() {
     let runner = RelayRunner::new(
         "wss://relay.example/",
         "tok",
@@ -803,34 +808,127 @@ fn a_peer_that_never_answers_is_reported_as_a_timeout() {
     );
 
     aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    let asking = Arc::clone(&runner);
+    let body = json!({});
     // aimux-async-seam: test - a peer request with nothing to carry it
     let answer = aimux::async_runtime::block_on_named("test:relay-peer-timeout", async move {
-        runner
+        asking
             .request_peer(
                 "strix",
                 "POST",
                 "/tasks/assign",
-                &json!({}),
+                &body,
                 Duration::from_millis(30),
             )
             .await
     });
 
     assert_eq!(answer, Err(PeerRequestError::TimedOut));
-    assert_eq!(
-        PeerRequestError::TimedOut.message(),
-        "peer did not answer in time"
+    // The premise, and the whole difference: the frame was withdrawn, so
+    // nothing is left to land on a reconnect minutes later and do the work
+    // after its caller was told it had not happened.
+    assert_eq!(runner.outbox_backlog_snapshot().current_depth, Some(0));
+    assert_eq!(runner.peer_waiter_count(), 0);
+}
+
+/// A frame that was already written cannot be recalled, and the error says so
+/// rather than claiming the work did not happen.
+#[test]
+fn a_request_that_left_is_reported_as_unanswered_not_as_undone() {
+    let recorder = Arc::new(Recorder::default());
+    let runner = RelayRunner::new(
+        "wss://relay.example/",
+        "tok",
+        test_machine(),
+        Arc::new(FakeBridge {
+            recorder: Arc::clone(&recorder),
+            subscribe_error: None,
+            subscribe_pending: false,
+        }),
     );
-    // Three outcomes, and each one says which it is: collapsing the last two
-    // into an empty body is the failure this crate keeps finding.
-    assert_eq!(
-        PeerRequestError::ConnectionLost.message(),
-        "relay connection was lost before the peer answered"
+    // One socket that takes the frame and answers nothing.
+    let mut connector = FakeConnector {
+        scripts: vec![Ok(Vec::new())],
+        attempts: Arc::new(Mutex::new(0)),
+        recorder: Arc::clone(&recorder),
+        writer_failures: Vec::new(),
+    };
+
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    let asking = Arc::clone(&runner);
+    let backoff_handle = runner.handle();
+    // aimux-async-seam: test - a peer request that leaves and is not answered
+    let (answer, ()) = aimux::async_runtime::block_on_named("test:relay-peer-silent", async move {
+        tokio::join!(
+            async move {
+                asking
+                    .request_peer(
+                        "strix",
+                        "POST",
+                        "/tasks/assign",
+                        &json!({}),
+                        Duration::from_millis(50),
+                    )
+                    .await
+            },
+            async {
+                runner
+                    .run_with_sleep(
+                        &mut connector,
+                        &mut |_| {
+                            backoff_handle.stop();
+                            Box::pin(async {})
+                        },
+                        &mut |_| 0,
+                    )
+                    .await;
+            }
+        )
+    });
+
+    // Either ending is honest about the same fact -- the request left and no
+    // answer came -- and neither of them is `TimedOut`, which claims the peer
+    // was never asked.
+    assert!(
+        matches!(
+            answer,
+            Err(PeerRequestError::AnsweredNothing) | Err(PeerRequestError::ConnectionLost)
+        ),
+        "{answer:?}"
     );
-    assert_eq!(
+    assert!(
+        recorder
+            .sent
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.contains("\"machineId\":\"strix\"")),
+        "the premise: the frame left"
+    );
+}
+
+/// Four endings, four sentences. A caller acts on which one it got, so the
+/// one that says "nothing happened" must never be used for the one that
+/// means "something might have".
+#[test]
+fn every_way_a_peer_request_can_fail_says_which_it_was() {
+    let sentences = [
         PeerRequestError::NotSent("outbox full".to_owned()).message(),
-        "peer request was not sent: outbox full"
+        PeerRequestError::TimedOut.message(),
+        PeerRequestError::AnsweredNothing.message(),
+        PeerRequestError::ConnectionLost.message(),
+    ];
+    assert_eq!(
+        sentences
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        4,
+        "{sentences:?}"
     );
+    assert!(sentences[0].contains("outbox full"));
+    assert!(sentences[1].contains("never asked"));
+    assert!(sentences[2].contains("unknown"));
 }
 
 /// A caller that goes away takes its place in the queue with it.

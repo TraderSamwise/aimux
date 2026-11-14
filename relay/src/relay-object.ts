@@ -53,6 +53,7 @@ import {
   getShareChatMode,
   listAcceptedShares,
   loadSharingState,
+  sanitizeShareMachineId,
   type SharingState,
   removeAcceptedShare,
   removeShareParticipant,
@@ -88,6 +89,14 @@ const PENDING_REQUEST_TTL_MS = 60_000;
 /// Low on purpose: a handoff is one call, and anything needing more than this
 /// at once is a loop, which is the failure this bounds.
 const MAX_PEER_REQUESTS_IN_FLIGHT = 8;
+/// How many peer requests one machine may be holding at once, from everyone.
+///
+/// The per-origin cap bounds what one machine can send and says nothing about
+/// what one machine can be sent: with several machines on the account, each
+/// politely under its own eight, the target still gets all of them written to
+/// its socket at once and answers them one at a time with the owner's own app
+/// queued behind. This is the bound that protects the machine being asked.
+const MAX_PEER_REQUESTS_PER_TARGET = 16;
 /// What a refused bind is, over the wire and to the person reading it.
 ///
 /// A bind is an owner repairing their own share, so unlike a guest-facing
@@ -99,13 +108,9 @@ const BIND_SHARE_REFUSALS: Record<BindShareRefusal, { status: number; error: str
     status: 404,
     error: "No share for that session was made from this checkout",
   },
-  "bound-to-another-machine": {
+  "several-shares-for-checkout": {
     status: 409,
-    error: "That share is already bound to another machine",
-  },
-  "ambiguous-unbound-shares": {
-    status: 409,
-    error: "More than one share for that session names no machine",
+    error: "More than one share for that session was made from this checkout",
   },
 };
 /// How many project endpoints one `project_endpoints` frame may report.
@@ -748,7 +753,30 @@ export class RelayObject extends DurableObject<Env> {
       if (!share) continue;
       if (recordStaleReceivers(share, shareReceivers(share))) changed = true;
     }
-    if (changed || learnedSomething) await saveSharingState(this.ctx.storage, state);
+    if (!changed && !learnedSomething) return;
+    // Written onto what is stored NOW, not onto the snapshot this started
+    // from. Between that load and here are up to twenty cross-object
+    // fetches, and a write landing inside that window was being erased by
+    // this save: a bind pressed while a machine reported -- which is the
+    // common case, since a report goes out on every connect -- came back
+    // undone, after the owner had been told it worked and every guest had
+    // been pushed the bound summary.
+    //
+    // Only what this path is the authority on is carried over: the endpoint
+    // a daemon just reported, and the refresh bookkeeping. Never
+    // `machineId`, which belongs to the bind and the invite, and never a
+    // share this does not still find -- one revoked in the window stays
+    // revoked.
+    const fresh = await loadSharingState(this.ctx.storage);
+    for (const reported of Object.values(state.shares)) {
+      const held = fresh.shares[reported.id];
+      if (!held) continue;
+      if (reported.serviceEndpoint) held.serviceEndpoint = { ...reported.serviceEndpoint };
+      held.lastReceiverRefreshAt = reported.lastReceiverRefreshAt;
+      held.staleReceivers = reported.staleReceivers;
+    }
+    fresh.machineProjectRoots = state.machineProjectRoots;
+    await saveSharingState(this.ctx.storage, fresh);
   }
 
   private async handleDaemonNotificationPush(
@@ -983,7 +1011,10 @@ export class RelayObject extends DurableObject<Env> {
     if (!shareId) return null;
     const share = state.shares[shareId];
     if (!share) return MISSING_SHARE_HOST;
-    return share.machineId ?? "";
+    // The same filter the routing and the summary use. Read raw, this said a
+    // share had a host that `resolveSharedDaemonTarget` would not route and
+    // `hostBound` called unbound -- one record, three answers.
+    return sanitizeShareMachineId(share.machineId) ?? "";
   }
 
   private async broadcastMachineStatus(): Promise<void> {
@@ -1406,25 +1437,28 @@ export class RelayObject extends DurableObject<Env> {
     const origin = machineFromTags(tags).id;
     const target = resolvePeerDaemonTarget(this.onlineMachines(), origin, parsed.machineId);
     if (!target.ok) {
-      this.send(ws, {
-        id: parsed.id,
-        type: "response",
-        status: target.status,
-        body: { ok: false, error: target.error, refusal: target.refusal },
+      this.sendRelayRefusal(ws, parsed.id, target.status, {
+        error: target.error,
+        refusal: target.refusal,
       });
       return;
     }
-    const inFlight = [...this.pendingRequests.values()].filter((entry) => entry.client === ws).length;
-    if (inFlight >= MAX_PEER_REQUESTS_IN_FLIGHT) {
-      this.send(ws, {
-        id: parsed.id,
-        type: "response",
-        status: 429,
-        body: {
-          ok: false,
-          error: `No more than ${MAX_PEER_REQUESTS_IN_FLIGHT} peer requests at once`,
-          refusal: "peer-too-many-in-flight",
-        },
+    const pending = [...this.pendingRequests.values()];
+    const fromThisMachine = pending.filter((entry) => entry.client === ws).length;
+    if (fromThisMachine >= MAX_PEER_REQUESTS_IN_FLIGHT) {
+      this.sendRelayRefusal(ws, parsed.id, 429, {
+        error: `No more than ${MAX_PEER_REQUESTS_IN_FLIGHT} peer requests at once`,
+        refusal: "peer-too-many-in-flight",
+      });
+      return;
+    }
+    const toThatMachine = pending.filter(
+      (entry) => entry.machineId === target.machineId && this.ctx.getTags(entry.client).includes("daemon"),
+    ).length;
+    if (toThatMachine >= MAX_PEER_REQUESTS_PER_TARGET) {
+      this.sendRelayRefusal(ws, parsed.id, 429, {
+        error: `Machine ${target.machineId} is already holding ${MAX_PEER_REQUESTS_PER_TARGET} peer requests`,
+        refusal: "peer-target-saturated",
       });
       return;
     }
@@ -1457,13 +1491,27 @@ export class RelayObject extends DurableObject<Env> {
     } catch {
       this.pendingRequests.delete(relayRequestId);
       this.detachClientPendingRequest(ws, relayRequestId);
-      this.send(ws, {
-        id: parsed.id,
-        type: "response",
-        status: 502,
-        body: { ok: false, error: "Peer machine connection lost", refusal: "peer-target-offline" },
+      this.sendRelayRefusal(ws, parsed.id, 502, {
+        error: "Peer machine connection lost",
+        refusal: "peer-target-offline",
       });
     }
+  }
+
+  /// An answer the relay made itself, marked as its own.
+  ///
+  /// A project service refuses with 502 and 503 too, so an unmarked refusal
+  /// leaves the asking daemon unable to tell "the peer's service is down"
+  /// from "the relay would not carry this" -- two problems with two different
+  /// fixes, wearing the same number.
+  private sendRelayRefusal(ws: WebSocket, id: string, status: number, body: { error: string; refusal: string }): void {
+    this.send(ws, {
+      id,
+      type: "response",
+      status,
+      source: "relay",
+      body: { ok: false, ...body },
+    });
   }
 
   private async prepareClientRequest(

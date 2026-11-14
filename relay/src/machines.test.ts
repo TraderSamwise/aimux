@@ -265,3 +265,25 @@ describe("which machine a daemon's request goes to", () => {
     expect(refused.refusal).toBe("peer-target-is-self");
   });
 });
+
+// `unidentified` is the one id every daemon without a persisted identity
+// shares, so naming it names whichever of them reached the socket map first.
+// A person's client may ask for it and see which machine it got; a daemon
+// cannot, so for a peer it is not a name at all.
+describe("naming the machine that has no name", () => {
+  it("refuses it as a peer target", () => {
+    const fleet = [{ id: UNIDENTIFIED_MACHINE_ID, name: "unidentified" }, MBP];
+    const refused = resolvePeerDaemonTarget(fleet, MBP.id, UNIDENTIFIED_MACHINE_ID);
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal).toBe("peer-target-unidentified");
+  });
+
+  it("still lets a person's client ask for it", () => {
+    const fleet = [{ id: UNIDENTIFIED_MACHINE_ID, name: "unidentified" }];
+    expect(resolveDaemonTarget(fleet, UNIDENTIFIED_MACHINE_ID)).toEqual({
+      ok: true,
+      machineId: UNIDENTIFIED_MACHINE_ID,
+    });
+  });
+});

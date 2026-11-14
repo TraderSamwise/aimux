@@ -673,61 +673,66 @@ fn operator_stream_gate_is_separate_from_buffered_proxy_gate() {
 /// Being on the account is not being at the keyboard.
 ///
 /// The owner's own app is stamped `owner`, and the daemon hands those straight
-/// to its whole API. A peer carrying that stamp would be every machine holding
-/// every other machine's keyboard, so a peer has its own allowlist and this is
-/// the second direction of it: the route next to the allowed one stays shut.
+/// to its whole API. A peer gets its own role so that it can be given routes
+/// deliberately -- and right now it has none, because the first two that
+/// looked narrow were not: a task's description is read back to an overseer as
+/// a briefing, which makes posting one a way to type into the agent that
+/// spawns agents.
 #[test]
-fn a_peer_machine_may_hand_over_work_and_nothing_else() {
-    let handing_over = allow(
-        Some(&peer(Some("mbp"))),
+fn a_peer_machine_may_do_nothing_yet() {
+    for (method, route) in [
+        ("POST", project_routes::tasks::ASSIGN),
+        ("POST", project_routes::tasks::ACCEPT),
+        ("POST", project_routes::agents::KILL),
+        ("GET", project_routes::tasks::LIST),
+    ] {
+        let refused = allow(
+            Some(&peer(Some("mbp"))),
+            method,
+            &port_path(route),
+            "",
+            Some(&json!({ "taskId": "t1" })),
+            Some(PROJECT_ROOT),
+        );
+        assert!(!refused.ok, "{method} {route} was allowed");
+        assert_eq!(refused.status, Some(403));
+        // The refusal names the route rather than saying "denied": a peer is
+        // a program, and the next phase opens exactly one of these.
+        assert!(
+            refused
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains(route)),
+            "{method} {route}: {:?}",
+            refused.error
+        );
+    }
+}
+
+/// The same request from the owner's own app is allowed, which is the point:
+/// the role is the difference, not the route.
+#[test]
+fn the_owners_own_app_is_not_held_to_the_peer_allowlist() {
+    let owner = RemoteActor {
+        role: RemoteActorRole::Owner,
+        declared_role: Some("owner".into()),
+        user_id: None,
+        display_name: None,
+        email: None,
+        share_id: None,
+        share_session_id: None,
+        peer_machine_id: None,
+        principal: None,
+    };
+    let allowed = allow(
+        Some(&owner),
         "POST",
         &port_path(project_routes::tasks::ASSIGN),
         "",
         Some(&json!({ "taskId": "t1" })),
         Some(PROJECT_ROOT),
     );
-    assert!(handing_over.ok, "{:?}", handing_over.error);
-
-    // The allowlist says WHAT may be asked; the project binding says of whom.
-    // The proxy target pins the host and not the port, so without this a peer
-    // chooses which local service answers -- its own JSON, posted by this
-    // machine, at whatever happens to be listening on a port it picked.
-    let unbound = allow(
-        Some(&peer(Some("mbp"))),
-        "POST",
-        &port_path(project_routes::tasks::ASSIGN),
-        "",
-        Some(&json!({ "taskId": "t1" })),
-        None,
-    );
-    assert!(!unbound.ok);
-    assert_eq!(unbound.status, Some(403));
-
-    // The route beside it, which the owner's app may post to and a peer may
-    // not. An allowlist with no refused neighbour proves nothing.
-    let killing = allow(
-        Some(&peer(Some("mbp"))),
-        "POST",
-        &port_path(project_routes::agents::KILL),
-        "",
-        Some(&json!({ "sessionId": SESSION })),
-        Some(PROJECT_ROOT),
-    );
-    assert!(!killing.ok);
-    assert_eq!(killing.status, Some(403));
-
-    // Reading is not granted either: nothing needs it yet, and an allowlist
-    // that grants what nobody asked for is the widening this phase was
-    // warned about.
-    let reading = allow(
-        Some(&peer(Some("mbp"))),
-        "GET",
-        &port_path(project_routes::tasks::LIST),
-        "",
-        None,
-        Some(PROJECT_ROOT),
-    );
-    assert!(!reading.ok);
+    assert!(allowed.ok, "{:?}", allowed.error);
 }
 
 /// The relay stamps the origin machine from the socket the frame arrived on,
@@ -755,6 +760,24 @@ fn a_peer_that_names_no_machine_is_refused() {
         Some(PROJECT_ROOT),
     );
     assert!(!blank.ok);
+
+    // `unidentified` is the slot every daemon with no persisted identity
+    // shares, so it is a label rather than a name -- and the refusal has to
+    // say that it did not learn where the frame came from, not quote it back
+    // as though it had.
+    let shared_slot = allow(
+        Some(&peer(Some("unidentified"))),
+        "POST",
+        &port_path(project_routes::tasks::ASSIGN),
+        "",
+        Some(&json!({ "taskId": "t1" })),
+        Some(PROJECT_ROOT),
+    );
+    assert!(!shared_slot.ok);
+    assert_eq!(
+        shared_slot.error.as_deref(),
+        Some("peer request did not say which machine it came from")
+    );
 }
 
 /// A role nobody recognizes must not fall into the peer arm, and the peer

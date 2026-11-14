@@ -308,6 +308,7 @@ fn an_answer_from_a_peer_is_carried_back_to_whoever_asked() {
             id: "peer-1".to_owned(),
             status: 200,
             body: json!({ "ok": true }),
+            from_relay: false,
         }
     );
 }
@@ -318,12 +319,15 @@ fn an_answer_from_a_peer_is_carried_back_to_whoever_asked() {
 fn a_relay_refusal_reaches_the_caller_as_itself() {
     assert_eq!(
         handle_frame(
-            r#"{"type":"response","id":"peer-2","status":503,"body":{"ok":false,"refusal":"peer-target-offline"}}"#
+            r#"{"type":"response","id":"peer-2","status":503,"source":"relay","body":{"ok":false,"refusal":"peer-target-offline"}}"#
         ),
         RelayAction::PeerResponse {
             id: "peer-2".to_owned(),
             status: 503,
             body: json!({ "ok": false, "refusal": "peer-target-offline" }),
+            // The relay signs its own: a project service refuses with 503
+            // too, and the two have different fixes.
+            from_relay: true,
         }
     );
 }
@@ -366,4 +370,26 @@ fn a_peer_request_names_the_machine_it_is_for() {
     assert_eq!(frame["method"], "POST");
     assert_eq!(frame["path"], "/tasks/assign");
     assert_eq!(frame["body"]["taskId"], "t1");
+}
+
+/// An unsigned answer is the peer's own, and is not read as the relay's.
+///
+/// The relay refuses with 502 and 503, and so does a project service that
+/// cannot be reached. Reading every such answer as the relay's would hide a
+/// dead service behind "the relay would not carry it".
+#[test]
+fn an_answer_the_relay_did_not_sign_is_the_peers_own() {
+    let RelayAction::PeerResponse { from_relay, .. } =
+        handle_frame(r#"{"type":"response","id":"peer-9","status":503,"body":{"ok":false}}"#)
+    else {
+        panic!("a response frame is a response");
+    };
+    assert!(!from_relay);
+
+    let RelayAction::PeerResponse { from_relay, .. } = handle_frame(
+        r#"{"type":"response","id":"peer-9","status":503,"source":"somewhere-else","body":{}}"#,
+    ) else {
+        panic!("a response frame is a response");
+    };
+    assert!(!from_relay, "only the relay's own marker counts");
 }
