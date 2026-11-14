@@ -34,6 +34,8 @@ pub enum RemoteCliOperation {
     SecurityDeviceApprove,
     SecurityDeviceBlock,
     SecurityDeviceUnblock,
+    ProjectsClaim,
+    ProjectsOwners,
 }
 
 /// Why a remote operation did less than it was asked to.
@@ -72,6 +74,18 @@ pub enum RemoteCliAction {
         relay_enable: Option<CoreCommandCall>,
     },
     SecurityDevices {
+        json: bool,
+    },
+    ProjectsClaim {
+        /// The checkout to claim; absent means the one this command was run
+        /// in, resolved where every other project command resolves it.
+        project: Option<String>,
+        /// Overrule a machine that holds it and is connected. By hand, in one
+        /// place, because the refusal is what makes the record worth keeping.
+        take: bool,
+        json: bool,
+    },
+    ProjectsOwners {
         json: bool,
     },
     SecurityDeviceApproveLive {
@@ -116,6 +130,11 @@ pub fn is_remote_core_cli_command(command: &str, subcommand: &str) -> bool {
                 "unlock" | "devices" | "device" | "approve" | "block" | "revoke" | "unblock"
             )
         )
+        // Ownership of a checkout is recorded in the relay, because a
+        // machine's own project registry is per machine: an owner written
+        // there is one machine's belief. So these are remote commands even
+        // though `projects list` beside them is local.
+        || matches!((command, subcommand), ("projects", "claim" | "owners"))
 }
 
 #[cfg(test)]

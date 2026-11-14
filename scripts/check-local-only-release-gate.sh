@@ -60,6 +60,8 @@ check_local_boundary() {
     hosted_cli \
     remote_login \
     remote_security_devices \
+    relay_http \
+    remote_project_owners \
     maybe_host_published_attachment \
     'attachments/hosted'
   do

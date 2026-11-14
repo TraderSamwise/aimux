@@ -1969,6 +1969,13 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["graveyard", "cleanup", "--dry-run"],
         vec!["projects"],
         vec!["projects", "list", "--json"],
+        // Ownership is recorded in the relay, so these are remote commands
+        // standing beside a local one.
+        vec!["projects", "claim"],
+        vec!["projects", "claim", "/repo", "--take"],
+        vec!["projects", "claim", "--json"],
+        vec!["projects", "owners"],
+        vec!["projects", "owners", "--json"],
         vec!["remote", "status", "--json"],
         vec!["remote", "enable"],
         vec!["remote", "disable"],
@@ -2019,6 +2026,8 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["doctor", "exchange", "--project"],
         vec!["doctor", "lifecycle", "--include-active"],
         vec!["projects", "list", "extra", "--json"],
+        vec!["projects", "owners", "/repo"],
+        vec!["projects", "claim", "--force"],
         vec!["remote", "enable", "--json"],
         vec!["remote", "disable", "extra"],
         vec!["remote", "enable", "--help"],

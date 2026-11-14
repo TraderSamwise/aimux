@@ -73,6 +73,26 @@ pub(super) fn has_help<S: AsRef<str>>(args: &[S]) -> bool {
         .any(|arg| matches!(arg.as_ref(), "--help" | "-h"))
 }
 
+/// `projects claim [<checkout>] [--take] [--json]`.
+///
+/// One optional checkout, because a claim is nearly always for the one you
+/// are standing in, and `has_only_allowed_flags` reads a positional as an
+/// unknown flag. The flags are exact: `--force` is not a spelling of
+/// `--take` here, and accepting it would make an overrule look accidental.
+pub(super) fn is_projects_claim_args<S: AsRef<str>>(args: &[S]) -> bool {
+    let mut positionals = 0;
+    for arg in args {
+        if let Some(flag) = arg.as_ref().strip_prefix("--") {
+            if !matches!(flag, "take" | "json") {
+                return false;
+            }
+        } else {
+            positionals += 1;
+        }
+    }
+    positionals <= 1
+}
+
 pub(super) fn has_only_allowed_flags<S: AsRef<str>>(args: &[S], allowed: &[&str]) -> bool {
     args.iter().all(|arg| allowed.contains(&arg.as_ref()))
 }
