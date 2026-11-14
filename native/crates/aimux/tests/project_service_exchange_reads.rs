@@ -1,4 +1,4 @@
-use aimux::project_service::coordination_mutations::record_task_input;
+use aimux::project_service::coordination_mutations::{record_task_input, task_input_target_exists};
 use aimux::project_service::exchange_reads::{
     list_tasks, list_thread_summaries, read_message_snapshot,
 };
@@ -85,6 +85,72 @@ fn sending_input_for_a_task_stamps_the_row_it_is_acting_on() {
     assert_eq!(missing.unwrap_err(), "task not found: task-nope");
     let after = read_runtime_exchange(runtime_exchange_path(&state_dir));
     assert_eq!(before["tasks"], after["tasks"], "a miss must not write");
+
+    cleanup(project);
+}
+
+/// Could-not-read and is-not-there are different answers.
+///
+/// The input route checks a task id before it probes tmux, because that probe
+/// is a subprocess and a typo should not cost one. The first version of that
+/// check used `read_runtime_exchange`, which folds a corrupt file, an
+/// unsupported version and an unreadable one into an EMPTY exchange -- so
+/// every task read as missing and a real row was reported as "task not
+/// found". The write path propagates the real cause, so the cheap check was
+/// the less honest of the two while its comment claimed they agreed.
+#[test]
+fn checking_a_task_id_tells_an_unreadable_ledger_apart_from_a_missing_row() {
+    let project = temp_project("task-check-unreadable");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+
+    // A real row, and a real miss, so the two honest answers are both here.
+    let assigned = route_project_service_request(
+        &ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir),
+        "POST",
+        "/tasks/assign",
+        Some(&json!({ "from": "claude-utymep", "to": "codex-1", "description": "move it" })),
+    );
+    assert_eq!(assigned.status, 200, "{:?}", assigned.body);
+    let task_id = assigned.body["task"]["id"]
+        .as_str()
+        .expect("task id")
+        .to_owned();
+    assert_eq!(task_input_target_exists(&state_dir, &task_id), Ok(()));
+    assert_eq!(
+        task_input_target_exists(&state_dir, "task-nope"),
+        Err("task not found: task-nope".to_owned())
+    );
+    assert_eq!(
+        task_input_target_exists(&state_dir, "   "),
+        Err("task id is required".to_owned())
+    );
+
+    // Now make the ledger unreadable. The SAME id that existed a line ago must
+    // not come back as missing.
+    write(
+        runtime_exchange_path(&state_dir),
+        b"{not valid exchange yaml",
+    )
+    .expect("write corrupt exchange");
+    let error = task_input_target_exists(&state_dir, &task_id)
+        .expect_err("an unreadable ledger is an error");
+    assert!(
+        !error.contains("task not found"),
+        "a ledger that cannot be read must not be reported as a missing row: {error}"
+    );
+    assert!(
+        error.contains("parse") || error.contains("read") || error.contains("exchange"),
+        "the refusal must name the real cause: {error}"
+    );
+
+    // And the write path agrees -- it is where this answer came from.
+    let writing = record_task_input(&state_dir, &task_id, Some("claude-utymep"))
+        .expect_err("the write cannot read it either");
+    assert!(
+        !writing.contains("task not found"),
+        "the write path must not report a missing row either: {writing}"
+    );
 
     cleanup(project);
 }

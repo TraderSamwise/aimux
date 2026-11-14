@@ -21,7 +21,7 @@ use super::agents::{resolve_direct_teammates, topology_desktop_verified_session_
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{
-    read_runtime_exchange, runtime_exchange_path, update_runtime_exchange,
+    runtime_exchange_path, try_read_runtime_exchange, update_runtime_exchange,
 };
 use super::scheduler::scheduler_now_ms;
 use super::team::load_team_config;
@@ -1028,16 +1028,6 @@ fn task_lifecycle(
     })
 }
 
-/// Record that input for a task was actually sent to its assignee.
-///
-/// The ledger and the delivery were two different worlds: `aimux task assign`
-/// wrote a row and delivered nothing, `aimux input` delivered and wrote
-/// nothing, and so `aimux task list` held three rows against fifteen live
-/// agents. This is the join -- the one channel that starts a turn can now
-/// stamp the task it is acting on.
-///
-/// A task id that does not exist is an ERROR, not a silent no-op. A typo that
-/// quietly records nothing would reproduce exactly the hole this closes.
 /// Whether a task id names a real row, without writing anything.
 ///
 /// `record_task_input` answers the same question, but it answers it by
@@ -1047,12 +1037,20 @@ fn task_lifecycle(
 /// that a refused message never leaves a row claiming it was delivered. One
 /// question, asked in two places, because the answer is needed at two
 /// different costs.
+///
+/// `try_read_runtime_exchange`, NOT `read_runtime_exchange`: that one folds a
+/// corrupt file, an unsupported version and an unreadable one into an empty
+/// exchange, so every task would read as missing and this would answer "task
+/// not found" about a row that exists. Could-not-read and is-not-there are
+/// different answers, and the write path propagates the real cause -- so
+/// swallowing it here would have made the early check the less honest of the
+/// two while its comment claimed they agreed.
 pub fn task_input_target_exists(project_state_dir: &Path, task_id: &str) -> Result<(), String> {
     let task_id = task_id.trim();
     if task_id.is_empty() {
         return Err("task id is required".into());
     }
-    let exchange = read_runtime_exchange(runtime_exchange_path(project_state_dir));
+    let exchange = try_read_runtime_exchange(runtime_exchange_path(project_state_dir))?;
     // The same sentence `record_task_input` gives, so moving the check earlier
     // did not change what a caller is told.
     find_by_id(&exchange, "tasks", task_id)
@@ -1060,6 +1058,21 @@ pub fn task_input_target_exists(project_state_dir: &Path, task_id: &str) -> Resu
         .ok_or_else(|| format!("task not found: {task_id}"))
 }
 
+/// Record that input for a task was actually sent to its assignee.
+///
+/// The ledger and the delivery were two different worlds: `aimux task assign`
+/// wrote a row and delivered nothing, `aimux input` delivered and wrote
+/// nothing, and so `aimux task list` held three rows against fifteen live
+/// agents. This is the join -- the one channel that starts a turn can now
+/// stamp the task it is acting on.
+///
+/// A task id that does not exist is an ERROR, not a silent no-op. A typo that
+/// quietly records nothing would reproduce exactly the hole this closes. The
+/// route checks that earlier and more cheaply with
+/// `task_input_target_exists`, and this still refuses too: the check happens
+/// before a tmux probe, the write happens after every refusal, and between
+/// them a row can be deleted -- so the write is the authority and its own
+/// not-found path is not dead.
 pub fn record_task_input(
     project_state_dir: &Path,
     task_id: &str,

@@ -3263,8 +3263,19 @@ fn agent_input_holds_for_recent_active_client_then_flushes_from_queue() {
     // holding a queued entry at the same moment raises it. As an equality this
     // passed only while nothing else in the file ever queued anything, and it
     // went red on CI -- under a different thread interleaving -- the moment a
-    // peer-hold test did. `current_depth` above is the per-project number and
-    // is the one that says this request was queued.
+    // peer-hold test did.
+    //
+    // `current_depth` above is the assertion that says this request was
+    // queued, and NOT because it is per-project: it is the same shared slot.
+    // It is trustworthy because `agent_input_delivery_backlog_snapshot` stores
+    // this project's queue length and reads it back inside one call, so no
+    // other test can get between the two. The high-water mark has no such
+    // store -- it only ever rises -- which is the whole difference.
+    //
+    // `status` shares that registry too, including its error slot, so a test
+    // that deliberately corrupts a queue file could in principle flip it here.
+    // Left as an equality: it is the only thing asserting this project's queue
+    // is healthy, and the window is one function body.
     assert!(
         queued.high_water_mark.is_some_and(|mark| mark >= 1),
         "the queue was filled: {queued:?}"
