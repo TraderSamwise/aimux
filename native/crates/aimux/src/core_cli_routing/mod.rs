@@ -51,7 +51,9 @@ pub use workflow::{
 pub use worktrees::{parse_core_graveyard_args, parse_core_worktree_args};
 
 use agents::stop_has_session_or_invalid_agent_shape;
-use common::{has_help, has_only_allowed_flags, parse_restart_flags, required_value};
+use common::{
+    has_help, has_only_allowed_flags, is_projects_claim_args, parse_restart_flags, required_value,
+};
 
 pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArgs> {
     if args.first().map(AsRef::as_ref) != Some("doctor") {
@@ -895,6 +897,8 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("logs"), _) => parse_core_logs_args(args).is_some(),
         (Some("projects"), None) => true,
         (Some("projects"), Some("list")) => has_only_allowed_flags(&args[2..], &["--json"]),
+        (Some("projects"), Some("claim")) => is_projects_claim_args(&args[2..]),
+        (Some("projects"), Some("owners")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (Some("projects"), Some("remove" | "unregister")) => {
             parse_core_projects_remove_args(args).is_some()
         }

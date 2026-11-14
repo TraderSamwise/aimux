@@ -233,6 +233,65 @@ describe("relay CORS", () => {
     expect(objectFetch.mock.calls[0][0].headers.get("X-Aimux-Share-Owner-Id")).toBeNull();
   });
 
+  // Claiming a checkout is a thing a machine says about itself, so the
+  // daemon's token carries it. A browser session has no machine to speak for,
+  // and allowing one would let a phone claim a laptop's repository.
+  it("lets the local CLI claim a project and refuses a browser session", async () => {
+    const objectFetch = vi.fn(async (_request: Request) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const env = {
+      CLERK_SECRET_KEY: "sk_test",
+      RELAY_TOKEN_SECRET: "shhh",
+      RELAY: { idFromName: vi.fn(() => ({ name: "user_owner" })), get: vi.fn(() => ({ fetch: objectFetch })) },
+    } as unknown as Env;
+
+    // A real daemon token, because `isDaemonToken` reads the payload rather
+    // than being mocked: a test that faked it would prove nothing about the
+    // branch the CLI actually takes.
+    const daemonToken = await mintDaemonToken("user_owner", "shhh");
+    const fromCli = await relay.fetch(
+      new Request("https://relay.aimux.app/projects/claim", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${daemonToken}` },
+        body: JSON.stringify({ projectRoot: "/repo", machineId: "mbp" }),
+      }),
+      env,
+    );
+    expect(fromCli.status).toBe(200);
+    expect(objectFetch.mock.calls[0][0].headers.get("X-Aimux-User-Id")).toBe("user_owner");
+
+    authMocks.verifyWsToken.mockResolvedValue("user_owner");
+    const fromBrowser = await relay.fetch(
+      new Request("https://relay.aimux.app/projects/claim", {
+        method: "POST",
+        headers: { Authorization: "Bearer clerk-token" },
+        body: JSON.stringify({ projectRoot: "/repo", machineId: "mbp" }),
+      }),
+      env,
+    );
+    expect(fromBrowser.status).toBe(403);
+    expect(objectFetch).toHaveBeenCalledTimes(1);
+
+    // The read too, not only the claim: its answer is machine ids and
+    // absolute paths, and the CLI is the only thing that asks.
+    const readFromBrowser = await relay.fetch(
+      new Request("https://relay.aimux.app/projects/owners", {
+        method: "GET",
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+      env,
+    );
+    expect(readFromBrowser.status).toBe(403);
+
+    const readFromCli = await relay.fetch(
+      new Request("https://relay.aimux.app/projects/owners", {
+        method: "GET",
+        headers: { Authorization: `Bearer ${daemonToken}` },
+      }),
+      env,
+    );
+    expect(readFromCli.status).toBe(200);
+  });
+
   it("allows Clerk tokens to read but not mutate owner device security", async () => {
     authMocks.verifyWsToken.mockResolvedValue("user_owner");
     const objectFetch = vi.fn(async (_request: Request) => {

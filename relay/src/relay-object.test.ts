@@ -170,6 +170,126 @@ describe("RelayObject request hibernation", () => {
 // that owner. The account boundary is therefore closed by construction rather
 // than by a check -- which is why the tests here are about the SECOND
 // boundary: being on the account is not being at the keyboard.
+// Ownership of a checkout is the deliberate record the ledger work needs
+// before anything resolves to an owner. It moves by hand, never by election,
+// and a second machine learning that it is NOT the owner is the whole point.
+describe("RelayObject recording which machine owns a checkout", () => {
+  function fleet(machines: string[]) {
+    const sockets = machines.map((id) =>
+      fakeSocket(["daemon", `user:user_owner`, `machine:${id}`, `machineName:sam-${id}`]),
+    );
+    return { sockets, storage: storageWithSockets(sockets) };
+  }
+
+  function report(object: RelayObject, socket: ReturnType<typeof fakeSocket>, projectRoot: string) {
+    return object.webSocketMessage(
+      socket,
+      JSON.stringify({
+        type: "project_endpoints",
+        projects: [{ projectRoot, host: "relay.aimux.app", port: 443 }],
+      }),
+    );
+  }
+
+  function claim(object: RelayObject, body: Record<string, unknown>) {
+    return object.fetch(
+      request("https://relay.aimux.app/projects/claim", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+        body,
+      }),
+    );
+  }
+
+  it("records the claim, and says who holds it", async () => {
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/Users/sam/cs/aimux");
+
+    const claimed = await claim(object, { projectRoot: "/Users/sam/cs/aimux", machineId: "mbp" });
+
+    expect(claimed.status).toBe(200);
+    expect(await claimed.json()).toMatchObject({ ok: true, alreadyOwned: false, owner: { machineId: "mbp" } });
+
+    const listed = await object.fetch(
+      request("https://relay.aimux.app/projects/owners", {
+        method: "GET",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+      }),
+    );
+    expect(await listed.json()).toMatchObject({
+      ok: true,
+      owners: [{ projectRoot: "/Users/sam/cs/aimux", machineId: "mbp", online: true }],
+    });
+  });
+
+  it("refuses a second machine while the owner is connected, and names it", async () => {
+    const {
+      sockets: [mbp, strix],
+      storage,
+    } = fleet(["mbp", "strix"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/Users/sam/cs/aimux");
+    await report(object, strix, "/Users/sam/cs/aimux");
+    expect((await claim(object, { projectRoot: "/Users/sam/cs/aimux", machineId: "mbp" })).status).toBe(200);
+
+    const refused = await claim(object, { projectRoot: "/Users/sam/cs/aimux", machineId: "strix" });
+
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      ok: false,
+      refusal: "held-by-a-connected-machine",
+      heldBy: { machineId: "mbp" },
+      // In the sentence, because the sentence is the only part that reaches a
+      // person: the CLI's relay client returns `error` and drops every field
+      // beside it, so the name in `heldBy` was a name nobody ever saw.
+      error: "Another machine owns that checkout and is connected right now: mbp",
+    });
+  });
+
+  // The case the record exists for: the owner is a laptop that is shut, and
+  // the work has to be able to carry on somewhere.
+  it("says the owner is away, and lets another machine take it", async () => {
+    const {
+      sockets: [mbp, strix],
+      storage,
+    } = fleet(["mbp", "strix"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/Users/sam/cs/aimux");
+    await report(object, strix, "/Users/sam/cs/aimux");
+    expect((await claim(object, { projectRoot: "/Users/sam/cs/aimux", machineId: "mbp" })).status).toBe(200);
+
+    // mbp goes away; only strix is left on the socket list.
+    const awake = storageWithSockets([strix]);
+    await awake.put("sharing-state:v1", await storage.get("sharing-state:v1"));
+    const reopened = createObject(awake, {} as unknown as Env);
+    await report(reopened, strix, "/Users/sam/cs/aimux");
+
+    const listed = await reopened.fetch(
+      request("https://relay.aimux.app/projects/owners", {
+        method: "GET",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+      }),
+    );
+    expect(await listed.json(), "the owner is named and marked away").toMatchObject({
+      owners: [{ machineId: "mbp", online: false }],
+    });
+
+    const taken = await claim(reopened, { projectRoot: "/Users/sam/cs/aimux", machineId: "strix" });
+    expect(taken.status).toBe(200);
+    expect(await taken.json()).toMatchObject({ owner: { machineId: "strix" } });
+  });
+});
+
 describe("RelayObject letting one machine ask another", () => {
   function fleet() {
     const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);

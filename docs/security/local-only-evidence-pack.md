@@ -297,7 +297,7 @@ Independent confirmation:
 
 ```bash
 strings /tmp/aimux-local-review-target/release/aimux \
-  | rg 'AIMUX_RELAY_URL|relay[.]aimux[.]app|wss://|ws://|hosted_server|hosted_cli|remote_login|remote_security_devices|attachments/hosted'
+  | rg 'AIMUX_RELAY_URL|relay[.]aimux[.]app|wss://|ws://|hosted_server|hosted_cli|remote_login|remote_security_devices|relay_http|remote_project_owners|attachments/hosted'
 ```
 
 Expected result: no matches in the local binary. The same strings should be

@@ -120,6 +120,27 @@ pub fn plan_remote_core_cli(
                 },
             ))
         }
+        ("projects", "claim") => {
+            let json = args[2..].iter().any(|arg| arg == "--json");
+            let take = args[2..].iter().any(|arg| arg == "--take");
+            let project = args[2..].iter().find(|arg| !arg.starts_with("--")).cloned();
+            Ok(remote_plan(
+                RemoteCliOperation::ProjectsClaim,
+                RemoteCliAction::ProjectsClaim {
+                    project,
+                    take,
+                    json,
+                },
+                None,
+            ))
+        }
+        ("projects", "owners") => Ok(remote_plan(
+            RemoteCliOperation::ProjectsOwners,
+            RemoteCliAction::ProjectsOwners {
+                json: args[2..].iter().any(|arg| arg == "--json"),
+            },
+            None,
+        )),
         ("security", "devices") if args[2..].iter().all(|arg| arg == "--json") => Ok(remote_plan(
             RemoteCliOperation::SecurityDevices,
             RemoteCliAction::SecurityDevices {
@@ -275,6 +296,12 @@ pub fn run_remote_cli_action(
             }
             Ok(CoreCliExecution::ok(lines))
         }
+        RemoteCliAction::ProjectsClaim {
+            project,
+            take,
+            json,
+        } => run_projects_claim(project.as_deref(), take, json, output_mode),
+        RemoteCliAction::ProjectsOwners { json } => run_projects_owners(json, output_mode),
         RemoteCliAction::SecurityDevices { json } => {
             run_security_devices(json, false, output_mode, runtime)
         }
@@ -434,6 +461,150 @@ fn parse_security_device_update_args(args: &[String]) -> Option<SecurityDeviceUp
         approval_code,
         json,
     })
+}
+
+/// Claim this checkout for this machine.
+///
+/// The machine identity comes from this machine, never from an argument: the
+/// relay records what a machine says about itself, and a claim naming another
+/// machine's id would be this machine speaking for one it is not.
+fn run_projects_claim(
+    project: Option<&str>,
+    take: bool,
+    json_flag: bool,
+    output_mode: CoreCliOutputMode,
+) -> Result<CoreCliExecution, String> {
+    let mut roots = crate::paths::PathResolver::from_env();
+    let resolved = roots.resolve_repo_root(project.unwrap_or("."));
+    // Checked before anything is written. Outside a checkout the resolver
+    // falls through to the working directory, so the claim used to go out for
+    // a path that is not a repository and come back "this machine has not
+    // reported that checkout" -- an answer to the wrong question, and one
+    // that sends somebody looking at the relay.
+    //
+    // And checked FIRST, because establishing this machine's identity is a
+    // write: a claim that was going to be refused anyway should not leave a
+    // file behind on its way out.
+    //
+    // "Could not look" is not "is not a checkout". An unmounted volume or a
+    // path with no permission is a different sentence, and the registry
+    // already keeps those apart.
+    match crate::paths::project_root_status(&resolved) {
+        crate::paths::ProjectRootStatus::GitCheckout => {}
+        crate::paths::ProjectRootStatus::NotCheckout => {
+            return Err(format!(
+                "{} is not a git checkout, so there is nothing to own",
+                resolved.to_string_lossy()
+            ));
+        }
+        crate::paths::ProjectRootStatus::Unreachable => {
+            return Err(format!(
+                "{} could not be read, so whether it is a checkout is unknown",
+                resolved.to_string_lossy()
+            ));
+        }
+    }
+    let resolver = crate::paths::PathResolver::from_env();
+    // Written if it is missing, so a machine that has never had an identity
+    // claims under a real id rather than as `unidentified` -- which the relay
+    // refuses, correctly, because that id is shared by every such daemon.
+    let machine = crate::machine_identity::load_or_create(&resolver)
+        .map_err(|error| format!("Could not read this machine's identity: {error}"))?;
+    let project_root = resolved.to_string_lossy().into_owned();
+    let (owner, already) =
+        crate::remote::remote_project_owners::claim_project_owner(&project_root, &machine, take)?;
+    if json_flag || output_mode == CoreCliOutputMode::Json {
+        return Ok(CoreCliExecution::ok(vec![
+            serde_json::to_string_pretty(&json!({
+                "projectRoot": owner.project_root,
+                "machineId": owner.machine_id,
+                "claimedAt": owner.claimed_at,
+                "alreadyOwned": already,
+            }))
+            .map_err(|error| error.to_string())?,
+        ]));
+    }
+    Ok(CoreCliExecution::ok(vec![if already {
+        format!("This machine already owns {}", owner.project_root)
+    } else {
+        format!("This machine now owns {}", owner.project_root)
+    }]))
+}
+
+/// Who owns what, including the checkouts this machine does not own.
+///
+/// That half is the point: a record that only ever said "yes, you" would tell
+/// nobody anything, and an owner that is away is the case a person has to be
+/// able to see before deciding to take it.
+fn run_projects_owners(
+    json_flag: bool,
+    output_mode: CoreCliOutputMode,
+) -> Result<CoreCliExecution, String> {
+    // Read, never created. `read_stored` exists for exactly this and says so:
+    // `load_or_create` is the first thing that can establish an identity, and
+    // on a full or read-only home it caches an ephemeral one for the rest of
+    // the process -- so a listing would decide what this machine connects as.
+    //
+    // Three outcomes, not two. An identity, no identity yet, and could-not-
+    // read: swallowing the last into the second made an unreadable home print
+    // every row as somebody else's machine, which is the one answer here that
+    // is actively misleading. The rows still print, because they are true and
+    // they came from the relay; what is withheld is the claim about which one
+    // is this machine.
+    let resolver = crate::paths::PathResolver::from_env();
+    let identity = crate::machine_identity::read_stored(&resolver);
+    let unreadable = identity.as_ref().err().map(ToString::to_string);
+    let machine_id = identity.ok().flatten().map(|machine| machine.id);
+    let owners = crate::remote::remote_project_owners::list_project_owners()?;
+    if json_flag || output_mode == CoreCliOutputMode::Json {
+        return Ok(CoreCliExecution::ok(vec![
+            serde_json::to_string_pretty(&json!({
+                "thisMachineId": machine_id,
+                // Said out loud rather than inferred from a null id, which
+                // would read as "this machine owns nothing here".
+                "thisMachineIdError": unreadable,
+                "owners": owners
+                    .iter()
+                    .map(|owner| json!({
+                        "projectRoot": owner.project_root,
+                        "machineId": owner.machine_id,
+                        "claimedAt": owner.claimed_at,
+                        "online": owner.online,
+                        "thisMachine": Some(&owner.machine_id) == machine_id.as_ref(),
+                    }))
+                    .collect::<Vec<_>>(),
+            }))
+            .map_err(|error| error.to_string())?,
+        ]));
+    }
+    if owners.is_empty() {
+        return Ok(CoreCliExecution::ok(vec![
+            "No checkout has an owner yet.".to_owned(),
+        ]));
+    }
+    let mut lines = Vec::new();
+    if let Some(error) = unreadable.as_deref() {
+        lines.push(format!(
+            "Could not read this machine's identity ({error}), so none of these rows can be called this machine's."
+        ));
+    }
+    lines.extend(
+        owners
+            .iter()
+            .map(|owner| {
+                let who = if unreadable.is_none() && Some(&owner.machine_id) == machine_id.as_ref()
+                {
+                    "this machine".to_owned()
+                } else if owner.online {
+                    format!("{} (connected)", owner.machine_id)
+                } else {
+                    format!("{} (away)", owner.machine_id)
+                };
+                format!("{}  {}", owner.project_root, who)
+            })
+            .collect::<Vec<_>>(),
+    );
+    Ok(CoreCliExecution::ok(lines))
 }
 
 fn run_security_devices(

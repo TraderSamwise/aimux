@@ -401,10 +401,14 @@ const AUDITED_PROCESS_SPAWN_SITES = [
     input: "remote-control feature path; not part of local-only claim",
   },
   {
-    path: "native/crates/aimux/src/remote/remote_security_devices.rs",
+    // One spawn site for every relay request the CLI makes, which is why the
+    // security-devices entry that used to be here moved: the security module
+    // and the project-ownership module ask the relay the same way, and two
+    // copies of that would be two places for a header or a timeout to drift.
+    path: "native/crates/aimux/src/remote/relay_http.rs",
     marker: 'AsyncCommand::new("curl");',
     command: "curl",
-    argv: "remote security device HTTP args",
+    argv: "relay HTTP args: method, bearer header, JSON body",
     input: "remote-control feature path; not part of local-only claim",
   },
   {

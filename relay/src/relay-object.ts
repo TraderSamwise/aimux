@@ -49,6 +49,8 @@ import {
   acceptShareInvite,
   bindShareToMachine,
   type BindShareRefusal,
+  claimProjectOwner,
+  type ProjectClaimRefusal,
   createShareInvite,
   getShareChatMode,
   listAcceptedShares,
@@ -249,6 +251,17 @@ export class RelayObject extends DurableObject<Env> {
     }
     if (url.pathname.startsWith("/shares/") && url.pathname.includes("/invites/") && request.method === "DELETE") {
       return this.revokeShareInvite(request, url);
+    }
+    if (url.pathname === "/projects/claim" && request.method === "POST") {
+      if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
+      return this.claimProjectOwner(request);
+    }
+    if (url.pathname === "/projects/owners" && request.method === "GET") {
+      // Gated like its neighbours: the answer is machine ids and absolute
+      // paths, which is the shape of thing a locked-down account should stop
+      // handing out even though reading it changes nothing.
+      if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
+      return this.listProjectOwners();
     }
     if (url.pathname === "/shares/bind" && request.method === "POST") {
       if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
@@ -1878,6 +1891,103 @@ export class RelayObject extends DurableObject<Env> {
     const result = revokeShareInvite(state, share.id, parsed.inviteId);
     await saveSharingState(this.ctx.storage, result.state);
     return json({ ok: true, share: summarizeShare(result.share ?? share) }, 200);
+  }
+
+  /// What a refused claim is, and what the person should do about it.
+  private static readonly CLAIM_REFUSALS: Record<ProjectClaimRefusal, { status: number; error: string }> = {
+    "machine-unidentified": {
+      status: 409,
+      error: "This machine has no stable identity yet, so it cannot own a checkout",
+    },
+    "machine-is-not-connected": {
+      status: 409,
+      error: "That machine is not connected to the relay right now",
+    },
+    "machine-has-not-reported-its-checkouts": {
+      status: 409,
+      error: "This machine has not told the relay which checkouts it has",
+    },
+    "too-many-owned-checkouts": {
+      status: 409,
+      error: "Too many checkouts already have a recorded owner",
+    },
+    "machine-does-not-hold-checkout": {
+      status: 409,
+      error: "This machine has not reported that checkout",
+    },
+    "held-by-a-connected-machine": {
+      status: 409,
+      error: "Another machine owns that checkout and is connected right now",
+    },
+  };
+
+  /// Record this machine as the owner of a checkout.
+  ///
+  /// The deliberate act the ledger work needs before anything resolves to an
+  /// owner: ownership moves by hand, never by election. It refuses while
+  /// another machine holds the checkout and is connected, because a claim
+  /// that always says yes records nothing a second machine could rely on --
+  /// `take` is how the owner overrules that, by hand and in one place.
+  private async claimProjectOwner(request: Request): Promise<Response> {
+    const userId = request.headers.get("X-Aimux-User-Id")?.trim();
+    if (!userId) return json({ ok: false, error: "Missing user context" }, 401);
+    let body: { projectRoot?: string; machineId?: string; take?: boolean };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return json({ ok: false, error: "Invalid JSON" }, 400);
+    }
+    // Loaded and saved with nothing awaited in between, which is what makes
+    // this safe without a version check: the durable object's input gate
+    // serializes the whole stretch, so no second claim can read the state
+    // this one is about to replace. The guarantee is positional -- adding an
+    // await below would reinstate a lost update with no test failing -- so it
+    // is written here rather than left to be noticed.
+    const state = await loadSharingState(this.ctx.storage);
+    const result = claimProjectOwner(state, {
+      projectRoot: body.projectRoot ?? "",
+      machineId: body.machineId ?? "",
+      connectedMachineIds: this.onlineMachines().map((machine) => machine.id),
+      take: body.take === true,
+    });
+    if (!result.ok) {
+      const refusal = RelayObject.CLAIM_REFUSALS[result.refusal];
+      // The machine goes in the SENTENCE. "Somebody else has it" is only
+      // actionable if you can tell which somebody, and the sentence is the
+      // only part that reaches a person: the CLI's relay client returns
+      // `error` and drops everything beside it, so a name in a sibling field
+      // was a name nobody ever saw -- while this file and the pull request
+      // both said the refusal named it.
+      const error = result.heldBy ? `${refusal.error}: ${result.heldBy.machineId}` : refusal.error;
+      return json(
+        {
+          ok: false,
+          error,
+          refusal: result.refusal,
+          ...(result.heldBy ? { heldBy: result.heldBy } : {}),
+        },
+        refusal.status,
+      );
+    }
+    if (!result.alreadyOwned) {
+      await saveSharingState(this.ctx.storage, result.state);
+    }
+    return json({ ok: true, alreadyOwned: result.alreadyOwned, owner: result.owner }, 200);
+  }
+
+  /// Who owns which checkout, for a machine that wants to know whether it is
+  /// the owner -- including when the answer is somebody else.
+  private async listProjectOwners(): Promise<Response> {
+    const state = await loadSharingState(this.ctx.storage);
+    const online = new Set(this.onlineMachines().map((machine) => machine.id));
+    const owners = Object.entries(state.projectOwners ?? {}).map(([projectRoot, owner]) => ({
+      projectRoot,
+      ...owner,
+      // Whether the owner is reachable right now, because "owned by a laptop
+      // that is shut" is the case the whole record exists to make visible.
+      online: online.has(owner.machineId),
+    }));
+    return json({ ok: true, owners }, 200);
   }
 
   /// Bind a share that already exists to the machine holding its session.

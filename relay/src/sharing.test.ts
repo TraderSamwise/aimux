@@ -5,6 +5,7 @@ import {
   createShareInvite,
   emptySharingState,
   bindShareToMachine,
+  claimProjectOwner,
   findShareForSession,
   getShareChatMode,
   isSharedRelayRequestAllowed,
@@ -1714,5 +1715,279 @@ describe("share service endpoints", () => {
       expect(result.updated, `port ${port}`).toEqual([]);
       expect(endpointOf(result.state, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
     }
+  });
+});
+
+// Ownership of a checkout lives here and not in a machine's own project
+// registry, because that registry is per machine: an owner written there is
+// one machine's belief, and two machines would each write themselves first
+// and never disagree out loud.
+describe("which machine owns a checkout", () => {
+  function reported(machines: Record<string, string[]>): SharingState {
+    return Object.entries(machines).reduce(
+      (carried, [machineId, roots]) => rememberMachineProjectRoots(carried, machineId, roots),
+      emptySharingState(),
+    );
+  }
+
+  it("records the machine that claimed it", () => {
+    const claimed = claimProjectOwner(reported({ mbp: ["/repo/aimux"] }), {
+      projectRoot: "/repo/aimux",
+      machineId: "mbp",
+      connectedMachineIds: ["mbp"],
+    });
+
+    expect(claimed.ok).toBe(true);
+    if (!claimed.ok) return;
+    expect(claimed.alreadyOwned).toBe(false);
+    expect(claimed.owner.machineId).toBe("mbp");
+    expect(claimed.state.projectOwners?.["/repo/aimux"]?.machineId).toBe("mbp");
+  });
+
+  // One checkout however it was typed. The key folds a trailing slash and
+  // nothing else, which is the only folding it does -- and the reason the
+  // comment on the record says plainly what the key is not.
+  it("treats a trailing slash as the same checkout", () => {
+    const claimed = claimProjectOwner(reported({ mbp: ["/repo/aimux"] }), {
+      projectRoot: "/repo/aimux/",
+      machineId: "mbp",
+      connectedMachineIds: ["mbp"],
+    });
+
+    expect(claimed.ok).toBe(true);
+    if (!claimed.ok) return;
+    expect(Object.keys(claimed.state.projectOwners ?? {})).toEqual(["/repo/aimux"]);
+  });
+
+  it("writes nothing when the same machine claims it again", () => {
+    const first = claimProjectOwner(reported({ mbp: ["/repo/aimux"] }), {
+      projectRoot: "/repo/aimux",
+      machineId: "mbp",
+      connectedMachineIds: ["mbp"],
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const again = claimProjectOwner(first.state, {
+      projectRoot: "/repo/aimux",
+      machineId: "mbp",
+      connectedMachineIds: ["mbp"],
+    });
+
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(again.alreadyOwned).toBe(true);
+    expect(again.owner.claimedAt).toBe(first.owner.claimedAt);
+  });
+
+  // The enforcement that makes the record worth keeping. A claim that always
+  // says yes records nothing a second machine could rely on.
+  it("refuses while another machine holds it and is here", () => {
+    const first = claimProjectOwner(reported({ mbp: ["/repo/aimux"], strix: ["/repo/aimux"] }), {
+      projectRoot: "/repo/aimux",
+      machineId: "mbp",
+      connectedMachineIds: ["mbp", "strix"],
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const refused = claimProjectOwner(first.state, {
+      projectRoot: "/repo/aimux",
+      machineId: "strix",
+      connectedMachineIds: ["mbp", "strix"],
+    });
+
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal).toBe("held-by-a-connected-machine");
+    // Which somebody, because "somebody else has it" is only actionable with
+    // a name on it.
+    expect(refused.heldBy?.machineId).toBe("mbp");
+    expect(first.state.projectOwners?.["/repo/aimux"]?.machineId).toBe("mbp");
+  });
+
+  // The case the record exists for: the owner is a laptop that is shut, and
+  // the work has to be able to carry on somewhere.
+  it("lets a machine take a checkout whose owner is away", () => {
+    const first = claimProjectOwner(reported({ mbp: ["/repo/aimux"], strix: ["/repo/aimux"] }), {
+      projectRoot: "/repo/aimux",
+      machineId: "mbp",
+      connectedMachineIds: ["mbp"],
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const taken = claimProjectOwner(first.state, {
+      projectRoot: "/repo/aimux",
+      machineId: "strix",
+      connectedMachineIds: ["strix"],
+    });
+
+    expect(taken.ok).toBe(true);
+    if (!taken.ok) return;
+    expect(taken.owner.machineId).toBe("strix");
+  });
+
+  // And by hand while the owner IS here, which is the only way a conflict is
+  // ever resolved: deliberately, in one place, never by election.
+  it("lets the owner take it deliberately from a machine that is here", () => {
+    const first = claimProjectOwner(reported({ mbp: ["/repo/aimux"], strix: ["/repo/aimux"] }), {
+      projectRoot: "/repo/aimux",
+      machineId: "mbp",
+      connectedMachineIds: ["mbp", "strix"],
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const taken = claimProjectOwner(first.state, {
+      projectRoot: "/repo/aimux",
+      machineId: "strix",
+      connectedMachineIds: ["mbp", "strix"],
+      take: true,
+    });
+
+    expect(taken.ok).toBe(true);
+    if (!taken.ok) return;
+    expect(taken.owner.machineId).toBe("strix");
+  });
+
+  // The same evidence the share bind asks for, and the same two answers.
+  it("refuses a machine that has reported nothing, and one that lacks the checkout", () => {
+    expect(
+      claimProjectOwner(emptySharingState(), {
+        projectRoot: "/repo/aimux",
+        machineId: "mbp",
+        connectedMachineIds: ["mbp"],
+      }),
+    ).toEqual({ ok: false, refusal: "machine-has-not-reported-its-checkouts" });
+
+    expect(
+      claimProjectOwner(reported({ mbp: ["/repo/something-else"] }), {
+        projectRoot: "/repo/aimux",
+        machineId: "mbp",
+        connectedMachineIds: ["mbp"],
+      }),
+    ).toEqual({ ok: false, refusal: "machine-does-not-hold-checkout" });
+  });
+
+  // A claim arrives over HTTP, where nothing binds the request to a socket:
+  // the token says which account is asking and never which machine. Naming a
+  // machine is therefore a claim in itself, and the least this can do is
+  // require that machine to be here -- which stops ownership being parked on
+  // a laptop that is shut and cannot be asked about it.
+  it("refuses to name a machine that is not connected", () => {
+    expect(
+      claimProjectOwner(reported({ strix: ["/repo/aimux"] }), {
+        projectRoot: "/repo/aimux",
+        machineId: "strix",
+        connectedMachineIds: ["mbp"],
+      }),
+    ).toEqual({ ok: false, refusal: "machine-is-not-connected" });
+  });
+
+  // The ceiling keeps one end of the sorted keys, so a claim past it either
+  // loses itself or -- worse, because the route would answer `ok` -- evicts
+  // somebody else's record. Both directions, because the first version of
+  // this test picked a key sorting below all the others and so proved only
+  // the half that was already safe.
+  function atTheCeiling(claimedRoot: string): SharingState {
+    const owners = Object.fromEntries(
+      Array.from({ length: 500 }, (_, index) => [
+        `/mm/repo-${String(index).padStart(4, "0")}`,
+        { machineId: "mbp", claimedAt: "2026-11-15T00:00:00.000Z" },
+      ]),
+    );
+    return {
+      ...reported({ mbp: [claimedRoot] }),
+      projectOwners: owners,
+    } as SharingState;
+  }
+
+  it("refuses a claim the ceiling would lose", () => {
+    expect(
+      claimProjectOwner(atTheCeiling("/aa/below-them-all"), {
+        projectRoot: "/aa/below-them-all",
+        machineId: "mbp",
+        connectedMachineIds: ["mbp"],
+      }),
+    ).toEqual({ ok: false, refusal: "too-many-owned-checkouts" });
+  });
+
+  it("refuses a claim that would evict somebody else", () => {
+    const full = atTheCeiling("/zz/above-them-all");
+
+    expect(
+      claimProjectOwner(full, {
+        projectRoot: "/zz/above-them-all",
+        machineId: "mbp",
+        connectedMachineIds: ["mbp"],
+      }),
+    ).toEqual({ ok: false, refusal: "too-many-owned-checkouts" });
+  });
+
+  // These keys are paths a daemon reported, so a plain property read answers
+  // from the prototype: a checkout called `constructor` made the read-back see
+  // a record that was never stored, and the route said "this machine now owns
+  // constructor". The hazard is documented in the same file for the same
+  // reason, and the first version of this check used the plain read anyway.
+  it("is not fooled by a checkout named after something on Object", () => {
+    // The prototype-named key has to be the one the ceiling DROPS, and the
+    // five hundred already there have to survive -- otherwise the eviction
+    // half of the check catches it and the prototype read is never asked the
+    // question. My first attempt at this test got that backwards and passed
+    // with the plain read restored.
+    const owners = Object.fromEntries(
+      Array.from({ length: 500 }, (_, index) => [
+        `zz/repo-${String(index).padStart(4, "0")}`,
+        { machineId: "mbp", claimedAt: "2026-11-15T00:00:00.000Z" },
+      ]),
+    );
+    const full = {
+      ...reported({ mbp: ["constructor"] }),
+      projectOwners: owners,
+    } as SharingState;
+
+    expect(
+      claimProjectOwner(full, {
+        projectRoot: "constructor",
+        machineId: "mbp",
+        connectedMachineIds: ["mbp"],
+      }),
+    ).toEqual({ ok: false, refusal: "too-many-owned-checkouts" });
+  });
+
+  // `unidentified` is the slot every daemon without a persisted identity
+  // shares, so recording it would name whichever of them asked last.
+  it("refuses a machine with no identity of its own", () => {
+    expect(
+      claimProjectOwner(reported({ mbp: ["/repo/aimux"] }), {
+        projectRoot: "/repo/aimux",
+        machineId: "unidentified",
+        connectedMachineIds: ["unidentified"],
+      }),
+    ).toEqual({ ok: false, refusal: "machine-unidentified" });
+  });
+
+  // Absent means nobody has claimed it, and absent has to be permitted: a
+  // daemon that is not logged in cannot read or write this at all, so a rule
+  // requiring an owner would make offline aimux refuse its own user.
+  it("says nothing about a checkout nobody claimed", () => {
+    expect(reported({ mbp: ["/repo/aimux"] }).projectOwners).toBeUndefined();
+  });
+
+  it("reads a stored record back as an owner or as nothing, never as junk", () => {
+    const stored = {
+      ...emptySharingState(),
+      projectOwners: {
+        "/repo/good": { machineId: "mbp", claimedAt: "2026-11-15T00:00:00.000Z" },
+        "/repo/nameless": { machineId: "", claimedAt: "2026-11-15T00:00:00.000Z" },
+        "/repo/undated": { machineId: "strix", claimedAt: "" },
+        "/repo/unidentified": { machineId: "unidentified", claimedAt: "2026-11-15T00:00:00.000Z" },
+      },
+    } as unknown as SharingState;
+
+    expect(normalizeSharingState(stored).projectOwners).toEqual({
+      "/repo/good": { machineId: "mbp", claimedAt: "2026-11-15T00:00:00.000Z" },
+    });
   });
 });
