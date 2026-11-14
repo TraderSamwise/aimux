@@ -2487,6 +2487,136 @@ fn a_peers_multiline_text_is_prefixed_so_its_first_line_is_not_a_command() {
     cleanup(project);
 }
 
+/// The prefix shields line ONE. On a receiver that executes lines, that is
+/// not enough, so a peer may not send a second one.
+///
+/// `looks_like_agent_command` gives up the moment it finds a line break, so
+/// `"thanks\nrm -rf ~/work"` is not a command and was delivered. On a `shell`
+/// receiver delivery is a paste then a carriage return, so line two arrived at
+/// a fresh prompt as its own command -- unprefixed, unattributed, executed.
+/// "Every peer input is named" was true of line one only, which is exactly
+/// what the earlier multi-line test asserted and therefore did not catch.
+///
+/// Three inverses, because each alone would pass for the wrong reason: the
+/// same multi-line text to an AGENT receiver still lands (it takes the whole
+/// paste as one prompt, so later lines are prose inside an attributed
+/// message), a SINGLE line to the shell still lands (the rule is about the
+/// second line, not about shells), and a LOCAL sender's multi-line to the
+/// shell still lands (the rule is about peers).
+#[test]
+fn a_peer_cannot_send_a_second_line_to_a_receiver_that_executes_lines() {
+    let project = temp_project("peer-shell-multiline");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let peer = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_request_headers([
+            ("x-aimux-actor-role", "peer"),
+            ("x-aimux-peer-machine-id", "mbp"),
+        ]);
+
+    for route in [routes::agents::INPUT, routes::live_pane::INPUT] {
+        for text in [
+            "thanks\nrm -rf ~/work",
+            "ok\rrm -rf ~/work",
+            "ok\u{2028}rm -rf ~/work",
+        ] {
+            let mut runtime = FakeCaptureRuntime::default();
+            let refused = route_agent_output_request_with_runtime(
+                &peer,
+                "POST",
+                route,
+                Some(&json!({ "sessionId": "shell-1", "text": text, "from": "claude-utymep" })),
+                &mut runtime,
+            )
+            .unwrap();
+            assert_eq!(refused.status, 403, "{route} {text:?}: {:?}", refused.body);
+            assert_eq!(
+                refused.body["error"],
+                "a peer machine cannot send more than one line to a shell, because only the first line carries its sender",
+                "{route} {text:?}"
+            );
+            assert!(
+                runtime.actions.is_empty(),
+                "{route} {text:?} must not be delivered: {:?}",
+                runtime.actions
+            );
+        }
+    }
+
+    // An agent receiver takes the whole paste as one prompt.
+    let mut runtime = FakeCaptureRuntime::default();
+    let to_agent = route_agent_output_request_with_runtime(
+        &peer,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({
+            "sessionId": "codex-1",
+            "text": "thanks\nrm -rf ~/work",
+            "from": "claude-utymep"
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(to_agent.status, 200, "{:?}", to_agent.body);
+
+    // The local multi-line inverse cannot assert a delivery here: multi-line
+    // text takes the GUARDED paste path and this file's fake runtime refuses
+    // those by design. It asserts what is actually in question instead -- that
+    // the request got PAST the rule and into delivery, where the fixture's own
+    // limit took over. A 403 carrying the rule's sentence is what must not
+    // happen, and the two failures are told apart by status and by text.
+    let past_the_rule = |status: u16, body: &Value, label: &str| {
+        assert_eq!(status, 500, "{label}: {body:?}");
+        assert!(
+            body["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("bracketed paste")),
+            "{label} must fail in delivery, not at the rule: {body:?}"
+        );
+    };
+
+    // One line to the shell is still allowed: the prefix covers position zero,
+    // so the shell would see a label and not a command.
+    let mut runtime = FakeCaptureRuntime::default();
+    let one_line = route_agent_output_request_with_runtime(
+        &peer,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "shell-1", "text": "rm -rf ~/work", "from": "claude-utymep" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(one_line.status, 200, "{:?}", one_line.body);
+    assert_eq!(
+        runtime.actions.first(),
+        Some(&FakeRuntimeAction::Text(
+            "@3".into(),
+            "[mbp/claude-utymep] rm -rf ~/work".into()
+        )),
+        "the prefix is what makes one line to a shell safe, so it must be there"
+    );
+
+    // And a local sender's multi-line is untouched -- the rule is about the
+    // peer, not about shells or about newlines.
+    let local = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime::default();
+    let locally = route_agent_output_request_with_runtime(
+        &local,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "shell-1", "text": "cd /repo\nyarn verify" })),
+        &mut runtime,
+    )
+    .unwrap();
+    past_the_rule(
+        locally.status,
+        &locally.body,
+        "multi-line from a local sender",
+    );
+
+    cleanup(project);
+}
+
 /// Both input routes preserve a numbered list in one delivery per turn.
 #[test]
 fn input_for_a_task_that_does_not_exist_is_refused_rather_than_sent() {
@@ -5630,16 +5760,19 @@ fn topology_fixture() -> Value {
         ],
         "nodes": [
             { "id": "node-live", "rigId": "rig-1", "logicalId": "codex-1", "toolConfigKey": "codex", "createdAt": "2026-09-05T00:00:00.000Z" },
-            { "id": "node-offline", "rigId": "rig-1", "logicalId": "codex-offline", "toolConfigKey": "codex", "createdAt": "2026-09-05T00:00:00.000Z" }
+            { "id": "node-offline", "rigId": "rig-1", "logicalId": "codex-offline", "toolConfigKey": "codex", "createdAt": "2026-09-05T00:00:00.000Z" },
+            { "id": "node-shell", "rigId": "rig-1", "logicalId": "shell-1", "toolConfigKey": "shell", "label": "shell", "createdAt": "2026-09-05T00:00:00.000Z" }
         ],
         "edges": [],
         "bindings": [
             { "id": "binding-live", "nodeId": "node-live", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" },
-            { "id": "binding-offline", "nodeId": "node-offline", "tmuxSession": "aimux-repo", "tmuxWindowId": "@2", "tmuxWindowIndex": 2, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" }
+            { "id": "binding-offline", "nodeId": "node-offline", "tmuxSession": "aimux-repo", "tmuxWindowId": "@2", "tmuxWindowIndex": 2, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" },
+            { "id": "binding-shell", "nodeId": "node-shell", "tmuxSession": "aimux-repo", "tmuxWindowId": "@3", "tmuxWindowIndex": 3, "tmuxWindowName": "shell", "updatedAt": "2026-09-05T00:00:00.000Z" }
         ],
         "sessions": [
             { "id": "codex-1", "nodeId": "node-live", "status": "running", "command": "codex", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" },
-            { "id": "codex-offline", "nodeId": "node-offline", "status": "offline", "command": "codex", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+            { "id": "codex-offline", "nodeId": "node-offline", "status": "offline", "command": "codex", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" },
+            { "id": "shell-1", "nodeId": "node-shell", "status": "running", "command": "zsh", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
         ],
         "services": [],
         "worktrees": [],

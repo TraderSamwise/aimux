@@ -48,7 +48,7 @@ use std::time::{Duration, Instant};
 use super::agent_input::{
     agent_input_sender_label, agent_sender_prompt, format_agent_input_with_attachments,
     looks_like_agent_command, shared_chat_body_actor_prompt, shared_chat_remote_actor_prompt,
-    shared_chat_trim,
+    shared_chat_trim, spans_more_than_one_line,
 };
 use super::agent_input_delivery::{
     AGENT_INPUT_DELIVERY_TASK_NAME, AgentInputDeliveryDecision, AgentInputWindowActivity,
@@ -2110,6 +2110,17 @@ fn input_live_pane_route(
     // disagreed with the INNER one more permissive -- and it left the composer
     // a peer with no label to compose, which is how body `from` came to be the
     // fallback for "I could not tell who this is".
+    //
+    // WHY IDENTITY IS MIRRORED HERE AND POLICY IS NOT. The daemon also refuses
+    // a peer's `force`, `attachmentIds` and `sharedChatActor`, and those are
+    // deliberately NOT repeated here, so this layer is still the more
+    // permissive one for them. The difference is that this layer composes the
+    // label, so it cannot attribute a peer it cannot identify -- identity is
+    // its own business, and it had to agree. The three fields are policy about
+    // what a peer may ask for, and a second copy of policy is a second thing
+    // to drift. Nothing is lost by it: reaching this service directly means
+    // being on the machine already, and a local caller that simply omits the
+    // peer role is granted MORE than any of those fields would give it.
     if let Some(peer) = remote_actor
         .as_ref()
         .filter(|actor| actor.role == RemoteActorRole::Peer)
@@ -2162,6 +2173,32 @@ fn input_live_pane_route(
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
+    // A peer may not send a SECOND line to a receiver that executes lines.
+    //
+    // The attribution prefix shields position zero of line one, and that is
+    // all it shields. On a `shell` receiver delivery is a paste followed by a
+    // carriage return, so every line after the first arrives at a fresh
+    // prompt as its own command: `"thanks\nrm -rf ~/work"` is not a command to
+    // `looks_like_agent_command` -- which gives up the moment it finds a break
+    // -- so it was delivered, and line two ran unprefixed and unattributed.
+    // "Every peer input is named" was true of line one only.
+    //
+    // Keyed on the receiver's tool, the same value
+    // `prompt_submit_mode_for_tool` reads, rather than on whether the text
+    // looks dangerous: an agent receiver takes the whole paste as one prompt,
+    // so its later lines are prose inside an attributed message and need no
+    // rule. A shell executes them.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && prompt_submit_mode_for_tool(target.tool.as_deref()) == PromptSubmitMode::DirectShell
+        && spans_more_than_one_line(&text)
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send more than one line to a shell, because only the first line carries its sender",
+        );
+    }
     let project_state_dir = context.project_state_dir();
     // Before the send, so a task id that does not exist refuses the whole
     // request rather than delivering and recording nothing. A typo that
@@ -2815,6 +2852,17 @@ async fn input_live_pane_route_async(
     // disagreed with the INNER one more permissive -- and it left the composer
     // a peer with no label to compose, which is how body `from` came to be the
     // fallback for "I could not tell who this is".
+    //
+    // WHY IDENTITY IS MIRRORED HERE AND POLICY IS NOT. The daemon also refuses
+    // a peer's `force`, `attachmentIds` and `sharedChatActor`, and those are
+    // deliberately NOT repeated here, so this layer is still the more
+    // permissive one for them. The difference is that this layer composes the
+    // label, so it cannot attribute a peer it cannot identify -- identity is
+    // its own business, and it had to agree. The three fields are policy about
+    // what a peer may ask for, and a second copy of policy is a second thing
+    // to drift. Nothing is lost by it: reaching this service directly means
+    // being on the machine already, and a local caller that simply omits the
+    // peer role is granted MORE than any of those fields would give it.
     if let Some(peer) = remote_actor
         .as_ref()
         .filter(|actor| actor.role == RemoteActorRole::Peer)
@@ -2867,6 +2915,32 @@ async fn input_live_pane_route_async(
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
         Err(error) => return json_error(500, error),
     };
+    // A peer may not send a SECOND line to a receiver that executes lines.
+    //
+    // The attribution prefix shields position zero of line one, and that is
+    // all it shields. On a `shell` receiver delivery is a paste followed by a
+    // carriage return, so every line after the first arrives at a fresh
+    // prompt as its own command: `"thanks\nrm -rf ~/work"` is not a command to
+    // `looks_like_agent_command` -- which gives up the moment it finds a break
+    // -- so it was delivered, and line two ran unprefixed and unattributed.
+    // "Every peer input is named" was true of line one only.
+    //
+    // Keyed on the receiver's tool, the same value
+    // `prompt_submit_mode_for_tool` reads, rather than on whether the text
+    // looks dangerous: an agent receiver takes the whole paste as one prompt,
+    // so its later lines are prose inside an attributed message and need no
+    // rule. A shell executes them.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && prompt_submit_mode_for_tool(target.tool.as_deref()) == PromptSubmitMode::DirectShell
+        && spans_more_than_one_line(&text)
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send more than one line to a shell, because only the first line carries its sender",
+        );
+    }
     let project_state_dir = context.project_state_dir();
     // Before the send, so a task id that does not exist refuses the whole
     // request rather than delivering and recording nothing. A typo that

@@ -130,6 +130,16 @@ fn is_shared_whitespace(character: char) -> bool {
 /// separators by definition -- so `!ls\u{b}rm -rf /` passed the single-line
 /// test and reached the agent with its sender stripped, which is the bypass
 /// the single-line rule exists to close.
+/// Whether this text would arrive as more than one line.
+///
+/// Shared with `looks_like_agent_command`, which gives up the moment it finds
+/// a break, and with the peer rule that refuses multi-line text to a shell --
+/// two rules that must agree about what a second line is, because the first
+/// one not firing is precisely why the second has to.
+pub fn spans_more_than_one_line(text: &str) -> bool {
+    text.contains(is_line_break)
+}
+
 fn is_line_break(character: char) -> bool {
     matches!(
         character,
