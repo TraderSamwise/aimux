@@ -1,4 +1,5 @@
 use aimux::agent_prompt_delivery::PromptDeliveryVerification;
+use aimux::async_runtime::block_on_named;
 use aimux::backlog_metrics::BacklogMetricStatus;
 use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
 use aimux::loop_watcher::{
@@ -2824,6 +2825,156 @@ fn a_peers_second_line_is_refused_rather_than_held_for_later() {
     );
 
     cleanup(project);
+}
+
+/// A refused peer send writes NOTHING -- and this is asserted on the async
+/// route as well, which is the one production serves.
+///
+/// Round four moved the line rule after the composer so that it could measure
+/// the prompt that is actually typed. That moved it past `record_task_input`
+/// and past `clear_loop_alert_pause_for_work`, so a refused peer message
+/// stamped `lastInputBy` and un-silenced the agent's loop alerts for input
+/// that never reached the pane: a ledger row claiming a delegation that did
+/// not happen, and a way for a peer to keep waking a looping agent with
+/// messages this service refuses.
+///
+/// Both twins, because every new assertion in this review went through the
+/// SYNC route while `project_service/process.rs` serves the async one -- and
+/// round two's whole finding was a fix that was never reached.
+#[test]
+fn a_refused_peer_send_leaves_the_ledger_and_the_loop_pause_alone() {
+    for executor in ["sync", "async"] {
+        let project = temp_project(&format!("peer-refusal-writes-nothing-{executor}"));
+        let state_dir = project.join("state");
+        write_state(&state_dir);
+
+        // A task to stamp, and a paused loop to un-pause.
+        let local = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+        let assigned = route_project_service_request(
+            &local,
+            "POST",
+            "/tasks/assign",
+            Some(&json!({
+                "from": "claude-utymep",
+                "to": "shell-1",
+                "description": "move the proxies"
+            })),
+        );
+        assert_eq!(assigned.status, 200, "{:?}", assigned.body);
+        let task_id = assigned.body["task"]["id"]
+            .as_str()
+            .expect("task id")
+            .to_owned();
+
+        update_session_metadata(&state_dir, "shell-1", |current| {
+            let mut current = current.as_object().cloned().unwrap_or_default();
+            current.insert(
+                "loop".into(),
+                json!({
+                    "active": true,
+                    "since": "2026-09-09T00:00:00.000Z",
+                    "goal": "ship",
+                    "source": "human"
+                }),
+            );
+            Value::Object(current)
+        })
+        .expect("add loop metadata");
+        let metadata = load_metadata_state(&state_dir);
+        let pause_key = loop_pause_key_from_loop_metadata(&metadata.sessions["shell-1"]["loop"])
+            .expect("active loop pause key");
+        let state_path = loop_watcher_state_path(&state_dir);
+        let mut watcher = LoopWatcher::new();
+        watcher.pause_loop_alerts(
+            "shell-1",
+            pause_key,
+            1_788_000_000_000,
+            LoopAlertPauseProvenance::default(),
+        );
+        save_loop_watcher_state(&state_path, &watcher).expect("save paused watcher state");
+        let paused_before = load_loop_watcher_state(&state_path)
+            .expect("watcher state")
+            .paused_loop_alert("shell-1")
+            .cloned()
+            .expect("the loop is paused to begin with");
+
+        let peer = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+            .with_request_headers([
+                ("x-aimux-actor-role", "peer"),
+                ("x-aimux-peer-machine-id", "mbp"),
+            ]);
+        let body = json!({
+            "sessionId": "shell-1",
+            "text": "thanks\nrm -rf ~/work",
+            "from": "claude-utymep",
+            "task": task_id.clone()
+        });
+        let response = match executor {
+            "sync" => {
+                let mut runtime = FakeCaptureRuntime::default();
+                route_agent_output_request_with_runtime(
+                    &peer,
+                    "POST",
+                    routes::agents::INPUT,
+                    Some(&body),
+                    &mut runtime,
+                )
+            }
+            _ => {
+                let irreversible = std::sync::atomic::AtomicBool::new(false);
+                let drive = async {
+                    aimux::project_service::agent_output::route_agent_output_request_async(
+                        &peer,
+                        "POST",
+                        routes::agents::INPUT,
+                        Some(&body),
+                        Some(&irreversible),
+                    )
+                    .await
+                };
+                // aimux-async-seam: test - drives the production async input route.
+                let response = block_on_named("test:peer-refusal", drive);
+                assert!(
+                    !irreversible.load(Ordering::SeqCst),
+                    "{executor}: a refusal must not reach delivery"
+                );
+                response
+            }
+        }
+        .expect("the input route handled the request");
+
+        assert_eq!(response.status, 403, "{executor}: {:?}", response.body);
+        assert_eq!(
+            response.body["error"],
+            "a peer machine cannot send more than one line to this receiver, because only the first line carries its sender",
+            "{executor}"
+        );
+
+        // The row is untouched: no `lastInputBy`, no `lastInputAt`.
+        let exchange = read_runtime_exchange(runtime_exchange_path(&state_dir));
+        let task = exchange["tasks"]
+            .as_array()
+            .expect("tasks")
+            .iter()
+            .find(|task| task["id"] == json!(task_id.clone()))
+            .expect("the task");
+        assert!(
+            task.get("lastInputBy").is_none() && task.get("lastInputAt").is_none(),
+            "{executor}: a refused send must not stamp the row: {task:?}"
+        );
+
+        // And the loop is still paused.
+        assert_eq!(
+            load_loop_watcher_state(&state_path)
+                .expect("watcher state")
+                .paused_loop_alert("shell-1")
+                .cloned(),
+            Some(paused_before),
+            "{executor}: a refused send must not un-pause loop alerts"
+        );
+
+        cleanup(project);
+    }
 }
 
 /// Both input routes preserve a numbered list in one delivery per turn.

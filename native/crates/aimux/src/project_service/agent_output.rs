@@ -2174,26 +2174,6 @@ fn input_live_pane_route(
         Err(error) => return json_error(500, error),
     };
     let project_state_dir = context.project_state_dir();
-    // Before the send, so a task id that does not exist refuses the whole
-    // request rather than delivering and recording nothing. A typo that
-    // silently skipped the ledger would reproduce the gap this closes.
-    if let Some(task_id) = body
-        .get("task")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|task_id| !task_id.is_empty())
-        && let Err(error) = record_task_input(
-            &project_state_dir,
-            task_id,
-            // The same derivation the prefix uses, so the ledger and the pane
-            // cannot name different senders -- and the only record of origin
-            // at all when the text is a bare command, which is delivered
-            // without a prefix because a prefixed command would not run.
-            agent_input_sender_label(body, remote_actor.as_ref()).as_deref(),
-        )
-    {
-        return json_error(400, error);
-    }
     let prompt = compose_prompt_for_delivery(PromptForDelivery {
         attachments: &attachments,
         body,
@@ -2249,6 +2229,57 @@ fn input_live_pane_route(
         runtime.agent_input_window_activity(&target.window_id)
     };
     let decision = decide_agent_input_delivery(force, activity, now_ms, now_ms);
+    // Never queued, for a peer with more than one line. The rule above asked
+    // about the tool resolved NOW, and a queued delivery re-resolves it at
+    // send time (`resolve_queued_delivery_target`) from a record that carries
+    // no role and no tool -- so a hold is a window in which an agent receiver
+    // can become one whose lines execute, with the multi-line prompt already
+    // approved. Refused rather than re-checked later, because the re-check
+    // would need the role threaded through the queue to be worth anything.
+    //
+    // Matched by REFERENCE so the decision survives for the branch below, and
+    // placed here rather than inside it so that this refusal, like every
+    // other, happens before the ledger write.
+    if let AgentInputDeliveryDecision::Hold { reason, .. } = &decision
+        && remote_actor
+            .as_ref()
+            .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && spans_more_than_one_line(&prompt)
+    {
+        return json_error(
+            409,
+            format!("a peer machine cannot hold more than one line for later delivery ({reason})"),
+        );
+    }
+    // Written only once the request is going to be delivered or held, and
+    // still before the send, so a task id that does not exist refuses the
+    // whole request rather than delivering and recording nothing.
+    //
+    // The ORDER here is the fix round five found. Moving the peer line rule
+    // after the composer (so that it could measure the prompt that is
+    // actually typed) moved it past this write, so a refused peer message
+    // stamped `lastInputBy` and un-paused the agent's loop alerts for input
+    // that never reached the pane -- a ledger row claiming a delegation that
+    // did not happen, and a way for a peer to keep un-silencing a looping
+    // agent with messages this service refuses. Every refusal now precedes
+    // every write.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+        && let Err(error) = record_task_input(
+            &project_state_dir,
+            task_id,
+            // The same derivation the prefix uses, so the ledger and the pane
+            // cannot name different senders -- and the only record of origin
+            // at all when the text is a bare command, which is delivered
+            // without a prefix because a prefixed command would not run.
+            agent_input_sender_label(body, remote_actor.as_ref()).as_deref(),
+        )
+    {
+        return json_error(400, error);
+    }
     if let Err(error) = clear_loop_alert_pause_for_work(&project_state_dir, &session_id) {
         return json_error(
             500,
@@ -2261,26 +2292,6 @@ fn input_live_pane_route(
         retry_after_ms,
     } = decision
     {
-        // Never queued, for a peer with more than one line. The rule above
-        // asked about the tool resolved NOW, and a queued delivery re-resolves
-        // it at send time (`resolve_queued_delivery_target`) from a record
-        // that carries no role and no tool -- so a hold is a window in which
-        // an agent receiver can become one whose lines execute, with the
-        // multi-line prompt already approved. Refused rather than re-checked
-        // later, because the re-check would need the role threaded through the
-        // queue to be worth anything.
-        if remote_actor
-            .as_ref()
-            .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
-            && spans_more_than_one_line(&prompt)
-        {
-            return json_error(
-                409,
-                format!(
-                    "a peer machine cannot hold more than one line for later delivery ({reason})"
-                ),
-            );
-        }
         let pending = match enqueue_agent_input_delivery(
             context,
             &session_id,
@@ -2949,26 +2960,6 @@ async fn input_live_pane_route_async(
         Err(error) => return json_error(500, error),
     };
     let project_state_dir = context.project_state_dir();
-    // Before the send, so a task id that does not exist refuses the whole
-    // request rather than delivering and recording nothing. A typo that
-    // silently skipped the ledger would reproduce the gap this closes.
-    if let Some(task_id) = body
-        .get("task")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|task_id| !task_id.is_empty())
-        && let Err(error) = record_task_input(
-            &project_state_dir,
-            task_id,
-            // The same derivation the prefix uses, so the ledger and the pane
-            // cannot name different senders -- and the only record of origin
-            // at all when the text is a bare command, which is delivered
-            // without a prefix because a prefixed command would not run.
-            agent_input_sender_label(body, remote_actor.as_ref()).as_deref(),
-        )
-    {
-        return json_error(400, error);
-    }
     let prompt = compose_prompt_for_delivery(PromptForDelivery {
         attachments: &attachments,
         body,
@@ -3024,6 +3015,57 @@ async fn input_live_pane_route_async(
         tmux_agent_input_window_activity_async(&target.window_id, TMUX_COMMAND_TIMEOUT).await
     };
     let decision = decide_agent_input_delivery(force, activity, now_ms, now_ms);
+    // Never queued, for a peer with more than one line. The rule above asked
+    // about the tool resolved NOW, and a queued delivery re-resolves it at
+    // send time (`resolve_queued_delivery_target`) from a record that carries
+    // no role and no tool -- so a hold is a window in which an agent receiver
+    // can become one whose lines execute, with the multi-line prompt already
+    // approved. Refused rather than re-checked later, because the re-check
+    // would need the role threaded through the queue to be worth anything.
+    //
+    // Matched by REFERENCE so the decision survives for the branch below, and
+    // placed here rather than inside it so that this refusal, like every
+    // other, happens before the ledger write.
+    if let AgentInputDeliveryDecision::Hold { reason, .. } = &decision
+        && remote_actor
+            .as_ref()
+            .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && spans_more_than_one_line(&prompt)
+    {
+        return json_error(
+            409,
+            format!("a peer machine cannot hold more than one line for later delivery ({reason})"),
+        );
+    }
+    // Written only once the request is going to be delivered or held, and
+    // still before the send, so a task id that does not exist refuses the
+    // whole request rather than delivering and recording nothing.
+    //
+    // The ORDER here is the fix round five found. Moving the peer line rule
+    // after the composer (so that it could measure the prompt that is
+    // actually typed) moved it past this write, so a refused peer message
+    // stamped `lastInputBy` and un-paused the agent's loop alerts for input
+    // that never reached the pane -- a ledger row claiming a delegation that
+    // did not happen, and a way for a peer to keep un-silencing a looping
+    // agent with messages this service refuses. Every refusal now precedes
+    // every write.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+        && let Err(error) = record_task_input(
+            &project_state_dir,
+            task_id,
+            // The same derivation the prefix uses, so the ledger and the pane
+            // cannot name different senders -- and the only record of origin
+            // at all when the text is a bare command, which is delivered
+            // without a prefix because a prefixed command would not run.
+            agent_input_sender_label(body, remote_actor.as_ref()).as_deref(),
+        )
+    {
+        return json_error(400, error);
+    }
     if let Err(error) = clear_loop_alert_pause_for_work(&project_state_dir, &session_id) {
         return json_error(
             500,
@@ -3036,26 +3078,6 @@ async fn input_live_pane_route_async(
         retry_after_ms,
     } = decision
     {
-        // Never queued, for a peer with more than one line. The rule above
-        // asked about the tool resolved NOW, and a queued delivery re-resolves
-        // it at send time (`resolve_queued_delivery_target`) from a record
-        // that carries no role and no tool -- so a hold is a window in which
-        // an agent receiver can become one whose lines execute, with the
-        // multi-line prompt already approved. Refused rather than re-checked
-        // later, because the re-check would need the role threaded through the
-        // queue to be worth anything.
-        if remote_actor
-            .as_ref()
-            .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
-            && spans_more_than_one_line(&prompt)
-        {
-            return json_error(
-                409,
-                format!(
-                    "a peer machine cannot hold more than one line for later delivery ({reason})"
-                ),
-            );
-        }
         let pending = match enqueue_agent_input_delivery(
             context,
             &session_id,
