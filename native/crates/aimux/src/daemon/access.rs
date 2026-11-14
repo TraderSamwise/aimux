@@ -42,8 +42,18 @@ pub fn build_daemon_route_context_for_actor(
     projects: &[ProjectsRouteProject],
 ) -> DaemonRouteRequestContext {
     let route_url = DaemonRouteUrl::parse(path);
+    // A peer needs this for the same reason an operator does: its allowlist
+    // refuses a proxy target that is not one of this machine's own project
+    // services, and "is it one of ours" cannot be answered from the port
+    // number. Without the resolution every peer request would be refused as
+    // if it had named a stranger's port.
     let project_root = actor
-        .filter(|actor| actor.role == RemoteActorRole::Operator)
+        .filter(|actor| {
+            matches!(
+                actor.role,
+                RemoteActorRole::Operator | RemoteActorRole::Peer
+            )
+        })
         .and_then(|_| {
             resolve_project_root_for_service_target(
                 projects,

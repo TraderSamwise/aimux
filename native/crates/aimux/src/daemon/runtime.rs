@@ -2987,10 +2987,22 @@ pub fn handle_daemon_runtime_request_with_mutex(
     handle_daemon_runtime_request(&mut *runtime, request)
 }
 
+/// The fast path builds its access context with an EMPTY project list, which
+/// is fine for a caller whose decision does not depend on one and wrong for a
+/// caller whose decision does. An operator was already excluded for that
+/// reason; a peer is excluded for the same one, because its allowlist asks
+/// whether the proxy target is one of this machine's own project services and
+/// an empty list answers "no" to every port, including the right one.
+///
+/// Keyed on the role rather than on the path: the question is who is asking,
+/// and a list of paths would go stale the moment the allowlist grew.
 fn proxy_fast_path_can_skip_runtime_lock(headers: &BTreeMap<String, String>) -> bool {
-    !parse_remote_actor(headers)
-        .as_ref()
-        .is_some_and(|actor| actor.role == RemoteActorRole::Operator)
+    !parse_remote_actor(headers).as_ref().is_some_and(|actor| {
+        matches!(
+            actor.role,
+            RemoteActorRole::Operator | RemoteActorRole::Peer
+        )
+    })
 }
 
 fn aimux_cli_launch_json(launch: AimuxCliLaunchCommand) -> Value {

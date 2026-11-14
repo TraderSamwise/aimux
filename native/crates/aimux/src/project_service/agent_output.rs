@@ -46,8 +46,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use super::agent_input::{
-    agent_sender_prompt, format_agent_input_with_attachments, shared_chat_body_actor_prompt,
-    shared_chat_remote_actor_prompt, shared_chat_trim,
+    agent_input_sender_label, agent_sender_prompt, format_agent_input_with_attachments,
+    shared_chat_body_actor_prompt, shared_chat_remote_actor_prompt, shared_chat_trim,
 };
 use super::agent_input_delivery::{
     AGENT_INPUT_DELIVERY_TASK_NAME, AgentInputDeliveryDecision, AgentInputWindowActivity,
@@ -2127,7 +2127,11 @@ fn input_live_pane_route(
         && let Err(error) = record_task_input(
             &project_state_dir,
             task_id,
-            body.get("from").and_then(Value::as_str),
+            // The same derivation the prefix uses, so the ledger and the pane
+            // cannot name different senders -- and the only record of origin
+            // at all when the text is a bare command, which is delivered
+            // without a prefix because a prefixed command would not run.
+            agent_input_sender_label(body, remote_actor.as_ref()).as_deref(),
         )
     {
         return json_error(400, error);
@@ -2261,16 +2265,30 @@ struct PromptForDelivery<'a> {
 
 /// Compose context, attribution and attachments before the shared delivery boundary.
 fn compose_prompt_for_delivery(input: PromptForDelivery<'_>) -> String {
-    let input_text = match input
+    // A stamped peer FIRST, ahead of both body sources. The machine came from
+    // the socket the frame arrived on; `sharedChatActor` and `from` came from
+    // the sender. A peer posting `sharedChatActor` used to win this ordering
+    // and put any name on the line -- and that field is not alphabet-filtered
+    // the way a sender id is, so the name could close the bracket and keep
+    // writing. The allowlist refuses such a body as well; this is the half
+    // that does not depend on the route it arrived by.
+    let peer_sender = input
         .remote_actor
-        .filter(|actor| actor.role == RemoteActorRole::Guest)
-        .and_then(|actor| shared_chat_remote_actor_prompt(actor, &input.text))
+        .filter(|actor| actor.role == RemoteActorRole::Peer)
+        .and_then(|actor| agent_sender_prompt(input.body, Some(actor), &input.text));
+    let input_text = match peer_sender
+        .or_else(|| {
+            input
+                .remote_actor
+                .filter(|actor| actor.role == RemoteActorRole::Guest)
+                .and_then(|actor| shared_chat_remote_actor_prompt(actor, &input.text))
+        })
         .or_else(|| shared_chat_body_actor_prompt(input.body, &input.text))
-        // Last, because a shared-chat guest is the stronger claim about who is
-        // speaking. This one covers the local channel -- one agent sending to
-        // another through `aimux input`, which until now said nothing at all
-        // about where the words came from.
-        .or_else(|| agent_sender_prompt(input.body, &input.text))
+        // Last of the three, because a shared-chat guest is the stronger claim
+        // about who is speaking. This one covers the local channel -- one
+        // agent sending to another through `aimux input`, which until now said
+        // nothing at all about where the words came from.
+        .or_else(|| agent_sender_prompt(input.body, None, &input.text))
     {
         Some(value) => value,
         None => input.text,
@@ -2760,7 +2778,11 @@ async fn input_live_pane_route_async(
         && let Err(error) = record_task_input(
             &project_state_dir,
             task_id,
-            body.get("from").and_then(Value::as_str),
+            // The same derivation the prefix uses, so the ledger and the pane
+            // cannot name different senders -- and the only record of origin
+            // at all when the text is a bare command, which is delivered
+            // without a prefix because a prefixed command would not run.
+            agent_input_sender_label(body, remote_actor.as_ref()).as_deref(),
         )
     {
         return json_error(400, error);

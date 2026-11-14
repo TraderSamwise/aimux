@@ -1506,6 +1506,132 @@ fn runtime_mutex_wrapper_still_denies_guest_live_pane_input_proxy_fast_path() {
     );
 }
 
+fn peer_input_request() -> DaemonHttpRequest {
+    let mut request = FakeRuntime::request("POST", "/proxy/127.0.0.1/43210/agents/input");
+    request
+        .headers
+        .insert("x-aimux-actor-role".into(), "peer".into());
+    request
+        .headers
+        .insert("x-aimux-peer-machine-id".into(), "mbp".into());
+    request
+        .headers
+        .insert("content-type".into(), "application/json".into());
+    request
+        .body_chunks
+        .push(br#"{"sessionId":"s","text":"hello","from":"claude-utymep"}"#.to_vec());
+    request
+}
+
+/// A peer's input reaches a project service this machine runs -- and nothing
+/// else that happens to answer on a loopback port.
+///
+/// The proxy validates the HOST and not the port (`proxy_host_allowed`), so
+/// the allowlist asks instead whether the target resolves to one of this
+/// daemon's own projects. Both directions, because either alone passes for
+/// the wrong reason: the real project is forwarded, and the identical request
+/// against a daemon that runs no project on that port is refused by name and
+/// forwards nothing.
+#[test]
+fn a_peer_input_proxy_is_bound_to_a_project_this_daemon_runs() {
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    let forwarded = handle_daemon_runtime_request(&mut runtime, peer_input_request());
+    assert_eq!(
+        forwarded.status,
+        200,
+        "a peer naming this daemon's own project service must be forwarded: {}",
+        String::from_utf8_lossy(&forwarded.body)
+    );
+    assert!(
+        runtime
+            .calls
+            .iter()
+            .any(|call| call.starts_with("proxy-json:POST:http://127.0.0.1:43210/agents/input")),
+        "calls: {:?}",
+        runtime.calls
+    );
+
+    let mut stranger = FakeRuntime::empty();
+    let refused = handle_daemon_runtime_request(&mut stranger, peer_input_request());
+    assert_eq!(refused.status, 403);
+    assert_eq!(
+        json_body(&refused)["error"],
+        "peer machine mbp named a port that is not one of this machine's project services"
+    );
+    assert!(
+        stranger.calls.is_empty(),
+        "nothing may be forwarded on a refusal: {:?}",
+        stranger.calls
+    );
+}
+
+/// And the binding above only has an answer on the LOCKED path.
+///
+/// The proxy fast path builds its access context with an EMPTY project list,
+/// which says "not ours" about every port including the right one. An
+/// operator was already excluded for that reason; a peer is excluded for the
+/// same one. The observable is the runtime lock itself: a caller on the fast
+/// path is answered while the lock is held, and a caller that needs the
+/// project list is not.
+///
+/// The guest is the control. Without it this test passes for a request that
+/// blocks for any reason at all -- and a guest really is served from the fast
+/// path, so the pair separates "needs the lock" from "is slow".
+#[test]
+fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
+    let fixture = HostedFixture::new("peer-proxy-needs-project-binding");
+    let runtime = Arc::new(Mutex::new(RealDaemonRuntime::new(
+        fixture.resolver.clone(),
+        AimuxDaemonInfo {
+            pid: 123,
+            port: 43191,
+            started_at: "started".into(),
+            updated_at: "updated".into(),
+        },
+    )));
+
+    let held = runtime.lock().expect("hold runtime lock");
+
+    // The control: a guest proxy request is on the fast path, so it is
+    // answered with the lock held.
+    let guest_runtime = Arc::clone(&runtime);
+    let (guest_tx, guest_rx) = mpsc::channel();
+    let guest_thread = thread::spawn(move || {
+        let mut request = FakeRuntime::request("GET", "/proxy/127.0.0.1/43210/desktop-state");
+        request
+            .headers
+            .insert("x-aimux-actor-role".into(), "guest".into());
+        let response = handle_daemon_runtime_request_with_mutex(&guest_runtime, request);
+        guest_tx.send(response.status).expect("send guest status");
+    });
+    assert_eq!(
+        guest_rx.recv_timeout(Duration::from_secs(2)),
+        Ok(403),
+        "a guest proxy request must still be answered from the fast path"
+    );
+    guest_thread.join().expect("guest thread");
+
+    // The peer cannot be, because its decision needs the project list.
+    let peer_runtime = Arc::clone(&runtime);
+    let (peer_tx, peer_rx) = mpsc::channel();
+    let peer_thread = thread::spawn(move || {
+        let response =
+            handle_daemon_runtime_request_with_mutex(&peer_runtime, peer_input_request());
+        peer_tx.send(response.status).expect("send peer status");
+    });
+    assert!(
+        peer_rx.recv_timeout(Duration::from_millis(500)).is_err(),
+        "a peer proxy request was answered while the runtime lock was held, so it took the fast path and its project list was empty"
+    );
+    drop(held);
+    assert!(
+        peer_rx.recv_timeout(Duration::from_secs(2)).is_ok(),
+        "the peer request must complete once the lock is released"
+    );
+    peer_thread.join().expect("peer thread");
+}
+
 #[test]
 fn hosted_operator_post_proxy_still_waits_for_project_binding_runtime_lock() {
     let fixture = HostedFixture::new("operator-post-proxy-still-bound");
