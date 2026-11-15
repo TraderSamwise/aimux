@@ -8,9 +8,15 @@ use crate::daemon::http::DaemonResponseBody;
 use crate::daemon::jobs::{DaemonJobRouteRuntime, route_jobs_json_request};
 use crate::daemon::remote_control::route_remote_json_request;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
+use crate::daemon::status::DaemonStatusRuntime;
+use crate::machine_identity::is_valid_machine_id;
 use crate::project_api_contract::routes as project_routes;
 use crate::project_service::lifecycle_mutation_queue::queued_lifecycle_timeout_ms;
-use crate::proxy_project_binding::{is_binary_project_route, parse_proxy_target};
+use crate::proxy_project_binding::{
+    PEER_AGENT_INPUT_ROUTE, is_binary_project_route, parse_proxy_target,
+    resolve_service_target_for_project_root,
+};
+use crate::request_actor::{RemoteActorRole, parse_remote_actor};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -202,6 +208,10 @@ pub fn route_json_daemon_request(
         });
     }
 
+    if method == "POST" && pathname == PEER_AGENT_INPUT_ROUTE {
+        return Some(route_peer_agent_input(runtime, body, headers));
+    }
+
     let proxy = parse_proxy_target(pathname)?;
     if !proxy_host_allowed(&proxy.host) {
         return Some(DaemonRouteResponse::json(
@@ -231,6 +241,123 @@ pub fn route_json_daemon_request(
             Err(error) => proxy_error_response(error),
         },
     )
+}
+
+/// A peer machine's input, named by project and delivered by this machine.
+///
+/// The access decision has already established that the caller is a stamped
+/// peer and that `project` names a project this daemon is serving; this builds
+/// the hop to its own project service.
+///
+/// THE HEADERS ARE BUILT FRESH, never forwarded. The incoming map is not safe
+/// to pass on: the relay strips a client's `x-aimux-*` before stamping its
+/// own, but nothing strips them from a request that arrived on loopback, so
+/// forwarding the map wholesale would let a local caller hand the project
+/// service any stamp it liked. Only two values cross, and both come from
+/// `parse_remote_actor` rather than from the map or the body -- so a request
+/// with no actor forwards no stamp at all, and reaches the project service as
+/// the local caller it is.
+///
+/// The BODY is rebuilt for the same reason. `attachmentIds`, `force` and
+/// `sharedChatActor` are refused by the allowlist, and rebuilding means a
+/// field nobody has thought about yet cannot ride along behind them.
+fn route_peer_agent_input(
+    runtime: &mut (impl DaemonJsonRouteRuntime + DaemonStatusRuntime),
+    body: Option<&Value>,
+    headers: &BTreeMap<String, String>,
+) -> DaemonRouteResponse {
+    let body = body.unwrap_or(&Value::Null);
+    let Some(project) = body
+        .get("project")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|project| !project.is_empty())
+    else {
+        return DaemonRouteResponse::json(
+            400,
+            json!({ "ok": false, "error": "project is required" }),
+        );
+    };
+    let Some(session_id) = body
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|session_id| !session_id.is_empty())
+    else {
+        return DaemonRouteResponse::json(
+            400,
+            json!({ "ok": false, "error": "sessionId is required" }),
+        );
+    };
+    // Asked again here rather than carried from the access decision, because
+    // that decision holds the project ROOT and this needs the address -- and a
+    // listing that fails is not a listing that is empty.
+    let projects = match runtime.try_list_projects_for_route() {
+        Ok(projects) => projects,
+        Err(error) => {
+            return DaemonRouteResponse::json(
+                500,
+                json!({ "ok": false, "error": format!("could not list this machine's projects: {error}") }),
+            );
+        }
+    };
+    let Some(target) = resolve_service_target_for_project_root(&projects, project) else {
+        return DaemonRouteResponse::json(
+            503,
+            json!({
+                "ok": false,
+                "error": format!("this machine is not serving a project at {project}")
+            }),
+        );
+    };
+    if !proxy_host_allowed(&target.host) {
+        return DaemonRouteResponse::json(
+            403,
+            json!({ "ok": false, "error": "proxy host not allowed" }),
+        );
+    }
+    let mut forwarded = BTreeMap::from([
+        ("accept".to_owned(), "application/json".to_owned()),
+        ("content-type".to_owned(), "application/json".to_owned()),
+    ]);
+    if let Some(actor) =
+        parse_remote_actor(headers).filter(|actor| actor.role == RemoteActorRole::Peer)
+        && let Some(machine) = actor
+            .peer_machine_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|machine| is_valid_machine_id(machine))
+    {
+        forwarded.insert("x-aimux-actor-role".to_owned(), "peer".to_owned());
+        forwarded.insert("x-aimux-peer-machine-id".to_owned(), machine.to_owned());
+    }
+    let mut onward = json!({ "sessionId": session_id, "text": body.get("text").and_then(Value::as_str).unwrap_or_default() });
+    for field in ["from", "task"] {
+        if let Some(value) = body
+            .get(field)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            onward[field] = Value::String(value.to_owned());
+        }
+    }
+    let target_url = format!(
+        "http://{}:{}{}",
+        target.host,
+        target.port,
+        project_routes::agents::INPUT
+    );
+    match runtime.proxy_json_request(
+        &target_url,
+        "POST",
+        &forwarded,
+        Some(&onward),
+        proxy_timeout_ms(project_routes::agents::INPUT),
+    ) {
+        Ok(response) => DaemonRouteResponse::json(response.status, response.json),
+        Err(error) => proxy_error_response(error),
+    }
 }
 
 pub fn route_stateless_proxy_daemon_request(

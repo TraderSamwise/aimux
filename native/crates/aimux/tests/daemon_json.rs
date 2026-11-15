@@ -26,6 +26,14 @@ struct FakeJsonRuntime {
     binary: ProxyBinaryResponse,
     proxy_error: Option<String>,
     calls: Vec<String>,
+    projects: Vec<ProjectsRouteProject>,
+    projects_error: Option<String>,
+    /// Recorded SEPARATELY from `calls`, which many tests assert on exactly.
+    /// The headers are the whole point of the peer input route -- it is the
+    /// one place a stamp is minted rather than forwarded -- so they need
+    /// asserting, and widening the call strings would have rewritten every
+    /// other expectation in this file.
+    proxy_json_headers: Vec<BTreeMap<String, String>>,
 }
 
 impl Default for FakeJsonRuntime {
@@ -40,6 +48,9 @@ impl Default for FakeJsonRuntime {
             },
             proxy_error: None,
             calls: Vec::new(),
+            projects: Vec::new(),
+            projects_error: None,
+            proxy_json_headers: Vec::new(),
         }
     }
 }
@@ -59,7 +70,14 @@ impl DaemonStatusRuntime for FakeJsonRuntime {
     }
 
     fn list_projects_for_route(&self) -> Vec<ProjectsRouteProject> {
-        Vec::new()
+        self.projects.clone()
+    }
+
+    fn try_list_projects_for_route(&self) -> Result<Vec<ProjectsRouteProject>, String> {
+        match &self.projects_error {
+            Some(error) => Err(error.clone()),
+            None => Ok(self.projects.clone()),
+        }
     }
 
     fn daemon_state(&self) -> DaemonState {
@@ -174,10 +192,11 @@ impl DaemonJsonRouteRuntime for FakeJsonRuntime {
         &mut self,
         target_url: &str,
         method: &str,
-        _headers: &BTreeMap<String, String>,
+        headers: &BTreeMap<String, String>,
         body: Option<&Value>,
         timeout_ms: u64,
     ) -> Result<ProxyJsonResponse, String> {
+        self.proxy_json_headers.push(headers.clone());
         self.calls
             .push(format!("json:{method}:{target_url}:{timeout_ms}:{body:?}"));
         if let Some(error) = &self.proxy_error {
@@ -245,6 +264,238 @@ impl DaemonJobRouteRuntime for FakeJsonRuntime {
             signal: "SIGTERM".to_owned(),
             pid: None,
         })
+    }
+}
+
+fn served_project(path: &str, port: u64, live: bool) -> ProjectsRouteProject {
+    ProjectsRouteProject {
+        id: path.replace('/', "-"),
+        name: path.into(),
+        path: path.into(),
+        last_seen: None,
+        dashboard_session_name: "aimux-test".into(),
+        service: None,
+        service_alive: live,
+        dashboard_alive: None,
+        service_endpoint: Some(json!({ "host": "127.0.0.1", "port": port })),
+        online_agent_count: None,
+    }
+}
+
+fn peer_input_headers() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("x-aimux-actor-role".to_owned(), "peer".to_owned()),
+        ("x-aimux-peer-machine-id".to_owned(), "mbp".to_owned()),
+        // The noise a real request carries, none of which may cross.
+        ("host".to_owned(), "127.0.0.1:43190".to_owned()),
+        ("content-length".to_owned(), "64".to_owned()),
+        ("x-aimux-share-id".to_owned(), "share-1".to_owned()),
+    ])
+}
+
+/// The peer input route mints the stamp it forwards; it never passes one on.
+///
+/// This is the whole reason the route exists in this shape. The relay strips a
+/// client's `x-aimux-*` before stamping its own, and nothing strips them from a
+/// request that arrived on loopback -- so forwarding the incoming map would
+/// hand the project service whatever a local caller wrote. Exactly four
+/// headers cross, and the two that matter come from `parse_remote_actor`.
+#[test]
+fn peer_agent_input_forwards_a_minted_stamp_and_nothing_else() {
+    let mut runtime = FakeJsonRuntime {
+        projects: vec![served_project("/repo", 43210, true)],
+        ..Default::default()
+    };
+
+    let response = route_json_daemon_request(
+        &mut runtime,
+        "POST",
+        "/peer/agents/input",
+        Some(&json!({
+            "project": "/repo",
+            "sessionId": "codex-1",
+            "text": "look at the shard numbers",
+            "from": "claude-utymep",
+            "task": "task-1"
+        })),
+        &peer_input_headers(),
+        true,
+    )
+    .expect("the peer input route answered");
+
+    assert_eq!(response.status, 202);
+    assert_eq!(
+        runtime.calls,
+        vec![format!(
+            "json:POST:http://127.0.0.1:43210/agents/input:{PROXY_TIMEOUT_MS}:{:?}",
+            Some(json!({
+                "sessionId": "codex-1",
+                "text": "look at the shard numbers",
+                "from": "claude-utymep",
+                "task": "task-1"
+            }))
+        )],
+        "the project supplies the address, and the body is rebuilt"
+    );
+    assert_eq!(
+        runtime.proxy_json_headers,
+        vec![BTreeMap::from([
+            ("accept".to_owned(), "application/json".to_owned()),
+            ("content-type".to_owned(), "application/json".to_owned()),
+            ("x-aimux-actor-role".to_owned(), "peer".to_owned()),
+            ("x-aimux-peer-machine-id".to_owned(), "mbp".to_owned()),
+        ])],
+        "only four headers may cross, and `host`/`content-length`/`x-aimux-share-id` are not among them"
+    );
+}
+
+/// No actor means no stamp. A request that is not a peer must reach the
+/// project service as the local caller it is, or every rule that keys on the
+/// peer role would fire for a local send.
+#[test]
+fn peer_agent_input_stamps_nothing_when_nobody_is_stamped() {
+    for headers in [
+        BTreeMap::new(),
+        // A role with no machine, and a machine that is not an id: neither is
+        // evidence of a peer, and the stamp is minted from the parse rather
+        // than copied, so neither can leak through.
+        BTreeMap::from([("x-aimux-actor-role".to_owned(), "peer".to_owned())]),
+        BTreeMap::from([
+            ("x-aimux-actor-role".to_owned(), "peer".to_owned()),
+            ("x-aimux-peer-machine-id".to_owned(), "Mbp".to_owned()),
+        ]),
+        // And an owner, which is a real actor but not a peer.
+        BTreeMap::from([("x-aimux-actor-role".to_owned(), "owner".to_owned())]),
+    ] {
+        let mut runtime = FakeJsonRuntime {
+            projects: vec![served_project("/repo", 43210, true)],
+            ..Default::default()
+        };
+        route_json_daemon_request(
+            &mut runtime,
+            "POST",
+            "/peer/agents/input",
+            Some(&json!({ "project": "/repo", "sessionId": "codex-1", "text": "hi" })),
+            &headers,
+            true,
+        )
+        .expect("answered");
+        assert_eq!(
+            runtime.proxy_json_headers,
+            vec![BTreeMap::from([
+                ("accept".to_owned(), "application/json".to_owned()),
+                ("content-type".to_owned(), "application/json".to_owned()),
+            ])],
+            "{headers:?} is not a stamped peer"
+        );
+    }
+}
+
+/// This machine supplies the address, so it answers for the cases where it has
+/// none -- each as its own outcome rather than as a 404.
+#[test]
+fn peer_agent_input_says_which_thing_it_could_not_find() {
+    // A project this daemon does not run.
+    let mut runtime = FakeJsonRuntime {
+        projects: vec![served_project("/repo", 43210, true)],
+        ..Default::default()
+    };
+    let stranger = route_json_daemon_request(
+        &mut runtime,
+        "POST",
+        "/peer/agents/input",
+        Some(&json!({ "project": "/elsewhere", "sessionId": "codex-1", "text": "hi" })),
+        &peer_input_headers(),
+        true,
+    )
+    .expect("answered");
+    assert_eq!(stranger.status, 503);
+    assert!(runtime.calls.is_empty(), "{:?}", runtime.calls);
+
+    // A project it runs but is not serving.
+    let mut runtime = FakeJsonRuntime {
+        projects: vec![served_project("/repo", 43210, false)],
+        ..Default::default()
+    };
+    let not_serving = route_json_daemon_request(
+        &mut runtime,
+        "POST",
+        "/peer/agents/input",
+        Some(&json!({ "project": "/repo", "sessionId": "codex-1", "text": "hi" })),
+        &peer_input_headers(),
+        true,
+    )
+    .expect("answered");
+    assert_eq!(not_serving.status, 503);
+    assert!(runtime.calls.is_empty(), "{:?}", runtime.calls);
+
+    // A listing that FAILED is not a listing that is empty.
+    let mut runtime = FakeJsonRuntime {
+        projects: vec![served_project("/repo", 43210, true)],
+        projects_error: Some("registry unreadable".into()),
+        ..Default::default()
+    };
+    let unreadable = route_json_daemon_request(
+        &mut runtime,
+        "POST",
+        "/peer/agents/input",
+        Some(&json!({ "project": "/repo", "sessionId": "codex-1", "text": "hi" })),
+        &peer_input_headers(),
+        true,
+    )
+    .expect("answered");
+    assert_eq!(
+        unreadable.status, 500,
+        "could-not-ask must not read as is-not-there"
+    );
+    assert!(runtime.calls.is_empty(), "{:?}", runtime.calls);
+
+    // And the two required fields.
+    for body in [
+        json!({ "sessionId": "codex-1", "text": "hi" }),
+        json!({ "project": "   ", "sessionId": "codex-1", "text": "hi" }),
+        json!({ "project": "/repo", "text": "hi" }),
+        json!({ "project": "/repo", "sessionId": "  ", "text": "hi" }),
+    ] {
+        let mut runtime = FakeJsonRuntime {
+            projects: vec![served_project("/repo", 43210, true)],
+            ..Default::default()
+        };
+        let refused = route_json_daemon_request(
+            &mut runtime,
+            "POST",
+            "/peer/agents/input",
+            Some(&body),
+            &peer_input_headers(),
+            true,
+        )
+        .expect("answered");
+        assert_eq!(refused.status, 400, "{body:?}");
+        assert!(runtime.calls.is_empty(), "{body:?}: {:?}", runtime.calls);
+    }
+}
+
+/// A trailing slash is one checkout, because the relay's own key folds exactly
+/// that much -- so a lookup that folded differently would miss the project the
+/// owner record names.
+#[test]
+fn peer_agent_input_folds_a_project_root_the_way_the_relay_does() {
+    for (served, named) in [("/repo", "/repo/"), ("/repo/", "/repo"), ("/repo", "/repo")] {
+        let mut runtime = FakeJsonRuntime {
+            projects: vec![served_project(served, 43210, true)],
+            ..Default::default()
+        };
+        let response = route_json_daemon_request(
+            &mut runtime,
+            "POST",
+            "/peer/agents/input",
+            Some(&json!({ "project": named, "sessionId": "codex-1", "text": "hi" })),
+            &peer_input_headers(),
+            true,
+        )
+        .expect("answered");
+        assert_eq!(response.status, 202, "{served} served, {named} named");
+        assert_eq!(runtime.calls.len(), 1, "{served} served, {named} named");
     }
 }
 

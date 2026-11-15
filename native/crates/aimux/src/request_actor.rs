@@ -1,7 +1,7 @@
 use crate::daemon::routing::DaemonRouteUrl;
 use crate::machine_identity::is_valid_machine_id;
 use crate::project_api_contract::routes as project_routes;
-use crate::proxy_project_binding::parse_proxy_target;
+use crate::proxy_project_binding::{PEER_AGENT_INPUT_ROUTE, parse_proxy_target};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -227,13 +227,21 @@ fn assert_peer_allowed(
     let route = proxy_sub_path
         .clone()
         .unwrap_or_else(|| pathname.to_owned());
+    // Two doors to the same thing, and the second is the one a peer on another
+    // machine can actually use: the proxy route needs a host and a port, which
+    // a sender across the relay has no way to learn, while this one carries
+    // the project and lets the owner supply its own address.
+    //
+    // The body rules below apply to both, which is why they are checked after
+    // this and not inside either arm.
+    let names_a_project = pathname == PEER_AGENT_INPUT_ROUTE;
     let refuse_route = || {
         RemoteAccessDecision::deny(
             403,
             format!("no route is open to peer machine {origin}: {route}"),
         )
     };
-    if proxy_sub_path.as_deref() != Some(project_routes::agents::INPUT) {
+    if proxy_sub_path.as_deref() != Some(project_routes::agents::INPUT) && !names_a_project {
         // `live_pane::INPUT` shares a handler with the route above and is
         // deliberately NOT here: it is the door a shared guest writes to, and
         // its guest arm keys on a share session a peer does not have.
@@ -257,11 +265,18 @@ fn assert_peer_allowed(
         );
     }
     if context.project_root.is_none() {
+        // Each door says which thing it could not find, because they are
+        // different mistakes: a port this machine does not serve, or a project
+        // this machine does not run.
         return RemoteAccessDecision::deny(
             403,
-            format!(
-                "peer machine {origin} named a port that is not one of this machine's project services"
-            ),
+            if names_a_project {
+                format!("peer machine {origin} named a project this machine is not serving")
+            } else {
+                format!(
+                    "peer machine {origin} named a port that is not one of this machine's project services"
+                )
+            },
         );
     }
     if context
