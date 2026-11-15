@@ -531,6 +531,18 @@ mod enabled_state {
             self.relay.disconnect();
         }
 
+        pub fn peer_owner_for_input(&self, project_root: &str) -> (Option<String>, &'static str) {
+            self.relay.peer_owner_for_input(project_root)
+        }
+
+        pub fn forward_agent_input(
+            &self,
+            machine_id: &str,
+            body: &Value,
+        ) -> Result<(u16, Value), String> {
+            self.relay.forward_agent_input(machine_id, body)
+        }
+
         /// The live client's own state. This used to answer a hardcoded
         /// "disconnected" whenever remote was enabled, which was
         /// indistinguishable from a relay that was up and working.
@@ -667,6 +679,23 @@ mod disabled_state {
         }
 
         pub fn disconnect(&self) {}
+
+        /// Nobody else owns anything, because there is no relay to say so --
+        /// and `relay_off` is the reason, not a shrug. The caller's local path
+        /// is correct and unchanged.
+        pub fn peer_owner_for_input(&self, _project_root: &str) -> (Option<String>, &'static str) {
+            (None, "relay_off")
+        }
+
+        /// Unreachable while the above answers `None`, and a refusal rather
+        /// than a silent success if that ever stops being true.
+        pub fn forward_agent_input(
+            &self,
+            _machine_id: &str,
+            _body: &Value,
+        ) -> Result<(u16, Value), String> {
+            Err("remote control is not built into this binary".to_owned())
+        }
 
         /// Off, and not "disconnected": nothing is waiting on a connection
         /// that could be made.

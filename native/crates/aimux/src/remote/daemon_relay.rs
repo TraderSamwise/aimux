@@ -21,7 +21,7 @@ use tokio::io::{
 use tokio::net::TcpStream;
 use tokio::time::Instant;
 
-use crate::async_runtime::{spawn_blocking_named, task_name};
+use crate::async_runtime::{block_on_named, spawn_blocking_named, task_name};
 use crate::daemon::routing::DaemonRouteUrl;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::desktop_notifier::{DesktopNotificationPayload, send_desktop_notification_and_wait};
@@ -478,6 +478,14 @@ fn security_notification(title: &str, message: &str) {
     });
 }
 
+/// How long a forwarded input may hold the daemon's runtime mutex.
+///
+/// Short on purpose. The text route runs with that mutex held, so this is time
+/// in which no other daemon request is served at all -- and a person waiting
+/// on `aimux input` would rather hear that it did not go than have the whole
+/// daemon stop answering while they wait.
+const PEER_INPUT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Owns the relay client for the life of the daemon.
 #[derive(Default)]
 pub struct RelaySupervisor {
@@ -592,6 +600,104 @@ impl RelaySupervisor {
     /// The caller records what it pushed, so a refusal has to be an error and
     /// not a silent no-op: recording a frame that never left would leave the
     /// share pointing at a dead port until the next time the port changed.
+    /// Who owns this checkout, and is it somebody else.
+    ///
+    /// `None` means "do not forward" for every reason that is not an owner
+    /// elsewhere: the relay is off, the table has not arrived, nobody owns it,
+    /// two rows fold to one key, or the owner is this machine. The caller's
+    /// local path is correct in all of them, and the second return value says
+    /// which so it can be printed rather than guessed at.
+    pub fn peer_owner_for_input(&self, project_root: &str) -> (Option<String>, &'static str) {
+        use crate::remote::remote_project_owners::ProjectOwnerLookup;
+        let Ok(current) = self.current.lock() else {
+            // A poisoned mutex is not a reason to route a person's keystrokes
+            // anywhere, and the local path is what they would have got before
+            // any of this existed.
+            return (None, "relay_unavailable");
+        };
+        let Some((runner, _)) = current.as_ref() else {
+            return (None, "relay_off");
+        };
+        match runner.project_owner_for(project_root) {
+            ProjectOwnerLookup::Unknown => (None, "owner_unknown"),
+            ProjectOwnerLookup::Unowned => (None, "owner_none"),
+            ProjectOwnerLookup::Ambiguous => (None, "owner_ambiguous"),
+            ProjectOwnerLookup::Owned(owner) => {
+                if owner.machine_id == runner.machine_id() {
+                    return (None, "owner_is_this_machine");
+                }
+                // `unidentified` is the slot every daemon without a persisted
+                // identity shares, so a row naming it names no one machine --
+                // and the relay refuses it as a target anyway.
+                if !crate::machine_identity::is_valid_machine_id(&owner.machine_id) {
+                    return (None, "owner_unidentified");
+                }
+                if !owner.online {
+                    // Refused here rather than discovered at the far end: the
+                    // relay would answer `peer-target-offline`, and this says
+                    // the same thing without spending a round trip under the
+                    // daemon's runtime lock.
+                    return (None, "owner_offline");
+                }
+                (Some(owner.machine_id), "owner_elsewhere")
+            }
+        }
+    }
+
+    /// Forward one agent input to the machine that owns the checkout.
+    ///
+    /// The timeout is deliberately short. The daemon's runtime mutex is held
+    /// across the whole text route, so every second spent here is a second no
+    /// other daemon request can be served -- which is the failure the mutex's
+    /// own comment documents. A person waiting on `aimux input` would rather
+    /// be told it did not go than have the daemon stop answering.
+    pub fn forward_agent_input(
+        &self,
+        machine_id: &str,
+        body: &serde_json::Value,
+    ) -> Result<(u16, serde_json::Value), String> {
+        let Ok(current) = self.current.lock() else {
+            return Err("relay_unavailable".to_owned());
+        };
+        let Some((runner, _)) = current.as_ref() else {
+            return Err("relay_off".to_owned());
+        };
+        let runner = Arc::clone(runner);
+        let machine_id = machine_id.to_owned();
+        let body = body.clone();
+        // Bound first so the call below stays on one line with its marker:
+        // the seam audit wants the two adjacent, and `cargo fmt` wraps a long
+        // `block_on_named(...)` onto the next line, which leaves the marker
+        // describing nothing.
+        let ask = async move {
+            runner
+                .request_peer(
+                    &machine_id,
+                    "POST",
+                    crate::proxy_project_binding::PEER_AGENT_INPUT_ROUTE,
+                    &body,
+                    PEER_INPUT_TIMEOUT,
+                )
+                .await
+        };
+        // The daemon's text routes are sync and run on a blocking worker, which
+        // is the context `block_on_named` is for. The marker below has to be
+        // the line directly above the call -- a second comment line between
+        // them and the audit reads it as describing nothing.
+        //
+        // aimux-async-seam: permanent - a sync daemon text route awaits a peer
+        let answer = block_on_named("relay:forward-input", ask);
+        match answer {
+            Ok(answer) => Ok((answer.status, answer.body)),
+            // `PeerRequestError::message` rather than sentences of my own.
+            // Four endings that a person needs told apart -- above all whether
+            // the words may have arrived anyway -- and the first draft here
+            // had `TimedOut` and `AnsweredNothing` the wrong way round. The
+            // type that defines the distinction is the one that should say it.
+            Err(error) => Err(error.message()),
+        }
+    }
+
     pub fn push_project_endpoints(
         &self,
         projects: &[crate::remote::relay_client::ProjectEndpoint],

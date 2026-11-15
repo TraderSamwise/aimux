@@ -4864,6 +4864,18 @@ impl DaemonAgentTextRuntime for RealDaemonRuntime {
         self.resolve_project_root_value(value)
     }
 
+    fn peer_owner_for_input(&self, project_root: &str) -> (Option<String>, &'static str) {
+        self.remote.peer_owner_for_input(project_root)
+    }
+
+    fn forward_agent_input(
+        &mut self,
+        machine_id: &str,
+        body: &Value,
+    ) -> Result<(u16, Value), String> {
+        self.remote.forward_agent_input(machine_id, body)
+    }
+
     fn get_project_service_json(
         &mut self,
         project: &str,

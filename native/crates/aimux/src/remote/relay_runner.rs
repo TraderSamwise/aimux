@@ -754,6 +754,17 @@ impl RelayRunner {
     /// this can fail says which way it was: a frame that never left, a
     /// deadline that passed, a connection that dropped. None of them is an
     /// empty answer.
+    /// The machine id this runner CONNECTED as.
+    ///
+    /// Read from here rather than from `machine_identity` afresh: the owner
+    /// table's rows name the machine the relay saw, so "is this row me" has to
+    /// be asked of the same id. A fresh read can differ -- an unreadable home
+    /// mints an ephemeral id for the process -- and the comparison that
+    /// matters is the one the relay would make.
+    pub fn machine_id(&self) -> &str {
+        &self.machine.id
+    }
+
     pub async fn request_peer(
         self: &Arc<Self>,
         machine_id: &str,
