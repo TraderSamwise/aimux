@@ -102,18 +102,35 @@ pub fn resolve_service_target_for_project_root(
     })
 }
 
-/// A trailing slash and nothing else, matching the relay's own key.
+/// The cap the relay truncates a stored project root to, and which this has
+/// to share for the fold below to agree with it.
+const MAX_PROJECT_ROOT_CHARS: usize = 600;
+
+/// The relay's own key, character for character.
 ///
-/// The relay folds exactly this much when it keys a checkout
-/// (`shareProjectRootKey`), so a lookup here has to fold the same amount or
-/// the two disagree about whether `/repo` and `/repo/` are one checkout.
+/// `shareProjectRootKey` is `trim`, then truncate to the cap, then strip EVERY
+/// trailing slash, falling back to the truncated value if that empties it.
+/// Three details, and the first version of this got two of them wrong: it
+/// stripped one slash instead of all of them, and it never truncated. So
+/// `/repo//` keyed as `/repo` at the relay and `/repo/` here, and a root past
+/// six hundred characters keyed as its prefix there and whole here -- a lookup
+/// that misses the project the owner record names, reported as "this machine
+/// is not serving" a project it is serving.
+///
+/// The ORDER matters and is the relay's: truncate, THEN fold. The other way
+/// round makes a root whose six-hundredth character is a slash unmatchable,
+/// which is written down beside the relay's own copy for the same reason.
 fn fold_project_root(raw: &str) -> &str {
     let trimmed = raw.trim();
-    if trimmed.len() > 1 {
-        trimmed.strip_suffix('/').unwrap_or(trimmed)
-    } else {
-        trimmed
-    }
+    let stored = match trimmed.char_indices().nth(MAX_PROJECT_ROOT_CHARS) {
+        Some((offset, _)) => &trimmed[..offset],
+        None => trimmed,
+    };
+    let folded = stored.trim_end_matches('/');
+    // `|| stored` in the relay: a root that is nothing but slashes keeps them
+    // rather than becoming the empty key, which would match every other such
+    // root.
+    if folded.is_empty() { stored } else { folded }
 }
 
 pub fn is_binary_project_route(sub_path: &str) -> bool {

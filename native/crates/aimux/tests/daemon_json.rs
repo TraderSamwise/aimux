@@ -349,44 +349,65 @@ fn peer_agent_input_forwards_a_minted_stamp_and_nothing_else() {
     );
 }
 
-/// No actor means no stamp. A request that is not a peer must reach the
-/// project service as the local caller it is, or every rule that keys on the
-/// peer role would fire for a local send.
+/// This door is peer-only, and that is a REFUSAL rather than a quiet
+/// downgrade.
+///
+/// The access decision does not establish that the caller is a peer: an owner
+/// is allowed unconditionally and a caller with no actor is allowed
+/// unconditionally. Both reached the handler, which rebuilds the body -- so
+/// the owner's own app, posting `sharedChatActor`, had it dropped and its text
+/// delivered with no author at all, where the same request through the proxy
+/// door is labelled. Two routes to one pane, disagreeing about who spoke.
 #[test]
-fn peer_agent_input_stamps_nothing_when_nobody_is_stamped() {
+fn peer_agent_input_is_refused_to_everyone_who_is_not_a_stamped_peer() {
     for headers in [
+        // Nobody.
         BTreeMap::new(),
+        // The owner's own app, which the access decision allows outright.
+        BTreeMap::from([("x-aimux-actor-role".to_owned(), "owner".to_owned())]),
         // A role with no machine, and a machine that is not an id: neither is
-        // evidence of a peer, and the stamp is minted from the parse rather
-        // than copied, so neither can leak through.
+        // evidence of a peer.
         BTreeMap::from([("x-aimux-actor-role".to_owned(), "peer".to_owned())]),
         BTreeMap::from([
             ("x-aimux-actor-role".to_owned(), "peer".to_owned()),
             ("x-aimux-peer-machine-id".to_owned(), "Mbp".to_owned()),
         ]),
-        // And an owner, which is a real actor but not a peer.
-        BTreeMap::from([("x-aimux-actor-role".to_owned(), "owner".to_owned())]),
+        BTreeMap::from([
+            ("x-aimux-actor-role".to_owned(), "peer".to_owned()),
+            (
+                "x-aimux-peer-machine-id".to_owned(),
+                "unidentified".to_owned(),
+            ),
+        ]),
     ] {
         let mut runtime = FakeJsonRuntime {
             projects: vec![served_project("/repo", 43210, true)],
             ..Default::default()
         };
-        route_json_daemon_request(
+        let refused = route_json_daemon_request(
             &mut runtime,
             "POST",
             "/peer/agents/input",
-            Some(&json!({ "project": "/repo", "sessionId": "codex-1", "text": "hi" })),
+            Some(&json!({
+                "project": "/repo",
+                "sessionId": "codex-1",
+                "text": "hi",
+                "sharedChatActor": { "role": "owner", "displayName": "Sam" }
+            })),
             &headers,
             true,
         )
         .expect("answered");
+        assert_eq!(refused.status, 403, "{headers:?}");
         assert_eq!(
-            runtime.proxy_json_headers,
-            vec![BTreeMap::from([
-                ("accept".to_owned(), "application/json".to_owned()),
-                ("content-type".to_owned(), "application/json".to_owned()),
-            ])],
-            "{headers:?} is not a stamped peer"
+            json_body(refused)["error"],
+            "this route is for a peer machine, and this request is not from one",
+            "{headers:?}"
+        );
+        assert!(
+            runtime.calls.is_empty(),
+            "{headers:?} must not reach the project service: {:?}",
+            runtime.calls
         );
     }
 }
@@ -480,7 +501,30 @@ fn peer_agent_input_says_which_thing_it_could_not_find() {
 /// owner record names.
 #[test]
 fn peer_agent_input_folds_a_project_root_the_way_the_relay_does() {
-    for (served, named) in [("/repo", "/repo/"), ("/repo/", "/repo"), ("/repo", "/repo")] {
+    // The case the relay's own comment names: truncate THEN fold, so a root
+    // whose last kept character is a slash is still matchable. These two
+    // differ only PAST the cap, so the relay keys them identically -- and a
+    // lookup that skipped the truncation would refuse a project the owner
+    // record names.
+    let prefix = format!("/{}/", "a".repeat(598));
+    let long_served = format!("{prefix}xxx");
+    let long_named = format!("{prefix}yyy");
+    for (served, named) in [
+        ("/repo", "/repo/"),
+        ("/repo/", "/repo"),
+        ("/repo", "/repo"),
+        // EVERY trailing slash, not one: the relay strips the lot, so one
+        // stripped here keyed `/repo//` as `/repo/` and missed the project.
+        ("/repo", "/repo//"),
+        ("/repo//", "/repo"),
+        ("/repo///", "/repo//"),
+        // Whitespace, which the relay trims first.
+        ("/repo", "  /repo/  "),
+        // And past the cap, where the relay keys the truncated prefix. Both
+        // sides must truncate before folding or a root whose last kept
+        // character is a slash becomes unmatchable.
+        (long_served.as_str(), long_named.as_str()),
+    ] {
         let mut runtime = FakeJsonRuntime {
             projects: vec![served_project(served, 43210, true)],
             ..Default::default()

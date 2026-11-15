@@ -245,9 +245,21 @@ pub fn route_json_daemon_request(
 
 /// A peer machine's input, named by project and delivered by this machine.
 ///
-/// The access decision has already established that the caller is a stamped
-/// peer and that `project` names a project this daemon is serving; this builds
-/// the hop to its own project service.
+/// The access decision establishes that a PEER naming this project may use
+/// this route. It does not establish that the caller IS a peer: an owner is
+/// allowed unconditionally and a caller with no actor is allowed
+/// unconditionally, so both reach here -- and the first version of this said
+/// otherwise in this very comment.
+///
+/// That mattered, because the two doors share one handler and this one
+/// rebuilds the body. The owner's own app, posting `sharedChatActor`, would
+/// have had it dropped and its text delivered with NO author, where the same
+/// request through the proxy door is labelled. Two routes to one pane,
+/// disagreeing about who spoke.
+///
+/// So this door is peer-only and the refusal says so. Nothing is lost: an
+/// owner and a local caller both already have the proxy door, which is the one
+/// their attribution is built for.
 ///
 /// THE HEADERS ARE BUILT FRESH, never forwarded. The incoming map is not safe
 /// to pass on: the relay strips a client's `x-aimux-*` before stamping its
@@ -266,6 +278,27 @@ fn route_peer_agent_input(
     body: Option<&Value>,
     headers: &BTreeMap<String, String>,
 ) -> DaemonRouteResponse {
+    // The gate the docstring used to assume. Also where the stamp is
+    // established, so there is one place that decides what a peer is.
+    let Some(peer_machine) = parse_remote_actor(headers)
+        .filter(|actor| actor.role == RemoteActorRole::Peer)
+        .and_then(|actor| {
+            actor
+                .peer_machine_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|machine| is_valid_machine_id(machine))
+                .map(str::to_owned)
+        })
+    else {
+        return DaemonRouteResponse::json(
+            403,
+            json!({
+                "ok": false,
+                "error": "this route is for a peer machine, and this request is not from one"
+            }),
+        );
+    };
     let body = body.unwrap_or(&Value::Null);
     let Some(project) = body
         .get("project")
@@ -316,21 +349,12 @@ fn route_peer_agent_input(
             json!({ "ok": false, "error": "proxy host not allowed" }),
         );
     }
-    let mut forwarded = BTreeMap::from([
+    let forwarded = BTreeMap::from([
         ("accept".to_owned(), "application/json".to_owned()),
         ("content-type".to_owned(), "application/json".to_owned()),
+        ("x-aimux-actor-role".to_owned(), "peer".to_owned()),
+        ("x-aimux-peer-machine-id".to_owned(), peer_machine),
     ]);
-    if let Some(actor) =
-        parse_remote_actor(headers).filter(|actor| actor.role == RemoteActorRole::Peer)
-        && let Some(machine) = actor
-            .peer_machine_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|machine| is_valid_machine_id(machine))
-    {
-        forwarded.insert("x-aimux-actor-role".to_owned(), "peer".to_owned());
-        forwarded.insert("x-aimux-peer-machine-id".to_owned(), machine.to_owned());
-    }
     let mut onward = json!({ "sessionId": session_id, "text": body.get("text").and_then(Value::as_str).unwrap_or_default() });
     for field in ["from", "task"] {
         if let Some(value) = body
