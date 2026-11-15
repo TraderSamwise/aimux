@@ -30,6 +30,26 @@ const LOOP_EXIT_EVENT_TIMEOUT_MS: u64 = 500;
 
 pub trait DaemonAgentTextRuntime {
     fn resolve_project_root(&self, value: &str) -> String;
+    /// Whether THIS machine is serving that checkout.
+    ///
+    /// The question that stops ownership shadowing a local session.
+    /// Ownership is an exclusive claim on a path, and nothing stops a second
+    /// machine from also having that checkout and running agents in it -- so
+    /// "strix owns /cs/aimux" does not mean a session named on this laptop
+    /// lives on strix. Without this, `aimux input` for a laptop-local agent
+    /// was sent to strix and refused there, and `--force` was refused before
+    /// it could even be tried: local input to any owned checkout was dead on
+    /// every machine but one.
+    ///
+    /// So the forward is for the case the feature is actually for: a machine
+    /// that does NOT have the checkout steering an agent on the machine that
+    /// does.
+    ///
+    /// Defaults to `true` -- "assume it is mine" -- because that is the
+    /// answer that keeps today's behaviour when a runtime cannot tell.
+    fn serves_project_locally(&mut self, _project_root: &str) -> bool {
+        true
+    }
     /// Which other machine owns this checkout, and why not if not.
     ///
     /// The second value is a reason rather than a bool, because every "no" is
@@ -729,7 +749,16 @@ pub fn agent_input_text_route(
     // from it would mean parsing an error string -- and the owner record is
     // the fact that actually answers the question.
     let resolved_for_owner = runtime.resolve_project_root(&project);
-    let (owner_machine, owner_reason) = runtime.peer_owner_for_input(&resolved_for_owner);
+    // Asked FIRST, before the owner table. If this machine is serving the
+    // checkout then the session named is this machine's business, whoever owns
+    // the path -- and the local path below is the one that has always handled
+    // it.
+    let serves_locally = runtime.serves_project_locally(&resolved_for_owner);
+    let (owner_machine, owner_reason) = if serves_locally {
+        (None, "project_is_served_here")
+    } else {
+        runtime.peer_owner_for_input(&resolved_for_owner)
+    };
     if let Some(owner_machine) = owner_machine {
         // `--force` cannot cross. The owner's allowlist refuses a peer's
         // `force` by name, so carrying it would turn this into a 403 from
@@ -769,6 +798,8 @@ pub fn agent_input_text_route(
                             Value::String(resolved_for_owner.clone()),
                         );
                         payload.insert("ownerMachineId".into(), Value::String(owner_machine));
+                        payload
+                            .insert("peerRouting".into(), Value::String(owner_reason.to_owned()));
                         Value::Object(payload)
                     }
                     _ => json!({
@@ -807,7 +838,7 @@ pub fn agent_input_text_route(
             ),
         };
     }
-    let _ = owner_reason;
+
     let (project_response, project_root) =
         match unwrap_project_result(runtime.post_project_service_json(
             &project,
@@ -836,9 +867,20 @@ pub fn agent_input_text_route(
             payload
                 .entry("sessionId")
                 .or_insert_with(|| Value::String(session_id));
+            // Why this went locally, carried rather than discarded. Eight
+            // reasons are only worth naming if somebody can read one: it was
+            // computed and thrown away, which made the whole set decorative.
+            // `--json` carries it, and a person asking why their words did not
+            // reach another machine has the answer in the response.
+            payload.insert("peerRouting".into(), Value::String(owner_reason.to_owned()));
             Value::Object(payload)
         }
-        _ => json!({ "ok": true, "projectRoot": project_root, "sessionId": session_id }),
+        _ => json!({
+            "ok": true,
+            "projectRoot": project_root,
+            "sessionId": session_id,
+            "peerRouting": owner_reason,
+        }),
     };
     text_or_json_lines(
         route_url,

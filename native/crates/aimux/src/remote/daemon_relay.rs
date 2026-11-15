@@ -594,12 +594,6 @@ impl RelaySupervisor {
         }
     }
 
-    /// Report where the project services are listening, or say why it could
-    /// not go.
-    ///
-    /// The caller records what it pushed, so a refusal has to be an error and
-    /// not a silent no-op: recording a frame that never left would leave the
-    /// share pointing at a dead port until the next time the port changed.
     /// Who owns this checkout, and is it somebody else.
     ///
     /// `None` means "do not forward" for every reason that is not an owner
@@ -663,6 +657,13 @@ impl RelaySupervisor {
             return Err("relay_off".to_owned());
         };
         let runner = Arc::clone(runner);
+        // Dropped before the wait, and this matters more than the comment on
+        // the timeout below. Held across `block_on_named`, this lock would
+        // stop `status`, `push`, `push_project_endpoints`, `is_connected`,
+        // `connect` and `disconnect` for the whole five seconds -- a broader
+        // stall than the runtime mutex the timeout is bounded for, and every
+        // other method on this type only queues.
+        drop(current);
         let machine_id = machine_id.to_owned();
         let body = body.clone();
         // Bound first so the call below stays on one line with its marker:
@@ -698,6 +699,12 @@ impl RelaySupervisor {
         }
     }
 
+    /// Report where the project services are listening, or say why it could
+    /// not go.
+    ///
+    /// The caller records what it pushed, so a refusal has to be an error and
+    /// not a silent no-op: recording a frame that never left would leave the
+    /// share pointing at a dead port until the next time the port changed.
     pub fn push_project_endpoints(
         &self,
         projects: &[crate::remote::relay_client::ProjectEndpoint],

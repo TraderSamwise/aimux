@@ -747,13 +747,6 @@ impl RelayRunner {
         self.queue(frame)
     }
 
-    /// Ask another of this account's machines something, and wait for it.
-    ///
-    /// The machine is named by the caller; there is no "whichever is online"
-    /// here, and the relay refuses a peer request that names none. Every way
-    /// this can fail says which way it was: a frame that never left, a
-    /// deadline that passed, a connection that dropped. None of them is an
-    /// empty answer.
     /// The machine id this runner CONNECTED as.
     ///
     /// Read from here rather than from `machine_identity` afresh: the owner
@@ -765,6 +758,13 @@ impl RelayRunner {
         &self.machine.id
     }
 
+    /// Ask another of this account's machines something, and wait for it.
+    ///
+    /// The machine is named by the caller; there is no "whichever is online"
+    /// here, and the relay refuses a peer request that names none. Every way
+    /// this can fail says which way it was: a frame that never left, a
+    /// deadline that passed, a connection that dropped. None of them is an
+    /// empty answer.
     pub async fn request_peer(
         self: &Arc<Self>,
         machine_id: &str,

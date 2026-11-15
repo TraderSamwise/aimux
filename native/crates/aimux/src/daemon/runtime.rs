@@ -4864,6 +4864,21 @@ impl DaemonAgentTextRuntime for RealDaemonRuntime {
         self.resolve_project_root_value(value)
     }
 
+    fn serves_project_locally(&mut self, project_root: &str) -> bool {
+        // The same registry fact the owner's own route resolves against, asked
+        // of this machine. A listing that FAILED is not a listing that is
+        // empty: unable to tell means assume it is ours, which is the answer
+        // that keeps today's behaviour.
+        let Ok(projects) = self.try_list_projects_for_route() else {
+            return true;
+        };
+        crate::proxy_project_binding::resolve_service_target_for_project_root(
+            &projects,
+            project_root,
+        )
+        .is_some()
+    }
+
     fn peer_owner_for_input(&self, project_root: &str) -> (Option<String>, &'static str) {
         self.remote.peer_owner_for_input(project_root)
     }

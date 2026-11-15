@@ -29,6 +29,9 @@ struct FakeAgentRuntime {
     invalid_agents: bool,
     tmux_live_window_error: Option<String>,
     agent_response: Option<Value>,
+    /// Whether this machine serves the checkout. `false` is the case the
+    /// forward is for: a machine that does not have it.
+    serves_locally: bool,
     /// Which machine the owner table names for any checkout, and why not.
     owner: Option<String>,
     owner_reason: &'static str,
@@ -40,6 +43,8 @@ struct FakeAgentRuntime {
 impl FakeAgentRuntime {
     fn owned_elsewhere(answer: Result<(u16, Value), String>) -> Self {
         Self {
+            // Not served here, which is the only case a forward is for.
+            serves_locally: false,
             owner: Some("strix".to_owned()),
             owner_reason: "owner_elsewhere",
             forwarded: Some(answer),
@@ -49,6 +54,10 @@ impl FakeAgentRuntime {
 }
 
 impl DaemonAgentTextRuntime for FakeAgentRuntime {
+    fn serves_project_locally(&mut self, _project_root: &str) -> bool {
+        self.serves_locally
+    }
+
     fn peer_owner_for_input(&self, _project_root: &str) -> (Option<String>, &'static str) {
         (self.owner.clone(), self.owner_reason)
     }
@@ -335,9 +344,9 @@ fn input_for_a_checkout_another_machine_owns_is_forwarded_to_it() {
     assert!(runtime.calls.is_empty(), "{:?}", runtime.calls);
 }
 
-/// Every reason the owner is not somebody else takes today's local path,
-/// byte-identically. Offline aimux is the common case and must not notice any
-/// of this.
+/// Every reason the owner is not somebody else takes today's local path, and
+/// SAYS which reason -- the eight were computed and discarded, which made the
+/// whole set decorative.
 #[test]
 fn input_takes_the_local_path_for_every_reason_it_is_not_forwarded() {
     for reason in [
@@ -351,6 +360,10 @@ fn input_takes_the_local_path_for_every_reason_it_is_not_forwarded() {
         "owner_offline",
     ] {
         let mut runtime = FakeAgentRuntime {
+            // Not served here, so the owner table IS consulted -- otherwise
+            // every iteration would be the same execution and the reason
+            // would never be read.
+            serves_locally: false,
             owner: None,
             owner_reason: reason,
             agent_response: Some(json!({ "ok": true, "sessionId": "codex-1" })),
@@ -367,6 +380,48 @@ fn input_takes_the_local_path_for_every_reason_it_is_not_forwarded() {
             "{reason} must reach this machine's project service"
         );
         assert_eq!(runtime.calls[0].route_path, project_routes::agents::INPUT);
+        assert!(
+            body_text(&response).contains(reason),
+            "{reason} must be carried to the caller: {}",
+            body_text(&response)
+        );
+    }
+}
+
+/// A session on a machine that SERVES the checkout stays local, whoever owns
+/// the path.
+///
+/// Ownership is an exclusive claim on a path; it does not mean the other
+/// machine is the only one running agents there. Without this, `aimux input`
+/// for a laptop-local agent in an owned checkout was sent to the owner and
+/// refused there -- and `--force` was refused before it could even be tried,
+/// so there was no way to reach a local session at all.
+#[test]
+fn a_session_on_a_checkout_this_machine_serves_is_never_forwarded() {
+    for extra in ["", "&force=1"] {
+        let mut runtime = FakeAgentRuntime {
+            // Served here AND owned by somebody else: the case that was broken.
+            serves_locally: true,
+            owner: Some("strix".to_owned()),
+            owner_reason: "owner_elsewhere",
+            forwarded: Some(Ok((200, json!({ "ok": true })))),
+            agent_response: Some(json!({ "ok": true, "sessionId": "codex-1" })),
+            ..Default::default()
+        };
+
+        let response = send_input(&mut runtime, extra);
+
+        assert_eq!(response.status, 200, "{extra}: {}", body_text(&response));
+        assert!(
+            runtime.forwards.is_empty(),
+            "{extra} must not be forwarded off a machine that serves the checkout"
+        );
+        assert_eq!(runtime.calls.len(), 1, "{extra} must be delivered locally");
+        assert!(
+            body_text(&response).contains("project_is_served_here"),
+            "{extra}: {}",
+            body_text(&response)
+        );
     }
 }
 
