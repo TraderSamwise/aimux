@@ -153,6 +153,20 @@ pub struct RelayRunner {
     /// dropping the sender is how it learns that rather than hanging.
     peer_waiters: Arc<Mutex<HashMap<String, oneshot::Sender<PeerAnswer>>>>,
     peer_request_seq: AtomicUsize,
+    /// Who owns which checkout, as the relay last told this machine.
+    ///
+    /// `Option` IS the tri-state and that is deliberate: `None` means no frame
+    /// has arrived on the CURRENT connection, `Some(empty)` means the relay
+    /// says nobody owns anything, and `Some(rows)` is a table. Held as a
+    /// separate `known` flag beside a vector, the two could disagree -- and
+    /// the answer that matters most here is the one nobody has yet, because a
+    /// sender that reads "no owner" when the truth is "not asked yet" sends
+    /// input to the wrong machine's local path.
+    ///
+    /// Cleared wherever `peer_waiters` is cleared, for the same reason: both
+    /// describe a connection, and a reconnect must not inherit either. A table
+    /// surviving a dead relay is a confident wrong answer.
+    project_owners: Arc<Mutex<Option<Vec<crate::remote::remote_project_owners::ProjectOwner>>>>,
     /// The frame currently being written, if one is.
     ///
     /// It stays at the front of the outbox across the write, deliberately, so
@@ -257,6 +271,8 @@ impl RelayRunner {
             outbox_high_water: AtomicUsize::new(0),
             peer_waiters: Arc::new(Mutex::new(HashMap::new())),
             peer_request_seq: AtomicUsize::new(0),
+            // `None`, not an empty table: nothing has been heard yet.
+            project_owners: Arc::new(Mutex::new(None)),
             writing_frame: Arc::new(Mutex::new(None)),
         })
     }
@@ -626,6 +642,12 @@ impl RelayRunner {
             RelayAction::NotifyClientConnected { title, body } => {
                 self.bridge.notify_client_connected(&title, &body).await;
             }
+            RelayAction::ProjectOwners { owners } => {
+                // Replaces whatever was held, including with an empty table:
+                // "the relay says nobody owns anything" is an answer, and it
+                // has to be distinguishable from never having been told.
+                self.store_project_owners(owners);
+            }
             RelayAction::PeerResponse {
                 id,
                 status,
@@ -839,6 +861,49 @@ impl RelayRunner {
     fn fail_peer_waiters(&self) {
         if let Ok(mut waiters) = self.peer_waiters.lock() {
             waiters.clear();
+        }
+        // The owner table described the connection that has just gone, so it
+        // goes with it. Keeping it would leave a sender confidently routing to
+        // whatever was true when the socket died.
+        if let Ok(mut owners) = self.project_owners.lock() {
+            *owners = None;
+        }
+    }
+
+    /// What this machine currently knows about who owns what.
+    ///
+    /// Three outcomes, and the caller has to handle all three: not asked yet,
+    /// asked and nobody owns this, asked and here is the owner. Collapsing the
+    /// first two is how a sender ends up believing a checkout is unowned when
+    /// it simply has not heard.
+    pub fn project_owner_for(
+        &self,
+        project_root: &str,
+    ) -> crate::remote::remote_project_owners::ProjectOwnerLookup {
+        let Ok(owners) = self.project_owners.lock() else {
+            return crate::remote::remote_project_owners::ProjectOwnerLookup::Unknown;
+        };
+        let Some(owners) = owners.as_ref() else {
+            return crate::remote::remote_project_owners::ProjectOwnerLookup::Unknown;
+        };
+        let wanted = crate::proxy_project_binding::fold_project_root_for_lookup(project_root);
+        match owners.iter().find(|owner| {
+            crate::proxy_project_binding::fold_project_root_for_lookup(&owner.project_root)
+                == wanted
+        }) {
+            Some(owner) => {
+                crate::remote::remote_project_owners::ProjectOwnerLookup::Owned(owner.clone())
+            }
+            None => crate::remote::remote_project_owners::ProjectOwnerLookup::Unowned,
+        }
+    }
+
+    fn store_project_owners(
+        &self,
+        owners: Vec<crate::remote::remote_project_owners::ProjectOwner>,
+    ) {
+        if let Ok(mut held) = self.project_owners.lock() {
+            *held = Some(owners);
         }
     }
 

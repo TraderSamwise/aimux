@@ -10,6 +10,73 @@ use serde_json::json;
 
 const MAX_HANDSHAKE_FAILURES: u32 = 5;
 
+/// An owner table arriving is an answer, and an EMPTY one is still an answer.
+///
+/// The daemon's own state holds this as an `Option`, where `None` means
+/// nothing has been heard on this connection. So a frame with no usable
+/// `owners` array must become an empty table rather than an `Ignore`:
+/// ignoring it would leave the daemon believing it had never been told, when
+/// it has been told that nobody owns anything.
+#[test]
+fn an_owner_table_frame_is_an_answer_even_when_it_is_empty() {
+    use aimux::remote::remote_project_owners::ProjectOwner;
+
+    assert_eq!(
+        handle_frame(
+            r#"{"type":"project_owners","owners":[{"projectRoot":"/repo","machineId":"mbp","claimedAt":"2026-11-15T00:00:00.000Z","online":true}]}"#
+        ),
+        RelayAction::ProjectOwners {
+            owners: vec![ProjectOwner {
+                project_root: "/repo".into(),
+                machine_id: "mbp".into(),
+                claimed_at: "2026-11-15T00:00:00.000Z".into(),
+                online: true,
+            }]
+        }
+    );
+
+    for empty in [
+        r#"{"type":"project_owners","owners":[]}"#,
+        r#"{"type":"project_owners"}"#,
+        r#"{"type":"project_owners","owners":"nonsense"}"#,
+    ] {
+        assert_eq!(
+            handle_frame(empty),
+            RelayAction::ProjectOwners { owners: Vec::new() },
+            "{empty} says the table is empty, which is not the same as silence"
+        );
+    }
+}
+
+/// A row that names no checkout or no machine is dropped, not stored.
+///
+/// It cannot be looked up and cannot be routed to, so keeping it would put a
+/// row in the table that matches nothing -- and `online` defaults to false
+/// rather than true, because an unstated liveness is not a promise of one.
+#[test]
+fn an_owner_row_missing_what_it_needs_is_dropped() {
+    use aimux::remote::remote_project_owners::ProjectOwner;
+
+    assert_eq!(
+        handle_frame(
+            r#"{"type":"project_owners","owners":[
+                {"machineId":"mbp"},
+                {"projectRoot":"/repo"},
+                {"projectRoot":"","machineId":"mbp"},
+                {"projectRoot":"/kept","machineId":"strix"}
+            ]}"#
+        ),
+        RelayAction::ProjectOwners {
+            owners: vec![ProjectOwner {
+                project_root: "/kept".into(),
+                machine_id: "strix".into(),
+                claimed_at: String::new(),
+                online: false,
+            }]
+        }
+    );
+}
+
 #[test]
 fn a_ping_is_answered_with_a_pong_and_nothing_else() {
     assert_eq!(

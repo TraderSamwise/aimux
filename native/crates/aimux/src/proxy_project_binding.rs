@@ -136,6 +136,16 @@ const MAX_PROJECT_ROOT_CHARS: usize = 600;
 /// The ORDER matters and is the relay's: truncate, THEN fold. The other way
 /// round makes a root whose six-hundredth character is a slash unmatchable,
 /// which is written down beside the relay's own copy for the same reason.
+/// The relay's key, for callers outside this module.
+///
+/// Exported rather than copied, because the owner table is keyed by the relay
+/// and looked up by the daemon: two folds would be two keys, and a daemon
+/// would decide a checkout is unowned because it folded the name differently
+/// from the record naming it.
+pub fn fold_project_root_for_lookup(raw: &str) -> &str {
+    fold_project_root(raw)
+}
+
 fn fold_project_root(raw: &str) -> &str {
     let trimmed = raw.trim();
     let stored = match trimmed.char_indices().nth(MAX_PROJECT_ROOT_CHARS) {

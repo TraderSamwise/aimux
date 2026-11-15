@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { Env, RelayMessage } from "./types.js";
+import type { Env, RelayMessage, RelayProjectOwnersControl } from "./types.js";
 import {
   MAX_MACHINES_PER_ROOM,
   type MachineInfo,
@@ -125,6 +125,12 @@ const BIND_SHARE_REFUSALS: Record<BindShareRefusal, { status: number; error: str
 /// array is unbounded work in one request. A daemon reports one entry per
 /// registered project; this is far above any real fleet.
 export const MAX_PROJECT_ENDPOINT_REPORTS = 500;
+/// How many owner rows one `project_owners` frame may carry.
+///
+/// The stored table is already capped at `MAX_OWNED_PROJECTS`, so this is the
+/// frame's own bound rather than the table's: a snapshot that grew past what a
+/// daemon can hold would be a push that costs more than the lookup it saves.
+export const MAX_PROJECT_OWNER_REPORTS = 500;
 /// How many shares one report may refresh in its guests' objects.
 ///
 /// Each one is a cross-object `fetch` per guest, and the retry means a report
@@ -371,6 +377,22 @@ export class RelayObject extends DurableObject<Env> {
       this.daemonMachineNames.set(daemonMachine.id, daemonMachine.name);
       this.send(server, { type: "connected", role: "daemon" });
       await this.broadcastMachineStatus();
+      // To the ARRIVING daemon only.
+      //
+      // The first version broadcast to every daemon here, on the reasoning
+      // that this machine coming up changes the `online` column of every row
+      // naming it. That broke an invariant worth keeping, and a test caught
+      // it: `broadcastMachineStatus` goes to CLIENT sockets only, so a daemon
+      // is never disturbed by another machine's arrival, and it should not
+      // start being.
+      //
+      // Nothing is lost, because `online` is a HINT and not a gate. A sender
+      // that forwards to a machine which has since gone gets the relay's own
+      // `peer-target-offline` by name; a sender that skips one which has since
+      // arrived falls back to its local path, which is the safe direction and
+      // self-corrects on the next claim. Ownership itself only changes on a
+      // claim, and that still tells everyone.
+      this.send(server, { type: "project_owners", owners: await this.projectOwnerRows() });
     } else {
       this.clientSockets.add(server);
       if (clientDevice) this.clientDeviceIds.set(server, clientDevice.deviceId);
@@ -1028,6 +1050,10 @@ export class RelayObject extends DurableObject<Env> {
       // Rehydration already dropped this machine from both maps.
       if (!replacementDaemon) {
         await this.broadcastMachineStatus();
+        // No owner push here. A machine leaving changes no ownership, only the
+        // `online` hint, and a flapping daemon broadcasting to the fleet costs
+        // more than the hint is worth -- the transport already refuses a dead
+        // target by name.
       }
     } else {
       this.clientSockets.delete(ws);
@@ -1971,6 +1997,11 @@ export class RelayObject extends DurableObject<Env> {
     }
     if (!result.alreadyOwned) {
       await saveSharingState(this.ctx.storage, result.state);
+      // Only when something actually changed. A re-claim of a checkout this
+      // machine already owns is the common case -- a daemon claims on every
+      // start -- and pushing the same snapshot for it would make the fleet's
+      // morning a broadcast per machine per checkout.
+      await this.broadcastProjectOwners();
     }
     return json({ ok: true, alreadyOwned: result.alreadyOwned, owner: result.owner }, 200);
   }
@@ -1978,16 +2009,36 @@ export class RelayObject extends DurableObject<Env> {
   /// Who owns which checkout, for a machine that wants to know whether it is
   /// the owner -- including when the answer is somebody else.
   private async listProjectOwners(): Promise<Response> {
+    return json({ ok: true, owners: await this.projectOwnerRows() }, 200);
+  }
+
+  /// The owner table as anyone is told it, derived once.
+  ///
+  /// The CLI reads this over HTTP and a daemon is pushed it over its socket.
+  /// Computed in two places they agreed only by luck, and `online` is the half
+  /// that would have drifted -- it comes from the live socket map, so the two
+  /// surfaces would have disagreed about which machines are up depending on
+  /// which one you asked.
+  private async projectOwnerRows(): Promise<RelayProjectOwnersControl["owners"]> {
     const state = await loadSharingState(this.ctx.storage);
     const online = new Set(this.onlineMachines().map((machine) => machine.id));
-    const owners = Object.entries(state.projectOwners ?? {}).map(([projectRoot, owner]) => ({
-      projectRoot,
-      ...owner,
-      // Whether the owner is reachable right now, because "owned by a laptop
-      // that is shut" is the case the whole record exists to make visible.
-      online: online.has(owner.machineId),
-    }));
-    return json({ ok: true, owners }, 200);
+    return Object.entries(state.projectOwners ?? {})
+      .slice(0, MAX_PROJECT_OWNER_REPORTS)
+      .map(([projectRoot, owner]) => ({
+        projectRoot,
+        ...owner,
+        // Whether the owner is reachable right now, because "owned by a laptop
+        // that is shut" is the case the whole record exists to make visible.
+        online: online.has(owner.machineId),
+      }));
+  }
+
+  /// Tell this account's daemons who owns what.
+  ///
+  /// `broadcastToDaemons`, never `broadcastToClients`: the rows are absolute
+  /// checkout paths and machine ids for the whole fleet.
+  private async broadcastProjectOwners(): Promise<void> {
+    this.broadcastToDaemons({ type: "project_owners", owners: await this.projectOwnerRows() });
   }
 
   /// Bind a share that already exists to the machine holding its session.

@@ -121,6 +121,14 @@ pub enum RelayAction {
         /// carrying the peer's own answer.
         from_relay: bool,
     },
+    /// The relay said who owns which checkout.
+    ///
+    /// A full snapshot, so it replaces whatever was held rather than merging:
+    /// a row that has gone from the table has gone, and merging would keep a
+    /// checkout owned by a machine that released it.
+    ProjectOwners {
+        owners: Vec<crate::remote::remote_project_owners::ProjectOwner>,
+    },
 }
 
 /// Node answered a ping itself and never surfaced it.
@@ -135,6 +143,39 @@ pub fn handle_frame(data: &str) -> RelayAction {
     match kind {
         "ping" => RelayAction::Send(json!({ "type": "pong" }).to_string()),
         "connected" | "error" | "pong" | "daemon_status" => RelayAction::Ignore,
+        "project_owners" => {
+            // A frame with no `owners` array is still an answer -- "the table
+            // is empty" -- and it has to be told apart from no frame at all,
+            // which is what the runner's `None` means. So a missing or
+            // unreadable array becomes an EMPTY table rather than an ignore:
+            // ignoring it would leave the daemon believing it had never been
+            // told, and it has.
+            let owners = message
+                .get("owners")
+                .and_then(Value::as_array)
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(|row| {
+                            let project_root = string_field(Some(row), "projectRoot");
+                            let machine_id = string_field(Some(row), "machineId");
+                            // A row naming no checkout or no machine cannot be
+                            // looked up or routed to, so it is dropped rather
+                            // than stored as a row that matches nothing.
+                            if project_root.is_empty() || machine_id.is_empty() {
+                                return None;
+                            }
+                            Some(crate::remote::remote_project_owners::ProjectOwner {
+                                project_root,
+                                machine_id,
+                                claimed_at: string_field(Some(row), "claimedAt"),
+                                online: row.get("online").and_then(Value::as_bool).unwrap_or(false),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            RelayAction::ProjectOwners { owners }
+        }
         "security_event" => {
             let event = message.get("event");
             let event_kind = event

@@ -9,6 +9,20 @@ use crate::machine_identity::MachineIdentity;
 use crate::remote::relay_http::{relay_request, response_error};
 use serde_json::{Value, json};
 
+/// What a daemon knows about one checkout's owner.
+///
+/// `Unknown` is not a failure and not an absence: it is "the relay has not
+/// told this machine yet", which is the state a daemon is in between starting
+/// and its first frame, and after any reconnect. A caller that treats it as
+/// `Unowned` routes local input that should have gone to another machine, and
+/// one that treats it as an error refuses work it could have done locally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectOwnerLookup {
+    Unknown,
+    Unowned,
+    Owned(ProjectOwner),
+}
+
 /// What the relay says about one checkout's owner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectOwner {
