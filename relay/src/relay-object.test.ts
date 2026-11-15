@@ -357,6 +357,59 @@ describe("RelayObject recording which machine owns a checkout", () => {
     expect(((await read.json()) as { owners: unknown }).owners).toEqual(pushed.owners);
   });
 
+  // One read of the sharing state to answer one claim.
+  //
+  // The claim route is safe without a version check only because nothing is
+  // awaited between its load and its save -- its own comment says so. The
+  // first version of the owner push awaited a SECOND load after the save to
+  // build the frame, which is two reads of one record inside one request with
+  // a write able to land between them: two concurrent claims and the last
+  // frame the fleet held omitted one of them. The frame is built from the
+  // state already in hand, and this is the gate that says so.
+  //
+  // Counted rather than raced, which is the same shape this file already uses
+  // for the guest-request path: a race is not reproducible in one thread, and
+  // the read count is the property that makes the race impossible.
+  it("reads the sharing state once to answer one claim", async () => {
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/repo");
+
+    storage.reads.clear();
+    const claimed = await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+    expect(claimed.status).toBe(200);
+
+    expect(
+      [...storage.reads.entries()].filter(([, count]) => count > 1),
+      "no record may be read twice inside one claim",
+    ).toEqual([]);
+  });
+
+  // A daemon claims on every start, so the common case is a re-claim of a
+  // checkout it already owns. Pushing a snapshot for those would make the
+  // fleet's morning a broadcast per machine per checkout, and nothing has
+  // changed to tell anyone about.
+  it("does not push the owner table for a re-claim that changed nothing", async () => {
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/repo");
+    await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+    const before = framesTo(mbp, "project_owners").length;
+    expect(before, "the first claim did push").toBeGreaterThan(0);
+
+    const again = await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+    expect(again.status).toBe(200);
+    expect(await again.json()).toMatchObject({ alreadyOwned: true });
+
+    expect(framesTo(mbp, "project_owners").length).toBe(before);
+  });
+
   // A daemon is not disturbed by another machine coming or going:
   // `broadcastMachineStatus` goes to client sockets only, and the first
   // version of this push broadcast on both and broke that -- a test that

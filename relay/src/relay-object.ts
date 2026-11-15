@@ -125,12 +125,6 @@ const BIND_SHARE_REFUSALS: Record<BindShareRefusal, { status: number; error: str
 /// array is unbounded work in one request. A daemon reports one entry per
 /// registered project; this is far above any real fleet.
 export const MAX_PROJECT_ENDPOINT_REPORTS = 500;
-/// How many owner rows one `project_owners` frame may carry.
-///
-/// The stored table is already capped at `MAX_OWNED_PROJECTS`, so this is the
-/// frame's own bound rather than the table's: a snapshot that grew past what a
-/// daemon can hold would be a push that costs more than the lookup it saves.
-export const MAX_PROJECT_OWNER_REPORTS = 500;
 /// How many shares one report may refresh in its guests' objects.
 ///
 /// Each one is a cross-object `fetch` per guest, and the retry means a report
@@ -392,7 +386,12 @@ export class RelayObject extends DurableObject<Env> {
       // arrived falls back to its local path, which is the safe direction and
       // self-corrects on the next claim. Ownership itself only changes on a
       // claim, and that still tells everyone.
-      this.send(server, { type: "project_owners", owners: await this.projectOwnerRows() });
+      // A load of its own, which is correct here: there is no write in this
+      // handler to be inconsistent with.
+      this.send(server, {
+        type: "project_owners",
+        owners: this.projectOwnerRows(await loadSharingState(this.ctx.storage)),
+      });
     } else {
       this.clientSockets.add(server);
       if (clientDevice) this.clientDeviceIds.set(server, clientDevice.deviceId);
@@ -1997,11 +1996,15 @@ export class RelayObject extends DurableObject<Env> {
     }
     if (!result.alreadyOwned) {
       await saveSharingState(this.ctx.storage, result.state);
-      // Only when something actually changed. A re-claim of a checkout this
-      // machine already owns is the common case -- a daemon claims on every
-      // start -- and pushing the same snapshot for it would make the fleet's
-      // morning a broadcast per machine per checkout.
-      await this.broadcastProjectOwners();
+      // From the state just saved, NOT from a fresh read. See
+      // `projectOwnerRows`: a second read here is the lost-update hazard this
+      // route's own comment warns about.
+      //
+      // And only when something actually changed. A re-claim of a checkout
+      // this machine already owns is the common case -- a daemon claims on
+      // every start -- and pushing the same snapshot for it would make the
+      // fleet's morning a broadcast per machine per checkout.
+      this.broadcastProjectOwners(result.state);
     }
     return json({ ok: true, alreadyOwned: result.alreadyOwned, owner: result.owner }, 200);
   }
@@ -2009,7 +2012,8 @@ export class RelayObject extends DurableObject<Env> {
   /// Who owns which checkout, for a machine that wants to know whether it is
   /// the owner -- including when the answer is somebody else.
   private async listProjectOwners(): Promise<Response> {
-    return json({ ok: true, owners: await this.projectOwnerRows() }, 200);
+    const state = await loadSharingState(this.ctx.storage);
+    return json({ ok: true, owners: this.projectOwnerRows(state) }, 200);
   }
 
   /// The owner table as anyone is told it, derived once.
@@ -2019,26 +2023,33 @@ export class RelayObject extends DurableObject<Env> {
   /// that would have drifted -- it comes from the live socket map, so the two
   /// surfaces would have disagreed about which machines are up depending on
   /// which one you asked.
-  private async projectOwnerRows(): Promise<RelayProjectOwnersControl["owners"]> {
-    const state = await loadSharingState(this.ctx.storage);
+  /// Takes the state rather than loading it, and that is the fix for a hazard
+  /// this file already documents.
+  ///
+  /// The claim route is safe without a version check only because nothing is
+  /// awaited between its load and its save. The first version of this awaited
+  /// a SECOND `loadSharingState` after the save to build the frame -- two
+  /// reads of one record inside one request, with a write able to land between
+  /// them, which is the exact thing the test about saving over what landed
+  /// while it ran exists to gate. Two concurrent claims and the last frame the
+  /// fleet held omitted one of them.
+  private projectOwnerRows(state: SharingState): RelayProjectOwnersControl["owners"] {
     const online = new Set(this.onlineMachines().map((machine) => machine.id));
-    return Object.entries(state.projectOwners ?? {})
-      .slice(0, MAX_PROJECT_OWNER_REPORTS)
-      .map(([projectRoot, owner]) => ({
-        projectRoot,
-        ...owner,
-        // Whether the owner is reachable right now, because "owned by a laptop
-        // that is shut" is the case the whole record exists to make visible.
-        online: online.has(owner.machineId),
-      }));
+    return Object.entries(state.projectOwners ?? {}).map(([projectRoot, owner]) => ({
+      projectRoot,
+      ...owner,
+      // Whether the owner is reachable right now, because "owned by a laptop
+      // that is shut" is the case the whole record exists to make visible.
+      online: online.has(owner.machineId),
+    }));
   }
 
   /// Tell this account's daemons who owns what.
   ///
   /// `broadcastToDaemons`, never `broadcastToClients`: the rows are absolute
   /// checkout paths and machine ids for the whole fleet.
-  private async broadcastProjectOwners(): Promise<void> {
-    this.broadcastToDaemons({ type: "project_owners", owners: await this.projectOwnerRows() });
+  private broadcastProjectOwners(state: SharingState): void {
+    this.broadcastToDaemons({ type: "project_owners", owners: this.projectOwnerRows(state) });
   }
 
   /// Bind a share that already exists to the machine holding its session.

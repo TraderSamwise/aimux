@@ -155,22 +155,7 @@ pub fn handle_frame(data: &str) -> RelayAction {
                 .and_then(Value::as_array)
                 .map(|rows| {
                     rows.iter()
-                        .filter_map(|row| {
-                            let project_root = string_field(Some(row), "projectRoot");
-                            let machine_id = string_field(Some(row), "machineId");
-                            // A row naming no checkout or no machine cannot be
-                            // looked up or routed to, so it is dropped rather
-                            // than stored as a row that matches nothing.
-                            if project_root.is_empty() || machine_id.is_empty() {
-                                return None;
-                            }
-                            Some(crate::remote::remote_project_owners::ProjectOwner {
-                                project_root,
-                                machine_id,
-                                claimed_at: string_field(Some(row), "claimedAt"),
-                                online: row.get("online").and_then(Value::as_bool).unwrap_or(false),
-                            })
-                        })
+                        .filter_map(crate::remote::remote_project_owners::project_owner_from_row)
                         .collect()
                 })
                 .unwrap_or_default();

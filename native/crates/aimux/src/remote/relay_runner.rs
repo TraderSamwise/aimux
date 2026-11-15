@@ -887,15 +887,29 @@ impl RelayRunner {
             return crate::remote::remote_project_owners::ProjectOwnerLookup::Unknown;
         };
         let wanted = crate::proxy_project_binding::fold_project_root_for_lookup(project_root);
-        match owners.iter().find(|owner| {
+        // The two guards the sibling lookup has and the first version of this
+        // did not. `resolve_service_target_for_project_root` refuses an empty
+        // key and refuses ambiguity; this folded both sides and took the first
+        // match, so a row whose root folded to nothing answered for every
+        // query that also folded to nothing.
+        if wanted.is_empty() {
+            return crate::remote::remote_project_owners::ProjectOwnerLookup::Unowned;
+        }
+        let mut matches = owners.iter().filter(|owner| {
             crate::proxy_project_binding::fold_project_root_for_lookup(&owner.project_root)
                 == wanted
-        }) {
-            Some(owner) => {
-                crate::remote::remote_project_owners::ProjectOwnerLookup::Owned(owner.clone())
-            }
-            None => crate::remote::remote_project_owners::ProjectOwnerLookup::Unowned,
+        });
+        let Some(owner) = matches.next() else {
+            return crate::remote::remote_project_owners::ProjectOwnerLookup::Unowned;
+        };
+        if matches.next().is_some() {
+            // Reachable because the relay's keys and this fold are not the
+            // same function: the relay trims what JavaScript trims and this
+            // trims what Rust does, so two keys distinct there can fold equal
+            // here. Refused rather than guessed at.
+            return crate::remote::remote_project_owners::ProjectOwnerLookup::Ambiguous;
         }
+        crate::remote::remote_project_owners::ProjectOwnerLookup::Owned(owner.clone())
     }
 
     fn store_project_owners(

@@ -17,6 +17,39 @@ const MAX_HANDSHAKE_FAILURES: u32 = 5;
 /// `owners` array must become an empty table rather than an `Ignore`:
 /// ignoring it would leave the daemon believing it had never been told, when
 /// it has been told that nobody owns anything.
+/// A whitespace-only checkout is not a checkout.
+///
+/// The first version tested `is_empty()` on an UNTRIMMED string, so a row
+/// reading `{"projectRoot":"  "}` survived the filter that exists to drop rows
+/// matching nothing -- and then folded to the empty key, which answered for
+/// every query that also folded to nothing. The relay's own key trims before
+/// it folds, so this has to as well.
+#[test]
+fn an_owner_row_whose_checkout_is_only_whitespace_is_dropped() {
+    use aimux::remote::remote_project_owners::project_owner_from_row;
+    use serde_json::json;
+
+    for row in [
+        json!({ "projectRoot": "  ", "machineId": "strix" }),
+        json!({ "projectRoot": "/repo", "machineId": "   " }),
+        json!({ "projectRoot": "\t", "machineId": "strix" }),
+    ] {
+        assert_eq!(project_owner_from_row(&row), None, "{row}");
+    }
+
+    // And the fields that DO survive are trimmed, so the key this is looked up
+    // by is the key the relay stored.
+    let trimmed = project_owner_from_row(&json!({
+        "projectRoot": "  /repo  ",
+        "machineId": "  mbp  ",
+        "claimedAt": " 2026-11-15T00:00:00.000Z "
+    }))
+    .expect("a real row");
+    assert_eq!(trimmed.project_root, "/repo");
+    assert_eq!(trimmed.machine_id, "mbp");
+    assert_eq!(trimmed.claimed_at, "2026-11-15T00:00:00.000Z");
+}
+
 #[test]
 fn an_owner_table_frame_is_an_answer_even_when_it_is_empty() {
     use aimux::remote::remote_project_owners::ProjectOwner;

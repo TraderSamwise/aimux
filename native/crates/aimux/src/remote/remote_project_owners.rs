@@ -20,7 +20,48 @@ use serde_json::{Value, json};
 pub enum ProjectOwnerLookup {
     Unknown,
     Unowned,
+    /// Two rows fold to the same key, so this cannot say which machine owns
+    /// it.
+    ///
+    /// Its own outcome rather than `Unowned`, which it superficially resembles
+    /// because both end up routing locally. `Unowned` is a fact about the
+    /// table; this is a fact about the question, and a caller that wants to
+    /// explain itself needs them apart. The sibling lookup
+    /// `resolve_service_target_for_project_root` refuses ambiguity for the
+    /// same reason -- picking the first match would aim a peer's keystrokes at
+    /// whichever row happened to be ordered first.
+    Ambiguous,
     Owned(ProjectOwner),
+}
+
+/// One row of the owner table, from whichever shape carried it.
+///
+/// The HTTP read and the pushed frame both produce these, and the parse was
+/// copied into both: one trim rule and one set of required fields, or the two
+/// disagree about which rows exist. A row naming no checkout or no machine can
+/// neither be looked up nor routed to, so it is dropped rather than stored as
+/// a row that matches nothing -- and the fields are TRIMMED first, because
+/// `"  "` is not a checkout and the relay's own key trims before it folds.
+pub fn project_owner_from_row(row: &Value) -> Option<ProjectOwner> {
+    let text = |field: &str| {
+        row.get(field)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let project_root = text("projectRoot");
+    let machine_id = text("machineId");
+    if project_root.is_empty() || machine_id.is_empty() {
+        return None;
+    }
+    Some(ProjectOwner {
+        project_root,
+        machine_id,
+        claimed_at: text("claimedAt"),
+        // An unstated liveness is not a promise of one.
+        online: row.get("online").and_then(Value::as_bool).unwrap_or(false),
+    })
 }
 
 /// What the relay says about one checkout's owner.
