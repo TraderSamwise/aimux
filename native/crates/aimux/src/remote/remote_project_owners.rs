@@ -50,14 +50,18 @@ pub fn peer_owner_decision(
         ProjectOwnerLookup::Unowned => (None, "owner_none"),
         ProjectOwnerLookup::Ambiguous => (None, "owner_ambiguous"),
         ProjectOwnerLookup::Owned(owner) => {
-            if owner.machine_id == this_machine_id {
-                return (None, "owner_is_this_machine");
-            }
+            // Validity BEFORE the self-comparison, and the order is the point.
             // `unidentified` is the slot every daemon without a persisted
-            // identity shares, so a row naming it names no one machine -- and
-            // the relay refuses it as a target anyway.
+            // identity shares, so a row naming it names no one machine --
+            // including this one. Asked the other way round, a daemon with no
+            // identity reading such a row answered `owner_is_this_machine`:
+            // the right outcome for the wrong reason, which is the kind that
+            // gets believed later.
             if !crate::machine_identity::is_valid_machine_id(&owner.machine_id) {
                 return (None, "owner_unidentified");
+            }
+            if owner.machine_id == this_machine_id {
+                return (None, "owner_is_this_machine");
             }
             if !owner.online {
                 // Refused here rather than discovered at the far end: the

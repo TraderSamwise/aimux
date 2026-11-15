@@ -118,6 +118,11 @@ const MAX_PROJECT_ROOT_CHARS: usize = 600;
 /// and looked up by the daemon: two folds would be two keys, and a daemon
 /// would decide a checkout is unowned because it folded the name differently
 /// from the record naming it.
+///
+/// Every caller compares against a relay-keyed value, which is why they all
+/// want the relay's cap as well as its slash rule. A caller comparing two
+/// LOCAL paths would inherit a six-hundred-character truncation it has no
+/// reason to want, and should fold neither side.
 pub fn fold_project_root_for_lookup(raw: &str) -> &str {
     fold_project_root(raw)
 }

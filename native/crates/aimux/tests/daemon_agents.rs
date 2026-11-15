@@ -29,9 +29,9 @@ struct FakeAgentRuntime {
     invalid_agents: bool,
     tmux_live_window_error: Option<String>,
     agent_response: Option<Value>,
-    /// Whether this machine serves the checkout. `false` is the case the
-    /// forward is for: a machine that does not have it.
-    serves_locally: bool,
+    /// Whether this machine runs the session. `false` is the case the forward
+    /// is for: a session that lives on another machine.
+    hosts_session: bool,
     /// Which machine the owner table names for any checkout, and why not.
     owner: Option<String>,
     owner_reason: &'static str,
@@ -43,8 +43,8 @@ struct FakeAgentRuntime {
 impl FakeAgentRuntime {
     fn owned_elsewhere(answer: Result<(u16, Value), String>) -> Self {
         Self {
-            // Not served here, which is the only case a forward is for.
-            serves_locally: false,
+            // Not here, which is the only case a forward is for.
+            hosts_session: false,
             owner: Some("strix".to_owned()),
             owner_reason: "owner_elsewhere",
             forwarded: Some(answer),
@@ -54,8 +54,8 @@ impl FakeAgentRuntime {
 }
 
 impl DaemonAgentTextRuntime for FakeAgentRuntime {
-    fn serves_project_locally(&mut self, _project_root: &str) -> bool {
-        self.serves_locally
+    fn hosts_session_locally(&mut self, _project_root: &str, _session_id: &str) -> bool {
+        self.hosts_session
     }
 
     fn peer_owner_for_input(&self, _project_root: &str) -> (Option<String>, &'static str) {
@@ -360,10 +360,10 @@ fn input_takes_the_local_path_for_every_reason_it_is_not_forwarded() {
         "owner_offline",
     ] {
         let mut runtime = FakeAgentRuntime {
-            // Not served here, so the owner table IS consulted -- otherwise
-            // every iteration would be the same execution and the reason
-            // would never be read.
-            serves_locally: false,
+            // Not here, so the owner table IS consulted -- otherwise every
+            // iteration would be the same execution and the reason would
+            // never be read.
+            hosts_session: false,
             owner: None,
             owner_reason: reason,
             agent_response: Some(json!({ "ok": true, "sessionId": "codex-1" })),
@@ -397,11 +397,12 @@ fn input_takes_the_local_path_for_every_reason_it_is_not_forwarded() {
 /// refused there -- and `--force` was refused before it could even be tried,
 /// so there was no way to reach a local session at all.
 #[test]
-fn a_session_on_a_checkout_this_machine_serves_is_never_forwarded() {
+fn a_session_this_machine_runs_is_never_forwarded() {
     for extra in ["", "&force=1"] {
         let mut runtime = FakeAgentRuntime {
-            // Served here AND owned by somebody else: the case that was broken.
-            serves_locally: true,
+            // Running here AND the path owned by somebody else: the case that
+            // was broken.
+            hosts_session: true,
             owner: Some("strix".to_owned()),
             owner_reason: "owner_elsewhere",
             forwarded: Some(Ok((200, json!({ "ok": true })))),
@@ -418,7 +419,7 @@ fn a_session_on_a_checkout_this_machine_serves_is_never_forwarded() {
         );
         assert_eq!(runtime.calls.len(), 1, "{extra} must be delivered locally");
         assert!(
-            body_text(&response).contains("project_is_served_here"),
+            body_text(&response).contains("session_is_here"),
             "{extra}: {}",
             body_text(&response)
         );

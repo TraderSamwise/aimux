@@ -30,24 +30,24 @@ const LOOP_EXIT_EVENT_TIMEOUT_MS: u64 = 500;
 
 pub trait DaemonAgentTextRuntime {
     fn resolve_project_root(&self, value: &str) -> String;
-    /// Whether THIS machine is serving that checkout.
+    /// Whether THIS machine is running that session.
     ///
-    /// The question that stops ownership shadowing a local session.
-    /// Ownership is an exclusive claim on a path, and nothing stops a second
-    /// machine from also having that checkout and running agents in it -- so
-    /// "strix owns /cs/aimux" does not mean a session named on this laptop
-    /// lives on strix. Without this, `aimux input` for a laptop-local agent
-    /// was sent to strix and refused there, and `--force` was refused before
-    /// it could even be tried: local input to any owned checkout was dead on
-    /// every machine but one.
+    /// The one fact that distinguishes a local send from a remote one, and it
+    /// took three attempts to arrive at. Ownership is an exclusive claim on a
+    /// PATH: it does not say where a session lives, so forwarding on it alone
+    /// sent laptop-local input to the owner. Whether this machine is SERVING
+    /// the checkout was wrong twice over -- as liveness it refused input
+    /// whenever the local project service happened to be down, and as registry
+    /// membership it was true of every checkout this machine has ever touched,
+    /// which made the forward unreachable for the case the feature exists for.
     ///
-    /// So the forward is for the case the feature is actually for: a machine
-    /// that does NOT have the checkout steering an agent on the machine that
-    /// does.
+    /// A session id is the thing `aimux input` is given, and the runtime
+    /// topology is the inventory that says which sessions this machine runs.
+    /// Asking it is one file read and no subprocess.
     ///
-    /// Defaults to `true` -- "assume it is mine" -- because that is the
-    /// answer that keeps today's behaviour when a runtime cannot tell.
-    fn serves_project_locally(&mut self, _project_root: &str) -> bool {
+    /// Defaults to `true` -- "assume it is mine" -- because that is the answer
+    /// that keeps today's behaviour when a runtime cannot tell.
+    fn hosts_session_locally(&mut self, _project_root: &str, _session_id: &str) -> bool {
         true
     }
     /// Which other machine owns this checkout, and why not if not.
@@ -749,13 +749,12 @@ pub fn agent_input_text_route(
     // from it would mean parsing an error string -- and the owner record is
     // the fact that actually answers the question.
     let resolved_for_owner = runtime.resolve_project_root(&project);
-    // Asked FIRST, before the owner table. If this machine is serving the
-    // checkout then the session named is this machine's business, whoever owns
-    // the path -- and the local path below is the one that has always handled
-    // it.
-    let serves_locally = runtime.serves_project_locally(&resolved_for_owner);
-    let (owner_machine, owner_reason) = if serves_locally {
-        (None, "project_is_served_here")
+    // Asked FIRST, before the owner table. A session this machine runs is this
+    // machine's business whoever owns the path, and the local path below is the
+    // one that has always handled it.
+    let hosts_session = runtime.hosts_session_locally(&resolved_for_owner, &session_id);
+    let (owner_machine, owner_reason) = if hosts_session {
+        (None, "session_is_here")
     } else {
         runtime.peer_owner_for_input(&resolved_for_owner)
     };
