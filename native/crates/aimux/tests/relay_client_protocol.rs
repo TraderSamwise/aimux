@@ -24,6 +24,72 @@ const MAX_HANDSHAKE_FAILURES: u32 = 5;
 /// matching nothing -- and then folded to the empty key, which answered for
 /// every query that also folded to nothing. The relay's own key trims before
 /// it folds, so this has to as well.
+/// Every reason to forward or not, asked of the decision itself.
+///
+/// This mapping had NO test: the only thing mentioning it was a fake that
+/// handed the reasons back as strings, so all eight were asserted as literals
+/// nobody executed. Deleting every arm left the suite green. Standing up a
+/// live relay to reach it is hard, which is why it is a pure function now --
+/// "the container is awkward to build" is not a reason for the decision
+/// inside it to go unproven.
+#[test]
+fn whether_to_forward_has_a_reason_for_every_answer() {
+    use aimux::remote::remote_project_owners::{
+        ProjectOwner, ProjectOwnerLookup, peer_owner_decision,
+    };
+
+    let owner = |machine: &str, online: bool| ProjectOwner {
+        project_root: "/repo".into(),
+        machine_id: machine.to_owned(),
+        claimed_at: "2026-11-15T00:00:00.000Z".into(),
+        online,
+    };
+
+    // The one case that forwards.
+    assert_eq!(
+        peer_owner_decision(ProjectOwnerLookup::Owned(owner("strix", true)), "mbp"),
+        (Some("strix".to_owned()), "owner_elsewhere")
+    );
+
+    // And every case that does not, each saying which.
+    for (lookup, reason) in [
+        (ProjectOwnerLookup::Unknown, "owner_unknown"),
+        (ProjectOwnerLookup::Unowned, "owner_none"),
+        (ProjectOwnerLookup::Ambiguous, "owner_ambiguous"),
+        // Owned by this very machine: local, and not a failure.
+        (
+            ProjectOwnerLookup::Owned(owner("mbp", true)),
+            "owner_is_this_machine",
+        ),
+        // A row naming the shared slot names no one machine.
+        (
+            ProjectOwnerLookup::Owned(owner("unidentified", true)),
+            "owner_unidentified",
+        ),
+        // And a machine that is not here: said now rather than discovered
+        // after a round trip.
+        (
+            ProjectOwnerLookup::Owned(owner("strix", false)),
+            "owner_offline",
+        ),
+    ] {
+        assert_eq!(
+            peer_owner_decision(lookup, "mbp"),
+            (None, reason),
+            "{reason}"
+        );
+    }
+
+    // The machine comparison is against the id GIVEN, not a fresh read: the
+    // owner table's rows name the machine the relay saw, so a runner that
+    // reconnected under a different identity must compare against the one it
+    // connected as.
+    assert_eq!(
+        peer_owner_decision(ProjectOwnerLookup::Owned(owner("strix", true)), "strix"),
+        (None, "owner_is_this_machine")
+    );
+}
+
 #[test]
 fn an_owner_row_whose_checkout_is_only_whitespace_is_dropped() {
     use aimux::remote::remote_project_owners::project_owner_from_row;

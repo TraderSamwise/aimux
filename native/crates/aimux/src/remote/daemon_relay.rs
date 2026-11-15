@@ -602,7 +602,6 @@ impl RelaySupervisor {
     /// local path is correct in all of them, and the second return value says
     /// which so it can be printed rather than guessed at.
     pub fn peer_owner_for_input(&self, project_root: &str) -> (Option<String>, &'static str) {
-        use crate::remote::remote_project_owners::ProjectOwnerLookup;
         let Ok(current) = self.current.lock() else {
             // A poisoned mutex is not a reason to route a person's keystrokes
             // anywhere, and the local path is what they would have got before
@@ -612,30 +611,12 @@ impl RelaySupervisor {
         let Some((runner, _)) = current.as_ref() else {
             return (None, "relay_off");
         };
-        match runner.project_owner_for(project_root) {
-            ProjectOwnerLookup::Unknown => (None, "owner_unknown"),
-            ProjectOwnerLookup::Unowned => (None, "owner_none"),
-            ProjectOwnerLookup::Ambiguous => (None, "owner_ambiguous"),
-            ProjectOwnerLookup::Owned(owner) => {
-                if owner.machine_id == runner.machine_id() {
-                    return (None, "owner_is_this_machine");
-                }
-                // `unidentified` is the slot every daemon without a persisted
-                // identity shares, so a row naming it names no one machine --
-                // and the relay refuses it as a target anyway.
-                if !crate::machine_identity::is_valid_machine_id(&owner.machine_id) {
-                    return (None, "owner_unidentified");
-                }
-                if !owner.online {
-                    // Refused here rather than discovered at the far end: the
-                    // relay would answer `peer-target-offline`, and this says
-                    // the same thing without spending a round trip under the
-                    // daemon's runtime lock.
-                    return (None, "owner_offline");
-                }
-                (Some(owner.machine_id), "owner_elsewhere")
-            }
-        }
+        // The decision itself is a pure function, so it can be tested without
+        // standing up a relay.
+        crate::remote::remote_project_owners::peer_owner_decision(
+            runner.project_owner_for(project_root),
+            runner.machine_id(),
+        )
     }
 
     /// Forward one agent input to the machine that owns the checkout.

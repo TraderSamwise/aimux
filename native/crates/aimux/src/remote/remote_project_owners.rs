@@ -34,6 +34,43 @@ pub enum ProjectOwnerLookup {
     Owned(ProjectOwner),
 }
 
+/// Whether to forward an input, and why not when not.
+///
+/// Pure, and separated from the supervisor for one reason: building a live
+/// `RelayRunner` to ask this question is hard enough that the mapping went
+/// untested, and "the container is hard to construct" is not a reason for the
+/// decision inside it to be unproven. Every one of these reasons is a
+/// different thing to tell somebody, so each is reachable from a test.
+pub fn peer_owner_decision(
+    lookup: ProjectOwnerLookup,
+    this_machine_id: &str,
+) -> (Option<String>, &'static str) {
+    match lookup {
+        ProjectOwnerLookup::Unknown => (None, "owner_unknown"),
+        ProjectOwnerLookup::Unowned => (None, "owner_none"),
+        ProjectOwnerLookup::Ambiguous => (None, "owner_ambiguous"),
+        ProjectOwnerLookup::Owned(owner) => {
+            if owner.machine_id == this_machine_id {
+                return (None, "owner_is_this_machine");
+            }
+            // `unidentified` is the slot every daemon without a persisted
+            // identity shares, so a row naming it names no one machine -- and
+            // the relay refuses it as a target anyway.
+            if !crate::machine_identity::is_valid_machine_id(&owner.machine_id) {
+                return (None, "owner_unidentified");
+            }
+            if !owner.online {
+                // Refused here rather than discovered at the far end: the
+                // relay would answer `peer-target-offline`, and this says the
+                // same thing without spending a round trip under the daemon's
+                // runtime lock.
+                return (None, "owner_offline");
+            }
+            (Some(owner.machine_id), "owner_elsewhere")
+        }
+    }
+}
+
 /// One row of the owner table, from whichever shape carried it.
 ///
 /// The HTTP read and the pushed frame both produce these, and the parse was

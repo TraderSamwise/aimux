@@ -765,11 +765,6 @@ pub fn agent_input_text_route(
         // another machine about a flag this one accepted -- and dropping it
         // silently would deliver unforced input while the person believes
         // otherwise.
-        // `--force` cannot cross. The owner's allowlist refuses a peer's
-        // `force` by name, so carrying it would turn this into a 403 from
-        // another machine about a flag this one accepted -- and dropping it
-        // silently would deliver unforced input while the person believes
-        // otherwise.
         if force {
             return text_error(
                 400,
@@ -807,6 +802,10 @@ pub fn agent_input_text_route(
                         "projectRoot": resolved_for_owner,
                         "sessionId": session_id,
                         "ownerMachineId": owner_machine,
+                        // Set here too. Every sibling branch carries it, and
+                        // the one that did not was the fallback nobody looks
+                        // at -- which is where a missing field survives.
+                        "peerRouting": owner_reason,
                     }),
                 };
                 text_or_json_lines(

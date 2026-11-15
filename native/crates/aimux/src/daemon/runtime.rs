@@ -4865,18 +4865,35 @@ impl DaemonAgentTextRuntime for RealDaemonRuntime {
     }
 
     fn serves_project_locally(&mut self, project_root: &str) -> bool {
-        // The same registry fact the owner's own route resolves against, asked
-        // of this machine. A listing that FAILED is not a listing that is
-        // empty: unable to tell means assume it is ours, which is the answer
-        // that keeps today's behaviour.
-        let Ok(projects) = self.try_list_projects_for_route() else {
-            return true;
+        // MEMBERSHIP, not liveness, and this is the whole correction.
+        //
+        // The first version asked `resolve_service_target_for_project_root`,
+        // which requires a LIVE service -- and the local path it guards is
+        // `ensure_if_unreachable`, where a dead service is a reason to start
+        // it, not a reason to go somewhere else. Agents live in tmux and
+        // outlive that HTTP process entirely. So a laptop whose project
+        // service happened to be down had its own local input forwarded to the
+        // owner and refused there: the same defect as before, on a narrower
+        // trigger.
+        //
+        // Membership also has no ambiguity rule and no cap to fall foul of,
+        // which were two more ways the liveness question answered "not mine"
+        // about a checkout that is.
+        //
+        // And it reads the registry rather than listing projects:
+        // `try_list_projects_for_route` probes each project's process, which
+        // is a `ps` per project on the hottest route there is. One file read,
+        // no subprocess.
+        let roots = match registry_project_roots(&self.resolver) {
+            Ok(roots) => roots,
+            // Could-not-read is not could-not-find. Unable to tell means
+            // assume it is ours, which keeps today's behaviour.
+            Err(_) => return true,
         };
-        crate::proxy_project_binding::resolve_service_target_for_project_root(
-            &projects,
-            project_root,
-        )
-        .is_some()
+        let wanted = crate::proxy_project_binding::fold_project_root_for_lookup(project_root);
+        roots
+            .iter()
+            .any(|root| crate::proxy_project_binding::fold_project_root_for_lookup(root) == wanted)
     }
 
     fn peer_owner_for_input(&self, project_root: &str) -> (Option<String>, &'static str) {
@@ -6073,6 +6090,16 @@ fn restart_all_project_roots(state: &DaemonState) -> Vec<String> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+/// Every checkout this machine has registered, by path, with no liveness
+/// probe and no subprocess.
+///
+/// Separate from `try_list_projects_for_route`, which answers a richer
+/// question at the cost of a process probe per project. "Do I have this
+/// checkout" needs neither, and it is asked on every `aimux input`.
+fn registry_project_roots(resolver: &PathResolver) -> Result<Vec<String>, String> {
+    registry_project_roots_for_orphan_cleanup(resolver)
 }
 
 fn registry_project_roots_for_orphan_cleanup(
