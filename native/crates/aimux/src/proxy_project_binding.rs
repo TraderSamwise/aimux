@@ -104,9 +104,25 @@ pub fn resolve_service_target_for_project_root(
 
 /// The cap the relay truncates a stored project root to, and which this has
 /// to share for the fold below to agree with it.
+///
+/// Defined in two languages, which is a thing that drifts: the other copy is
+/// `MAX_PROJECT_ROOT_CHARS` in `relay/src/sharing.ts`. Changing one without
+/// the other does not fail anything loudly -- it makes long checkout paths
+/// unmatchable between the owner record and this lookup, which surfaces as
+/// "this machine is not serving" a project it is serving.
 const MAX_PROJECT_ROOT_CHARS: usize = 600;
 
-/// The relay's own key, character for character.
+/// The relay's own key, in the relay's own order.
+///
+/// Not character for character, and the difference is written down rather than
+/// claimed away: the cap is counted in Unicode scalars here and in UTF-16
+/// units by the relay's `slice`, and the two trims disagree at the edges (Rust
+/// trims U+0085, JavaScript trims U+FEFF -- the same divergence
+/// `shared_chat_trim` exists for). A checkout path long enough to reach the cap
+/// AND carrying an astral character would key differently on the two sides.
+/// That is reachable only past six hundred characters with an emoji in the
+/// path, and the honest thing is to say so here rather than to claim an
+/// equality that does not hold.
 ///
 /// `shareProjectRootKey` is `trim`, then truncate to the cap, then strip EVERY
 /// trailing slash, falling back to the truncated value if that empties it.

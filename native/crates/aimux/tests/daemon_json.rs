@@ -501,14 +501,24 @@ fn peer_agent_input_says_which_thing_it_could_not_find() {
 /// owner record names.
 #[test]
 fn peer_agent_input_folds_a_project_root_the_way_the_relay_does() {
-    // The case the relay's own comment names: truncate THEN fold, so a root
-    // whose last kept character is a slash is still matchable. These two
-    // differ only PAST the cap, so the relay keys them identically -- and a
-    // lookup that skipped the truncation would refuse a project the owner
-    // record names.
+    // Two roots differing only PAST the cap, which the relay keys identically.
+    // This proves the truncation happens -- without it the two keys differ and
+    // the lookup refuses a project the owner record names.
     let prefix = format!("/{}/", "a".repeat(598));
     let long_served = format!("{prefix}xxx");
     let long_named = format!("{prefix}yyy");
+    // And the case that proves the ORDER, which the pair above cannot: both of
+    // those go through this same function, so swapping truncate and fold moves
+    // both keys together and they still match.
+    //
+    // This one is CROSS-SIDE. The served root is a real local path whose six
+    // hundredth character is a slash; the named root is the relay's own
+    // already-folded key for it, five hundred and ninety nine characters with
+    // the slash gone. Truncate-then-fold makes them equal. Fold-then-truncate
+    // leaves the served one ending in the slash and they never match -- which
+    // is the unmatchable root the relay's own comment warns about.
+    let order_served = format!("/{}/xxx", "a".repeat(598));
+    let order_named = format!("/{}", "a".repeat(598));
     for (served, named) in [
         ("/repo", "/repo/"),
         ("/repo/", "/repo"),
@@ -524,6 +534,12 @@ fn peer_agent_input_folds_a_project_root_the_way_the_relay_does() {
         // sides must truncate before folding or a root whose last kept
         // character is a slash becomes unmatchable.
         (long_served.as_str(), long_named.as_str()),
+        (order_served.as_str(), order_named.as_str()),
+        // A root that is nothing but slashes keeps them rather than folding to
+        // the empty key, which would match every other such root. The relay's
+        // `|| stored` is this case.
+        ("///", "///"),
+        ("/", "/"),
     ] {
         let mut runtime = FakeJsonRuntime {
             projects: vec![served_project(served, 43210, true)],
