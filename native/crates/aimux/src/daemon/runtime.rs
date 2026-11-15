@@ -4867,26 +4867,38 @@ impl DaemonAgentTextRuntime for RealDaemonRuntime {
     fn hosts_session_locally(&mut self, project_root: &str, session_id: &str) -> bool {
         // The runtime topology is the inventory AGENTS.md points at for
         // session liveness, and it is a file this daemon already owns. One
-        // read, no subprocess -- which matters because this is on every
-        // `aimux input`.
+        // read, and no subprocess of its own -- which matters because this is
+        // on every `aimux input`. `&mut self.resolver` rather than a clone for
+        // exactly that reason: a clone throws the resolver's cache away and
+        // resolves the repo root again, which the first version did while its
+        // comment claimed otherwise.
         //
         // Could-not-read means assume it is ours: a topology this machine
         // cannot parse is not evidence that somebody else is running the
         // session, and the local path is what the person would have got
-        // before any of this existed.
-        let mut resolver = self.resolver.clone();
-        let state_dir = resolver.project_state_dir_for(project_root);
+        // before any of this existed. A MISSING topology is not an error --
+        // it reads as an empty one, which is what lets a machine that does not
+        // have the checkout fall through to the owner table.
+        let state_dir = self.resolver.project_state_dir_for(project_root);
         let Ok(topology) = crate::runtime_topology::read_runtime_topology(
             crate::runtime_topology::runtime_topology_path(&state_dir),
         ) else {
             return true;
         };
-        // Every session this machine knows of for the project, whatever its
-        // status: a stopped session is still this machine's to resume, and
-        // sending its input elsewhere would start a second one there.
-        crate::runtime_topology::list_topology_session_states(&topology, None)
-            .iter()
-            .any(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
+        // The statuses the reconciler actually keeps, and NOT `None`.
+        //
+        // `None` means no filter, which also returns GRAVEYARD rows: sessions
+        // deliberately removed. There is no "stopped" session status to
+        // preserve either -- that word is a SERVICE status -- so the reason
+        // the first version gave for `None` was fiction, and what it really
+        // did was let a killed session claim "it is here" and suppress the
+        // forward forever. A real project's topology was half graveyard rows.
+        crate::runtime_topology::list_topology_session_states(
+            &topology,
+            Some(crate::project_service::session_visibility::DASHBOARD_SESSION_STATUSES),
+        )
+        .iter()
+        .any(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
     }
 
     fn peer_owner_for_input(&self, project_root: &str) -> (Option<String>, &'static str) {
