@@ -194,9 +194,17 @@ struct PeerWaiterGuard {
 
 impl Drop for PeerWaiterGuard {
     fn drop(&mut self) {
-        if let Ok(mut waiters) = self.waiters.lock() {
-            waiters.remove(&self.id);
-        }
+        // Recovered, not skipped. This guard exists precisely to remove the
+        // entry on the way out that no code can see -- a caller dropped
+        // mid-await inside a `select!` -- and its own comment at the
+        // registration site calls a left-behind entry "a leak that nothing
+        // later would ever collect". Read through `if let Ok(..)`, a poisoned
+        // mutex produced exactly that leak, in the one place whose whole job
+        // is to prevent it.
+        self.waiters
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&self.id);
     }
 }
 
@@ -778,16 +786,19 @@ impl RelayRunner {
             self.peer_request_seq.fetch_add(1, Ordering::Relaxed)
         );
         let (sender, receiver) = oneshot::channel();
-        match self.peer_waiters.lock() {
-            Ok(mut waiters) => {
-                waiters.insert(id.clone(), sender);
-            }
-            Err(_) => {
-                return Err(PeerRequestError::NotSent(
-                    "peer_waiters_unavailable".to_owned(),
-                ));
-            }
-        }
+        // Recovered like every other read of this table, rather than refusing.
+        //
+        // This used to return NotSent("peer_waiters_unavailable") on a poisoned
+        // mutex, and poison is PERMANENT -- nothing in this crate clears it,
+        // and the runner outlives reconnects. So one panic anywhere that held
+        // this lock meant every peer request on the machine failed forever,
+        // which is a far worse outcome than proceeding: the mutations here are
+        // single map operations that cannot leave a torn map, which is exactly
+        // what the poison gates below demonstrate.
+        self.peer_waiters
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(id.clone(), sender);
         // Takes the entry out on every way out of this function, including the
         // one no code here can see: a caller inside a `select!` that loses the
         // race is dropped mid-await, and an entry left behind for it is a leak
@@ -856,29 +867,44 @@ impl RelayRunner {
     /// outside otherwise, and a guard whose failure cannot be written is not
     /// checking anything.
     pub fn peer_waiter_count(&self) -> usize {
+        // `unwrap_or(0)` reported "nobody is waiting" for a table it could not
+        // read, which is a different answer.
         self.peer_waiters
             .lock()
-            .map(|waiters| waiters.len())
-            .unwrap_or(0)
+            .unwrap_or_else(|error| error.into_inner())
+            .len()
     }
 
     fn take_peer_waiter(&self, id: &str) -> Option<oneshot::Sender<PeerAnswer>> {
-        self.peer_waiters.lock().ok()?.remove(id)
+        // `.lock().ok()?` read a poisoned mutex as "no waiter with that id",
+        // so an answer that had arrived was dropped and its caller waited for
+        // nothing.
+        self.peer_waiters
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(id)
     }
 
     /// Tell everyone still waiting that the connection went, by dropping
     /// their senders. A caller that learns nothing waits out its whole
     /// deadline for an answer that can no longer arrive.
     fn fail_peer_waiters(&self) {
-        if let Ok(mut waiters) = self.peer_waiters.lock() {
-            waiters.clear();
-        }
+        // Recovered, not skipped. Read through `if let Ok(..)` a poisoned
+        // mutex meant neither of these ran, which produced exactly the two
+        // outcomes the comments here exist to prevent: every in-flight caller
+        // waited out its whole deadline instead of learning its answer could
+        // not arrive, and stale ownership survived the dead socket.
+        self.peer_waiters
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear();
         // The owner table described the connection that has just gone, so it
         // goes with it. Keeping it would leave a sender confidently routing to
         // whatever was true when the socket died.
-        if let Ok(mut owners) = self.project_owners.lock() {
-            *owners = None;
-        }
+        *self
+            .project_owners
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
     }
 
     /// What this machine currently knows about who owns what.
@@ -927,9 +953,16 @@ impl RelayRunner {
         &self,
         owners: Vec<crate::remote::remote_project_owners::ProjectOwner>,
     ) {
-        if let Ok(mut held) = self.project_owners.lock() {
-            *held = Some(owners);
-        }
+        // Recovered, not skipped. A frame HAD arrived with the table in it;
+        // read through `if let Ok(..)` a poisoned mutex threw it away, and
+        // because `project_owner_for` then keeps answering `Unknown`, the
+        // relay never recovered ownership knowledge no matter how many more
+        // frames came. Dropping data you were handed is not the same as not
+        // having been handed any.
+        *self
+            .project_owners
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(owners);
     }
 
     fn queue(&self, frame: String) -> Result<(), String> {
@@ -2241,6 +2274,269 @@ mod tests {
 
         fn close<'a>(&'a mut self) -> BoxFuture<'a, ()> {
             Box::pin(async {})
+        }
+    }
+
+    /// Poison `peer_waiters` the way a panic inside a held guard would.
+    fn poison_peer_waiters(runner: &RelayRunner) {
+        let waiters = Arc::clone(&runner.peer_waiters);
+        let panicked = std::thread::spawn(move || {
+            let _guard = waiters.lock().expect("a clean lock to poison");
+            panic!("poisoning the peer waiter table on purpose");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(
+            runner.peer_waiters.is_poisoned(),
+            "the mutex must actually be poisoned for this test to mean anything"
+        );
+    }
+
+    /// Poison `project_owners`, which is a different mutex from `peer_waiters`.
+    ///
+    /// Separate, and a test that confuses the two proves nothing about either.
+    fn poison_project_owners(runner: &RelayRunner) {
+        let owners = Arc::clone(&runner.project_owners);
+        let panicked = std::thread::spawn(move || {
+            let _guard = owners.lock().expect("a clean lock to poison");
+            panic!("poisoning the project owner table on purpose");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(
+            runner.project_owners.is_poisoned(),
+            "the owner mutex must actually be poisoned for this test to mean anything"
+        );
+    }
+
+    /// A poisoned waiter table still fails its waiters when the socket goes.
+    ///
+    /// `fail_peer_waiters` exists so that a caller "that learns nothing waits
+    /// out its whole deadline for an answer that can no longer arrive", and so
+    /// that the owner table does not "leave a sender confidently routing to
+    /// whatever was true when the socket died" -- both quoted from its own
+    /// comments. Read through `if let Ok(..)`, a poisoned mutex produces
+    /// EXACTLY those two outcomes: nothing is cleared, every in-flight peer
+    /// request hangs to its deadline, and stale ownership survives the dead
+    /// connection.
+    ///
+    /// A poisoned mutex is not an absence of waiters, which is the same
+    /// distinction #537 drew for the project event bus.
+    #[test]
+    fn a_poisoned_waiter_table_still_fails_its_waiters_and_drops_stale_owners() {
+        let runner = RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        );
+
+        // TWO callers waiting for peer answers, and an owner table from the
+        // connection that is about to die. Two, because each of the three
+        // recovered sites needs its own assertion below and they cannot all
+        // share one waiter.
+        let (answered, mut answered_receiver) =
+            tokio::sync::oneshot::channel::<super::PeerAnswer>();
+        let (abandoned, mut abandoned_receiver) =
+            tokio::sync::oneshot::channel::<super::PeerAnswer>();
+        {
+            let mut waiters = runner.peer_waiters.lock().expect("a clean waiter table");
+            waiters.insert("req-answered".to_owned(), answered);
+            waiters.insert("req-abandoned".to_owned(), abandoned);
+        }
+        *runner.project_owners.lock().expect("a clean owner table") = Some(Vec::new());
+
+        poison_peer_waiters(&runner);
+        // AND the owner table, which is a SEPARATE mutex. Poisoning only
+        // peer_waiters made the project_owners assertion below vacuous: that
+        // lock returned Ok, so `*owners = None` ran whether or not it had been
+        // recovered, and the assertion passed with the old code restored.
+        poison_project_owners(&runner);
+
+        // SITE ONE: peer_waiter_count. `unwrap_or(0)` answered "nobody is
+        // waiting" for a table it could not read.
+        assert_eq!(
+            runner.peer_waiter_count(),
+            2,
+            "peer_waiter_count reported no waiters on a poisoned table while two were sitting in it"
+        );
+
+        // SITE TWO: take_peer_waiter. `.lock().ok()?` answered "no waiter with
+        // that id", so an answer that HAD arrived was dropped on the floor and
+        // its caller waited for nothing.
+        let taken = runner.take_peer_waiter("req-answered");
+        assert!(
+            taken.is_some(),
+            "take_peer_waiter found no waiter on a poisoned table, so an answer that arrived would be dropped and its caller would wait for an answer it had already been sent"
+        );
+        // Delivering through it proves it is the real sender, not just a Some.
+        drop(taken);
+        assert!(
+            matches!(
+                answered_receiver.try_recv(),
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+            ),
+            "the taken waiter was not the live sender for its id"
+        );
+
+        // SITE THREE: fail_peer_waiters.
+        runner.fail_peer_waiters();
+
+        // The waiter learns the answer cannot arrive, by its sender being
+        // dropped. Through the poisoned read it is never dropped, so this
+        // receiver stays pending and the real caller would wait out its
+        // deadline.
+        // Closed, SPECIFICALLY. `try_recv().is_err()` would have been vacuous:
+        // it is Err for a dropped sender (Closed) and equally Err for a sender
+        // still sitting in the table with nothing sent (Empty), so it passes
+        // whether or not the fix works.
+        assert!(
+            matches!(
+                abandoned_receiver.try_recv(),
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+            ),
+            "the waiter's sender was not dropped on a poisoned table, so a real caller would wait out its whole deadline for an answer that can no longer arrive"
+        );
+        assert!(
+            runner
+                .peer_waiters
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_empty(),
+            "the waiter table was not cleared on a poisoned mutex"
+        );
+        assert!(
+            runner
+                .project_owners
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_none(),
+            "stale project ownership survived the dead connection on a poisoned mutex, which is what its own comment says must not happen"
+        );
+    }
+
+    /// A poisoned waiter table does not leak the entry its guard exists to take.
+    ///
+    /// `PeerWaiterGuard` is there for the exit no code can see: a caller inside
+    /// a `select!` that loses the race is dropped mid-await, and the
+    /// registration site's own comment calls a left-behind entry "a leak that
+    /// nothing later would ever collect". Read through `if let Ok(..)`, a
+    /// poisoned mutex produced precisely that leak, in the one place whose
+    /// whole job is to prevent it. This is the site I missed when I first fixed
+    /// the other three.
+    #[test]
+    fn a_poisoned_waiter_table_still_lets_its_guard_collect_the_entry() {
+        let runner = RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        );
+
+        let (sender, _receiver) = tokio::sync::oneshot::channel::<super::PeerAnswer>();
+        runner
+            .peer_waiters
+            .lock()
+            .expect("a clean waiter table")
+            .insert("req-gave-up".to_owned(), sender);
+
+        poison_peer_waiters(&runner);
+
+        // The guard for a caller that has gone away.
+        drop(super::PeerWaiterGuard {
+            waiters: Arc::clone(&runner.peer_waiters),
+            id: "req-gave-up".to_owned(),
+        });
+
+        assert!(
+            runner
+                .peer_waiters
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_empty(),
+            "the guard did not collect its entry on a poisoned table, which is the leak its own comment says nothing later would ever collect"
+        );
+    }
+
+    /// A poisoned owner table does not throw away a table it was handed.
+    ///
+    /// `store_project_owners` is given rows that arrived in a frame. Read
+    /// through `if let Ok(..)` a poisoned mutex discarded them, and because
+    /// `project_owner_for` answers `Unknown` for an unreadable table, the relay
+    /// never recovered ownership knowledge however many more frames came.
+    /// Being handed data and dropping it is not the same as not being handed
+    /// any -- the distinction this whole class turns on.
+    #[test]
+    fn a_poisoned_owner_table_still_stores_the_rows_it_was_handed() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let runner = RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        );
+
+        poison_project_owners(&runner);
+
+        runner.store_project_owners(Vec::new());
+
+        assert!(
+            runner
+                .project_owners
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_some(),
+            "the owner rows handed to store_project_owners were discarded on a poisoned table, so project_owner_for would keep answering Unknown for every later frame too"
+        );
+    }
+
+    /// A peer request still registers its waiter after the table is poisoned.
+    ///
+    /// Poison is PERMANENT -- nothing in this crate calls `clear_poison`, and
+    /// the runner outlives reconnects, with `fail_peer_waiters` driven from the
+    /// connection loop. So the old refusal at the registration path was not a
+    /// one-request failure: one panic anywhere that held this lock meant every
+    /// peer request on the machine failed forever with
+    /// "peer_waiters_unavailable". Refusing at the only write path while every
+    /// read recovers is incoherent, and the recovery is safe for exactly the
+    /// reason the other gates here show: every mutation is a single map
+    /// operation.
+    ///
+    /// The request still fails, because this runner has no socket. What it must
+    /// not say any more is that the waiter table was unavailable.
+    #[test]
+    fn a_peer_request_is_not_refused_forever_by_a_poisoned_waiter_table() {
+        let runner = Arc::new(RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        ));
+        poison_peer_waiters(&runner);
+
+        // aimux-async-seam: test - drives one request with no socket behind it
+        let outcome = crate::async_runtime::block_on_named("relay:test-poisoned-request", {
+            let runner = Arc::clone(&runner);
+            async move {
+                runner
+                    .request_peer(
+                        "peer-machine",
+                        "GET",
+                        "/health",
+                        &serde_json::json!({}),
+                        Duration::from_millis(10),
+                    )
+                    .await
+            }
+        });
+
+        // Any other outcome means it got past registration, which is the
+        // whole claim.
+        if let Err(super::PeerRequestError::NotSent(reason)) = outcome {
+            assert_ne!(
+                reason, "peer_waiters_unavailable",
+                "a poisoned waiter table still refuses every peer request, and poison never clears, so the feature is dead for the life of the process"
+            );
         }
     }
 }
