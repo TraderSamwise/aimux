@@ -3089,11 +3089,48 @@ fn handle_task_list_without_holding_the_lock(
                 locked.build_project_service_json_request(&project, &route_path, None, None)
             };
             // The guard is gone by here. That is the whole point of the carve-out.
-            let (project_root, json_request) = match built {
-                Ok(resolved) => resolved,
-                Err(response) => return response,
+            let hot = match built {
+                Ok((project_root, json_request)) => {
+                    send_project_service_json(&project_root, &json_request)
+                }
+                Err(response) => ProjectServiceJsonResult::error(response),
             };
-            let result = send_project_service_json(&project_root, &json_request);
+
+            // `get_hot_or_ensured_project_service_json` is what the generic
+            // route reaches through this trait, and on 502 or 503 it STARTS the
+            // project service and retries. Dropping that would mean
+            // `aimux task list` stopped working on a project whose service is
+            // not up -- a 503 where it used to start the service and answer.
+            // So the retry is mirrored here, with the same split: the ensure
+            // mutates the runtime and is locked, the send is not.
+            let result = match hot {
+                ProjectServiceJsonResult::Err { response }
+                    if response.status == 502 || response.status == 503 =>
+                {
+                    let ensured = {
+                        let mut locked = runtime.lock().expect("daemon runtime mutex poisoned");
+                        match locked.ensure_project_service_for_text_request(&project) {
+                            Ok(project_root) => locked.build_project_service_json_request(
+                                &project_root,
+                                &route_path,
+                                None,
+                                None,
+                            ),
+                            Err(error) => Err(crate::daemon::routing::text_error(
+                                502,
+                                format!("Error: {error}"),
+                            )),
+                        }
+                    };
+                    match ensured {
+                        Ok((project_root, json_request)) => {
+                            send_project_service_json(&project_root, &json_request)
+                        }
+                        Err(response) => ProjectServiceJsonResult::error(response),
+                    }
+                }
+                result => result,
+            };
             crate::daemon::text::collaboration::render_task_list_result(&route_url, result)
         },
     )

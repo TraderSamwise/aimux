@@ -4585,3 +4585,88 @@ fn a_core_text_route_does_not_hold_the_runtime_lock_across_its_upstream_call() {
     drop(stuck);
     fixture.cleanup();
 }
+
+/// A project service that answers task-list requests.
+struct TaskListUpstream {
+    port: u16,
+}
+
+impl TaskListUpstream {
+    fn spawn() -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind task list upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let body =
+                    json!({ "tasks": [{ "id": "t1", "title": "from the upstream" }] }).to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                use std::io::Write;
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        Self { port }
+    }
+}
+
+/// The carve-out still STARTS a project service that is not running.
+///
+/// This is a regression the carve-out nearly shipped, so it gets a gate of its
+/// own. `aimux task list` reaches the project service through
+/// `DaemonCollaborationTextRuntime::get_project_service_json`, which is
+/// `get_hot_or_ensured_project_service_json`: on 502 or 503 it starts the
+/// service and retries. A carve-out that calls build+send directly answers 503
+/// instead, so the command would stop working on any project whose service is
+/// not already up -- the common case after a reboot.
+#[test]
+fn the_carved_out_task_list_route_still_starts_a_project_service_that_is_down() {
+    let fixture = RuntimeFixture::new("task-list-cold");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    // No endpoint file: the project service is NOT running. The launcher
+    // publishes one pointing at a real upstream when asked to start it.
+    let upstream = TaskListUpstream::spawn();
+    let mut launcher = FakeLauncher::new(std::process::id() as i32);
+    launcher.endpoint_port = Some(upstream.port);
+    let launcher = Arc::new(launcher);
+    let runtime = Arc::new(Mutex::new(fixture.runtime_with_launcher(
+        Arc::clone(&launcher),
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    )));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        health_identity,
+        request(
+            "GET",
+            &format!(
+                "{}?project={}",
+                aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+                project_root
+            ),
+        ),
+    );
+
+    assert_eq!(
+        response.status, 200,
+        "the carved-out route answered {} instead of starting the project service and retrying. Without the ensure-and-retry the generic route performs, `aimux task list` returns 503 on any project whose service is not already up",
+        response.status
+    );
+    assert_eq!(
+        launcher.calls(),
+        vec![project_root],
+        "the route should have asked the launcher to start the project service exactly once"
+    );
+    fixture.cleanup();
+}
