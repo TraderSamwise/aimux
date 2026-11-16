@@ -1657,35 +1657,53 @@ fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
     peer_thread.join().expect("peer thread");
 }
 
-/// An interceptor waiting on the runtime mutex does not consume an async worker.
+/// Which pre-dispatch interceptor a worker-starvation check is aiming at.
+#[derive(Debug, Clone, Copy)]
+enum StreamInterceptor {
+    JobEvents,
+    HostAgentStream,
+}
+
+/// Fails when an interceptor holds an async worker while it waits for the
+/// global runtime mutex.
 ///
-/// Both stream interceptors run before route dispatch and both need the global
-/// runtime mutex -- the one other routes hold across a project-service call.
-/// They used to take it INLINE on the async worker, and
-/// `ASYNC_RUNTIME_WORKER_THREADS` is 2, so two concurrent stream requests
-/// during contention parked both workers. Every other connection task was then
-/// accepted and never polled, `/health` among them, and the watchdog ends the
-/// process after three 30s strikes: a daemon that was merely busy exited as a
-/// wedged one.
+/// Both stream interceptors run before route dispatch and both need that mutex
+/// -- the one other routes hold across a project-service call. They used to
+/// take it INLINE on the async worker, and `ASYNC_RUNTIME_WORKER_THREADS` is
+/// 2, so two concurrent stream requests during contention parked both workers.
+/// Every other connection task was then accepted and never polled, `/health`
+/// among them, and the watchdog ends the process after three 30s strikes: a
+/// daemon that was merely busy exited as a wedged one.
 ///
-/// HOW THIS DISCRIMINATES, because my first attempt did not. That version
-/// spawned two interceptors and one task that merely yielded, then asserted
-/// the yield ran. It passed with the inline locks restored -- `spawn` gives no
-/// polling order, so the yielding task simply finished before the other two
-/// ever reached the lock. A test that survives its own mutation reads as a
-/// guarantee and is worse than nothing.
+/// WHAT DISCRIMINATES, after three attempts that did not.
 ///
-/// This version spawns FOUR TIMES as many interceptor tasks as there are
-/// workers, and each one reports that it has been polled BEFORE it awaits the
-/// interceptor. With the lock taken inline, only as many tasks as there are
-/// workers can ever report: the first two park their workers forever and the
-/// rest are never polled. With the lock on the blocking pool, every task is
-/// polled and every one reports. So the count of reports is the discriminator,
-/// and it does not depend on scheduling order.
-#[test]
-fn an_interceptor_waiting_on_the_runtime_lock_does_not_consume_an_async_worker() {
+/// (1) Two interceptors plus one task that merely yielded, asserting the yield
+/// ran. Passed with the inline locks restored: `spawn` gives no polling order,
+/// so the yield finished first.
+///
+/// (2) Counting how many tasks were polled within a 5s budget. A review ran it
+/// and it FAILED on correct code, reporting the identical number this file's
+/// mutation proof attributes to the regression. Five seconds of CPU starvation
+/// on two worker threads looks exactly like two workers parked on a lock, so
+/// the gate asserted a cause it had not established. A flaky gate that names
+/// the wrong cause is worse than no gate.
+///
+/// (3) Alternating the two interceptors across the tasks. That made detection
+/// depend on polling ORDER: with only some tasks able to park a worker, a run
+/// that polled those last reported every task and passed with the bug present.
+///
+/// So: every task here drives the SAME interceptor, and there are more tasks
+/// than workers. Once `WORKERS` of them are parked nothing can be polled
+/// again, whatever the order. And the budget is a QUIET WINDOW rather than a
+/// deadline -- any task being polled resets it, so the test fails only when
+/// progress STOPS. A starved runtime still progresses, just slowly, and
+/// passes; a parked worker never progresses and fails.
+fn assert_interceptor_does_not_consume_a_worker(interceptor: StreamInterceptor) {
     const WORKERS: usize = aimux::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
-    let attempts = WORKERS * 4;
+    let attempts = WORKERS + 2;
+    // A no-progress window, not a latency budget: this is what a true
+    // regression costs to detect, not what a healthy run waits.
+    let quiet_window = Duration::from_secs(30);
 
     let async_runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(WORKERS)
@@ -1695,7 +1713,7 @@ fn an_interceptor_waiting_on_the_runtime_lock_does_not_consume_an_async_worker()
     let _entered = async_runtime.enter();
 
     let daemon = Arc::new(Mutex::new(FakeRuntime::empty()));
-    // Held for the whole test, so every interceptor genuinely blocks and none
+    // Held for the whole check, so every interceptor genuinely blocks and none
     // can pass by racing to an uncontended mutex.
     let held = daemon.lock().expect("hold the runtime mutex");
 
@@ -1703,34 +1721,34 @@ fn an_interceptor_waiting_on_the_runtime_lock_does_not_consume_an_async_worker()
     for index in 0..attempts {
         let runtime = Arc::clone(&daemon);
         let polled_tx = polled_tx.clone();
-        // Alternating, so neither interceptor can be the only one proved.
-        let jobs_turn = index % 2 == 0;
         async_runtime.spawn(async move {
             polled_tx.send(index).expect("the test is still listening");
             let mut sink: Vec<u8> = Vec::new();
-            if jobs_turn {
-                let request = FakeRuntime::request(
-                    "GET",
-                    aimux::core_command_contract::CORE_API_ROUTES.jobs_events,
-                );
-                let _ =
-                    aimux::daemon::jobs::maybe_handle_job_event_stream_request_with_runtime_mutex(
+            match interceptor {
+                StreamInterceptor::JobEvents => {
+                    let request = FakeRuntime::request(
+                        "GET",
+                        aimux::core_command_contract::CORE_API_ROUTES.jobs_events,
+                    );
+                    let _ = aimux::daemon::jobs::maybe_handle_job_event_stream_request_with_runtime_mutex(
                         &runtime,
                         &request,
                         &mut sink,
                     )
                     .await;
-            } else {
-                let request = FakeRuntime::request(
-                    "GET",
-                    aimux::core_command_contract::CORE_API_ROUTES.host_agent_stream_text,
-                );
-                let _ = aimux::daemon::stream::maybe_handle_host_agent_stream_request_with_runtime_mutex_async(
-                    &runtime,
-                    &request,
-                    &mut sink,
-                )
-                .await;
+                }
+                StreamInterceptor::HostAgentStream => {
+                    let request = FakeRuntime::request(
+                        "GET",
+                        aimux::core_command_contract::CORE_API_ROUTES.host_agent_stream_text,
+                    );
+                    let _ = aimux::daemon::stream::maybe_handle_host_agent_stream_request_with_runtime_mutex_async(
+                        &runtime,
+                        &request,
+                        &mut sink,
+                    )
+                    .await;
+                }
             }
         });
     }
@@ -1738,7 +1756,7 @@ fn an_interceptor_waiting_on_the_runtime_lock_does_not_consume_an_async_worker()
 
     let mut reported = 0;
     while reported < attempts {
-        match polled.recv_timeout(Duration::from_secs(5)) {
+        match polled.recv_timeout(quiet_window) {
             Ok(_) => reported += 1,
             Err(_) => break,
         }
@@ -1747,8 +1765,19 @@ fn an_interceptor_waiting_on_the_runtime_lock_does_not_consume_an_async_worker()
 
     assert_eq!(
         reported, attempts,
-        "only {reported} of {attempts} interceptor tasks were ever polled on {WORKERS} workers, so an interceptor is holding a worker while it waits for the runtime mutex -- every other connection task, /health included, would be accepted and never answered"
+        "{interceptor:?}: {reported} of {attempts} tasks were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}. Progress stopped rather than slowed, which a starved runtime does not do: this interceptor is holding a worker while it waits for the runtime mutex, so every other connection task -- /health included -- would be accepted and never answered"
     );
+}
+
+/// Proved separately from its twin, so neither rides on the other being safe.
+#[test]
+fn the_job_event_stream_interceptor_does_not_consume_an_async_worker() {
+    assert_interceptor_does_not_consume_a_worker(StreamInterceptor::JobEvents);
+}
+
+#[test]
+fn the_host_agent_stream_interceptor_does_not_consume_an_async_worker() {
+    assert_interceptor_does_not_consume_a_worker(StreamInterceptor::HostAgentStream);
 }
 
 /// Every per-connection interceptor declines `/health` without locking.

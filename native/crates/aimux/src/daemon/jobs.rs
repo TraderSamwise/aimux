@@ -445,14 +445,17 @@ where
     }
 
     let resolve_runtime = Arc::clone(runtime);
-    let resolve_path = request.path.clone();
+    // The whole request, not just its path, and for a reason a review named:
+    // the gate above and the resolve below would otherwise parse from two
+    // different owners. They agree today -- both take `request.path` and
+    // `DaemonRouteUrl::parse` is pure -- but the moment the gate normalises a
+    // path or the resolution needs a header, they would diverge in silence.
+    // The host-agent interceptor beside this one already clones the request.
+    let resolve_request = request.clone();
     let resolution = crate::async_runtime::spawn_blocking_named(
         crate::async_runtime::task_name("daemon-jobs", "event-stream-resolve"),
         move || {
-            // Reparsed inside, because the closure owns its path: the
-            // `route_url` above borrows the request and cannot cross onto the
-            // pool.
-            let route_url = DaemonRouteUrl::parse(&resolve_path);
+            let route_url = DaemonRouteUrl::parse(&resolve_request.path);
             let runtime = resolve_runtime
                 .lock()
                 .expect("daemon runtime mutex poisoned");
