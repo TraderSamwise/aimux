@@ -3370,6 +3370,13 @@ pub fn run_daemon_internal() -> Result<()> {
             .with_global_expose_hot_snapshot_coordinator(global_expose_hot_snapshots.clone())
             .with_daemon_scheduler(daemon_scheduler.clone()),
     ));
+    // Here, and not later. `from_runtime` is a BLOCKING lock, and by the time
+    // the serve loop is set up the scheduler and the hosted listener are both
+    // live and both take this mutex -- so taking it there made daemon startup
+    // wait on a periodic task's first tick, which is the opposite of what a
+    // lock-free readiness route is for. At this point nothing else holds a
+    // handle, so it cannot contend.
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     // Held for the daemon's lifetime. A local build gets `None` and holds
     // nothing, which is why the binding is not gated.
     let _hosted_server = crate::remote_control_edge::RemoteDaemonState::start_hosted_listener(
@@ -3402,9 +3409,6 @@ pub fn run_daemon_internal() -> Result<()> {
         runtime.connect_relay_on_startup();
     }
     let route_runtime = Arc::clone(&runtime);
-    // Once, here, and never again for the daemon's life. `/health` answers
-    // from this copy so the readiness probe never queues behind the mutex.
-    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     let stream_runtime = Arc::clone(&runtime);
     let shutdown_runtime = Arc::clone(&runtime);
     // Off the async runtime on purpose: a watchdog scheduled on the runtime it
