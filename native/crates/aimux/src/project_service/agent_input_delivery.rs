@@ -59,7 +59,16 @@ pub struct AgentInputDeliveryQueue {
 }
 
 impl AgentInputDeliveryQueue {
-    fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
+    /// `pub` so a test can hold it.
+    ///
+    /// Not a test hook: production really does hold this from another thread --
+    /// the enqueue path takes it while the tick is running -- and the gate for
+    /// "the tick does not wait for this lock on an async worker" has no way to
+    /// create that state otherwise. Everything that takes it in production is
+    /// in this module and holds it across a bounded file operation; a caller
+    /// outside the module holding it across anything longer is the bug this
+    /// accessor makes testable, not one it introduces.
+    pub fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
         self.lock
             .lock()
             .expect("agent input delivery lock poisoned")
@@ -105,7 +114,7 @@ pub struct PendingAgentInputDelivery {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct AgentInputDeliveryState {
+pub struct AgentInputDeliveryState {
     version: u64,
     pending: Vec<PendingAgentInputDelivery>,
 }
@@ -551,44 +560,27 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
 }
 
 pub async fn run_pending_agent_input_deliveries_async(
-    context: &ProjectServiceRequestContext,
+    context: &Arc<ProjectServiceRequestContext>,
     now_ms: i64,
 ) -> Result<(), String> {
     let task_deadline = Instant::now()
         .checked_add(DELIVERY_TASK_TIMEOUT.saturating_sub(DELIVERY_TASK_COMMIT_MARGIN))
         .unwrap_or_else(Instant::now);
     let path = agent_input_delivery_queue_path(context.project_state_dir());
-    let state = {
-        let _guard = context.agent_input_delivery_queue.lock();
-        match load_delivery_state(&path) {
-            Ok(state) => {
-                clear_agent_input_delivery_queue_failure(context, QUEUE_LOAD_OPERATION);
-                state
-            }
-            Err(_) => {
-                let error = load_error_for_path(&path);
-                record_backlog_error(
-                    AGENT_INPUT_DELIVERY_BACKLOG,
-                    Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
-                    error.clone(),
-                );
-                record_agent_input_delivery_queue_failure(
-                    context,
-                    QUEUE_LOAD_OPERATION,
-                    format!("Skipped queued agent input delivery because {error}"),
-                );
-                return Err(format!("agent input delivery queue unavailable: {error}"));
-            }
-        }
-    };
+    let state = load_delivery_queue_off_the_worker(context, &path).await?;
     if state.pending.is_empty() {
         backlog_metric(
             AGENT_INPUT_DELIVERY_BACKLOG,
             Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
         )
         .set_depth(0);
-        // Same as the sync runner: an empty queue clears the rows.
-        publish_queued_input_counts(context, &[]);
+        // Same as the sync runner: an empty queue clears the rows -- and off
+        // the worker, because `publish_queued_input_counts` acquires a state
+        // update lock whose retry loop sleeps up to ACQUIRE_TIMEOUT, then
+        // reads and rewrites session metadata. This is the STEADY STATE path,
+        // twice a second, so it was the worst of the three on this stack and
+        // the one my first gate could not see.
+        publish_queued_input_counts_off_the_worker(context, Vec::new()).await?;
         return Ok(());
     }
 
@@ -738,9 +730,150 @@ pub async fn run_pending_agent_input_deliveries_async(
         clear_agent_input_delivery_failure(context, session_id);
     }
 
+    let merge_failures =
+        merge_and_save_delivery_queue_off_the_worker(context, path, remaining, loaded_ids).await?;
+    failures.extend(merge_failures);
+    finish_agent_input_delivery_task(failures)
+}
+
+/// Each of these is a named `async fn` rather than an inline `spawn_blocking`
+/// at the call site, and that is deliberate.
+///
+/// My first gate drove the whole tick with the queue lock held, and it proved
+/// only the FIRST of the three spans: every task parked in the load and never
+/// returned, and even with a free lock an empty queue returns before the merge.
+/// Put the merge back inline on the worker and that gate passed unchanged --
+/// a review caught it, and I reproduced it. A test that proves the half
+/// already safe is the shape I have hit five times on this branch.
+///
+/// Naming each hop gives each one a gate that drives the real production call,
+/// and each is mutation-proved on its own.
+pub async fn load_delivery_queue_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    path: &Path,
+) -> Result<AgentInputDeliveryState, String> {
+    let context = Arc::clone(context);
+    let path = path.to_path_buf();
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "queue-load",
+            "project-service",
+        ),
+        move || load_delivery_queue_under_lock(&context, &path),
+    )
+    .await
+    // A pool task that never ran is not an unreadable queue.
+    .map_err(|error| format!("agent input delivery queue load did not finish: {error}"))?
+}
+
+/// Publishes the queued-input counts off the worker.
+///
+/// `publish_queued_input_counts` acquires a state update lock whose retry loop
+/// sleeps, then reads and rewrites session metadata. On the empty-queue path
+/// that runs twice a second in the steady state.
+pub async fn publish_queued_input_counts_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    pending: Vec<PendingAgentInputDelivery>,
+) -> Result<(), String> {
+    let context = Arc::clone(context);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "publish-counts",
+            "project-service",
+        ),
+        move || publish_queued_input_counts(&context, &pending),
+    )
+    .await
+    .map_err(|error| format!("agent input delivery count publish did not finish: {error}"))
+}
+
+/// Merges, saves and republishes off the worker.
+pub async fn merge_and_save_delivery_queue_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    path: PathBuf,
+    remaining: Vec<PendingAgentInputDelivery>,
+    loaded_ids: BTreeSet<String>,
+) -> Result<Vec<String>, String> {
+    let context = Arc::clone(context);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "merge-and-save",
+            "project-service",
+        ),
+        move || merge_and_save_delivery_queue(&context, &path, remaining, &loaded_ids),
+    )
+    .await
+    // A pool task that never ran is not an empty failure list.
+    .map_err(|error| format!("agent input delivery merge did not finish: {error}"))
+}
+
+/// Reads the queue under the shared lock.
+///
+/// Separate from its async caller for the same reason as
+/// `merge_and_save_delivery_queue`: a function that waits for this lock on an
+/// async worker parks it, and the project service runs two.
+///
+/// `Err` is the queue being unreadable, which is not the same as an empty
+/// queue and is reported rather than skipped.
+fn load_delivery_queue_under_lock(
+    context: &ProjectServiceRequestContext,
+    path: &Path,
+) -> Result<AgentInputDeliveryState, String> {
+    let _guard = context.agent_input_delivery_queue.lock();
+    match load_delivery_state(path) {
+        Ok(state) => {
+            clear_agent_input_delivery_queue_failure(context, QUEUE_LOAD_OPERATION);
+            Ok(state)
+        }
+        Err(_) => {
+            let error = load_error_for_path(path);
+            record_backlog_error(
+                AGENT_INPUT_DELIVERY_BACKLOG,
+                Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+                error.clone(),
+            );
+            record_agent_input_delivery_queue_failure(
+                context,
+                QUEUE_LOAD_OPERATION,
+                format!("Skipped queued agent input delivery because {error}"),
+            );
+            Err(format!("agent input delivery queue unavailable: {error}"))
+        }
+    }
+}
+
+/// Merges the queue back, saves it, and republishes the counts.
+///
+/// Separate from its async caller so the whole span can run on the blocking
+/// pool. It holds the shared delivery-queue lock from its first line to its
+/// last, and in that span it does a file read, a `write_json_atomic` -- a temp
+/// file plus a rename -- and `publish_queued_input_counts`, which on a changed
+/// fingerprint takes a lock directory and rewrites session metadata. That
+/// function's own comment says doing it twice a second eats the budget the tick
+/// has for actually delivering.
+///
+/// It used to run inline on the project service's async worker, because
+/// `AgentInputDeliveryTask::run` awaits its caller directly and
+/// `periodic_scheduler.rs` awaits task futures on its own async task -- the
+/// `spawn_blocking_named` in that file is for alert sinks, not task bodies. The
+/// daemon's ten `PeriodicTask` impls each offload their own body; this one did
+/// not, which is the same defect the two daemon stream interceptors had.
+///
+/// Returns the failures it collected rather than taking a `&mut Vec`, so the
+/// closure that runs it owns everything it touches.
+fn merge_and_save_delivery_queue(
+    context: &ProjectServiceRequestContext,
+    path: &Path,
+    remaining: Vec<PendingAgentInputDelivery>,
+    loaded_ids: &BTreeSet<String>,
+) -> Vec<String> {
+    let mut failures = Vec::new();
     let _guard = context.agent_input_delivery_queue.lock();
     let mut pending = remaining;
-    match load_delivery_state(&path) {
+    match load_delivery_state(path) {
         Ok(current) => {
             clear_agent_input_delivery_queue_failure(context, QUEUE_MERGE_OPERATION);
             pending.extend(
@@ -770,7 +903,7 @@ pub async fn run_pending_agent_input_deliveries_async(
     };
     let depth = state.pending.len();
     let saved_pending = state.pending.clone();
-    match save_delivery_state(&path, state) {
+    match save_delivery_state(path, state) {
         Ok(()) => {
             clear_agent_input_delivery_queue_failure(context, QUEUE_SAVE_OPERATION);
             publish_queued_input_counts(context, &saved_pending);
@@ -794,7 +927,7 @@ pub async fn run_pending_agent_input_deliveries_async(
             failures.push(error);
         }
     }
-    finish_agent_input_delivery_task(failures)
+    failures
 }
 
 pub fn agent_input_delivery_backlog_snapshot(
