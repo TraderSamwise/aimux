@@ -1045,12 +1045,18 @@ impl RelayRunner {
             let notified = self.outbox_ready.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            if self
-                .outbox
-                .lock()
-                .ok()
-                .is_some_and(|outbox| !outbox.is_empty())
-            {
+            // Recovered, not treated as empty. `.lock().ok()` read a
+            // poisoned mutex as "the outbox is empty", so this loop would wait
+            // on a notification forever instead of draining frames that were
+            // sitting right there.
+            let has_frames = {
+                let outbox = self
+                    .outbox
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                !outbox.is_empty()
+            };
+            if has_frames {
                 return;
             }
             notified.await;
