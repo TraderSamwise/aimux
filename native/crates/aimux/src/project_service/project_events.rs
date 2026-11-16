@@ -51,9 +51,16 @@ impl ProjectEventBus {
     }
 
     pub fn publish(&self, event: Value) -> u64 {
-        let Ok(mut state) = self.inner.state.lock() else {
-            return 0;
-        };
+        // Recovered, not skipped. A poisoned mutex here used to return
+        // sequence 0 and DROP the event: the caller got a plausible-looking
+        // number, the event never reached the store, and nothing anywhere
+        // said so. One panic while holding this lock silently emptied the
+        // project event stream for the rest of the process.
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         state.latest_sequence = state.latest_sequence.saturating_add(1);
         let sequence = state.latest_sequence;
         state
@@ -73,9 +80,13 @@ impl ProjectEventBus {
         after_sequence: u64,
         session_filter: Option<&str>,
     ) -> Vec<ProjectEventRecord> {
-        let Ok(state) = self.inner.state.lock() else {
-            return Vec::new();
-        };
+        // An empty Vec is "no events since", not "could not read the
+        // store", so the guard is recovered rather than the read abandoned.
+        let state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         events_since_locked(&state, after_sequence, session_filter)
     }
 
@@ -86,9 +97,11 @@ impl ProjectEventBus {
         timeout: Duration,
     ) -> bool {
         let deadline = Instant::now() + timeout;
-        let Ok(mut state) = self.inner.state.lock() else {
-            return false;
-        };
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         loop {
             if state_has_events_since(&state, after_sequence, session_filter) {
                 return true;
@@ -119,9 +132,15 @@ impl ProjectEventBus {
         let deadline = Instant::now() + timeout;
         loop {
             let notified = self.inner.changed_async.notified();
-            if let Ok(state) = self.inner.state.lock()
-                && state_has_events_since(&state, after_sequence, session_filter)
-            {
+            let has_events = {
+                let state = self
+                    .inner
+                    .state
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                state_has_events_since(&state, after_sequence, session_filter)
+            };
+            if has_events {
                 return true;
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -394,4 +413,63 @@ fn now_iso() -> String {
         now.second(),
         now.millisecond()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Poisons the bus mutex the only way it can really happen: a panic while
+    /// a guard is held.
+    fn poison(bus: &ProjectEventBus) {
+        let inner = Arc::clone(&bus.inner);
+        let panicked = std::thread::spawn(move || {
+            let _guard = inner.state.lock().expect("a clean lock to poison");
+            panic!("poisoning the project event bus on purpose");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(
+            bus.inner.state.is_poisoned(),
+            "the mutex must actually be poisoned for this test to mean anything"
+        );
+    }
+
+    /// A poisoned mutex is not an absence of events.
+    ///
+    /// Every read here used `let Ok(..) else` or `.ok()` and treated a poisoned
+    /// lock as "nothing to report". `publish` was the worst: it returned
+    /// sequence 0 and DROPPED the event, so the caller got a plausible-looking
+    /// number while the event never reached the store. One panic while holding
+    /// this lock silently emptied the project event stream for the rest of the
+    /// process, and nothing anywhere said so.
+    ///
+    /// Recovering the guard is this crate's own pattern -- 29 other sites
+    /// already do it -- and the data behind a poisoned mutex is still intact.
+    #[test]
+    fn a_poisoned_bus_still_publishes_and_reports_its_events() {
+        let bus = ProjectEventBus::default();
+        poison(&bus);
+
+        let sequence = bus.publish(json!({ "kind": "after-poison" }));
+        assert_eq!(
+            sequence, 1,
+            "publish returned {sequence} on a poisoned bus: 0 is what the old              code returned while dropping the event, and it is indistinguishable              from a real sequence to the caller"
+        );
+
+        let events = bus.events_since(0, None);
+        assert_eq!(
+            events.len(),
+            1,
+            "events_since reported {} events on a poisoned bus; an empty Vec is              'no events since', not 'could not read the store'",
+            events.len()
+        );
+        assert_eq!(events[0].event["kind"], "after-poison");
+
+        assert!(
+            bus.wait_for_events_since(0, None, Duration::from_millis(50)),
+            "wait_for_events_since reported no events on a poisoned bus while an              event was sitting in it"
+        );
+    }
 }
