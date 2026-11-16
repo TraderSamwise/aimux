@@ -887,25 +887,61 @@ pub fn agent_input_text_route(
     )
 }
 
+/// Phase one of `aimux ps`: which project, and which upstream path.
+///
+/// Pure, and public, because this route is served from two places -- the
+/// generic locked dispatch and the carve-out in `daemon/runtime.rs` that keeps
+/// the global runtime mutex off the upstream hop. Both call this and
+/// `render_agent_ps_result`, so the two cannot answer differently.
+pub fn resolve_agent_ps_request(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: project_routes::agents::LIST.to_owned(),
+    })
+}
+
+/// Phase three of `aimux ps`, from a raw project-service result.
+pub fn render_agent_ps_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    render_agent_ps_payload(route_url, &json)
+}
+
 pub fn agent_ps_text_route(
     runtime: &mut impl DaemonAgentTextRuntime,
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
 ) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_agent_ps_request(route_url, body) {
+        Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let (json, _) = match unwrap_project_result(
-        runtime.get_project_service_json(&project, project_routes::agents::LIST),
-    ) {
-        Ok(result) => result,
-        Err(response) => return response,
-    };
-    if let Some(response) = reject_unverified_tmux_liveness(&json) {
+    let (json, _) =
+        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
+            Ok(result) => result,
+            Err(response) => return response,
+        };
+    render_agent_ps_payload(route_url, &json)
+}
+
+/// Phase three proper: the upstream's JSON into the route's response. Pure.
+fn render_agent_ps_payload(route_url: &DaemonRouteUrl, json: &Value) -> DaemonRouteResponse {
+    if let Some(response) = reject_unverified_tmux_liveness(json) {
         return response;
     }
-    let agents = match required_project_service_array(&json, "agent ps", "agents") {
+    let agents = match required_project_service_array(json, "agent ps", "agents") {
         Ok(agents) => agents,
         Err(response) => return response,
     };
