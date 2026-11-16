@@ -1367,20 +1367,24 @@ impl RealDaemonRuntime {
     /// The resolver and the verifier, for a caller that wants to resolve an
     /// endpoint WITHOUT holding the guard.
     ///
-    /// The verifier is an `Arc`, so that half is a pointer copy. The resolver
-    /// is NOT: `repo_root_cache` is a plain `HashMap` on this branch, so
-    /// `Clone` deep-copies it and the locked work is one allocation per cached
-    /// directory. I first wrote that this "shares its cache", which is true
-    /// only once #544 makes the cache an `Arc<Mutex<..>>` -- and this file
-    /// already warns about exactly that mistake a few hundred lines down,
-    /// where a clone "throws the resolver's cache away and resolves the repo
-    /// root again, which the first version did while its comment claimed
-    /// otherwise". Same error, same file, so it is written down here too.
+    /// Both halves are pointer copies, but only since #544. The verifier has
+    /// always been an `Arc`; the resolver's `repo_root_cache` became an
+    /// `Arc<Mutex<..>>` there, so a clone now shares it instead of deep-copying
+    /// the map.
     ///
-    /// It is still a strict improvement: a map clone is bounded work with no
-    /// syscalls, where what it replaces was two process spawns. But the honest
-    /// claim is "bounded allocation", not "pointer copy", and that distinction
-    /// is the whole cost argument for what stays inside the critical section.
+    /// Worth spelling out because I got it wrong twice in opposite directions.
+    /// I first wrote "shares its cache" while this branch still predated #544,
+    /// when `Clone` really did deep-copy and the honest claim was "bounded
+    /// allocation". A review caught that. Then #544 merged, which made the
+    /// original claim true and my correction false -- so the comment had to
+    /// move again when master came in. This file also warns about the same
+    /// class a few hundred lines down, where a clone "throws the resolver's
+    /// cache away and resolves the repo root again, which the first version
+    /// did while its comment claimed otherwise".
+    ///
+    /// The lesson for the next person: a comment about what a clone costs is
+    /// only true relative to the cache's representation, so check the field
+    /// rather than trusting a neighbouring comment -- including this one.
     pub fn project_service_resolution_handles(
         &self,
     ) -> (PathResolver, Arc<dyn ProjectServiceProcessVerifier>) {
@@ -3168,10 +3172,9 @@ fn handle_core_read_route_without_holding_the_lock(
                 Ok(resolved) => resolved,
                 Err(response) => return response,
             };
-            // Phase one holds the guard ONLY to copy two handles: an `Arc`
-            // pointer copy and a resolver clone, which on this branch deep-
-            // copies the repo-root map. Bounded allocation, no syscalls. It
-            // used to do the whole resolution here, which meant two
+            // Phase one holds the guard ONLY to copy two handles, both of
+            // which are pointer copies since #544 made the resolver's cache
+            // shared. It used to do the whole resolution here, which meant two
             // subprocesses -- `rev-parse` and `ps` -- ran inside the critical
             // section.
             let (resolver, verifier) = {
