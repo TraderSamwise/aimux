@@ -322,16 +322,27 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   },
   {
     path: "native/crates/aimux/src/process_inspector.rs",
-    marker: 'AsyncCommand::new("ps")',
-    count: 6,
-    command: "ps",
+    marker: "AsyncCommand::new(ps_program()?.as_os_str())",
+    count: 3,
+    command:
+      "ps, resolved once per process to an absolute path by ps_program rather than spawned by name, so the OS no longer walks PATH on every call -- read_process_args alone has eleven callers and runs on every project-service liveness check",
     argv: "literal process inspection args",
     input: "runtime-selected pid/process filter",
   },
   {
     path: "native/crates/aimux/src/process_inspector.rs",
-    marker: 'AsyncCommand::new("lsof")',
-    command: "lsof",
+    marker: "AsyncCommand::new(ps_program_or_error()?.as_os_str())",
+    count: 3,
+    command:
+      "ps, same resolve-once memo; these are the Result-returning try_* variants, which name a failed resolve rather than folding it into \"no answer\"",
+    argv: "literal process inspection args",
+    input: "runtime-selected pid/process filter",
+  },
+  {
+    path: "native/crates/aimux/src/process_inspector.rs",
+    marker: "AsyncCommand::new(lsof_program()?.as_os_str())",
+    command:
+      "lsof, resolved once per process by lsof_program; reached from read_process_cwd, which the liveness filter calls on its second attempt when the args alone do not identify the project",
     argv: "literal port/process inspection args",
     input: "runtime-selected pid/port filter",
   },
