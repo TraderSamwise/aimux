@@ -300,6 +300,15 @@ where
     // `block_on_named` -- would be refused and panic here. The real daemon
     // routes through the interceptor variant above, which does spawn_blocking;
     // anything wiring the route handler through THIS one has to do the same.
+    //
+    // The panic is the loud failure. The quiet one is worse and is why this
+    // note matters: a handler that merely WAITS here -- for the runtime mutex,
+    // for a lock someone else holds -- parks an async worker instead of
+    // panicking, and there are two of them. Every other connection task is
+    // then accepted and never polled, `/health` among them, and the watchdog
+    // ends the process after three failed probes. That is not hypothetical; it
+    // is what the two stream interceptors did until 2026-11-16, and it reads
+    // in the log as a wedged daemon rather than a busy one.
     let response = handle(request);
     write_prepared_response_async(stream, &response).await?;
     Ok(())
