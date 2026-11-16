@@ -2833,3 +2833,32 @@ fn the_delivery_tick_calls_the_receipt_hops_not_the_blocking_writes() {
         "the tick called finish_input_delivery directly again: same lock, same two workers"
     );
 }
+
+/// The async delivery tick resolves targets through the hop, not inline.
+///
+/// The gate above proves the hop keeps off the workers; nothing in it proves
+/// the tick CALLS the hop. #536 shipped a hop whose call site was never
+/// updated and no test noticed, so this asserts the source directly -- the
+/// same remedy, and the precedent is `daemon_host_agent.rs:123`.
+#[test]
+fn the_delivery_tick_resolves_targets_off_the_worker() {
+    const SOURCE: &str = include_str!("../src/project_service/agent_input_delivery.rs");
+    let start = SOURCE
+        .find("pub async fn run_pending_agent_input_deliveries_async(")
+        .expect("the async delivery tick is still named this");
+    let body = &SOURCE[start..];
+    let end = body
+        .find("\npub ")
+        .map(|offset| offset + 1)
+        .unwrap_or(body.len());
+    let body = &body[..end];
+
+    assert!(
+        body.contains("resolve_queued_delivery_target_off_the_worker("),
+        "the async delivery tick does not call resolve_queued_delivery_target_off_the_worker; a hop nothing calls is not a fix"
+    );
+    assert!(
+        !body.contains("resolve_queued_delivery_target(context,"),
+        "the async delivery tick still resolves a target inline on the worker"
+    );
+}
