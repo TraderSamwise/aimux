@@ -4600,6 +4600,15 @@ fn a_core_text_route_does_not_hold_the_runtime_lock_across_its_upstream_call() {
 
     // Thread two: any other route. It needs the runtime, so it can only answer
     // if the stuck route is not sitting on the mutex.
+    //
+    // WHY `/projects` IS A MEANINGFUL PROBE, because it is not obvious: it has
+    // its own fast path ahead of this carve-out, so it looks like a route that
+    // never takes the mutex at all. It does -- `daemon_project_read_snapshot`
+    // locks just long enough to clone the resolver and the verifier, then does
+    // the slow directory work unlocked. That brief acquisition is the thing
+    // this gate detects. If `/projects` is ever made snapshot-free, this gate
+    // goes quietly vacuous and must move to another route that still needs the
+    // runtime; the mutation proof in the commit body is what would catch that.
     let other_runtime = Arc::clone(&runtime);
     let (answered_tx, answered) = mpsc::channel();
     std::thread::spawn(move || {
