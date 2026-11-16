@@ -32,6 +32,40 @@ const HAZARDS = [
       (/\buse\s+std\s*::\s*thread\s*::\s*sleep\b/.test(fileText) && /\bsleep\s*\(/.test(fnSource)),
   },
   {
+    // The hazard that killed daemons: a per-connection interceptor took the
+    // global runtime mutex on an async worker, and with two workers two
+    // concurrent stream requests parked both. Every other connection task was
+    // accepted and never polled, /health among them, and the watchdog ends the
+    // process after three failed probes.
+    //
+    // Scoped to a SHARED mutex arriving as an `Arc<Mutex<..>>` parameter,
+    // because that is the one whose hold time is someone else's to decide. A
+    // function's own short-lived internal mutex is not this bug, and there are
+    // 96 of those -- a rule that flagged them would have to be switched off.
+    //
+    // Locking inside a `spawn_blocking_named` closure is the fix, not the
+    // hazard, so those bodies are removed before the check.
+    id: "shared-mutex-lock",
+    message:
+      "shared Arc<Mutex<..>> locked on the async fn's own stack; take it inside spawn_blocking_named so waiting for it cannot park an async worker",
+    matches: (fnSource) => {
+      const openBrace = fnSource.indexOf("{");
+      if (openBrace === -1) return false;
+      const shared = [
+        ...fnSource
+          .slice(0, openBrace)
+          .matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*:\s*&?\s*Arc\s*<\s*Mutex\s*</g),
+      ].map((match) => match[1]);
+      if (shared.length === 0) return false;
+      const body = fnSource
+        .slice(openBrace)
+        .replace(/spawn_blocking_named\s*\([\s\S]*?\n\s{4,}\)/g, " ");
+      return shared.some((name) =>
+        new RegExp(`\\b${name}\\s*\\n?\\s*\\.\\s*lock\\s*\\(`).test(body),
+      );
+    },
+  },
+  {
     id: "blocking-recv",
     message: "blocking channel recv used inside async fn; use async channels or spawn_blocking",
     matches: (fnSource, fileText) =>
@@ -55,6 +89,11 @@ function rustFiles(root) {
   return files;
 }
 
+/// `'a'`, `'\n'`, `'\\''`, `'\x41'`, `'\u{1F600}'` -- and nothing that is
+/// really a lifetime.
+const CHAR_LITERAL =
+  /^'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]{1,6}\}|.)|[^\\'])'/;
+
 function maskRust(text) {
   let out = "";
   let i = 0;
@@ -76,9 +115,20 @@ function maskRust(text) {
         i += 1;
         state = "string";
       } else if (ch === "'") {
-        out += " ";
-        i += 1;
-        state = "char";
+        // A lifetime or a loop label is not a char literal. Treating `'` as
+        // the start of one blanked everything up to the next apostrophe, and
+        // in daemon/stream.rs the first `'` is `Formatter<'_>` on line 41
+        // while the next is `&'a` on line 812 -- so 770 lines, every async fn
+        // in the file included, were masked out and silently unscanned. The
+        // audit reported a pass over code it had never looked at.
+        if (CHAR_LITERAL.test(text.slice(i))) {
+          out += " ";
+          i += 1;
+          state = "char";
+        } else {
+          out += ch;
+          i += 1;
+        }
       } else {
         out += ch;
         i += 1;
