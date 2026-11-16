@@ -4521,6 +4521,15 @@ impl HangingUpstream {
     }
 
     /// Wait until the route is genuinely inside its upstream call.
+    ///
+    /// This closes TWO silent-pass modes, not one. The obvious one is the race:
+    /// a second thread that takes the lock before the first one wants it proves
+    /// nothing. The other is vacuity -- if the metadata endpoint ever stopped
+    /// resolving, the route would fail fast without making any call at all, the
+    /// probe would answer 200, and the gate would pass in milliseconds while
+    /// testing nothing. Because a TCP accept happens from inside
+    /// `execute_loopback_json_request`, requiring one proves the route really
+    /// reached the hop, so that second mode now fails loudly here instead.
     fn wait_for_the_route_to_reach_the_call(&self) {
         self.accepted
             .recv_timeout(Duration::from_secs(30))
