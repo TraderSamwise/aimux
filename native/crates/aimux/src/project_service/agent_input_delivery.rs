@@ -702,7 +702,7 @@ pub async fn run_pending_agent_input_deliveries_async(
                         let receipt =
                             match super::input_delivery_receipt::finish_input_delivery_off_the_worker(
                                 context,
-                                attempt.clone(),
+                                attempt,
                                 Ok(verification),
                             )
                             .await
@@ -740,7 +740,7 @@ pub async fn run_pending_agent_input_deliveries_async(
                         if let Err(join_error) =
                             super::input_delivery_receipt::finish_input_delivery_off_the_worker(
                                 context,
-                                attempt.clone(),
+                                attempt,
                                 Err(error.clone()),
                             )
                             .await
