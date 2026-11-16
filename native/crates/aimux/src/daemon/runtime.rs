@@ -1367,26 +1367,22 @@ impl RealDaemonRuntime {
                 format!("Error: project service unavailable for {project_root}"),
             ));
         };
-        let method = if body.is_some() {
-            DaemonHttpMethod::Post
-        } else {
-            DaemonHttpMethod::Get
-        };
-        let body_text = body.map(|value| value.to_string());
-        let mut headers = BTreeMap::from([("accept".to_owned(), "application/json".to_owned())]);
-        if body_text.is_some() {
-            headers.insert("content-type".to_owned(), "application/json".to_owned());
-        }
         Ok((
             project_root,
-            DaemonJsonRequest {
-                url: format!("http://{}:{}{}", endpoint.host, endpoint.port, route_path),
-                method,
-                headers,
-                body: body_text,
-                timeout_ms,
-            },
+            build_daemon_json_request(&endpoint, route_path, body, timeout_ms),
         ))
+    }
+
+    /// The resolver and the verifier, for a caller that wants to resolve an
+    /// endpoint WITHOUT holding the guard. Cheap: a pointer copy and a map
+    /// clone that shares its cache.
+    pub fn project_service_resolution_handles(
+        &self,
+    ) -> (PathResolver, Arc<dyn ProjectServiceProcessVerifier>) {
+        (
+            self.resolver.clone(),
+            Arc::clone(&self.project_service_process_verifier),
+        )
     }
 
     fn request_project_service_json(
@@ -3172,12 +3168,23 @@ fn handle_core_read_route_without_holding_the_lock(
                 Ok(resolved) => resolved,
                 Err(response) => return response,
             };
-            // Phase one, under the lock: everything that needs the runtime.
-            let built = {
-                let mut locked = runtime.lock().expect("daemon runtime mutex poisoned");
-                locked.build_project_service_json_request(&project, &route_path, None, None)
+            // Phase one holds the guard ONLY to copy two handles. It used to
+            // do the whole resolution here, which meant two subprocesses --
+            // `rev-parse` and `ps` -- ran inside the critical section.
+            let (resolver, verifier) = {
+                let locked = runtime.lock().expect("daemon runtime mutex poisoned");
+                locked.project_service_resolution_handles()
             };
-            // The guard is gone by here. That is the whole point of the carve-out.
+            // The guard is gone by here, and the resolution below is where the
+            // spawns live.
+            let built = resolve_project_service_json_request(
+                &resolver,
+                &verifier,
+                &project,
+                &route_path,
+                None,
+                None,
+            );
             let hot = match built {
                 Ok((project_root, json_request)) => {
                     send_project_service_json(&project_root, &json_request)
@@ -12691,6 +12698,99 @@ mod tests {
         let rc = unsafe { libc::utimes(c_path.as_ptr(), times.as_ptr()) };
         assert_eq!(rc, 0, "utimes failed for {}", path.display());
     }
+}
+
+/// The request itself, built the same way for both resolution paths.
+///
+/// Shared so the locked builder and the unlocked one cannot drift in the
+/// headers, the method choice or the URL shape -- the `/health` lesson, where
+/// two handlers built the same body until they were given one builder.
+fn build_daemon_json_request(
+    endpoint: &MetadataApiEndpoint,
+    route_path: &str,
+    body: Option<Value>,
+    timeout_ms: Option<u64>,
+) -> DaemonJsonRequest {
+    let method = if body.is_some() {
+        DaemonHttpMethod::Post
+    } else {
+        DaemonHttpMethod::Get
+    };
+    let body_text = body.map(|value| value.to_string());
+    let mut headers = BTreeMap::from([("accept".to_owned(), "application/json".to_owned())]);
+    if body_text.is_some() {
+        headers.insert("content-type".to_owned(), "application/json".to_owned());
+    }
+    DaemonJsonRequest {
+        url: format!("http://{}:{}{}", endpoint.host, endpoint.port, route_path),
+        method,
+        headers,
+        body: body_text,
+        timeout_ms,
+    }
+}
+
+/// Everything phase one used to do under the lock, with no `&self` to hold the
+/// guard through.
+///
+/// Phase one was supposed to be the fast part, and it was not. It spawns TWO
+/// subprocesses: `resolve_repo_root` runs `rev-parse --git-common-dir`, and the
+/// endpoint's liveness filter runs `ps -o args=` to confirm the pid really is
+/// this build's project service for this project. Both ran while the caller
+/// held the one global runtime mutex, so the carve-outs moved the HTTP hop off
+/// the lock and left two process spawns on it.
+///
+/// Neither needs the runtime. `resolve_project_root_value` and
+/// `metadata_endpoint_for_root` use exactly two pieces of state -- the
+/// resolver, which is `Clone` and shares its cache, and the process verifier,
+/// which is already an `Arc`. So a caller clones those two under the lock,
+/// which is a pointer copy and a map clone, drops the guard, and comes here.
+///
+/// Free rather than a method for the same reason `send_project_service_json`
+/// is: with no `self` there is nothing to hold the mutex through, so the next
+/// person cannot accidentally put this back inside the critical section.
+///
+/// The liveness filter is NOT skipped. It is what stops a recycled port
+/// serving a request from an unrelated listener, and the retry cannot recover
+/// that because the request would SUCCEED against the wrong process.
+pub fn resolve_project_service_json_request(
+    resolver: &PathResolver,
+    verifier: &Arc<dyn ProjectServiceProcessVerifier>,
+    project: &str,
+    route_path: &str,
+    body: Option<Value>,
+    timeout_ms: Option<u64>,
+) -> Result<(String, DaemonJsonRequest), DaemonRouteResponse> {
+    let mut resolver = resolver.clone();
+    let project_root = resolver
+        .resolve_repo_root(project)
+        .to_string_lossy()
+        .into_owned();
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    let project_id = compute_project_id(Path::new(&project_root));
+    let endpoint = load_metadata_endpoint(state_dir).filter(|endpoint| {
+        verifier.is_live_native_project_service(&ProjectServiceState {
+            project_id: project_id.clone(),
+            project_root: project_root.clone(),
+            pid: endpoint.pid,
+            started_at: String::new(),
+            updated_at: String::new(),
+            status: None,
+            restart_count: None,
+            last_restart_at: None,
+            last_exit: None,
+        })
+    });
+    let Some(endpoint) = endpoint else {
+        return Err(crate::daemon::routing::text_error(
+            503,
+            format!("Error: project service unavailable for {project_root}"),
+        ));
+    };
+    Ok((
+        project_root,
+        build_daemon_json_request(&endpoint, route_path, body, timeout_ms),
+    ))
 }
 
 /// The blocking half of a project-service call, which needs no runtime at all.

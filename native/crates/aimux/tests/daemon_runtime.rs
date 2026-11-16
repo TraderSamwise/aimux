@@ -5435,3 +5435,126 @@ fn the_carved_out_agent_list_route_still_starts_a_project_service_that_is_down()
     );
     fixture.cleanup();
 }
+
+/// A verifier that blocks, standing in for the `ps` spawn.
+///
+/// The real phase-one work is two subprocesses -- `rev-parse` and `ps -o
+/// args=` -- and a test cannot make a real spawn hang on demand. The verifier
+/// is already injectable, so blocking inside it puts an unbounded wait exactly
+/// where the `ps` runs, which is the same move the hanging upstream makes for
+/// the HTTP hop: control the resource so the park is unbounded and the
+/// question becomes progress rather than latency.
+struct BlockingProcessVerifier {
+    reached: mpsc::Sender<()>,
+    release: Arc<Mutex<bool>>,
+}
+
+impl ProjectServiceProcessVerifier for BlockingProcessVerifier {
+    fn is_live_native_project_service(&self, _service: &ProjectServiceState) -> bool {
+        let _ = self.reached.send(());
+        // Parks until the test lets go, like a `ps` that never returns.
+        loop {
+            if *self.release.lock().expect("release flag") {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn live_project_service_pids(&self, _project_id: &str, _project_root: &str) -> Vec<i32> {
+        Vec::new()
+    }
+
+    fn is_live(&self, _pid: i32) -> bool {
+        true
+    }
+}
+
+/// Endpoint resolution does not hold the runtime mutex.
+///
+/// Phase one of the carve-out was meant to be the fast part and was not: it
+/// spawned `rev-parse --git-common-dir` and `ps -o args=` while holding the one
+/// global runtime mutex. So #538, #541 and #543 moved the HTTP hop off the lock
+/// and left two process spawns on it.
+///
+/// This blocks inside the process verifier, which is where the `ps` runs, and
+/// requires another route to still answer.
+#[test]
+fn endpoint_resolution_does_not_hold_the_runtime_lock() {
+    let fixture = RuntimeFixture::new("endpoint-lock");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: 45_999,
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let (reached_tx, reached) = mpsc::channel();
+    let release = Arc::new(Mutex::new(false));
+    let runtime = Arc::new(Mutex::new(fixture.runtime_with_launcher_and_verifier(
+        Arc::new(FakeLauncher::new(std::process::id() as i32)),
+        Arc::new(BlockingProcessVerifier {
+            reached: reached_tx,
+            release: Arc::clone(&release),
+        }),
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    )));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let stuck_runtime = Arc::clone(&runtime);
+    let stuck_path = format!(
+        "{}?project={}",
+        aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+        project_root
+    );
+    let stuck = std::thread::spawn(move || {
+        let _ = handle_daemon_runtime_request_with_mutex(
+            &stuck_runtime,
+            health_identity,
+            request("GET", &stuck_path),
+        );
+    });
+
+    // The barrier: the verifier itself reports when the route has reached the
+    // work that used to run under the lock. Without it the probe races the
+    // route and passes while the bug is present.
+    reached
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the route never reached the process verifier, so this gate is testing nothing");
+
+    let other_runtime = Arc::clone(&runtime);
+    let (answered_tx, answered) = mpsc::channel();
+    std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &other_runtime,
+            health_identity,
+            request("GET", "/projects"),
+        );
+        let _ = answered_tx.send(response.status);
+    });
+
+    let outcome = answered.recv_timeout(Duration::from_secs(30));
+
+    *release.lock().expect("release flag") = true;
+    let _ = stuck.join();
+
+    assert_eq!(
+        outcome.ok(),
+        Some(200),
+        "GET /projects never answered while a core text route was resolving its endpoint. The endpoint resolution is holding the global runtime mutex across its `ps` spawn, which is the second subprocess in the locked phase of every core text route"
+    );
+    fixture.cleanup();
+}
