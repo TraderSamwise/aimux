@@ -1698,6 +1698,12 @@ enum StreamInterceptor {
 /// deadline -- any task being polled resets it, so the test fails only when
 /// progress STOPS. A starved runtime still progresses, just slowly, and
 /// passes; a parked worker never progresses and fails.
+/// Phase two probes this many times, pausing between rounds so the tasks have
+/// actually reached their lock. Matches the project-service gates from PR #534,
+/// where a single probe was proved to race.
+const PHASE_TWO_ROUNDS: usize = 20;
+const PHASE_TWO_SETTLE: Duration = Duration::from_millis(10);
+
 fn assert_interceptor_does_not_consume_a_worker(interceptor: StreamInterceptor) {
     const WORKERS: usize = aimux::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
     let attempts = WORKERS + 2;
@@ -1781,17 +1787,40 @@ fn assert_interceptor_does_not_consume_a_worker(interceptor: StreamInterceptor) 
     // with no yield point in between, which is true of both interceptors today
     // and is exactly the kind of thing an unrelated change breaks silently.
     //
-    // Spawned AFTER the barrier above, which is what makes it sound -- an
-    // earlier attempt spawned a yielding task concurrently and it passed with
-    // the bug, because `spawn` gives no polling order and the yield simply
-    // finished first. Here every interceptor task has already been polled, so
-    // if any of them is holding a worker there is nothing left to poll this.
-    let (yielded_tx, yielded) = mpsc::channel();
-    async_runtime.spawn(async move {
-        tokio::task::yield_now().await;
-        let _ = yielded_tx.send(());
-    });
-    let still_polling = yielded.recv_timeout(quiet_window).is_ok();
+    // Spawned AFTER the barrier, and probed REPEATEDLY. Both halves matter.
+    //
+    // After the barrier, because an earlier attempt spawned a yielding task
+    // concurrently and it passed with the bug: `spawn` gives no polling order
+    // and the yield simply finished first.
+    //
+    // Repeatedly, because a single probe after the barrier STILL races. Every
+    // task reports before it awaits, so the barrier can clear while the tasks
+    // are still inside their await and have not reached the lock; the probe
+    // then runs on a free worker and passes. These two gates did catch their
+    // yield-then-lock mutation with one probe, but by timing luck rather than
+    // by design -- `yield_now` resumes on the same worker almost at once, so
+    // parking happened to finish before the drain loop above did. A slower
+    // await does not: on PR #534 the identical single-probe shape let a
+    // pool-hop-then-lock mutation through unchanged, which is what sent me
+    // back here to strengthen these.
+    //
+    // So: pause briefly so the tasks have actually reached their lock, then
+    // require progress to CONTINUE. The pause is not a latency budget -- it
+    // only has to exceed "an await resumes" -- and the loop costs a fifth of a
+    // second on a pass.
+    let mut still_polling = true;
+    for _ in 0..PHASE_TWO_ROUNDS {
+        std::thread::sleep(PHASE_TWO_SETTLE);
+        let (yielded_tx, yielded) = mpsc::channel();
+        async_runtime.spawn(async move {
+            tokio::task::yield_now().await;
+            let _ = yielded_tx.send(());
+        });
+        if yielded.recv_timeout(quiet_window).is_err() {
+            still_polling = false;
+            break;
+        }
+    }
 
     drop(held);
 
