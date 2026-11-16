@@ -109,18 +109,30 @@ impl PathResolver {
         )
     }
 
-    /// How many repo roots this resolver has cached.
+    /// How many directories this resolver has an answer for.
     ///
-    /// Exists so a test can ask whether the cache SURVIVES cloning, which is
-    /// not observable from the outside otherwise: the only other difference a
-    /// shared cache makes is one fewer subprocess, and counting subprocesses
-    /// needs either timing or a seam, both of which are worse than one
-    /// accessor.
-    pub fn cached_repo_root_count(&self) -> usize {
+    /// Private, and visible to the test module below because that module is a
+    /// child of this one. Exists so a test can ask whether the cache SURVIVES
+    /// cloning, which is not observable from outside otherwise: the only other
+    /// difference a shared cache makes is one fewer subprocess, and counting
+    /// subprocesses needs timing or a seam, both worse than one accessor.
+    #[cfg(test)]
+    fn cached_repo_root_count(&self) -> usize {
         self.repo_root_cache
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .len()
+    }
+
+    /// What this resolver has cached for `key`, for tests that need the value
+    /// and not just the count.
+    #[cfg(test)]
+    fn cached_repo_root(&self, key: &Path) -> Option<PathBuf> {
+        self.repo_root_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(key)
+            .cloned()
     }
 
     pub fn resolve_repo_root(&mut self, cwd: impl AsRef<Path>) -> PathBuf {
@@ -145,15 +157,17 @@ impl PathResolver {
             }
         }
 
-        if let Some(repo_root) = resolve_git_repo_root(&resolved_cwd) {
+        let lookup = resolve_git_repo_root(&resolved_cwd);
+        if let Some(entry) = cache_entry_for(&lookup) {
             self.repo_root_cache
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
-                .insert(resolved_cwd, repo_root.clone());
-            return repo_root;
+                .insert(resolved_cwd.clone(), entry);
         }
-
-        resolved_cwd
+        match lookup {
+            RepoRootLookup::Resolved(repo_root) => repo_root,
+            RepoRootLookup::NotARepository | RepoRootLookup::CouldNotAsk => resolved_cwd,
+        }
     }
 
     pub fn project_id_for(&mut self, cwd: impl AsRef<Path>) -> String {
@@ -685,8 +699,53 @@ pub fn aimux_managed_worktree_parent(path: impl AsRef<Path>) -> Option<PathBuf> 
     None
 }
 
-fn resolve_git_repo_root(cwd: &Path) -> Option<PathBuf> {
-    let output = AsyncCommand::new("git")
+/// Three outcomes from asking where a directory's repository lives.
+///
+/// `Option` collapsed two of them: `.ok()?` on the spawn made "the process
+/// could not run" indistinguishable from "this is not a repository", and the
+/// caller treats both as "the directory is its own root". Only one of those
+/// is a fact about the directory, and only one is safe to remember.
+enum RepoRootLookup {
+    Resolved(PathBuf),
+    NotARepository,
+    CouldNotAsk,
+}
+
+/// What a lookup is worth remembering, if anything.
+///
+/// ONLY a resolved root. I tried caching the negative answer too, reasoning
+/// that otherwise the subprocess repeats forever for every directory outside a
+/// repository -- and `tests/paths.rs::does_not_cache_non_git_fallback_roots`
+/// failed, correctly. It resolves a directory, THEN makes its parent a
+/// repository, and expects the second resolve to find the new root. A cached
+/// "not a repository" makes that answer permanently wrong, and that sequence
+/// is ordinary here: a client asks about a directory, then someone initialises
+/// a repository around it. A repo root, by contrast, almost never stops being
+/// one, which is why the positive answer is safe to keep.
+///
+/// The two uncached arms are still distinct facts and the enum keeps them
+/// apart: "asked, and no" versus "could not ask". Collapsing them is what
+/// `.ok()?` used to do, and if either ever becomes cacheable they need
+/// different treatment.
+///
+/// Pure, so the decision is testable without making a subprocess fail -- which
+/// would mean manipulating PATH, and PATH is process-global and shared with
+/// every other test in this binary.
+fn cache_entry_for(lookup: &RepoRootLookup) -> Option<PathBuf> {
+    match lookup {
+        RepoRootLookup::Resolved(repo_root) => Some(repo_root.clone()),
+        RepoRootLookup::NotARepository | RepoRootLookup::CouldNotAsk => None,
+    }
+}
+
+fn resolve_git_repo_root(cwd: &Path) -> RepoRootLookup {
+    // Resolved once per process instead of spawned by bare name, which makes
+    // the OS walk PATH on every call. The crate already has this seam and
+    // AGENTS.md's Subprocess Churn section asks for it by name.
+    let Ok(program) = crate::git_delivery::git_program() else {
+        return RepoRootLookup::CouldNotAsk;
+    };
+    let output = AsyncCommand::new(program.as_os_str())
         .args(["rev-parse", "--git-common-dir"])
         .current_dir(cwd)
         .env_remove("GIT_DIR")
@@ -694,21 +753,31 @@ fn resolve_git_repo_root(cwd: &Path) -> Option<PathBuf> {
         .env_remove("GIT_INDEX_FILE")
         .env_remove("GIT_OBJECT_DIRECTORY")
         .env_remove("GIT_COMMON_DIR")
-        .output()
-        .ok()?;
+        .output();
+    // Could not ask: says nothing about the directory, so the caller must not
+    // remember it.
+    let Ok(output) = output else {
+        return RepoRootLookup::CouldNotAsk;
+    };
     if !output.status.success() {
-        return None;
+        // It ran and said no. That IS a fact about the directory.
+        return RepoRootLookup::NotARepository;
     }
-    let git_common_dir = String::from_utf8(output.stdout).ok()?;
+    let Ok(git_common_dir) = String::from_utf8(output.stdout) else {
+        return RepoRootLookup::CouldNotAsk;
+    };
     let git_common_dir = git_common_dir.trim();
     if git_common_dir.is_empty() {
-        return None;
+        return RepoRootLookup::CouldNotAsk;
     }
     let abs_git_dir = lexical_resolve(cwd, Path::new(git_common_dir));
     if let Some(repo_root) = git_common_worktree_parent(&abs_git_dir) {
-        return Some(repo_root);
+        return RepoRootLookup::Resolved(repo_root);
     }
-    abs_git_dir.parent().map(Path::to_path_buf)
+    match abs_git_dir.parent() {
+        Some(parent) => RepoRootLookup::Resolved(parent.to_path_buf()),
+        None => RepoRootLookup::CouldNotAsk,
+    }
 }
 
 fn git_common_worktree_parent(path: &Path) -> Option<PathBuf> {
@@ -765,39 +834,155 @@ fn path_to_string(path: &Path) -> String {
 #[cfg(test)]
 mod resolver_cache_tests {
     use super::PathResolver;
+    use std::path::PathBuf;
+
+    /// A throwaway repository, because the crate's own directory is not a safe
+    /// subject.
+    ///
+    /// The first version of this test used `env!("CARGO_MANIFEST_DIR")`, which
+    /// FAILS whenever the checkout sits in an aimux-managed worktree:
+    /// `resolve_repo_root` short-circuits on a `.aimux/worktrees` path before
+    /// the cache and so caches nothing, and the assertion message then lies
+    /// about why. AGENTS.md sends agents to work in exactly such a worktree,
+    /// so it would have failed for the next person and not for me -- this
+    /// checkout happens to sit under `.claude/worktrees`, which does not
+    /// short-circuit. It also failed in any non-repository source copy.
+    struct TempRepo {
+        root: PathBuf,
+    }
+
+    impl TempRepo {
+        fn create(label: &str) -> Option<Self> {
+            let root =
+                std::env::temp_dir().join(format!("aimux-resolver-{label}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).ok()?;
+            let status = std::process::Command::new("git")
+                .args(["init", "--quiet"])
+                .current_dir(&root)
+                .status()
+                .ok()?;
+            if !status.success() {
+                return None;
+            }
+            // Canonicalised because the resolver returns canonical paths and
+            // the temp directory is a symlink on macOS.
+            Some(Self {
+                root: std::fs::canonicalize(&root).ok()?,
+            })
+        }
+    }
+
+    impl Drop for TempRepo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// Only a resolved root is remembered.
+    ///
+    /// The arm no behavioural test can reach: making the spawn fail needs PATH
+    /// manipulation, and PATH is process-global, so a test that did it would
+    /// corrupt every other test in this binary. Testing the decision directly
+    /// covers all three outcomes with no I/O.
+    ///
+    /// Both uncached arms matter, for different reasons. "Asked, and this is
+    /// not a repository" must not be cached because the directory can BECOME
+    /// one -- `tests/paths.rs::does_not_cache_non_git_fallback_roots` pins
+    /// exactly that sequence, and it is what caught me when I tried caching
+    /// the negative answer. "Could not ask" must not be cached because it is
+    /// not a fact about the directory at all.
+    #[test]
+    fn only_a_resolved_root_is_cached() {
+        use super::{RepoRootLookup, cache_entry_for};
+
+        let root = PathBuf::from("/repo");
+        assert_eq!(
+            cache_entry_for(&RepoRootLookup::Resolved(root.clone())),
+            Some(root),
+            "a resolved root must be remembered, or the subprocess repeats on every call"
+        );
+        assert_eq!(
+            cache_entry_for(&RepoRootLookup::NotARepository),
+            None,
+            "'not a repository' was remembered, which makes the answer permanently wrong once a repository is initialised around that directory"
+        );
+        assert_eq!(
+            cache_entry_for(&RepoRootLookup::CouldNotAsk),
+            None,
+            "a lookup that could not run was remembered as a fact about the directory"
+        );
+    }
 
     /// A resolver's repo-root cache survives being cloned.
     ///
-    /// `PathResolver` derives `Clone` over a plain `HashMap`, and the daemon
-    /// clones it CONSTANTLY -- 105 sites in the crate, 84 in
-    /// `daemon/runtime.rs` alone -- because methods like
-    /// `metadata_endpoint_for_root` take `&self` while `resolve_repo_root`
-    /// needs `&mut self`. Every one of those clones gets a fresh empty cache,
-    /// populates it, and drops it. The cache is write-only in every daemon
-    /// path, so the `rev-parse --git-common-dir` subprocess runs on EVERY call
-    /// rather than once per directory -- and it runs while the caller holds the
-    /// one global runtime mutex.
-    ///
-    /// That is the hazard AGENTS.md's Subprocess Churn section opens with, and
-    /// the comment on this cache cites a stuck-process incident which is
-    /// therefore still reachable.
+    /// `PathResolver` derives `Clone`, and the daemon clones it at 105 sites
+    /// in the crate -- 84 in `daemon/runtime.rs` alone -- because methods like
+    /// `metadata_endpoint_for_root` take `&self` while resolving needs
+    /// `&mut self`. With a plain `HashMap` every clone populated a private
+    /// cache and dropped it, so the cache was write-only in every daemon path
+    /// and the `rev-parse` subprocess ran on every call rather than once per
+    /// directory -- while the caller held the one global runtime mutex.
     #[test]
     fn the_repo_root_cache_survives_cloning() {
-        // This crate's own directory is inside a repository, so the resolve
-        // really does take the caching path rather than the not-a-repo path.
-        let repo_dir = env!("CARGO_MANIFEST_DIR");
-        let original = PathResolver::new(repo_dir, repo_dir, None);
+        let Some(repo) = TempRepo::create("shared") else {
+            eprintln!("skipping: could not create a temp repository");
+            return;
+        };
+        let original = PathResolver::new(&repo.root, &repo.root, None);
         let mut clone = original.clone();
 
-        let resolved = clone.resolve_repo_root(repo_dir);
-        assert!(
-            clone.cached_repo_root_count() > 0,
-            "resolving {resolved:?} cached nothing, so this test is not exercising the caching path at all"
+        let resolved = clone.resolve_repo_root(&repo.root);
+        assert_eq!(
+            resolved, repo.root,
+            "the resolver did not report the temp repository as its own root, so this test is not exercising what it claims"
+        );
+        assert_eq!(
+            clone.cached_repo_root_count(),
+            1,
+            "resolving cached {} entries instead of exactly one",
+            clone.cached_repo_root_count()
         );
 
-        assert!(
-            original.cached_repo_root_count() > 0,
+        assert_eq!(
+            original.cached_repo_root_count(),
+            1,
             "the clone cached a repo root and the original cannot see it, so every one of the daemon's resolver clones populates a cache that is immediately dropped and the subprocess repeats on every call"
+        );
+        // The VALUE, not just the count. A shared map holding the wrong root
+        // would satisfy a count assertion perfectly.
+        assert_eq!(
+            original.cached_repo_root(&repo.root),
+            Some(repo.root.clone()),
+            "the shared cache holds the wrong value for {:?}",
+            repo.root
+        );
+    }
+
+    /// Two independently constructed resolvers do NOT share a cache.
+    ///
+    /// The inverse, and the reason the `Arc` is created per construction
+    /// rather than in a static: sharing between separate resolvers would make
+    /// one resolver's answers visible to another's, and nothing expects that.
+    #[test]
+    fn independently_constructed_resolvers_do_not_share_a_cache() {
+        let Some(repo) = TempRepo::create("separate") else {
+            eprintln!("skipping: could not create a temp repository");
+            return;
+        };
+        let mut first = PathResolver::new(&repo.root, &repo.root, None);
+        let second = PathResolver::new(&repo.root, &repo.root, None);
+
+        let _ = first.resolve_repo_root(&repo.root);
+        assert_eq!(
+            first.cached_repo_root_count(),
+            1,
+            "the first resolver cached nothing, so this test is not exercising the caching path"
+        );
+        assert_eq!(
+            second.cached_repo_root_count(),
+            0,
+            "a separately constructed resolver sees the first one's cache, so the sharing is process-wide rather than per-resolver"
         );
     }
 }

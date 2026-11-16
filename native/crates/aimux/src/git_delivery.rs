@@ -41,7 +41,7 @@ pub const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 /// cannot tell one resolution from two identical ones.
 type ResolvedGit = (Option<OsString>, Result<Arc<OsString>, String>);
 
-fn git_program() -> Result<Arc<OsString>, String> {
+pub(crate) fn git_program() -> Result<Arc<OsString>, String> {
     static GIT_PROGRAM: OnceLock<Mutex<Option<ResolvedGit>>> = OnceLock::new();
     let path_env = std::env::var_os("PATH");
     let cache = GIT_PROGRAM.get_or_init(|| Mutex::new(None));
