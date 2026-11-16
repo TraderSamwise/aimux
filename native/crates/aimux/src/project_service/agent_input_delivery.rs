@@ -806,14 +806,26 @@ async fn resolve_queued_delivery_target_off_the_worker(
     now_ms: i64,
 ) -> Result<QueuedDeliveryTarget, String> {
     let context = Arc::clone(context);
-    let pending = pending.clone();
+    // Only the three fields the resolve actually reads, NOT a clone of the
+    // whole entry: `prompt` is the agent input itself and can be kilobytes,
+    // and copying it per entry per tick to a callee that never looks at it is
+    // pure cost at 2 Hz.
+    let probe = PendingAgentInputDelivery {
+        id: String::new(),
+        session_id: pending.session_id.clone(),
+        window_id: pending.window_id.clone(),
+        prompt: String::new(),
+        created_at_ms: pending.created_at_ms,
+        max_deliver_at_ms: pending.max_deliver_at_ms,
+        hold_reason: String::new(),
+    };
     crate::async_runtime::spawn_blocking_named(
         crate::async_runtime::scoped_task_name(
             AGENT_INPUT_DELIVERY_TASK_NAME,
             "target-resolve",
             "project-service",
         ),
-        move || resolve_queued_delivery_target(&context, &pending, now_ms),
+        move || resolve_queued_delivery_target(&context, &probe, now_ms),
     )
     .await
     // A pool task that never ran is not an unresolvable target.

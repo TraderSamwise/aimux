@@ -2836,29 +2836,65 @@ fn the_delivery_tick_calls_the_receipt_hops_not_the_blocking_writes() {
 
 /// The async delivery tick resolves targets through the hop, not inline.
 ///
-/// The gate above proves the hop keeps off the workers; nothing in it proves
-/// the tick CALLS the hop. #536 shipped a hop whose call site was never
-/// updated and no test noticed, so this asserts the source directly -- the
-/// same remedy, and the precedent is `daemon_host_agent.rs:123`.
+/// The worker gate in the module proves the hop keeps off the workers; nothing
+/// in it proves the tick CALLS the hop. #536 shipped a hop whose call site was
+/// never updated and no test noticed, so this asserts the source directly --
+/// the same remedy, and the precedent is `daemon_host_agent.rs:123`.
 #[test]
 fn the_delivery_tick_resolves_targets_off_the_worker() {
     const SOURCE: &str = include_str!("../src/project_service/agent_input_delivery.rs");
+    const TICK: &str = "pub async fn run_pending_agent_input_deliveries_async(";
+
+    // Brace-counted, not sliced to the next `pub `.
+    //
+    // The first version of this test took everything up to the next `\npub `,
+    // and the hop it is checking for is PRIVATE -- so the slice ran straight
+    // past the end of the tick and swallowed
+    // `resolve_queued_delivery_target_off_the_worker`'s own definition. The
+    // positive assertion then matched the definition as well as the call site
+    // and was vacuous: deleting the call site left it passing. My mutation
+    // proof did not catch that, because the mutation I ran tripped the
+    // NEGATIVE assertion and I never exercised the positive one on its own.
     let start = SOURCE
-        .find("pub async fn run_pending_agent_input_deliveries_async(")
+        .find(TICK)
         .expect("the async delivery tick is still named this");
-    let body = &SOURCE[start..];
-    let end = body
-        .find("\npub ")
-        .map(|offset| offset + 1)
-        .unwrap_or(body.len());
-    let body = &body[..end];
+    let open = start + SOURCE[start..].find('{').expect("the tick has a body");
+    let mut depth = 0usize;
+    let mut end = None;
+    for (offset, character) in SOURCE[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(open + offset + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let body = &SOURCE[start..end.expect("the tick's body closes")];
+    assert!(
+        !body.contains("async fn resolve_queued_delivery_target_off_the_worker"),
+        "the slice still overshoots into the hop's definition, which is what made this test vacuous the first time"
+    );
 
     assert!(
         body.contains("resolve_queued_delivery_target_off_the_worker("),
         "the async delivery tick does not call resolve_queued_delivery_target_off_the_worker; a hop nothing calls is not a fix"
     );
-    assert!(
-        !body.contains("resolve_queued_delivery_target(context,"),
-        "the async delivery tick still resolves a target inline on the worker"
+    // Spelling-independent. The first version looked for the single literal
+    // `resolve_queued_delivery_target(context,`, so `context.as_ref()`, a
+    // rustfmt argument wrap, or a local binding would each have reverted the
+    // fix with the test still green. Counting direct calls catches all of
+    // them: every occurrence of the base name must belong to the hop call.
+    let direct = body.matches("resolve_queued_delivery_target(").count();
+    let through_hop = body
+        .matches("resolve_queued_delivery_target_off_the_worker(")
+        .count();
+    assert_eq!(
+        direct, 0,
+        "the async delivery tick resolves a target inline on the worker: {direct} direct call(s) to resolve_queued_delivery_target beside {through_hop} through the hop"
     );
 }
