@@ -1374,8 +1374,22 @@ impl RealDaemonRuntime {
     }
 
     /// The resolver and the verifier, for a caller that wants to resolve an
-    /// endpoint WITHOUT holding the guard. Cheap: a pointer copy and a map
-    /// clone that shares its cache.
+    /// endpoint WITHOUT holding the guard.
+    ///
+    /// The verifier is an `Arc`, so that half is a pointer copy. The resolver
+    /// is NOT: `repo_root_cache` is a plain `HashMap` on this branch, so
+    /// `Clone` deep-copies it and the locked work is one allocation per cached
+    /// directory. I first wrote that this "shares its cache", which is true
+    /// only once #544 makes the cache an `Arc<Mutex<..>>` -- and this file
+    /// already warns about exactly that mistake a few hundred lines down,
+    /// where a clone "throws the resolver's cache away and resolves the repo
+    /// root again, which the first version did while its comment claimed
+    /// otherwise". Same error, same file, so it is written down here too.
+    ///
+    /// It is still a strict improvement: a map clone is bounded work with no
+    /// syscalls, where what it replaces was two process spawns. But the honest
+    /// claim is "bounded allocation", not "pointer copy", and that distinction
+    /// is the whole cost argument for what stays inside the critical section.
     pub fn project_service_resolution_handles(
         &self,
     ) -> (PathResolver, Arc<dyn ProjectServiceProcessVerifier>) {
@@ -3168,9 +3182,12 @@ fn handle_core_read_route_without_holding_the_lock(
                 Ok(resolved) => resolved,
                 Err(response) => return response,
             };
-            // Phase one holds the guard ONLY to copy two handles. It used to
-            // do the whole resolution here, which meant two subprocesses --
-            // `rev-parse` and `ps` -- ran inside the critical section.
+            // Phase one holds the guard ONLY to copy two handles: an `Arc`
+            // pointer copy and a resolver clone, which on this branch deep-
+            // copies the repo-root map. Bounded allocation, no syscalls. It
+            // used to do the whole resolution here, which meant two
+            // subprocesses -- `rev-parse` and `ps` -- ran inside the critical
+            // section.
             let (resolver, verifier) = {
                 let locked = runtime.lock().expect("daemon runtime mutex poisoned");
                 locked.project_service_resolution_handles()
@@ -3203,6 +3220,15 @@ fn handle_core_read_route_without_holding_the_lock(
                 ProjectServiceJsonResult::Err { response }
                     if response.status == 502 || response.status == 503 =>
                 {
+                    // STILL THE WORST SPAN ON THIS ROUTE, and worse than
+                    // "a different span", which is how I first described it.
+                    // One guard covers `ensure_project_service_for_text_request`
+                    // -- itself another `rev-parse` -- then a service spawn and
+                    // a startup wait of up to PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+                    // and THEN a second full resolution with another
+                    // `rev-parse` and another `ps`. So the retry puts back
+                    // double what phase one above just removed. It is only the
+                    // cold path, but it wants its own change and its own gate.
                     let ensured = {
                         let mut locked = runtime.lock().expect("daemon runtime mutex poisoned");
                         match locked.ensure_project_service_for_text_request(&project) {

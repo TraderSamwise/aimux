@@ -5502,6 +5502,12 @@ fn endpoint_resolution_does_not_hold_the_runtime_lock() {
     )
     .expect("write the metadata endpoint");
 
+    // The fixture writes ONLY the endpoint file, and that matters: the probe
+    // route reaches `read_projects_for_route_from_snapshot`, which calls this
+    // same blocking verifier for anything in `services_by_id`. Add a service
+    // state file here and the probe parks in the verifier too, and the gate
+    // reports a lock problem that is really the fixture. Fail-safe direction,
+    // but it is a real dependency and not an accident worth leaving unstated.
     let (reached_tx, reached) = mpsc::channel();
     let release = Arc::new(Mutex::new(false));
     let runtime = Arc::new(Mutex::new(fixture.runtime_with_launcher_and_verifier(
@@ -5550,11 +5556,23 @@ fn endpoint_resolution_does_not_hold_the_runtime_lock() {
 
     *release.lock().expect("release flag") = true;
     let _ = stuck.join();
-
-    assert_eq!(
-        outcome.ok(),
-        Some(200),
-        "GET /projects never answered while a core text route was resolving its endpoint. The endpoint resolution is holding the global runtime mutex across its `ps` spawn, which is the second subprocess in the locked phase of every core text route"
-    );
+    // Cleanup BEFORE the assertions, so a failure does not leave the fixture
+    // directory behind -- the panicking runs are exactly the ones that litter.
     fixture.cleanup();
+
+    // Three outcomes, not two. `recv_timeout` returns `Disconnected` when the
+    // probe thread panicked, and folding that into the timeout message would
+    // report an unrelated panic as a lock bug.
+    match outcome {
+        Ok(status) => assert_eq!(
+            status, 200,
+            "GET /projects answered {status} while a core text route resolved its endpoint; this gate is about the lock, so an unexpected status means the probe itself is broken"
+        ),
+        Err(mpsc::RecvTimeoutError::Timeout) => panic!(
+            "GET /projects never answered while a core text route was resolving its endpoint. The endpoint resolution is holding the global runtime mutex across its `ps` spawn, which is the second subprocess in the locked phase of every core text route"
+        ),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("the probe thread died without answering, so this says nothing about the lock")
+        }
+    }
 }
