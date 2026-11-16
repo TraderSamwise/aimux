@@ -2736,15 +2736,13 @@ fn a_finish_receipt_write_does_not_consume_an_async_worker() {
 
     // An attempt to finish. Taken through the begin hop so the shape is the
     // real one rather than a hand-built value.
-    let attempt = async_runtime
-        .block_on(
-            aimux::project_service::input_delivery_receipt::begin_input_delivery_off_the_worker(
-                &context,
-                "session-finish".to_owned(),
-                "window-1".to_owned(),
-            ),
-        )
-        .expect("an attempt to finish");
+    let begin = aimux::project_service::input_delivery_receipt::begin_input_delivery_off_the_worker(
+        &context,
+        "session-finish".to_owned(),
+        "window-1".to_owned(),
+    );
+    // aimux-async-seam: test - sync test drives async handler
+    let attempt = async_runtime.block_on(begin).expect("an attempt to finish");
 
     let held =
         aimux::state_update_lock::acquire_state_update_lock(&metadata_state_path(&state_dir))
