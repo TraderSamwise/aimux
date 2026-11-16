@@ -400,13 +400,25 @@ pub fn route_jobs_json_request(
     None
 }
 
+/// Resolves on the blocking pool, NOT on the async worker.
+///
+/// Same reason as the host-agent interceptor beside it in `daemon/stream.rs`:
+/// this runs before route dispatch, it takes the global runtime mutex that
+/// other routes hold across a project-service call, and
+/// `ASYNC_RUNTIME_WORKER_THREADS` is 2. Taking that lock inline parked a
+/// worker, and two of these at once parked both -- leaving `/health` accepted
+/// but never polled, which the watchdog counts as a wedge and ends the process
+/// for after three 30s strikes.
+///
+/// This one runs FIRST in the interceptor chain, so fixing only its neighbour
+/// would have left the starvation in place with a gate that looked satisfied.
 pub async fn maybe_handle_job_event_stream_request_with_runtime_mutex<Runtime, Writer>(
     runtime: &Arc<Mutex<Runtime>>,
     request: &crate::daemon::server::DaemonHttpRequest,
     writer: &mut Writer,
 ) -> Result<bool, std::io::Error>
 where
-    Runtime: DaemonJobRouteRuntime,
+    Runtime: DaemonJobRouteRuntime + Send + 'static,
     Writer: AsyncWrite + Unpin + Send,
 {
     let route_url = DaemonRouteUrl::parse(&request.path);
@@ -432,77 +444,95 @@ where
         Err(DaemonRouteResponse),
     }
 
-    let resolution = {
-        let runtime = runtime.lock().expect("daemon runtime mutex poisoned");
-        let store = runtime.job_store();
-        let mut resolver = runtime.job_path_resolver();
-        match route_url.search_param("handle") {
-            Some(handle) => {
-                let seq = match route_url.search_param("seq") {
-                    Some(raw) => match raw.parse::<u64>() {
-                        Ok(seq) => Ok(seq),
-                        Err(_) => Err(DaemonRouteResponse::json(
-                            400,
-                            json!({ "ok": false, "error": "seq must be an unsigned integer" }),
-                        )),
-                    },
-                    None => Ok(0),
-                };
-                let explicit_project = route_url.search_param("project").map(PathBuf::from);
-                match seq {
-                    Ok(seq) => match resolve_job_handle(
-                        &store,
-                        &mut resolver,
-                        handle,
-                        explicit_project.as_deref(),
-                    ) {
-                        Ok(resolved) => StreamResolution::Ok {
-                            store,
-                            id: resolved.record.id,
-                            seq,
-                        },
-                        Err(error) => StreamResolution::Err(store_error_response(error)),
-                    },
-                    Err(response) => StreamResolution::Err(response),
-                }
-            }
-            None if route_url.search_param("scope").is_some() => {
-                let scope = route_url.search_param("scope").unwrap_or_default();
-                match route_url
-                    .search_param("depth")
-                    .map(|raw| raw.parse::<usize>())
-                {
-                    Some(Err(_)) => StreamResolution::Err(DaemonRouteResponse::json(
-                        400,
-                        json!({ "ok": false, "error": "depth must be an unsigned integer" }),
-                    )),
-                    depth_result => {
-                        let depth = depth_result.and_then(Result::ok);
-                        match parse_job_scope_handle(scope, &mut resolver) {
-                            Ok(prefix) => StreamResolution::List {
-                                store,
-                                prefix: Some(prefix),
-                                depth,
-                            },
-                            Err(error) => StreamResolution::Err(DaemonRouteResponse::json(
+    let resolve_runtime = Arc::clone(runtime);
+    let resolve_path = request.path.clone();
+    let resolution = crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("daemon-jobs", "event-stream-resolve"),
+        move || {
+            // Reparsed inside, because the closure owns its path: the
+            // `route_url` above borrows the request and cannot cross onto the
+            // pool.
+            let route_url = DaemonRouteUrl::parse(&resolve_path);
+            let runtime = resolve_runtime
+                .lock()
+                .expect("daemon runtime mutex poisoned");
+            let store = runtime.job_store();
+            let mut resolver = runtime.job_path_resolver();
+            match route_url.search_param("handle") {
+                Some(handle) => {
+                    let seq = match route_url.search_param("seq") {
+                        Some(raw) => match raw.parse::<u64>() {
+                            Ok(seq) => Ok(seq),
+                            Err(_) => Err(DaemonRouteResponse::json(
                                 400,
-                                json!({ "ok": false, "error": error }),
+                                json!({ "ok": false, "error": "seq must be an unsigned integer" }),
                             )),
+                        },
+                        None => Ok(0),
+                    };
+                    let explicit_project = route_url.search_param("project").map(PathBuf::from);
+                    match seq {
+                        Ok(seq) => match resolve_job_handle(
+                            &store,
+                            &mut resolver,
+                            handle,
+                            explicit_project.as_deref(),
+                        ) {
+                            Ok(resolved) => StreamResolution::Ok {
+                                store,
+                                id: resolved.record.id,
+                                seq,
+                            },
+                            Err(error) => StreamResolution::Err(store_error_response(error)),
+                        },
+                        Err(response) => StreamResolution::Err(response),
+                    }
+                }
+                None if route_url.search_param("scope").is_some() => {
+                    let scope = route_url.search_param("scope").unwrap_or_default();
+                    match route_url
+                        .search_param("depth")
+                        .map(|raw| raw.parse::<usize>())
+                    {
+                        Some(Err(_)) => StreamResolution::Err(DaemonRouteResponse::json(
+                            400,
+                            json!({ "ok": false, "error": "depth must be an unsigned integer" }),
+                        )),
+                        depth_result => {
+                            let depth = depth_result.and_then(Result::ok);
+                            match parse_job_scope_handle(scope, &mut resolver) {
+                                Ok(prefix) => StreamResolution::List {
+                                    store,
+                                    prefix: Some(prefix),
+                                    depth,
+                                },
+                                Err(error) => StreamResolution::Err(DaemonRouteResponse::json(
+                                    400,
+                                    json!({ "ok": false, "error": error }),
+                                )),
+                            }
                         }
                     }
                 }
+                None if route_url.search_param("all").is_some() => StreamResolution::List {
+                    store,
+                    prefix: None,
+                    depth: None,
+                },
+                None => StreamResolution::Err(DaemonRouteResponse::json(
+                    400,
+                    json!({ "ok": false, "error": "handle is required" }),
+                )),
             }
-            None if route_url.search_param("all").is_some() => StreamResolution::List {
-                store,
-                prefix: None,
-                depth: None,
-            },
-            None => StreamResolution::Err(DaemonRouteResponse::json(
-                400,
-                json!({ "ok": false, "error": "handle is required" }),
-            )),
-        }
-    };
+        },
+    )
+    .await
+    // A pool task that never ran is not an empty resolution.
+    .map_err(|error| {
+        std::io::Error::other(format!(
+            "job event stream resolution did not finish: {error}"
+        ))
+    })?;
 
     match resolution {
         StreamResolution::Ok { store, id, seq } => {

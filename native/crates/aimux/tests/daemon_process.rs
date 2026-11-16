@@ -1657,6 +1657,100 @@ fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
     peer_thread.join().expect("peer thread");
 }
 
+/// An interceptor waiting on the runtime mutex does not consume an async worker.
+///
+/// Both stream interceptors run before route dispatch and both need the global
+/// runtime mutex -- the one other routes hold across a project-service call.
+/// They used to take it INLINE on the async worker, and
+/// `ASYNC_RUNTIME_WORKER_THREADS` is 2, so two concurrent stream requests
+/// during contention parked both workers. Every other connection task was then
+/// accepted and never polled, `/health` among them, and the watchdog ends the
+/// process after three 30s strikes: a daemon that was merely busy exited as a
+/// wedged one.
+///
+/// HOW THIS DISCRIMINATES, because my first attempt did not. That version
+/// spawned two interceptors and one task that merely yielded, then asserted
+/// the yield ran. It passed with the inline locks restored -- `spawn` gives no
+/// polling order, so the yielding task simply finished before the other two
+/// ever reached the lock. A test that survives its own mutation reads as a
+/// guarantee and is worse than nothing.
+///
+/// This version spawns FOUR TIMES as many interceptor tasks as there are
+/// workers, and each one reports that it has been polled BEFORE it awaits the
+/// interceptor. With the lock taken inline, only as many tasks as there are
+/// workers can ever report: the first two park their workers forever and the
+/// rest are never polled. With the lock on the blocking pool, every task is
+/// polled and every one reports. So the count of reports is the discriminator,
+/// and it does not depend on scheduling order.
+#[test]
+fn an_interceptor_waiting_on_the_runtime_lock_does_not_consume_an_async_worker() {
+    const WORKERS: usize = aimux::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
+    let attempts = WORKERS * 4;
+
+    let async_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(WORKERS)
+        .enable_all()
+        .build()
+        .expect("a runtime with production's worker count");
+    let _entered = async_runtime.enter();
+
+    let daemon = Arc::new(Mutex::new(FakeRuntime::empty()));
+    // Held for the whole test, so every interceptor genuinely blocks and none
+    // can pass by racing to an uncontended mutex.
+    let held = daemon.lock().expect("hold the runtime mutex");
+
+    let (polled_tx, polled) = mpsc::channel();
+    for index in 0..attempts {
+        let runtime = Arc::clone(&daemon);
+        let polled_tx = polled_tx.clone();
+        // Alternating, so neither interceptor can be the only one proved.
+        let jobs_turn = index % 2 == 0;
+        async_runtime.spawn(async move {
+            polled_tx.send(index).expect("the test is still listening");
+            let mut sink: Vec<u8> = Vec::new();
+            if jobs_turn {
+                let request = FakeRuntime::request(
+                    "GET",
+                    aimux::core_command_contract::CORE_API_ROUTES.jobs_events,
+                );
+                let _ =
+                    aimux::daemon::jobs::maybe_handle_job_event_stream_request_with_runtime_mutex(
+                        &runtime,
+                        &request,
+                        &mut sink,
+                    )
+                    .await;
+            } else {
+                let request = FakeRuntime::request(
+                    "GET",
+                    aimux::core_command_contract::CORE_API_ROUTES.host_agent_stream_text,
+                );
+                let _ = aimux::daemon::stream::maybe_handle_host_agent_stream_request_with_runtime_mutex_async(
+                    &runtime,
+                    &request,
+                    &mut sink,
+                )
+                .await;
+            }
+        });
+    }
+    drop(polled_tx);
+
+    let mut reported = 0;
+    while reported < attempts {
+        match polled.recv_timeout(Duration::from_secs(5)) {
+            Ok(_) => reported += 1,
+            Err(_) => break,
+        }
+    }
+    drop(held);
+
+    assert_eq!(
+        reported, attempts,
+        "only {reported} of {attempts} interceptor tasks were ever polled on {WORKERS} workers, so an interceptor is holding a worker while it waits for the runtime mutex -- every other connection task, /health included, would be accepted and never answered"
+    );
+}
+
 /// Every per-connection interceptor declines `/health` without locking.
 ///
 /// The interceptors run BEFORE route dispatch, on an async worker, and two of

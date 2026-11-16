@@ -555,22 +555,53 @@ where
     write_host_agent_stream_resolution(resolution, writer)
 }
 
+/// Resolves on the blocking pool, NOT on the async worker.
+///
+/// This runs as a per-connection interceptor, before route dispatch, for every
+/// request -- and it takes the global runtime mutex, which other routes hold
+/// across their call to a project service. `ASYNC_RUNTIME_WORKER_THREADS` is
+/// 2, so two concurrent stream requests taking that lock inline left both
+/// workers parked and every other connection task accepted but never polled.
+/// `/health` is one of those, the watchdog probes it every 30s with a 10s
+/// budget, and three strikes end the process: a daemon that was merely busy
+/// exited as a wedged one. `remote/relay_endpoints.rs` documents the same
+/// shape for periodic tasks, and all ten of those offload correctly; these
+/// interceptors did not.
+///
+/// Only the lock and the resolve move. The path gate stays on this stack
+/// because it must stay cheap: a request that is not a host-agent stream has
+/// to fall through without paying a pool hop.
 pub async fn maybe_handle_host_agent_stream_request_with_runtime_mutex_async<Runtime, Writer>(
     runtime: &Arc<Mutex<Runtime>>,
     request: &DaemonHttpRequest,
     writer: &mut Writer,
 ) -> Result<bool, HostAgentStreamError>
 where
-    Runtime: DaemonHostAgentTextRuntime,
+    Runtime: DaemonHostAgentTextRuntime + Send + 'static,
     Writer: AsyncWrite + Unpin + Send,
 {
     if !is_host_agent_stream_text_request(request) {
         return Ok(false);
     }
-    let resolution = {
-        let mut runtime = runtime.lock().expect("daemon runtime mutex poisoned");
-        resolve_host_agent_stream_request(&mut *runtime, request)
-    }?;
+    let resolve_runtime = Arc::clone(runtime);
+    let resolve_request = request.clone();
+    let resolution = crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("daemon-stream", "host-agent-resolve"),
+        move || {
+            let mut runtime = resolve_runtime
+                .lock()
+                .expect("daemon runtime mutex poisoned");
+            resolve_host_agent_stream_request(&mut *runtime, &resolve_request)
+        },
+    )
+    .await
+    // A pool task that never ran is not an empty resolution. It is reported as
+    // its own failure, with the join error in it.
+    .map_err(|error| {
+        HostAgentStreamError::Io(format!(
+            "host agent stream resolution did not finish: {error}"
+        ))
+    })??;
     let Some(resolution) = resolution else {
         return Ok(false);
     };
