@@ -630,8 +630,12 @@ pub fn handoff_mutation_text_route(
 /// the project service happens WITHOUT the global runtime mutex held -- that
 /// serialization is the 0.55s staircase measured on sam-strix, where eight
 /// concurrent `aimux task list` runs completed one at a time. Both paths call
-/// this and `render_task_list_payload` so the two cannot drift, which is the
-/// lesson `/health` taught when it had two routes building the same body.
+/// this, and both render through `render_task_list_result`, so the two cannot
+/// drift -- the lesson `/health` taught when it had two routes building the
+/// same body. What actually holds them together is
+/// `the_carved_out_task_list_answers_what_the_locked_path_answers`; the shared
+/// helpers only make agreement easy, and the carve-out shipped once with these
+/// helpers in place and the router's refusals missing.
 pub fn resolve_task_list_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,

@@ -3024,8 +3024,20 @@ pub fn handle_daemon_runtime_request_with_mutex(
             },
         );
     }
+    // The same condition the `doctor_versions` carve-out above carries, and for
+    // the same reason. `task_list_text` is in `local_cli_text_routes`, so
+    // `daemon/router.rs` refuses it two ways -- 403 "core text routes are
+    // loopback-only" for a remote actor, 403 "core text routes are cli-only"
+    // for a request with an `Origin` header. Those refusals live on the route,
+    // not in the access decision, and `assert_remote_access_allowed` allows an
+    // Owner actor and no actor alike. A carve-out without this condition
+    // therefore SERVES the task list to a relay-stamped owner and to a browser,
+    // both of which the daemon turns away. Anyone excluded here takes the
+    // locked path and is refused there, by the one copy of the rule.
     if request.method == "GET"
         && pathname == crate::core_command_contract::CORE_API_ROUTES.task_list_text
+        && parse_remote_actor(&request.headers).is_none()
+        && !crate::daemon::router::has_origin_header(&request.headers)
     {
         return handle_task_list_without_holding_the_lock(runtime, request);
     }
@@ -3061,6 +3073,11 @@ fn handle_task_list_without_holding_the_lock(
     handle_daemon_http_request(
         request,
         |method, path, body, headers| {
+            // An empty project list is sound only because of the condition
+            // on the carve-out above: the list is consulted for Operator and
+            // Peer actors, and `parse_remote_actor(..).is_none()` means there
+            // is no actor at all. The proxy fast path has to exclude those two
+            // roles explicitly for the same reason.
             build_daemon_route_context(method, path, body, headers.clone(), &[])
         },
         |_, path, body, context, _| {
@@ -12606,10 +12623,13 @@ mod tests {
 
 /// The blocking half of a project-service call, which needs no runtime at all.
 ///
-/// A free function rather than a method on purpose: with no `self` there is
-/// nothing to hold the global runtime mutex through, so a caller that builds
-/// its request with `build_project_service_json_request` under the lock can
-/// drop the guard and come here.
+/// Free rather than a method so that a caller which wants the hop unlocked
+/// CAN have it: build the request with `build_project_service_json_request`
+/// under the guard, drop the guard, come here. It does not by itself prevent
+/// anything -- `request_project_service_json` calls it from `&mut self`, so on
+/// every route that still goes through the generic locked dispatch this runs
+/// with the mutex held exactly as before. Nothing gates that, and the earlier
+/// claim that there was "nothing to hold the mutex through" was wrong.
 pub fn send_project_service_json(
     project_root: &str,
     request: &DaemonJsonRequest,
