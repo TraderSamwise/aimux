@@ -639,7 +639,7 @@ pub fn handoff_mutation_text_route(
 pub fn resolve_task_list_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
-) -> Result<(String, String), DaemonRouteResponse> {
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
     let project = required_param(route_url, body, "project")?;
     let mut query = Vec::new();
     if let Some(session) = trimmed_param(route_url, body, "session") {
@@ -653,7 +653,10 @@ pub fn resolve_task_list_request(
     } else {
         format!("{}?{}", project_routes::tasks::LIST, query.join("&"))
     };
-    Ok((project, route_path))
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    })
 }
 
 /// Phase three from a raw project-service result.
@@ -691,7 +694,10 @@ pub fn task_list_text_route(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
 ) -> DaemonRouteResponse {
-    let (project, route_path) = match resolve_task_list_request(route_url, body) {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_task_list_request(route_url, body) {
         Ok(resolved) => resolved,
         Err(response) => return response,
     };

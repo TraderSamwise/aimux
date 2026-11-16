@@ -3034,7 +3034,15 @@ pub fn handle_daemon_runtime_request_with_mutex(
     // therefore SERVES the task list to a relay-stamped owner and to a browser,
     // both of which the daemon turns away. Anyone excluded here takes the
     // locked path and is refused there, by the one copy of the rule.
+    // Pathname second, before the header work, which is where it was before
+    // this guard covered two routes. `parse_remote_actor` and
+    // `has_origin_header` are pure and cheap -- header lookups and an optional
+    // JSON parse -- but they are still more expensive than a string compare,
+    // and hoisting them ran them for every daemon GET. One copy of the rule,
+    // cheapest discriminator first.
     if request.method == "GET"
+        && (pathname == crate::core_command_contract::CORE_API_ROUTES.task_list_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.agent_ps_text)
         && parse_remote_actor(&request.headers).is_none()
         && !crate::daemon::router::has_origin_header(&request.headers)
     {
@@ -3057,6 +3065,21 @@ pub fn handle_daemon_runtime_request_with_mutex(
     }
     let mut runtime = runtime.lock().expect("daemon runtime mutex poisoned");
     handle_daemon_runtime_request(&mut *runtime, request)
+}
+
+/// What a core read route needs resolved before it can call its project
+/// service.
+///
+/// Named fields rather than a `(String, String)`, and that is not style. Both
+/// the carve-out and the locked path consume these in the same order, so a
+/// route whose resolve returned them the other way round would be wrong
+/// IDENTICALLY on both paths -- which the parity test cannot see, because
+/// parity compares the two paths against each other. A positional pair put
+/// exactly the mistake the shared machinery exists to prevent back within
+/// reach of the next route.
+pub struct CoreReadTarget {
+    pub project: String,
+    pub route_path: String,
 }
 
 /// A single-upstream-call core read route, served without the global runtime
@@ -3099,17 +3122,25 @@ pub fn handle_daemon_runtime_request_with_mutex(
 fn handle_core_read_route_without_holding_the_lock(
     runtime: &Arc<Mutex<RealDaemonRuntime>>,
     request: DaemonHttpRequest,
-    resolve: impl Fn(&DaemonRouteUrl, Option<&Value>) -> Result<(String, String), DaemonRouteResponse>,
+    resolve: impl Fn(&DaemonRouteUrl, Option<&Value>) -> Result<CoreReadTarget, DaemonRouteResponse>,
     render: impl Fn(&DaemonRouteUrl, ProjectServiceJsonResult) -> DaemonRouteResponse,
 ) -> PreparedDaemonResponse {
     handle_daemon_http_request(
         request,
         |method, path, body, headers| {
-            // An empty project list is sound only because of the condition
-            // on the carve-out above: the list is consulted for Operator and
-            // Peer actors, and `parse_remote_actor(..).is_none()` means there
-            // is no actor at all. The proxy fast path has to exclude those two
-            // roles explicitly for the same reason.
+            // An empty project list is sound because of the condition on the
+            // carve-out above, and the code is stronger than "the list is
+            // consulted for Operator and Peer actors", which is what this
+            // comment used to claim. `build_daemon_route_context_for_actor`
+            // reads `projects` only INSIDE
+            // `actor.filter(|a| matches!(a.role, Operator | Peer))`, so with
+            // no actor the `Option::filter` short-circuits and the slice is
+            // never read on any path. The condition is therefore
+            // `parse_remote_actor(..).is_none()` and nothing else -- it does
+            // not depend on which pathname got here, which is why putting two
+            // route checks under it cannot invalidate it. The proxy fast path
+            // has to exclude those two roles explicitly because it serves
+            // actors.
             build_daemon_route_context(method, path, body, headers.clone(), &[])
         },
         |_, path, body, context, _| {
@@ -3125,7 +3156,10 @@ fn handle_core_read_route_without_holding_the_lock(
                 );
             }
             let route_url = DaemonRouteUrl::parse(path);
-            let (project, route_path) = match resolve(&route_url, body) {
+            let CoreReadTarget {
+                project,
+                route_path,
+            } = match resolve(&route_url, body) {
                 Ok(resolved) => resolved,
                 Err(response) => return response,
             };

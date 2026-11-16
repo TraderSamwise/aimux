@@ -391,3 +391,48 @@ fn an_owner_role_over_the_relay_reaches_daemon_routes() {
         "the owner's own paired device must reach /projects over the relay"
     );
 }
+
+/// An actorless request's context does not depend on the project list.
+///
+/// This is the invariant every core-read carve-out in `daemon/runtime.rs`
+/// rests on. Those carve-outs build their context with an EMPTY project slice
+/// and are sound only because `build_daemon_route_context_for_actor` reads
+/// `projects` exclusively inside
+/// `actor.filter(|a| matches!(a.role, Operator | Peer))`, so with no actor the
+/// `Option::filter` short-circuits and the slice is never read on any path.
+///
+/// Until now that reasoning lived in a prose comment beside the carve-outs,
+/// and a comment cannot fail. The way it would quietly stop being true is not
+/// another carve-out -- the condition is pathname-independent -- but
+/// `build_daemon_route_context_for_actor` gaining a `projects`-dependent
+/// decision for actorless requests. This fails the day that happens, and it
+/// covers every present and future carve-out at once.
+#[test]
+fn an_actorless_request_context_ignores_the_project_list() {
+    let populated = [
+        project("/repo-one", 45901, true),
+        project("/repo-two", 45902, false),
+    ];
+
+    for (method, path, body) in [
+        ("GET", "/core/task/list-text?project=/repo-one", None),
+        ("GET", "/core/agents/ps-text?project=/repo-two", None),
+        ("GET", "/projects", None),
+        (
+            "POST",
+            "/core/agents/input-text",
+            Some(json!({ "project": "/repo-one", "sessionId": "a", "text": "hi" })),
+        ),
+    ] {
+        // No actor header, which is what the carve-outs' guard requires.
+        let headers = BTreeMap::<String, String>::new();
+        let with_empty =
+            build_daemon_route_context(method, path, body.as_ref(), headers.clone(), &[]);
+        let with_projects =
+            build_daemon_route_context(method, path, body.as_ref(), headers, &populated);
+        assert_eq!(
+            with_empty, with_projects,
+            "{method} {path} built a different context from an empty project list than from a populated one, so the carve-outs in daemon/runtime.rs that pass &[] are no longer sound"
+        );
+    }
+}

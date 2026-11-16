@@ -896,9 +896,12 @@ pub fn agent_input_text_route(
 pub fn resolve_agent_ps_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
-) -> Result<(String, String), DaemonRouteResponse> {
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
     let project = required_param(route_url, body, "project")?;
-    Ok((project, project_routes::agents::LIST.to_owned()))
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: project_routes::agents::LIST.to_owned(),
+    })
 }
 
 /// Phase three of `aimux ps`, from a raw project-service result.
@@ -918,7 +921,10 @@ pub fn agent_ps_text_route(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
 ) -> DaemonRouteResponse {
-    let (project, route_path) = match resolve_agent_ps_request(route_url, body) {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_agent_ps_request(route_url, body) {
         Ok(resolved) => resolved,
         Err(response) => return response,
     };
