@@ -5,6 +5,7 @@ use aimux::plugin_project_service_host::builtin_plugin_tick_tasks;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_input_delivery::{
     AGENT_INPUT_DELIVERY_TASK_NAME, agent_input_delivery_queue_path, agent_input_delivery_task,
+    run_pending_agent_input_deliveries_async,
 };
 use aimux::project_service::agent_restore_task::{AgentRestoreSnapshotTask, LiveWindowSource};
 use aimux::project_service::loop_watcher_task::LoopWatcherTask;
@@ -2405,4 +2406,86 @@ fn wait_for_atomic_usize(counter: &AtomicUsize, expected: usize) -> Option<usize
         std::thread::sleep(Duration::from_millis(10));
     }
     None
+}
+
+/// The delivery tick does not consume an async worker while it waits for the
+/// shared queue lock.
+///
+/// `AgentInputDeliveryTask::run` awaits `run_pending_agent_input_deliveries_async`
+/// directly, and `periodic_scheduler` awaits task futures on its own async
+/// task -- the `spawn_blocking_named` in that file is for alert sinks, not task
+/// bodies. So this function runs on the project service's async workers, and
+/// there are two. It used to take the shared delivery-queue lock twice on that
+/// stack: once for a file read, and once held to the end of the function across
+/// a read, a `write_json_atomic`, and a possible session-metadata rewrite. The
+/// daemon's ten `PeriodicTask` impls each offload their own body; this one did
+/// not, which is the same defect the two daemon stream interceptors had.
+///
+/// The gate is the shape PR #533 settled on, for the reasons recorded there.
+/// Phase one: more tasks than workers, every one reporting that it has been
+/// polled BEFORE it awaits, so with the lock taken on a worker only as many as
+/// there are workers can ever report. Phase two: a task that only yields,
+/// spawned AFTER that barrier, because an `.await` anywhere before the lock
+/// lets every task report and park afterwards -- phase one cannot see that and
+/// a review proved it. The budget is a quiet window rather than a deadline:
+/// any report resets it, so a slow machine passes and a parked worker does not.
+#[test]
+fn the_delivery_tick_does_not_consume_an_async_worker() {
+    const WORKERS: usize = aimux::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
+    let attempts = WORKERS + 2;
+    let quiet_window = Duration::from_secs(30);
+
+    let root =
+        std::env::temp_dir().join(format!("aimux-delivery-tick-worker-{}", std::process::id()));
+    let state_dir = root.join("state");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&state_dir).expect("state dir");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&root, state_dir.clone());
+
+    let async_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(WORKERS)
+        .enable_all()
+        .build()
+        .expect("a runtime with the project service's worker count");
+    let _entered = async_runtime.enter();
+
+    // Held for the whole check, so every tick genuinely blocks on it.
+    let held = context.agent_input_delivery_queue.lock();
+
+    let (polled_tx, polled) = mpsc::channel();
+    for index in 0..attempts {
+        let tick_context = context.clone();
+        let polled_tx = polled_tx.clone();
+        async_runtime.spawn(async move {
+            polled_tx.send(index).expect("the test is still listening");
+            let _ = run_pending_agent_input_deliveries_async(&tick_context, 0).await;
+        });
+    }
+    drop(polled_tx);
+
+    let mut reported = 0;
+    while reported < attempts {
+        match polled.recv_timeout(quiet_window) {
+            Ok(_) => reported += 1,
+            Err(_) => break,
+        }
+    }
+
+    let (yielded_tx, yielded) = mpsc::channel();
+    async_runtime.spawn(async move {
+        tokio::task::yield_now().await;
+        let _ = yielded_tx.send(());
+    });
+    let still_polling = yielded.recv_timeout(quiet_window).is_ok();
+
+    drop(held);
+
+    assert_eq!(
+        reported, attempts,
+        "{reported} of {attempts} delivery ticks were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}. Progress stopped rather than slowed, which a starved runtime does not do: the tick is holding a worker while it waits for the delivery-queue lock"
+    );
+    assert!(
+        still_polling,
+        "every delivery tick was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied even though each tick got its first poll, which is what happens when the lock is taken after an await rather than before one"
+    );
 }
