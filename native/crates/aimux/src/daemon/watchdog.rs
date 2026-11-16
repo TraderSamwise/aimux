@@ -138,10 +138,23 @@ pub fn probe_health_within(host: &str, port: u16, timeout: Duration) -> Result<(
 
 /// How long a process gets to keep failing before it ends itself.
 ///
-/// A budget per process kind, not one shared constant: the daemon serves state
-/// off disk, while a project service's `/health` builds scheduler diagnostics
-/// on a two-worker runtime, so its latency tracks contention. The thing a
-/// watchdog must never do is end a service that is merely starved of CPU.
+/// A budget per process kind, not one shared constant: the daemon answers
+/// `/health` without taking its runtime mutex, while a project service's
+/// `/health` builds scheduler diagnostics on a two-worker runtime, so its
+/// latency tracks contention. The thing a watchdog must never do is end a
+/// service that is merely starved of CPU.
+///
+/// The daemon half of that was not true until 2026-11-16. The route took the
+/// global runtime mutex for `pid` and `port`, so its latency tracked
+/// contention exactly like a project service's -- and on sam-strix it did end
+/// a healthy daemon: `/health` measured p50 0.44ms and 11.2s under
+/// contention, past the 10s timeout, and the log records
+/// `consecutiveFailures: 3`, `exitCode: 70` at 10:18:08Z against a daemon
+/// whose own health route was answering in microseconds. The tight budget
+/// below is earned by `DaemonHealthIdentity` and the two gates that hold it
+/// there -- `health_answers_while_another_request_holds_the_runtime_mutex` and
+/// `hosted_health_answers_over_the_socket_while_the_runtime_lock_is_held`. If
+/// either is ever deleted, this budget stops being safe.
 #[derive(Debug, Clone, Copy)]
 pub struct WatchdogBudget {
     pub label: &'static str,
