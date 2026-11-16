@@ -4463,3 +4463,125 @@ fn overseer_watch_rejects_invalid_published_inventory_before_spawning_or_assigni
         fixture.cleanup();
     }
 }
+
+/// A listener that accepts and never answers.
+///
+/// This is what makes the lock question answerable without a latency budget.
+/// Core text routes build their `DaemonJsonRequest` with `timeout_ms: None`,
+/// so `execute_loopback_json_request` waits forever. A route that holds the
+/// runtime mutex across that call therefore holds it FOREVER, which turns
+/// "does the daemon still answer other routes" from a timing question into a
+/// progress question -- the only kind these gates can ask without becoming
+/// flaky on a loaded runner.
+struct HangingUpstream {
+    port: u16,
+    _listener: TcpListener,
+}
+
+impl HangingUpstream {
+    fn spawn() -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind hanging upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
+        let accepting = listener.try_clone().expect("clone hanging upstream");
+        std::thread::spawn(move || {
+            // Accept and hold. Never write a byte, never close.
+            let mut held = Vec::new();
+            for stream in accepting.incoming() {
+                match stream {
+                    Ok(stream) => held.push(stream),
+                    Err(_) => break,
+                }
+            }
+        });
+        Self {
+            port,
+            _listener: listener,
+        }
+    }
+}
+
+/// A core text route does not hold the runtime mutex across its project-service call.
+///
+/// This is the serialization measured on sam-strix: eight concurrent
+/// `aimux task list` runs completed as an even 0.55s staircase, one at a time,
+/// because every core text route holds the one global runtime mutex for its
+/// whole duration -- including the blocking HTTP hop to the project service.
+/// `/health` was taken out of that queue first, which stopped the watchdog
+/// ending healthy daemons; this is the queue itself.
+///
+/// The route's work splits in three with no trait change: resolve the request
+/// (needs the runtime, fast), make the call (needs nothing from the runtime
+/// once the request is built), render (pure). Only the middle phase must run
+/// unlocked.
+#[test]
+fn a_core_text_route_does_not_hold_the_runtime_lock_across_its_upstream_call() {
+    let fixture = RuntimeFixture::new("task-list-lock");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+
+    let upstream = HangingUpstream::spawn();
+    let project_root = project.to_string_lossy().into_owned();
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: upstream.port,
+            // The fixture's verifier trusts this process, so the endpoint
+            // reads as a live project service.
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    // Thread one: a core text route whose upstream never answers.
+    let stuck_runtime = Arc::clone(&runtime);
+    let stuck_path = format!(
+        "{}?project={}",
+        aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+        project_root
+    );
+    let stuck = std::thread::spawn(move || {
+        let _ = handle_daemon_runtime_request_with_mutex(
+            &stuck_runtime,
+            health_identity,
+            request("GET", &stuck_path),
+        );
+    });
+
+    // Thread two: any other route. It needs the runtime, so it can only answer
+    // if the stuck route is not sitting on the mutex.
+    let other_runtime = Arc::clone(&runtime);
+    let (answered_tx, answered) = mpsc::channel();
+    std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &other_runtime,
+            health_identity,
+            request("GET", "/projects"),
+        );
+        let _ = answered_tx.send(response.status);
+    });
+
+    // A quiet window, not a deadline: the stuck route holds its lock forever
+    // when this regresses, so the failure is permanent rather than slow and a
+    // loaded machine cannot turn a pass into a fail.
+    let outcome = answered.recv_timeout(Duration::from_secs(30));
+
+    assert_eq!(
+        outcome.ok(),
+        Some(200),
+        "GET /projects never answered while a core text route waited on an upstream that never replies. The route is holding the global runtime mutex across its project-service call, which is the 0.55s staircase measured on sam-strix: every aimux command on the machine queues behind whichever one is slowest"
+    );
+
+    // The stuck thread is still parked on the hanging upstream by design.
+    drop(stuck);
+    fixture.cleanup();
+}
