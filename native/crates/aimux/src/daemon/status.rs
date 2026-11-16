@@ -33,6 +33,24 @@ pub trait DaemonStatusRuntime {
     fn resolve_project_root(&self, cwd: &str) -> String;
 }
 
+/// The daemon's health body, built in exactly one place.
+///
+/// Two routes answer `GET /health`: this module's, reached with the runtime
+/// already borrowed, and the lock-free one in `daemon/runtime.rs` that the
+/// loopback listener reaches first. They had the same five fields written out
+/// twice, and `DaemonHealthIdentity` was about to make that two different
+/// derivations of `pid` and `port` -- which is the shape AGENTS.md calls the
+/// bug even when the two currently agree.
+pub fn daemon_health_payload(pid: i32, port: u16, service_info: Value) -> Value {
+    json!({
+        "ok": true,
+        "kind": DAEMON_HEALTH_KIND,
+        "pid": pid,
+        "port": port,
+        "serviceInfo": service_info,
+    })
+}
+
 pub fn route_status_request(
     runtime: &mut impl DaemonStatusRuntime,
     method: &str,
@@ -46,13 +64,7 @@ pub fn route_status_request(
         let daemon = runtime.current_daemon_info(issued_at);
         return Some(DaemonRouteResponse::json(
             200,
-            json!({
-                "ok": true,
-                "kind": DAEMON_HEALTH_KIND,
-                "pid": daemon.pid,
-                "port": daemon.port,
-                "serviceInfo": runtime.project_service_info(),
-            }),
+            daemon_health_payload(daemon.pid, daemon.port, runtime.project_service_info()),
         ));
     }
 

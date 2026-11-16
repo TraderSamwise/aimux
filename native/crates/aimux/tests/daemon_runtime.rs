@@ -11,9 +11,9 @@ use aimux::daemon::listener::{
 };
 use aimux::daemon::process::handle_daemon_runtime_request;
 use aimux::daemon::runtime::{
-    PROJECT_SERVICE_STARTUP_TIMEOUT_MS, ProjectServiceHealthProbe, ProjectServiceLauncher,
-    ProjectServiceProcessVerifier, RealDaemonRuntime, SystemProjectServiceLauncher,
-    handle_daemon_runtime_request_with_mutex,
+    DaemonHealthIdentity, PROJECT_SERVICE_STARTUP_TIMEOUT_MS, ProjectServiceHealthProbe,
+    ProjectServiceLauncher, ProjectServiceProcessVerifier, RealDaemonRuntime,
+    SystemProjectServiceLauncher, handle_daemon_runtime_request_with_mutex,
 };
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::agents::DaemonAgentTextRuntime;
@@ -227,12 +227,112 @@ fn native_daemon_http_routes_health_and_projects_through_real_runtime() {
     fixture.cleanup();
 }
 
+/// The two `/health` routes answer identically.
+///
+/// Two of them exist: `daemon/status.rs`, reached with the runtime already
+/// borrowed, and the lock-free one in `daemon/runtime.rs` that the loopback
+/// listener reaches first. AGENTS.md calls a fact computed twice the bug even
+/// while the two answers agree, and `DaemonHealthIdentity` was about to make
+/// `pid` and `port` two different derivations.
+///
+/// Compared against each other rather than each against a literal, because a
+/// per-surface test passes happily while the surfaces disagree -- which is
+/// exactly how this class survives.
+#[test]
+fn both_health_routes_answer_the_same_body() {
+    let fixture = RuntimeFixture::new("health-parity");
+    let expected_pid = fixture.info.pid;
+    let expected_port = fixture.info.port;
+    let mut borrowed = fixture.runtime();
+
+    // The status-contract route, reached with the runtime borrowed.
+    let borrowed_response = handle_daemon_runtime_request(&mut borrowed, request("GET", "/health"));
+    let borrowed_body: Value =
+        serde_json::from_slice(&borrowed_response.body).expect("borrowed health json");
+
+    // The lock-free route the listener reaches first.
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let lock_free_response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request("GET", "/health"),
+    );
+    let lock_free_body: Value =
+        serde_json::from_slice(&lock_free_response.body).expect("lock-free health json");
+
+    assert_eq!(borrowed_response.status, lock_free_response.status);
+    assert_eq!(
+        borrowed_body, lock_free_body,
+        "the two health routes must not drift: {borrowed_body} vs {lock_free_body}"
+    );
+    assert_eq!(lock_free_body["pid"], json!(expected_pid));
+    assert_eq!(lock_free_body["port"], json!(expected_port));
+    fixture.cleanup();
+}
+
+/// `/health` answers while another request holds the runtime mutex.
+///
+/// The load test below says in its own comment that "a regression that
+/// serialised the fleet behind a mutex into twenty seconds would pass here",
+/// and on 2026-11-16 that regression was live: on sam-strix eight concurrent
+/// `/health` calls to the installed daemon all returned together at 11.2s,
+/// against a p50 of 0.44ms. `daemon_supervisor.rs` polls this route on a
+/// 2.5s client budget (`DAEMON_HEALTH_PROBE_TIMEOUT_MS`), so a daemon that was
+/// up and listening was reported as one that had not started -- the CLI
+/// printed "still waiting for aimux daemon at 127.0.0.1:43190 (40s)".
+///
+/// This is the one latency claim about `/health` that needs no load and no
+/// wall-clock budget: hold the lock, ask for health, require an answer. It is
+/// bounded by a channel rather than a join, so a route that takes the mutex
+/// back FAILS here in ten seconds instead of hanging the suite forever.
+#[test]
+fn health_answers_while_another_request_holds_the_runtime_mutex() {
+    let fixture = RuntimeFixture::new("health-under-lock");
+    let expected_pid = fixture.info.pid;
+    let expected_port = fixture.info.port;
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    // Taken before the probe starts and released only after it answers, so
+    // the probe cannot pass by winning a race for an uncontended lock.
+    let held = runtime.lock().expect("hold the runtime mutex");
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let probe_runtime = Arc::clone(&runtime);
+    let probe = std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &probe_runtime,
+            health_identity,
+            request("GET", "/health"),
+        );
+        let _ = sender.send(response);
+    });
+
+    // Released before the assert, so a failure still joins the probe and runs
+    // `cleanup` instead of panicking with the lock in hand.
+    let answered = receiver.recv_timeout(Duration::from_secs(10));
+    drop(held);
+    probe.join().expect("health probe thread");
+    let response = answered.expect("/health answered while the runtime mutex was held");
+
+    let body: Value = serde_json::from_slice(&response.body).expect("health json");
+    assert_eq!(response.status, 200);
+    assert_eq!(body["kind"], "aimux-daemon");
+    assert_eq!(body["pid"], json!(expected_pid));
+    assert_eq!(body["port"], json!(expected_port));
+    fixture.cleanup();
+}
+
 #[test]
 fn native_daemon_projects_route_reports_genuine_empty_registry_as_empty() {
     let fixture = RuntimeFixture::new("projects-empty-registry");
     let runtime = Arc::new(Mutex::new(fixture.runtime()));
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request("GET", "/projects"),
+    );
     let body: Value = serde_json::from_slice(&response.body).expect("projects json");
 
     assert_eq!(response.status, 200);
@@ -270,9 +370,14 @@ fn native_daemon_projects_route_reports_unreadable_registered_root_not_empty() {
     fs::set_permissions(&locked_parent, fs::Permissions::from_mode(0o000)).expect("lock parent");
     let runtime = Arc::new(Mutex::new(fixture.runtime()));
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request("GET", "/projects"),
+    );
     let cli_response = handle_daemon_runtime_request_with_mutex(
         &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
         request(
             "GET",
             &format!("{}?json=1", CORE_API_ROUTES.daemon_projects_text),
@@ -322,9 +427,14 @@ fn native_daemon_projects_route_omits_genuinely_absent_registered_root() {
     .expect("registry");
     let runtime = Arc::new(Mutex::new(fixture.runtime()));
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request("GET", "/projects"),
+    );
     let cli_response = handle_daemon_runtime_request_with_mutex(
         &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
         request(
             "GET",
             &format!("{}?json=1", CORE_API_ROUTES.daemon_projects_text),
@@ -349,7 +459,11 @@ fn native_daemon_projects_route_reports_registry_parse_failure_not_empty() {
     fs::write(resolver.projects_registry_path(), "{").expect("bad registry");
     let runtime = Arc::new(Mutex::new(fixture.runtime()));
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request("GET", "/projects"),
+    );
     let body: Value = serde_json::from_slice(&response.body).expect("projects error json");
 
     assert_eq!(response.status, 500);
@@ -392,7 +506,11 @@ fn native_daemon_projects_route_and_doctor_report_endpoint_parse_failure() {
     fs::write(&endpoint_path, "{").expect("bad endpoint");
     let runtime = Arc::new(Mutex::new(fixture.runtime()));
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request("GET", "/projects"),
+    );
     let body: Value = serde_json::from_slice(&response.body).expect("projects json");
 
     assert_eq!(response.status, 200);
@@ -541,6 +659,11 @@ fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
     let address = listener.local_addr().expect("daemon address");
     let request_count = 60 * 5 + 1;
     let server_runtime = Arc::clone(&runtime);
+    // Hoisted, because deriving it per request took the global mutex on every
+    // one of the 301 requests below -- including the post-load `/health` this
+    // test exists to ask. That both diverged from production, which passes a
+    // startup copy, and added contention to the thing being measured.
+    let server_health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     let server_join = std::thread::spawn(move || {
         let mut joins = Vec::new();
         for _ in 0..request_count {
@@ -576,7 +699,11 @@ fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
                         })
                     },
                     &mut |request| {
-                        handle_daemon_runtime_request_with_mutex(&request_runtime, request)
+                        handle_daemon_runtime_request_with_mutex(
+                            &request_runtime,
+                            server_health_identity,
+                            request,
+                        )
                     },
                 );
             }));
@@ -641,10 +768,18 @@ fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
     //
     // Narrowed from a first draft that said "nothing in the suite puts a
     // wall-clock bound on these routes", which a review refuted:
-    // `daemon_supervisor.rs` asks `/health` with a 400ms client budget and
-    // bounds the call at 5s. That gates the CLIENT giving up on a daemon that
-    // never answers, not the daemon's latency, which is the distinction the
-    // first draft lost.
+    // `daemon_supervisor.rs` asks `/health` with a client budget and bounds
+    // the call. That gates the CLIENT giving up on a daemon that never
+    // answers, not the daemon's latency, which is the distinction the first
+    // draft lost.
+    //
+    // The refutation named "a 400ms client budget", and that number was never
+    // real: `DAEMON_HEALTH_PROBE_TIMEOUT_MS` is 2_500 and has been since the
+    // constant was introduced in 3b6620134. A 2026-11-16 change read this
+    // comment, trusted it, and copied 400ms into two more places before a
+    // review caught it. The figure is gone rather than corrected inline,
+    // because the point here does not need one and a number in a comment is
+    // what went stale.
     //
     // This was the only post-load responsiveness gate in the repo and it is a
     // liveness gate now -- a deliberate trade, since the alternative is a
@@ -2926,6 +3061,7 @@ fn the_versions_report_carries_what_the_snapshot_read() {
 
     let json_response = handle_daemon_runtime_request_with_mutex(
         &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
         request(
             "GET",
             &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
@@ -2958,6 +3094,7 @@ fn the_versions_report_carries_what_the_snapshot_read() {
 
     let text_response = handle_daemon_runtime_request_with_mutex(
         &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
         request("GET", CORE_API_ROUTES.doctor_versions_text),
     );
     let text = String::from_utf8(text_response.body).expect("versions text");
@@ -3003,6 +3140,7 @@ fn the_versions_report_is_built_with_the_runtime_lock_released() {
     let request_thread = thread::spawn(move || {
         handle_daemon_runtime_request_with_mutex(
             &request_runtime,
+            DaemonHealthIdentity::from_runtime(&request_runtime),
             request("GET", CORE_API_ROUTES.doctor_versions_text),
         )
     });
@@ -3087,6 +3225,7 @@ fn the_versions_fast_path_answers_each_caller_as_the_locked_path_would() {
         assert_eq!(
             served(handle_daemon_runtime_request_with_mutex(
                 &runtime,
+                DaemonHealthIdentity::from_runtime(&runtime),
                 versions_request("GET", &path, None)
             )),
             if path.contains("json=1") {
@@ -3112,6 +3251,7 @@ fn the_versions_fast_path_answers_each_caller_as_the_locked_path_would() {
             ] {
                 let through_fast_path = served(handle_daemon_runtime_request_with_mutex(
                     &runtime,
+                    DaemonHealthIdentity::from_runtime(&runtime),
                     versions_request(method, &path, header),
                 ));
                 let through_lock = {

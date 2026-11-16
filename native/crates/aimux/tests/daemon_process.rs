@@ -5,7 +5,9 @@ use aimux::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
 };
 use aimux::daemon::process::handle_daemon_runtime_request;
-use aimux::daemon::runtime::{RealDaemonRuntime, handle_daemon_runtime_request_with_mutex};
+use aimux::daemon::runtime::{
+    DaemonHealthIdentity, RealDaemonRuntime, handle_daemon_runtime_request_with_mutex,
+};
 use aimux::daemon::server::DaemonHttpRequest;
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::agents::{DaemonAgentTextRuntime, ProjectServicePostOptions};
@@ -1344,11 +1346,15 @@ fn runtime_mutex_wrapper_routes_owner_get_proxy_without_head_of_line_blocking() 
     request
         .headers
         .insert("x-aimux-actor-role".into(), "owner".into());
+    // Before the hold, not inside it: `from_runtime` takes the same mutex,
+    // and these tests exist to prove a route answers while it is held.
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     let held = runtime.lock().expect("hold runtime lock");
     let (response_tx, response_rx) = mpsc::channel();
     let request_runtime = Arc::clone(&runtime);
     let request_thread = thread::spawn(move || {
-        let response = handle_daemon_runtime_request_with_mutex(&request_runtime, request);
+        let response =
+            handle_daemon_runtime_request_with_mutex(&request_runtime, health_identity, request);
         response_tx
             .send(response)
             .expect("send proxy response before lock release");
@@ -1409,11 +1415,15 @@ fn runtime_mutex_wrapper_routes_owner_post_proxy_without_head_of_line_blocking()
     request
         .body_chunks
         .push(br#"{"sessionId":"s","text":"hello"}"#.to_vec());
+    // Before the hold, not inside it: `from_runtime` takes the same mutex,
+    // and these tests exist to prove a route answers while it is held.
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     let held = runtime.lock().expect("hold runtime lock");
     let (response_tx, response_rx) = mpsc::channel();
     let request_runtime = Arc::clone(&runtime);
     let request_thread = thread::spawn(move || {
-        let response = handle_daemon_runtime_request_with_mutex(&request_runtime, request);
+        let response =
+            handle_daemon_runtime_request_with_mutex(&request_runtime, health_identity, request);
         response_tx
             .send(response)
             .expect("send proxy response before lock release");
@@ -1465,7 +1475,11 @@ fn runtime_mutex_wrapper_still_denies_guest_desktop_state_proxy_fast_path() {
         .headers
         .insert("x-aimux-actor-role".into(), "guest".into());
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request);
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request,
+    );
 
     assert_eq!(response.status, 403);
     assert_eq!(
@@ -1497,7 +1511,11 @@ fn runtime_mutex_wrapper_still_denies_guest_live_pane_input_proxy_fast_path() {
         .body_chunks
         .push(br#"{"sessionId":"s","text":"hello"}"#.to_vec());
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request);
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request,
+    );
 
     assert_eq!(response.status, 403);
     assert_eq!(
@@ -1591,6 +1609,9 @@ fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
         },
     )));
 
+    // Before the hold, not inside it: `from_runtime` takes the same mutex,
+    // and these tests exist to prove a route answers while it is held.
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     let held = runtime.lock().expect("hold runtime lock");
 
     // The control: a guest proxy request is on the fast path, so it is
@@ -1602,7 +1623,8 @@ fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
         request
             .headers
             .insert("x-aimux-actor-role".into(), "guest".into());
-        let response = handle_daemon_runtime_request_with_mutex(&guest_runtime, request);
+        let response =
+            handle_daemon_runtime_request_with_mutex(&guest_runtime, health_identity, request);
         guest_tx.send(response.status).expect("send guest status");
     });
     assert_eq!(
@@ -1616,8 +1638,11 @@ fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
     let peer_runtime = Arc::clone(&runtime);
     let (peer_tx, peer_rx) = mpsc::channel();
     let peer_thread = thread::spawn(move || {
-        let response =
-            handle_daemon_runtime_request_with_mutex(&peer_runtime, peer_input_request());
+        let response = handle_daemon_runtime_request_with_mutex(
+            &peer_runtime,
+            health_identity,
+            peer_input_request(),
+        );
         peer_tx.send(response.status).expect("send peer status");
     });
     assert!(
@@ -1630,6 +1655,137 @@ fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
         "the peer request must complete once the lock is released"
     );
     peer_thread.join().expect("peer thread");
+}
+
+/// Every per-connection interceptor declines `/health` without locking.
+///
+/// The interceptors run BEFORE route dispatch, on an async worker, and two of
+/// them take the global runtime mutex to do their work
+/// (`daemon/stream.rs`, `daemon/jobs.rs`). They escape only because they
+/// path-gate first and return `Ok(false)` for anything that is not their
+/// route. Nothing tested that, and `ASYNC_RUNTIME_WORKER_THREADS` is 2 -- so
+/// an interceptor that locked before checking the path would leave `/health`
+/// accepted but never polled, which the watchdog reads as a wedge and ends the
+/// process for. That silently reverts the whole point of
+/// `DaemonHealthIdentity`.
+///
+/// Held for the duration, so a lock taken before the path check cannot pass by
+/// winning an uncontended mutex. Bounded by a channel rather than a join, so
+/// the failure is a named assertion in two seconds instead of a hung suite.
+///
+/// This test ENUMERATES the interceptors, which is its weakness: a third one
+/// added without a line here is not covered. The names are in
+/// `daemon/runtime.rs`'s interceptor closure, and they belong in this list.
+#[test]
+fn interceptors_decline_health_without_taking_the_runtime_lock() {
+    let runtime = Arc::new(Mutex::new(FakeRuntime::empty()));
+    let held = runtime.lock().expect("hold runtime lock");
+
+    let (tx, rx) = mpsc::channel();
+    let probe_runtime = Arc::clone(&runtime);
+    let probe = thread::spawn(move || {
+        let request = FakeRuntime::request("GET", "/health");
+        let mut sink: Vec<u8> = Vec::new();
+        let host_agent =
+            aimux::daemon::stream::maybe_handle_host_agent_stream_request_with_runtime_mutex(
+                &probe_runtime,
+                &request,
+                &mut sink,
+            );
+        let _ = tx.send((host_agent.map_err(|error| error.to_string()), sink));
+    });
+
+    let (host_agent, sink) = match rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(result) => result,
+        Err(error) => {
+            drop(held);
+            probe.join().expect("interceptor probe thread");
+            panic!(
+                "the host-agent-stream interceptor took the runtime mutex before deciding it does not handle /health: {error}"
+            );
+        }
+    };
+    drop(held);
+    probe.join().expect("interceptor probe thread");
+
+    assert_eq!(
+        host_agent,
+        Ok(false),
+        "the interceptor must DECLINE /health, not answer it"
+    );
+    assert!(
+        sink.is_empty(),
+        "an interceptor that declines must not have written to the stream: {sink:?}"
+    );
+}
+
+/// Hosted `/health` answers over the socket while the runtime mutex is held.
+///
+/// The handler never touched the runtime, but the listener locked it before
+/// dispatching anyway, so the answer waited on whatever else held it. That
+/// matters more here than locally: `relay_endpoints.rs` has the watchdog read
+/// an unanswered `/health` as a WEDGED daemon, so a daemon that was merely
+/// busy reported itself to the relay as broken.
+///
+/// The twin below is the other direction -- an operator proxy still waits,
+/// because it needs the project list the runtime owns. One route escaping the
+/// lock must not mean all of them do.
+#[test]
+fn hosted_health_answers_over_the_socket_while_the_runtime_lock_is_held() {
+    let fixture = HostedFixture::new("hosted-health-under-lock");
+    let runtime = Arc::new(Mutex::new(FakeRuntime::empty()));
+    let port = unused_loopback_port();
+    let handle = start_hosted_server_background(
+        HostedConfig {
+            enabled: true,
+            port,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        Arc::clone(&runtime),
+    )
+    .expect("hosted startup")
+    .expect("hosted server starts");
+    let held = runtime.lock().expect("hold runtime lock");
+    let (response_tx, response_rx) = mpsc::channel();
+    let request_thread = thread::spawn(move || {
+        let mut client = connect_loopback_port(port);
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("client timeout");
+        write!(
+            client,
+            "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+        )
+        .expect("write hosted health request");
+        response_tx
+            .send(read_socket_text(&mut client))
+            .expect("send hosted health response");
+    });
+
+    let response = match response_rx.recv_timeout(Duration::from_millis(500)) {
+        Ok(response) => response,
+        Err(error) => {
+            drop(held);
+            request_thread.join().expect("request thread");
+            handle.abort();
+            panic!(
+                "hosted GET /health did not answer within 500ms while the runtime mutex was held: {error}"
+            );
+        }
+    };
+    drop(held);
+    request_thread.join().expect("request thread");
+    handle.abort();
+
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "hosted health must answer 200 without the runtime: {response}"
+    );
+    assert!(
+        response.contains(r#""mode":"hosted""#),
+        "hosted health must still be the hosted answer: {response}"
+    );
 }
 
 #[test]

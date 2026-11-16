@@ -138,10 +138,42 @@ pub fn probe_health_within(host: &str, port: u16, timeout: Duration) -> Result<(
 
 /// How long a process gets to keep failing before it ends itself.
 ///
-/// A budget per process kind, not one shared constant: the daemon serves state
-/// off disk, while a project service's `/health` builds scheduler diagnostics
-/// on a two-worker runtime, so its latency tracks contention. The thing a
-/// watchdog must never do is end a service that is merely starved of CPU.
+/// A budget per process kind, not one shared constant: the daemon answers
+/// `/health` without taking its runtime mutex, while a project service's
+/// `/health` builds scheduler diagnostics on a two-worker runtime, so its
+/// latency tracks contention. The thing a watchdog must never do is end a
+/// service that is merely starved of CPU.
+///
+/// The daemon half of that was not true until 2026-11-16. The route took the
+/// global runtime mutex for `pid` and `port`, so its latency tracked
+/// contention exactly like a project service's -- and on sam-strix it did end
+/// a healthy daemon: `/health` measured p50 0.44ms and 11.2s under
+/// contention, past the 10s timeout, and the log records
+/// `consecutiveFailures: 3`, `exitCode: 70` at 10:18:08Z against a daemon
+/// whose own health route was answering in microseconds.
+///
+/// `DaemonHealthIdentity` removed that, and it was the dominant cause and the
+/// only measured one. It is NOT the only way this probe can time out, so the
+/// budget below is not fully earned yet. What remains, named rather than
+/// implied:
+///
+/// - The blocking pool is a FIFO queue. Every route waiting on the runtime
+///   mutex holds a thread in it, and core text routes still hold that mutex
+///   across their call to the project service. Enough in-flight requests and
+///   the probe's own task queues without starting --
+///   `async_runtime::spawn_blocking_named` says this out loud.
+/// - `ASYNC_RUNTIME_WORKER_THREADS` is 2, and the per-connection interceptors
+///   at `daemon/stream.rs` and `daemon/jobs.rs` take a blocking lock inline on
+///   a worker. Two concurrent stream requests during contention can leave
+///   `/health` accepted but never polled. Every periodic task offloads to
+///   `spawn_blocking` correctly; the interceptors do not.
+/// - Those interceptors escape only because they path-gate BEFORE locking. An
+///   interceptor that locks first would revert the whole fix silently, which
+///   is why `health_answers_through_the_listener_while_the_runtime_lock_is_held`
+///   drives a real socket through the listener rather than calling the route.
+///
+/// So: the three gates named here are what make the tight budget defensible,
+/// and they do not make it unconditional.
 #[derive(Debug, Clone, Copy)]
 pub struct WatchdogBudget {
     pub label: &'static str,
