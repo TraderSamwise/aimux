@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const PROJECTS_REGISTRY_VERSION: u8 = 1;
@@ -67,7 +68,21 @@ pub struct PathResolver {
     process_cwd: PathBuf,
     home_dir: PathBuf,
     aimux_home_override: Option<String>,
-    repo_root_cache: HashMap<PathBuf, PathBuf>,
+    /// Shared across clones ON PURPOSE.
+    ///
+    /// This used to be a plain `HashMap`, and `PathResolver` derives `Clone`,
+    /// so every clone got a private copy. The daemon clones this resolver at
+    /// 105 sites in the crate -- 84 in `daemon/runtime.rs` alone -- because
+    /// methods like `metadata_endpoint_for_root` take `&self` while resolving
+    /// needs `&mut self`. Each of those clones populated its own cache and
+    /// dropped it, so the cache was WRITE-ONLY in every daemon path and the
+    /// `rev-parse --git-common-dir` subprocess ran on every call rather than
+    /// once per directory -- while the caller held the one global runtime
+    /// mutex.
+    ///
+    /// Nothing outside this module ever reads the field, so sharing it changes
+    /// no caller; the 105 clone sites compile untouched.
+    repo_root_cache: Arc<Mutex<HashMap<PathBuf, PathBuf>>>,
 }
 
 impl PathResolver {
@@ -80,7 +95,7 @@ impl PathResolver {
             process_cwd: process_cwd.into(),
             home_dir: home_dir.into(),
             aimux_home_override,
-            repo_root_cache: HashMap::new(),
+            repo_root_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -94,18 +109,47 @@ impl PathResolver {
         )
     }
 
+    /// How many repo roots this resolver has cached.
+    ///
+    /// Exists so a test can ask whether the cache SURVIVES cloning, which is
+    /// not observable from the outside otherwise: the only other difference a
+    /// shared cache makes is one fewer subprocess, and counting subprocesses
+    /// needs either timing or a seam, both of which are worse than one
+    /// accessor.
+    pub fn cached_repo_root_count(&self) -> usize {
+        self.repo_root_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .len()
+    }
+
     pub fn resolve_repo_root(&mut self, cwd: impl AsRef<Path>) -> PathBuf {
         let resolved_cwd = lexical_resolve(&self.process_cwd, cwd.as_ref());
         if let Some(repo_root) = aimux_managed_worktree_parent(&resolved_cwd) {
             return repo_root;
         }
 
-        if let Some(cached) = self.repo_root_cache.get(&resolved_cwd) {
-            return cached.clone();
+        // Scoped so the guard is dropped BEFORE the subprocess below. Holding
+        // it across the spawn would put a second lock exactly where the first
+        // one already hurts, and the cost of releasing it is at worst two
+        // concurrent callers each resolving the same directory once, which is
+        // harmless. A poisoned cache is recovered rather than read as empty:
+        // "I could not look at the cache" is not "nothing is cached".
+        {
+            let cache = self
+                .repo_root_cache
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if let Some(cached) = cache.get(&resolved_cwd) {
+                return cached.clone();
+            }
         }
 
         if let Some(repo_root) = resolve_git_repo_root(&resolved_cwd) {
-            self.repo_root_cache.insert(resolved_cwd, repo_root.clone());
+            self.repo_root_cache
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .insert(resolved_cwd, repo_root.clone());
             return repo_root;
         }
 
@@ -716,4 +760,44 @@ fn components_to_path(components: &[Component<'_>]) -> PathBuf {
 
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+#[cfg(test)]
+mod resolver_cache_tests {
+    use super::PathResolver;
+
+    /// A resolver's repo-root cache survives being cloned.
+    ///
+    /// `PathResolver` derives `Clone` over a plain `HashMap`, and the daemon
+    /// clones it CONSTANTLY -- 105 sites in the crate, 84 in
+    /// `daemon/runtime.rs` alone -- because methods like
+    /// `metadata_endpoint_for_root` take `&self` while `resolve_repo_root`
+    /// needs `&mut self`. Every one of those clones gets a fresh empty cache,
+    /// populates it, and drops it. The cache is write-only in every daemon
+    /// path, so the `rev-parse --git-common-dir` subprocess runs on EVERY call
+    /// rather than once per directory -- and it runs while the caller holds the
+    /// one global runtime mutex.
+    ///
+    /// That is the hazard AGENTS.md's Subprocess Churn section opens with, and
+    /// the comment on this cache cites a stuck-process incident which is
+    /// therefore still reachable.
+    #[test]
+    fn the_repo_root_cache_survives_cloning() {
+        // This crate's own directory is inside a repository, so the resolve
+        // really does take the caching path rather than the not-a-repo path.
+        let repo_dir = env!("CARGO_MANIFEST_DIR");
+        let original = PathResolver::new(repo_dir, repo_dir, None);
+        let mut clone = original.clone();
+
+        let resolved = clone.resolve_repo_root(repo_dir);
+        assert!(
+            clone.cached_repo_root_count() > 0,
+            "resolving {resolved:?} cached nothing, so this test is not exercising the caching path at all"
+        );
+
+        assert!(
+            original.cached_repo_root_count() > 0,
+            "the clone cached a repo root and the original cannot see it, so every one of the daemon's resolver clones populates a cache that is immediately dropped and the subprocess repeats on every call"
+        );
+    }
 }
