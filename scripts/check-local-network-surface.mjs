@@ -305,10 +305,12 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   },
   {
     path: "native/crates/aimux/src/paths.rs",
-    marker: 'AsyncCommand::new("git")',
-    command: "git",
+    marker: "AsyncCommand::new(program.as_os_str())",
+    command:
+      "git, resolved once per process to an absolute path by git_program rather than spawned by name, so the OS no longer walks PATH on every repository-root lookup",
     argv: "literal rev-parse --git-common-dir",
-    input: "cwd-derived repository root resolution",
+    input:
+      "cwd-derived repository root resolution; the resolved answer is cached per directory in a cache shared across resolver clones, so the spawn happens once per in-repo directory rather than on every call. A directory that is NOT a repository is deliberately not cached, because it can become one later, and a lookup that could not run is not cached either because it says nothing about the directory",
   },
   {
     path: "native/crates/aimux/src/plugin_project_service_host.rs",
