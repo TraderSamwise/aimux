@@ -194,9 +194,17 @@ struct PeerWaiterGuard {
 
 impl Drop for PeerWaiterGuard {
     fn drop(&mut self) {
-        if let Ok(mut waiters) = self.waiters.lock() {
-            waiters.remove(&self.id);
-        }
+        // Recovered, not skipped. This guard exists precisely to remove the
+        // entry on the way out that no code can see -- a caller dropped
+        // mid-await inside a `select!` -- and its own comment at the
+        // registration site calls a left-behind entry "a leak that nothing
+        // later would ever collect". Read through `if let Ok(..)`, a poisoned
+        // mutex produced exactly that leak, in the one place whose whole job
+        // is to prevent it.
+        self.waiters
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&self.id);
     }
 }
 
@@ -942,9 +950,16 @@ impl RelayRunner {
         &self,
         owners: Vec<crate::remote::remote_project_owners::ProjectOwner>,
     ) {
-        if let Ok(mut held) = self.project_owners.lock() {
-            *held = Some(owners);
-        }
+        // Recovered, not skipped. A frame HAD arrived with the table in it;
+        // read through `if let Ok(..)` a poisoned mutex threw it away, and
+        // because `project_owner_for` then keeps answering `Unknown`, the
+        // relay never recovered ownership knowledge no matter how many more
+        // frames came. Dropping data you were handed is not the same as not
+        // having been handed any.
+        *self
+            .project_owners
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(owners);
     }
 
     fn queue(&self, frame: String) -> Result<(), String> {
@@ -2373,6 +2388,94 @@ mod tests {
                 .unwrap_or_else(|error| error.into_inner())
                 .is_none(),
             "stale project ownership survived the dead connection on a poisoned mutex, which is what its own comment says must not happen"
+        );
+    }
+
+    /// A poisoned waiter table does not leak the entry its guard exists to take.
+    ///
+    /// `PeerWaiterGuard` is there for the exit no code can see: a caller inside
+    /// a `select!` that loses the race is dropped mid-await, and the
+    /// registration site's own comment calls a left-behind entry "a leak that
+    /// nothing later would ever collect". Read through `if let Ok(..)`, a
+    /// poisoned mutex produced precisely that leak, in the one place whose
+    /// whole job is to prevent it. This is the site I missed when I first fixed
+    /// the other three.
+    #[test]
+    fn a_poisoned_waiter_table_still_lets_its_guard_collect_the_entry() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let runner = RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        );
+
+        let (sender, _receiver) = tokio::sync::oneshot::channel::<super::PeerAnswer>();
+        runner
+            .peer_waiters
+            .lock()
+            .expect("a clean waiter table")
+            .insert("req-gave-up".to_owned(), sender);
+
+        poison_peer_waiters(&runner);
+
+        // The guard for a caller that has gone away.
+        drop(super::PeerWaiterGuard {
+            waiters: Arc::clone(&runner.peer_waiters),
+            id: "req-gave-up".to_owned(),
+        });
+
+        assert!(
+            runner
+                .peer_waiters
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_empty(),
+            "the guard did not collect its entry on a poisoned table, which is the leak its own comment says nothing later would ever collect"
+        );
+    }
+
+    /// A poisoned owner table does not throw away a table it was handed.
+    ///
+    /// `store_project_owners` is given rows that arrived in a frame. Read
+    /// through `if let Ok(..)` a poisoned mutex discarded them, and because
+    /// `project_owner_for` answers `Unknown` for an unreadable table, the relay
+    /// never recovered ownership knowledge however many more frames came.
+    /// Being handed data and dropping it is not the same as not being handed
+    /// any -- the distinction this whole class turns on.
+    #[test]
+    fn a_poisoned_owner_table_still_stores_the_rows_it_was_handed() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let runner = RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        );
+
+        // Poison via peer_waiters' sibling: project_owners is its own mutex, so
+        // poison it directly to keep the test honest about which lock it means.
+        let owners = Arc::clone(&runner.project_owners);
+        let panicked = std::thread::spawn(move || {
+            let _guard = owners.lock().expect("a clean lock to poison");
+            panic!("poisoning the project owner table on purpose");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(
+            runner.project_owners.is_poisoned(),
+            "the owner mutex must actually be poisoned for this test to mean anything"
+        );
+
+        runner.store_project_owners(Vec::new());
+
+        assert!(
+            runner
+                .project_owners
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_some(),
+            "the owner rows handed to store_project_owners were discarded on a poisoned table, so project_owner_for would keep answering Unknown for every later frame too"
         );
     }
 }
