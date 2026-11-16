@@ -3042,7 +3042,8 @@ pub fn handle_daemon_runtime_request_with_mutex(
     // cheapest discriminator first.
     if request.method == "GET"
         && (pathname == crate::core_command_contract::CORE_API_ROUTES.task_list_text
-            || pathname == crate::core_command_contract::CORE_API_ROUTES.agent_ps_text)
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.agent_ps_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.agent_list_text)
         && parse_remote_actor(&request.headers).is_none()
         && !crate::daemon::router::has_origin_header(&request.headers)
     {
@@ -3060,6 +3061,14 @@ pub fn handle_daemon_runtime_request_with_mutex(
                 request,
                 crate::daemon::text::agents::resolve_agent_ps_request,
                 crate::daemon::text::agents::render_agent_ps_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.agent_list_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::agents::resolve_agent_list_request,
+                crate::daemon::text::agents::render_agent_list_result,
             );
         }
     }
