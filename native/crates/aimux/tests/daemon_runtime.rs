@@ -227,6 +227,49 @@ fn native_daemon_http_routes_health_and_projects_through_real_runtime() {
     fixture.cleanup();
 }
 
+/// The two `/health` routes answer identically.
+///
+/// Two of them exist: `daemon/status.rs`, reached with the runtime already
+/// borrowed, and the lock-free one in `daemon/runtime.rs` that the loopback
+/// listener reaches first. AGENTS.md calls a fact computed twice the bug even
+/// while the two answers agree, and `DaemonHealthIdentity` was about to make
+/// `pid` and `port` two different derivations.
+///
+/// Compared against each other rather than each against a literal, because a
+/// per-surface test passes happily while the surfaces disagree -- which is
+/// exactly how this class survives.
+#[test]
+fn both_health_routes_answer_the_same_body() {
+    let fixture = RuntimeFixture::new("health-parity");
+    let expected_pid = fixture.info.pid;
+    let expected_port = fixture.info.port;
+    let mut borrowed = fixture.runtime();
+
+    // The status-contract route, reached with the runtime borrowed.
+    let borrowed_response = handle_daemon_runtime_request(&mut borrowed, request("GET", "/health"));
+    let borrowed_body: Value =
+        serde_json::from_slice(&borrowed_response.body).expect("borrowed health json");
+
+    // The lock-free route the listener reaches first.
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let lock_free_response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request("GET", "/health"),
+    );
+    let lock_free_body: Value =
+        serde_json::from_slice(&lock_free_response.body).expect("lock-free health json");
+
+    assert_eq!(borrowed_response.status, lock_free_response.status);
+    assert_eq!(
+        borrowed_body, lock_free_body,
+        "the two health routes must not drift: {borrowed_body} vs {lock_free_body}"
+    );
+    assert_eq!(lock_free_body["pid"], json!(expected_pid));
+    assert_eq!(lock_free_body["port"], json!(expected_port));
+    fixture.cleanup();
+}
+
 /// `/health` answers while another request holds the runtime mutex.
 ///
 /// The load test below says in its own comment that "a regression that

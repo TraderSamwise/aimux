@@ -57,7 +57,7 @@ use crate::daemon::services_doctor::{
 use crate::daemon::stability_doctor::{
     StabilityDoctorReport, build_stability_doctor_report_with_live_scheduler,
 };
-use crate::daemon::status::{DAEMON_HEALTH_KIND, DaemonStatusRuntime};
+use crate::daemon::status::DaemonStatusRuntime;
 use crate::daemon::stream::{
     maybe_handle_host_agent_stream_request_with_runtime_mutex_async,
     maybe_handle_project_event_stream_request_async,
@@ -2899,13 +2899,11 @@ pub fn handle_daemon_runtime_request_with_mutex(
                 // whatever unrelated work happened to hold it.
                 DaemonRouteResponse::json(
                     200,
-                    json!({
-                        "ok": true,
-                        "kind": DAEMON_HEALTH_KIND,
-                        "pid": health_identity.pid,
-                        "port": health_identity.port,
-                        "serviceInfo": project_service_info_value(),
-                    }),
+                    crate::daemon::status::daemon_health_payload(
+                        health_identity.pid,
+                        health_identity.port,
+                        project_service_info_value(),
+                    ),
                 )
             },
         );
