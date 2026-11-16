@@ -5,7 +5,6 @@ use aimux::plugin_project_service_host::builtin_plugin_tick_tasks;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_input_delivery::{
     AGENT_INPUT_DELIVERY_TASK_NAME, agent_input_delivery_queue_path, agent_input_delivery_task,
-    run_pending_agent_input_deliveries_async,
 };
 use aimux::project_service::agent_restore_task::{AgentRestoreSnapshotTask, LiveWindowSource};
 use aimux::project_service::loop_watcher_task::LoopWatcherTask;
@@ -2408,39 +2407,60 @@ fn wait_for_atomic_usize(counter: &AtomicUsize, expected: usize) -> Option<usize
     None
 }
 
-/// The delivery tick does not consume an async worker while it waits for the
+/// Which of the delivery tick's three blocking hops a check is aiming at.
+#[derive(Debug, Clone, Copy)]
+enum DeliveryHop {
+    QueueLoad,
+    MergeAndSave,
+}
+
+/// Fails when a delivery hop holds an async worker while it waits for the
 /// shared queue lock.
 ///
-/// `AgentInputDeliveryTask::run` awaits `run_pending_agent_input_deliveries_async`
-/// directly, and `periodic_scheduler` awaits task futures on its own async
-/// task -- the `spawn_blocking_named` in that file is for alert sinks, not task
-/// bodies. So this function runs on the project service's async workers, and
-/// there are two. It used to take the shared delivery-queue lock twice on that
-/// stack: once for a file read, and once held to the end of the function across
-/// a read, a `write_json_atomic`, and a possible session-metadata rewrite. The
-/// daemon's ten `PeriodicTask` impls each offload their own body; this one did
-/// not, which is the same defect the two daemon stream interceptors had.
+/// `AgentInputDeliveryTask::run` awaits the tick directly, and
+/// `periodic_scheduler` awaits task futures on its own async task -- the
+/// `spawn_blocking_named` in that file is for alert sinks, not task bodies. So
+/// the tick runs on the project service's async workers, and there are two.
 ///
-/// The gate is the shape PR #533 settled on, for the reasons recorded there.
-/// Phase one: more tasks than workers, every one reporting that it has been
-/// polled BEFORE it awaits, so with the lock taken on a worker only as many as
-/// there are workers can ever report. Phase two: a task that only yields,
-/// spawned AFTER that barrier, because an `.await` anywhere before the lock
-/// lets every task report and park afterwards -- phase one cannot see that and
-/// a review proved it. The budget is a quiet window rather than a deadline:
-/// any report resets it, so a slow machine passes and a parked worker does not.
-#[test]
-fn the_delivery_tick_does_not_consume_an_async_worker() {
+/// WHY THERE ARE THREE OF THESE. My first version drove the whole tick with
+/// the lock held and asserted on that. It proved only the FIRST hop: every
+/// task parked in the queue load and never returned, and even with a free lock
+/// an empty queue returns before the merge. A review pointed out the merge was
+/// ungated, and putting the merge back inline on the worker passed that gate
+/// unchanged -- I reproduced it before believing it. So each hop is now a
+/// named `async fn` the production tick calls, and each gets its own check.
+///
+/// The shape is the one PR #533 settled on: more tasks than workers, each
+/// reporting it was polled BEFORE it awaits, then -- after that barrier -- a
+/// task that only yields which must still run, because an `.await` anywhere
+/// before the lock lets every task report and park afterwards. The budget is a
+/// quiet window rather than a deadline, so a slow machine passes and a parked
+/// worker does not.
+/// Phase two probes this many times, pausing between rounds so the hops have
+/// actually reached their lock. The pause is not a latency budget -- it only
+/// has to exceed "a pool task finishes and its awaiter resumes", which is
+/// microseconds -- and the whole loop costs a fifth of a second on a pass.
+const PHASE_TWO_ROUNDS: usize = 20;
+const PHASE_TWO_SETTLE: Duration = Duration::from_millis(10);
+
+fn assert_delivery_hop_does_not_consume_a_worker(hop: DeliveryHop) {
     const WORKERS: usize = aimux::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
     let attempts = WORKERS + 2;
     let quiet_window = Duration::from_secs(30);
 
-    let root =
-        std::env::temp_dir().join(format!("aimux-delivery-tick-worker-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!(
+        "aimux-delivery-hop-{:?}-{}",
+        hop,
+        std::process::id()
+    ));
     let state_dir = root.join("state");
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&state_dir).expect("state dir");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&root, state_dir.clone());
+    let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+        &root,
+        state_dir.clone(),
+    ));
+    let path = agent_input_delivery_queue_path(&state_dir);
 
     let async_runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(WORKERS)
@@ -2449,16 +2469,33 @@ fn the_delivery_tick_does_not_consume_an_async_worker() {
         .expect("a runtime with the project service's worker count");
     let _entered = async_runtime.enter();
 
-    // Held for the whole check, so every tick genuinely blocks on it.
+    // Held for the whole check, so every hop genuinely blocks on it.
     let held = context.agent_input_delivery_queue.lock();
 
     let (polled_tx, polled) = mpsc::channel();
     for index in 0..attempts {
-        let tick_context = context.clone();
+        let hop_context = Arc::clone(&context);
+        let hop_path = path.clone();
         let polled_tx = polled_tx.clone();
         async_runtime.spawn(async move {
             polled_tx.send(index).expect("the test is still listening");
-            let _ = run_pending_agent_input_deliveries_async(&tick_context, 0).await;
+            match hop {
+                DeliveryHop::QueueLoad => {
+                    let _ = aimux::project_service::agent_input_delivery::
+                        load_delivery_queue_off_the_worker(&hop_context, &hop_path)
+                        .await;
+                }
+                DeliveryHop::MergeAndSave => {
+                    let _ = aimux::project_service::agent_input_delivery::
+                        merge_and_save_delivery_queue_off_the_worker(
+                            &hop_context,
+                            hop_path,
+                            Vec::new(),
+                            Default::default(),
+                        )
+                        .await;
+                }
+            }
         });
     }
     drop(polled_tx);
@@ -2471,21 +2508,74 @@ fn the_delivery_tick_does_not_consume_an_async_worker() {
         }
     }
 
-    let (yielded_tx, yielded) = mpsc::channel();
-    async_runtime.spawn(async move {
-        tokio::task::yield_now().await;
-        let _ = yielded_tx.send(());
-    });
-    let still_polling = yielded.recv_timeout(quiet_window).is_ok();
+    // Phase two, and it probes REPEATEDLY rather than once.
+    //
+    // A single probe spawned straight after the barrier races the thing it is
+    // looking for. Each hop reports before it awaits, so the barrier clears
+    // almost immediately -- while the hops are still inside their pool task
+    // and have not reached the lock yet. The probe then runs on a free worker
+    // and passes. I proved that on myself: a mutation that hops to the pool
+    // and THEN locks inline passed a single-probe phase two unchanged.
+    //
+    // So: give the hops a short, bounded moment to actually reach their lock,
+    // then require progress to CONTINUE. With the lock held and the hops on
+    // the pool, the workers stay free and every round runs. With a hop locking
+    // on a worker after its await, a later round finds nothing left to poll it.
+    let mut still_polling = true;
+    for _ in 0..PHASE_TWO_ROUNDS {
+        std::thread::sleep(PHASE_TWO_SETTLE);
+        let (yielded_tx, yielded) = mpsc::channel();
+        async_runtime.spawn(async move {
+            tokio::task::yield_now().await;
+            let _ = yielded_tx.send(());
+        });
+        if yielded.recv_timeout(quiet_window).is_err() {
+            still_polling = false;
+            break;
+        }
+    }
 
     drop(held);
+    let _ = fs::remove_dir_all(&root);
 
     assert_eq!(
         reported, attempts,
-        "{reported} of {attempts} delivery ticks were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}. Progress stopped rather than slowed, which a starved runtime does not do: the tick is holding a worker while it waits for the delivery-queue lock"
+        "{hop:?}: {reported} of {attempts} tasks were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}. Progress stopped rather than slowed, which a starved runtime does not do: this hop is holding a worker while it waits for the delivery-queue lock"
     );
     assert!(
         still_polling,
-        "every delivery tick was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied even though each tick got its first poll, which is what happens when the lock is taken after an await rather than before one"
+        "{hop:?}: every task was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied even though each hop got its first poll, which is what happens when the lock is taken after an await rather than before one"
     );
+}
+
+/// Proved separately, so no hop rides on another being safe. The first version
+/// of this gate proved only the load, and the merge was reachable by nothing.
+#[test]
+fn the_delivery_queue_load_does_not_consume_an_async_worker() {
+    assert_delivery_hop_does_not_consume_a_worker(DeliveryHop::QueueLoad);
+}
+
+// There is deliberately NO gate for the third hop,
+// `publish_queued_input_counts_off_the_worker`, and the reason is worth more
+// than a passing test would be.
+//
+// That function never touches the queue mutex. It takes a state-update lock
+// DIRECTORY and, while another writer holds it, sleeps in a retry loop until
+// ACQUIRE_TIMEOUT and then gives up. I built the gate for it twice: first
+// holding only the queue mutex, which it does not take, so the gate passed
+// with the hop mutated back onto the worker -- vacuous. Then holding the real
+// lock directory, which made the hop park a worker for about two seconds and
+// then return, and the gate passed again -- because it asks whether progress
+// STOPS, and a bounded park is not a stop. That is by design: the quiet window
+// exists so a slow machine cannot fail the gate, and the same property makes a
+// two-second park invisible to it.
+//
+// So the offload of that hop is justified by reading the code, not by a gate,
+// and saying so is better than shipping a test that cannot fail. What a gate
+// would need is a latency budget, which is exactly what made the first version
+// of these checks flaky on a loaded runner.
+
+#[test]
+fn the_delivery_merge_and_save_does_not_consume_an_async_worker() {
+    assert_delivery_hop_does_not_consume_a_worker(DeliveryHop::MergeAndSave);
 }

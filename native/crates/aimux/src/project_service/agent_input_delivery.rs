@@ -114,7 +114,7 @@ pub struct PendingAgentInputDelivery {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct AgentInputDeliveryState {
+pub struct AgentInputDeliveryState {
     version: u64,
     pending: Vec<PendingAgentInputDelivery>,
 }
@@ -560,40 +560,27 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
 }
 
 pub async fn run_pending_agent_input_deliveries_async(
-    context: &ProjectServiceRequestContext,
+    context: &Arc<ProjectServiceRequestContext>,
     now_ms: i64,
 ) -> Result<(), String> {
     let task_deadline = Instant::now()
         .checked_add(DELIVERY_TASK_TIMEOUT.saturating_sub(DELIVERY_TASK_COMMIT_MARGIN))
         .unwrap_or_else(Instant::now);
     let path = agent_input_delivery_queue_path(context.project_state_dir());
-    // On the blocking pool, like the merge below. This one is only a file read
-    // under the lock and on its own it would be a small thing to leave -- but
-    // leaving it would mean this function still waits for a shared lock on an
-    // async worker, which is the whole invariant, and it would make that
-    // invariant impossible to gate: a test that holds the lock would park a
-    // worker here no matter what the tail does.
-    let load_context = context.clone();
-    let load_path = path.clone();
-    let state = crate::async_runtime::spawn_blocking_named(
-        crate::async_runtime::scoped_task_name(
-            AGENT_INPUT_DELIVERY_TASK_NAME,
-            "queue-load",
-            "project-service",
-        ),
-        move || load_delivery_queue_under_lock(&load_context, &load_path),
-    )
-    .await
-    // A pool task that never ran is not an unreadable queue.
-    .map_err(|error| format!("agent input delivery queue load did not finish: {error}"))??;
+    let state = load_delivery_queue_off_the_worker(context, &path).await?;
     if state.pending.is_empty() {
         backlog_metric(
             AGENT_INPUT_DELIVERY_BACKLOG,
             Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
         )
         .set_depth(0);
-        // Same as the sync runner: an empty queue clears the rows.
-        publish_queued_input_counts(context, &[]);
+        // Same as the sync runner: an empty queue clears the rows -- and off
+        // the worker, because `publish_queued_input_counts` acquires a state
+        // update lock whose retry loop sleeps up to ACQUIRE_TIMEOUT, then
+        // reads and rewrites session metadata. This is the STEADY STATE path,
+        // twice a second, so it was the worst of the three on this stack and
+        // the one my first gate could not see.
+        publish_queued_input_counts_off_the_worker(context, Vec::new()).await?;
         return Ok(());
     }
 
@@ -743,28 +730,84 @@ pub async fn run_pending_agent_input_deliveries_async(
         clear_agent_input_delivery_failure(context, session_id);
     }
 
-    // On the blocking pool, not this worker. See
-    // `merge_and_save_delivery_queue`: it holds the shared queue lock across a
-    // file read, an atomic write and a possible session-metadata rewrite, and
-    // this function runs on the project service's async worker.
-    let merge_context = context.clone();
-    let merge_path = path.clone();
-    let merge_loaded_ids = loaded_ids.clone();
-    let merge_failures = crate::async_runtime::spawn_blocking_named(
+    let merge_failures =
+        merge_and_save_delivery_queue_off_the_worker(context, path, remaining, loaded_ids).await?;
+    failures.extend(merge_failures);
+    finish_agent_input_delivery_task(failures)
+}
+
+/// Each of these is a named `async fn` rather than an inline `spawn_blocking`
+/// at the call site, and that is deliberate.
+///
+/// My first gate drove the whole tick with the queue lock held, and it proved
+/// only the FIRST of the three spans: every task parked in the load and never
+/// returned, and even with a free lock an empty queue returns before the merge.
+/// Put the merge back inline on the worker and that gate passed unchanged --
+/// a review caught it, and I reproduced it. A test that proves the half
+/// already safe is the shape I have hit five times on this branch.
+///
+/// Naming each hop gives each one a gate that drives the real production call,
+/// and each is mutation-proved on its own.
+pub async fn load_delivery_queue_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    path: &Path,
+) -> Result<AgentInputDeliveryState, String> {
+    let context = Arc::clone(context);
+    let path = path.to_path_buf();
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "queue-load",
+            "project-service",
+        ),
+        move || load_delivery_queue_under_lock(&context, &path),
+    )
+    .await
+    // A pool task that never ran is not an unreadable queue.
+    .map_err(|error| format!("agent input delivery queue load did not finish: {error}"))?
+}
+
+/// Publishes the queued-input counts off the worker.
+///
+/// `publish_queued_input_counts` acquires a state update lock whose retry loop
+/// sleeps, then reads and rewrites session metadata. On the empty-queue path
+/// that runs twice a second in the steady state.
+pub async fn publish_queued_input_counts_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    pending: Vec<PendingAgentInputDelivery>,
+) -> Result<(), String> {
+    let context = Arc::clone(context);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "publish-counts",
+            "project-service",
+        ),
+        move || publish_queued_input_counts(&context, &pending),
+    )
+    .await
+    .map_err(|error| format!("agent input delivery count publish did not finish: {error}"))
+}
+
+/// Merges, saves and republishes off the worker.
+pub async fn merge_and_save_delivery_queue_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    path: PathBuf,
+    remaining: Vec<PendingAgentInputDelivery>,
+    loaded_ids: BTreeSet<String>,
+) -> Result<Vec<String>, String> {
+    let context = Arc::clone(context);
+    crate::async_runtime::spawn_blocking_named(
         crate::async_runtime::scoped_task_name(
             AGENT_INPUT_DELIVERY_TASK_NAME,
             "merge-and-save",
             "project-service",
         ),
-        move || {
-            merge_and_save_delivery_queue(&merge_context, &merge_path, remaining, &merge_loaded_ids)
-        },
+        move || merge_and_save_delivery_queue(&context, &path, remaining, &loaded_ids),
     )
     .await
     // A pool task that never ran is not an empty failure list.
-    .map_err(|error| format!("agent input delivery merge did not finish: {error}"))?;
-    failures.extend(merge_failures);
-    finish_agent_input_delivery_task(failures)
+    .map_err(|error| format!("agent input delivery merge did not finish: {error}"))
 }
 
 /// Reads the queue under the shared lock.
