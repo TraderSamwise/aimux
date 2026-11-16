@@ -693,14 +693,32 @@ pub async fn run_pending_agent_input_deliveries_async(
                 .await
                 {
                     Ok(verification) => {
+                        // A join failure is reported, not logged as a null
+                        // receipt. My first version of this hop wrote
+                        // `.unwrap_or(Value::Null)` here, which would have put
+                        // `"delivery": null` in a line that says the input was
+                        // delivered, with nothing anywhere saying the receipt
+                        // write never finished.
                         let receipt =
-                            super::input_delivery_receipt::finish_input_delivery_off_the_worker(
+                            match super::input_delivery_receipt::finish_input_delivery_off_the_worker(
                                 context,
                                 attempt.clone(),
                                 Ok(verification),
                             )
                             .await
-                            .unwrap_or(Value::Null);
+                            {
+                                Ok(receipt) => receipt,
+                                Err(error) => {
+                                    failures.push(error.clone());
+                                    record_agent_input_delivery_failure(
+                                        context,
+                                        Some(&pending.session_id),
+                                        "Agent input delivery receipt did not finish",
+                                        error,
+                                    );
+                                    continue;
+                                }
+                            };
                         clear_agent_input_delivery_failure(context, &pending.session_id);
                         log_at(
                             LogLevel::Info,
@@ -715,13 +733,20 @@ pub async fn run_pending_agent_input_deliveries_async(
                         );
                     }
                     Err(error) => {
-                        let _ =
+                        // The receipt Value was discarded here before and still
+                        // is -- but a JOIN failure is not the same as a
+                        // discarded value, so it is collected rather than
+                        // swallowed by a bare `let _ =`.
+                        if let Err(join_error) =
                             super::input_delivery_receipt::finish_input_delivery_off_the_worker(
                                 context,
                                 attempt.clone(),
                                 Err(error.clone()),
                             )
-                            .await;
+                            .await
+                        {
+                            failures.push(join_error);
+                        }
                         record_agent_input_delivery_failure(
                             context,
                             Some(&pending.session_id),
