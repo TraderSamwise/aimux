@@ -156,15 +156,15 @@ pub fn route_collaboration_text_request(
     None
 }
 
-pub fn thread_list_text_route(
-    runtime: &mut impl DaemonCollaborationTextRuntime,
+/// Phase one of `aimux thread list`: which project, and which upstream path.
+///
+/// Pure, and public, because this route is served from two places -- the
+/// generic locked dispatch and the shared carve-out in `daemon/runtime.rs`.
+pub fn resolve_thread_list_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
-) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
     let session = trimmed_param(route_url, body, "session");
     let route_path = session
         .map(|session| {
@@ -175,11 +175,50 @@ pub fn thread_list_text_route(
             )
         })
         .unwrap_or_else(|| project_routes::threads::LIST.to_owned());
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    })
+}
+
+/// Phase three of `aimux thread list`, from a raw project-service result.
+pub fn render_thread_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    render_thread_list_payload(route_url, json)
+}
+
+pub fn thread_list_text_route(
+    runtime: &mut impl DaemonCollaborationTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_thread_list_request(route_url, body) {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
     let (json, _) =
         match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
             Ok(result) => result,
             Err(response) => return response,
         };
+    render_thread_list_payload(route_url, json)
+}
+
+/// Phase three proper. Pure.
+///
+/// Takes the json by value because this route passes it to
+/// `text_or_json_lines` as the JSON body as well as into the payload, so a
+/// borrow would just force a clone at the call site.
+fn render_thread_list_payload(route_url: &DaemonRouteUrl, json: Value) -> DaemonRouteResponse {
     if !json.is_array() {
         return text_error(
             502,

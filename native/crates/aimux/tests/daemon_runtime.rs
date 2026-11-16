@@ -5576,3 +5576,268 @@ fn endpoint_resolution_does_not_hold_the_runtime_lock() {
         }
     }
 }
+
+/// An upstream that answers every request with one canned body.
+struct CannedUpstream {
+    port: u16,
+}
+
+impl CannedUpstream {
+    fn spawn(body: String) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind canned upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                use std::io::Write;
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        Self { port }
+    }
+}
+
+/// One parity harness for both routes added here.
+///
+/// The three earlier carve-outs each grew their own near-identical copy of
+/// this. I am not churning those in a PR about new routes -- they are proved
+/// and consolidating them is its own change -- but a fourth and fifth copy
+/// would have been indefensible.
+///
+/// Compares status AND the whole body across both renderings x three methods x
+/// six header shapes, and asserts the served body contains what the case
+/// claims to exercise. That last part is not decoration: parity compares the
+/// two paths against each other, so anything dropped in SHARED render code
+/// changes both identically and compares equal. That is how a missing
+/// `projectRoot` passed 71 tests on #543.
+fn assert_core_read_route_parity(
+    label: &str,
+    fixture_name: &str,
+    route: &str,
+    upstream_body: serde_json::Value,
+    expected_status: u16,
+    expected_body_fragment: &str,
+) {
+    let fixture = RuntimeFixture::new(fixture_name);
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    let upstream = CannedUpstream::spawn(upstream_body.to_string());
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: upstream.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let served = |response: aimux::daemon::http::PreparedDaemonResponse| {
+        (
+            response.status,
+            String::from_utf8(response.body).expect("body"),
+        )
+    };
+    let with_header = |method: &str, path: &str, header: Option<(&str, &str)>| {
+        let mut request = request(method, path);
+        if let Some((name, value)) = header {
+            request.headers.insert(name.into(), value.into());
+        }
+        request
+    };
+
+    for path in [
+        format!("{route}?project={project_root}"),
+        format!("{route}?project={project_root}&json=1"),
+    ] {
+        let local = served(handle_daemon_runtime_request_with_mutex(
+            &runtime,
+            DaemonHealthIdentity::from_runtime(&runtime),
+            with_header("GET", &path, None),
+        ));
+        assert_eq!(
+            local.0, expected_status,
+            "{label}: a local caller must reach the upstream's answer at {path}, otherwise this compares two unrelated failures"
+        );
+        assert!(
+            local.1.contains(expected_body_fragment),
+            "{label}: the served body did not mention {expected_body_fragment:?} at {path}, so this case is not exercising what it claims: {}",
+            local.1
+        );
+
+        for method in ["GET", "HEAD", "POST"] {
+            for header in [
+                None,
+                Some(("x-aimux-actor-role", "owner")),
+                Some(("x-aimux-actor-role", "guest")),
+                Some(("x-aimux-actor-role", "operator")),
+                Some(("origin", "http://localhost:3000")),
+                Some(("Origin", "http://localhost:3000")),
+            ] {
+                let through_carve_out = served(handle_daemon_runtime_request_with_mutex(
+                    &runtime,
+                    DaemonHealthIdentity::from_runtime(&runtime),
+                    with_header(method, &path, header),
+                ));
+                let through_lock = {
+                    let mut locked = runtime.lock().expect("runtime lock");
+                    served(handle_daemon_runtime_request(
+                        &mut *locked,
+                        with_header(method, &path, header),
+                    ))
+                };
+                assert_eq!(
+                    through_carve_out, through_lock,
+                    "{label}: the carve-out answered {method} {header:?} at {path} differently from the locked path"
+                );
+            }
+        }
+    }
+    fixture.cleanup();
+}
+
+/// A core read route does not hold the runtime mutex across its upstream call.
+fn assert_core_read_route_releases_the_lock(fixture_name: &str, route: &str) {
+    let fixture = RuntimeFixture::new(fixture_name);
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+
+    let upstream = HangingUpstream::spawn();
+    let project_root = project.to_string_lossy().into_owned();
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: upstream.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let stuck_runtime = Arc::clone(&runtime);
+    let stuck_path = format!("{route}?project={project_root}");
+    let stuck = std::thread::spawn(move || {
+        let _ = handle_daemon_runtime_request_with_mutex(
+            &stuck_runtime,
+            health_identity,
+            request("GET", &stuck_path),
+        );
+    });
+
+    upstream.wait_for_the_route_to_reach_the_call();
+
+    let other_runtime = Arc::clone(&runtime);
+    let (answered_tx, answered) = mpsc::channel();
+    std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &other_runtime,
+            health_identity,
+            request("GET", "/projects"),
+        );
+        let _ = answered_tx.send(response.status);
+    });
+
+    let outcome = answered.recv_timeout(Duration::from_secs(30));
+    upstream.release();
+    let _ = stuck.join();
+    fixture.cleanup();
+
+    match outcome {
+        Ok(status) => assert_eq!(
+            status, 200,
+            "the probe route answered {status}, so it is broken rather than blocked"
+        ),
+        Err(mpsc::RecvTimeoutError::Timeout) => panic!(
+            "GET /projects never answered while {route} waited on an upstream that never replies: the route is holding the global runtime mutex across its project-service call"
+        ),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("the probe thread died without answering, so this says nothing about the lock")
+        }
+    }
+}
+
+#[test]
+fn the_thread_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "thread-list-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_list_text,
+    );
+}
+
+#[test]
+fn the_carved_out_thread_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a thread summary",
+        "thread-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_list_text,
+        // The renderer reads a NESTED `thread` object for id, kind and status;
+        // a flat summary renders as "?  ?  ?" and a parity test without the
+        // body-fragment assertion would have compared two of those and passed.
+        json!([{ "thread": { "id": "from-the-upstream", "kind": "review", "status": "open" } }]),
+        200,
+        "from-the-upstream",
+    );
+    // The refusal path: this route demands an array and 502s otherwise, and
+    // without a case for it the matrix would be happy-path only -- which is
+    // how #543's refusal rendering went uncovered.
+    assert_core_read_route_parity(
+        "a non-array payload",
+        "thread-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_list_text,
+        json!({ "summaries": [] }),
+        502,
+        "invalid thread list response",
+    );
+}
+
+#[test]
+fn the_worktree_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "worktree-list-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.worktree_list_text,
+    );
+}
+
+#[test]
+fn the_carved_out_worktree_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a worktree",
+        "worktree-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.worktree_list_text,
+        json!({ "worktrees": [{ "name": "from-the-upstream", "path": "/repo/wt" }] }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a payload with no worktrees key",
+        "worktree-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.worktree_list_text,
+        json!({ "other": [] }),
+        502,
+        "worktree list",
+    );
+}
