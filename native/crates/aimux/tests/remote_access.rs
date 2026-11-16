@@ -775,6 +775,108 @@ fn a_peer_route_is_open_on_the_same_post_the_body_parser_reads() {
     }
 }
 
+/// The second peer door: named by PROJECT, not by port.
+///
+/// The proxy route needs a host and a port, which a sender across the relay
+/// has no way to learn -- the owner record carries the machine and not the
+/// address. This one carries the project and lets the owner supply its own
+/// address, which is also the stronger shape: the port stops coming from the
+/// caller.
+///
+/// The body rules are shared with the proxy door, so they are asserted here
+/// too rather than assumed: a door that admitted `force` would be a door
+/// around every one of them.
+#[test]
+fn a_peer_may_also_name_a_project_instead_of_a_port() {
+    let route = "/peer/agents/input";
+    let body = json!({ "project": PROJECT_ROOT, "sessionId": "claude-abc", "text": "hi" });
+
+    let allowed = allow(
+        Some(&peer(Some("mbp"))),
+        "POST",
+        route,
+        "",
+        Some(&body),
+        Some(PROJECT_ROOT),
+    );
+    assert!(allowed.ok, "{:?}", allowed.error);
+
+    // The project it named is not one this machine serves. A different
+    // mistake from naming a stranger's port, and it says so.
+    let unserved = allow(
+        Some(&peer(Some("mbp"))),
+        "POST",
+        route,
+        "",
+        Some(&body),
+        None,
+    );
+    assert!(!unserved.ok);
+    assert_eq!(
+        unserved.error.as_deref(),
+        Some("peer machine mbp named a project this machine is not serving")
+    );
+
+    // Wrong verb, same door.
+    for spelling in ["GET", "PUT", "post"] {
+        let refused = allow(
+            Some(&peer(Some("mbp"))),
+            spelling,
+            route,
+            "",
+            Some(&body),
+            Some(PROJECT_ROOT),
+        );
+        assert!(!refused.ok, "{spelling} was allowed");
+    }
+
+    // The shared body rules.
+    for (field, body) in [
+        (
+            "force",
+            json!({ "project": PROJECT_ROOT, "sessionId": "a", "text": "hi", "force": true }),
+        ),
+        (
+            "attachmentIds",
+            json!({ "project": PROJECT_ROOT, "sessionId": "a", "text": "hi", "attachmentIds": ["att_1"] }),
+        ),
+        (
+            "sharedChatActor",
+            json!({
+                "project": PROJECT_ROOT,
+                "sessionId": "a",
+                "text": "hi",
+                "sharedChatActor": { "role": "owner", "displayName": "Sam" }
+            }),
+        ),
+    ] {
+        let refused = allow(
+            Some(&peer(Some("mbp"))),
+            "POST",
+            route,
+            "",
+            Some(&body),
+            Some(PROJECT_ROOT),
+        );
+        assert!(!refused.ok, "{field} was allowed on the project door");
+    }
+
+    // And an unstamped caller gets nothing here either.
+    let anonymous = allow(
+        Some(&peer(None)),
+        "POST",
+        route,
+        "",
+        Some(&body),
+        Some(PROJECT_ROOT),
+    );
+    assert!(!anonymous.ok);
+    assert_eq!(
+        anonymous.error.as_deref(),
+        Some("peer request did not say which machine it came from")
+    );
+}
+
 /// The proxy validates the HOST and not the port, so without a project the
 /// route reaches any loopback port that answers `POST /agents/input` --
 /// including something that is not an Aimux project service at all.

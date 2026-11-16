@@ -10,6 +10,172 @@ use serde_json::json;
 
 const MAX_HANDSHAKE_FAILURES: u32 = 5;
 
+/// Every reason to forward or not, asked of the decision itself.
+///
+/// This mapping had NO test: the only thing mentioning it was a fake that
+/// handed the reasons back as strings, so all eight were asserted as literals
+/// nobody executed. Deleting every arm left the suite green. Standing up a
+/// live relay to reach it is hard, which is why it is a pure function now --
+/// "the container is awkward to build" is not a reason for the decision
+/// inside it to go unproven.
+#[test]
+fn whether_to_forward_has_a_reason_for_every_answer() {
+    use aimux::remote::remote_project_owners::{
+        ProjectOwner, ProjectOwnerLookup, peer_owner_decision,
+    };
+
+    let owner = |machine: &str, online: bool| ProjectOwner {
+        project_root: "/repo".into(),
+        machine_id: machine.to_owned(),
+        claimed_at: "2026-11-15T00:00:00.000Z".into(),
+        online,
+    };
+
+    // The one case that forwards.
+    assert_eq!(
+        peer_owner_decision(ProjectOwnerLookup::Owned(owner("strix", true)), "mbp"),
+        (Some("strix".to_owned()), "owner_elsewhere")
+    );
+
+    // And every case that does not, each saying which.
+    for (lookup, reason) in [
+        (ProjectOwnerLookup::Unknown, "owner_unknown"),
+        (ProjectOwnerLookup::Unowned, "owner_none"),
+        (ProjectOwnerLookup::Ambiguous, "owner_ambiguous"),
+        // Owned by this very machine: local, and not a failure.
+        (
+            ProjectOwnerLookup::Owned(owner("mbp", true)),
+            "owner_is_this_machine",
+        ),
+        // A row naming the shared slot names no one machine.
+        (
+            ProjectOwnerLookup::Owned(owner("unidentified", true)),
+            "owner_unidentified",
+        ),
+        // And a machine that is not here: said now rather than discovered
+        // after a round trip.
+        (
+            ProjectOwnerLookup::Owned(owner("strix", false)),
+            "owner_offline",
+        ),
+    ] {
+        assert_eq!(
+            peer_owner_decision(lookup, "mbp"),
+            (None, reason),
+            "{reason}"
+        );
+    }
+
+    // The machine comparison is against the id GIVEN, not a fresh read: the
+    // owner table's rows name the machine the relay saw, so a runner that
+    // reconnected under a different identity must compare against the one it
+    // connected as.
+    assert_eq!(
+        peer_owner_decision(ProjectOwnerLookup::Owned(owner("strix", true)), "strix"),
+        (None, "owner_is_this_machine")
+    );
+}
+
+/// A whitespace-only checkout is not a checkout.
+///
+/// The first version tested `is_empty()` on an UNTRIMMED string, so a row
+/// reading `{"projectRoot":"  "}` survived the filter that exists to drop rows
+/// matching nothing -- and then folded to the empty key, which answered for
+/// every query that also folded to nothing. The relay's own key trims before
+/// it folds, so this has to as well.
+#[test]
+fn an_owner_row_whose_checkout_is_only_whitespace_is_dropped() {
+    use aimux::remote::remote_project_owners::project_owner_from_row;
+    use serde_json::json;
+
+    for row in [
+        json!({ "projectRoot": "  ", "machineId": "strix" }),
+        json!({ "projectRoot": "/repo", "machineId": "   " }),
+        json!({ "projectRoot": "\t", "machineId": "strix" }),
+    ] {
+        assert_eq!(project_owner_from_row(&row), None, "{row}");
+    }
+
+    // And the fields that DO survive are trimmed, so the key this is looked up
+    // by is the key the relay stored.
+    let trimmed = project_owner_from_row(&json!({
+        "projectRoot": "  /repo  ",
+        "machineId": "  mbp  ",
+        "claimedAt": " 2026-11-15T00:00:00.000Z "
+    }))
+    .expect("a real row");
+    assert_eq!(trimmed.project_root, "/repo");
+    assert_eq!(trimmed.machine_id, "mbp");
+    assert_eq!(trimmed.claimed_at, "2026-11-15T00:00:00.000Z");
+}
+
+/// An owner table arriving is an answer, and an EMPTY one is still an answer.
+///
+/// The daemon's own state holds this as an `Option`, where `None` means
+/// nothing has been heard on this connection. So a frame with no usable
+/// `owners` array must become an empty table rather than an `Ignore`:
+/// ignoring it would leave the daemon believing it had never been told, when
+/// it has been told that nobody owns anything.
+#[test]
+fn an_owner_table_frame_is_an_answer_even_when_it_is_empty() {
+    use aimux::remote::remote_project_owners::ProjectOwner;
+
+    assert_eq!(
+        handle_frame(
+            r#"{"type":"project_owners","owners":[{"projectRoot":"/repo","machineId":"mbp","claimedAt":"2026-11-15T00:00:00.000Z","online":true}]}"#
+        ),
+        RelayAction::ProjectOwners {
+            owners: vec![ProjectOwner {
+                project_root: "/repo".into(),
+                machine_id: "mbp".into(),
+                claimed_at: "2026-11-15T00:00:00.000Z".into(),
+                online: true,
+            }]
+        }
+    );
+
+    for empty in [
+        r#"{"type":"project_owners","owners":[]}"#,
+        r#"{"type":"project_owners"}"#,
+        r#"{"type":"project_owners","owners":"nonsense"}"#,
+    ] {
+        assert_eq!(
+            handle_frame(empty),
+            RelayAction::ProjectOwners { owners: Vec::new() },
+            "{empty} says the table is empty, which is not the same as silence"
+        );
+    }
+}
+
+/// A row that names no checkout or no machine is dropped, not stored.
+///
+/// It cannot be looked up and cannot be routed to, so keeping it would put a
+/// row in the table that matches nothing -- and `online` defaults to false
+/// rather than true, because an unstated liveness is not a promise of one.
+#[test]
+fn an_owner_row_missing_what_it_needs_is_dropped() {
+    use aimux::remote::remote_project_owners::ProjectOwner;
+
+    assert_eq!(
+        handle_frame(
+            r#"{"type":"project_owners","owners":[
+                {"machineId":"mbp"},
+                {"projectRoot":"/repo"},
+                {"projectRoot":"","machineId":"mbp"},
+                {"projectRoot":"/kept","machineId":"strix"}
+            ]}"#
+        ),
+        RelayAction::ProjectOwners {
+            owners: vec![ProjectOwner {
+                project_root: "/kept".into(),
+                machine_id: "strix".into(),
+                claimed_at: String::new(),
+                online: false,
+            }]
+        }
+    );
+}
+
 #[test]
 fn a_ping_is_answered_with_a_pong_and_nothing_else() {
     assert_eq!(

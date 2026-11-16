@@ -4,7 +4,10 @@ use crate::daemon::json::{
 use crate::daemon::router::DaemonRouteRequestContext;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon_projects::ProjectsRouteProject;
-use crate::proxy_project_binding::{parse_proxy_target, resolve_project_root_for_service_target};
+use crate::proxy_project_binding::{
+    PEER_AGENT_INPUT_ROUTE, parse_proxy_target, resolve_project_root_for_service_target,
+    resolve_service_target_for_project_root,
+};
 use crate::request_actor::{
     RemoteAccessContext, RemoteAccessDecision, RemoteActor, RemoteActorRole,
     assert_operator_stream_allowed, assert_remote_access_allowed, parse_remote_actor,
@@ -55,10 +58,29 @@ pub fn build_daemon_route_context_for_actor(
             )
         })
         .and_then(|_| {
+            // Two ways to name a project, because there are two peer doors.
+            //
+            // The proxy route carries host and port, so the project is read
+            // back out of them. The peer input route carries the project
+            // itself, which is the stronger shape -- the caller stops
+            // supplying an address -- and it resolves through the same project
+            // slice so the binding means the same thing on both.
             resolve_project_root_for_service_target(
                 projects,
                 parse_proxy_target(route_url.pathname()).as_ref(),
             )
+            .or_else(|| {
+                (route_url.pathname() == PEER_AGENT_INPUT_ROUTE)
+                    .then(|| {
+                        body.and_then(|body| body.get("project"))
+                            .and_then(Value::as_str)
+                            .and_then(|project| {
+                                resolve_service_target_for_project_root(projects, project)
+                                    .map(|_| project.to_owned())
+                            })
+                    })
+                    .flatten()
+            })
         });
     let access_decision = assert_remote_access_allowed(
         actor,

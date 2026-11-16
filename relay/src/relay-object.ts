@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { Env, RelayMessage } from "./types.js";
+import type { Env, RelayMessage, RelayProjectOwnersControl } from "./types.js";
 import {
   MAX_MACHINES_PER_ROOM,
   type MachineInfo,
@@ -371,6 +371,27 @@ export class RelayObject extends DurableObject<Env> {
       this.daemonMachineNames.set(daemonMachine.id, daemonMachine.name);
       this.send(server, { type: "connected", role: "daemon" });
       await this.broadcastMachineStatus();
+      // To the ARRIVING daemon only.
+      //
+      // The first version broadcast to every daemon here, on the reasoning
+      // that this machine coming up changes the `online` column of every row
+      // naming it. That broke an invariant worth keeping, and a test caught
+      // it: `broadcastMachineStatus` goes to CLIENT sockets only, so a daemon
+      // is never disturbed by another machine's arrival, and it should not
+      // start being.
+      //
+      // Nothing is lost, because `online` is a HINT and not a gate. A sender
+      // that forwards to a machine which has since gone gets the relay's own
+      // `peer-target-offline` by name; a sender that skips one which has since
+      // arrived falls back to its local path, which is the safe direction and
+      // self-corrects on the next claim. Ownership itself only changes on a
+      // claim, and that still tells everyone.
+      // A load of its own, which is correct here: there is no write in this
+      // handler to be inconsistent with.
+      this.send(server, {
+        type: "project_owners",
+        owners: this.projectOwnerRows(await loadSharingState(this.ctx.storage)),
+      });
     } else {
       this.clientSockets.add(server);
       if (clientDevice) this.clientDeviceIds.set(server, clientDevice.deviceId);
@@ -1028,6 +1049,10 @@ export class RelayObject extends DurableObject<Env> {
       // Rehydration already dropped this machine from both maps.
       if (!replacementDaemon) {
         await this.broadcastMachineStatus();
+        // No owner push here. A machine leaving changes no ownership, only the
+        // `online` hint, and a flapping daemon broadcasting to the fleet costs
+        // more than the hint is worth -- the transport already refuses a dead
+        // target by name.
       }
     } else {
       this.clientSockets.delete(ws);
@@ -1971,6 +1996,15 @@ export class RelayObject extends DurableObject<Env> {
     }
     if (!result.alreadyOwned) {
       await saveSharingState(this.ctx.storage, result.state);
+      // From the state just saved, NOT from a fresh read. See
+      // `projectOwnerRows`: a second read here is the lost-update hazard this
+      // route's own comment warns about.
+      //
+      // And only when something actually changed. A re-claim of a checkout
+      // this machine already owns is the common case -- a daemon claims on
+      // every start -- and pushing the same snapshot for it would make the
+      // fleet's morning a broadcast per machine per checkout.
+      this.broadcastProjectOwners(result.state);
     }
     return json({ ok: true, alreadyOwned: result.alreadyOwned, owner: result.owner }, 200);
   }
@@ -1979,15 +2013,43 @@ export class RelayObject extends DurableObject<Env> {
   /// the owner -- including when the answer is somebody else.
   private async listProjectOwners(): Promise<Response> {
     const state = await loadSharingState(this.ctx.storage);
+    return json({ ok: true, owners: this.projectOwnerRows(state) }, 200);
+  }
+
+  /// The owner table as anyone is told it, derived once.
+  ///
+  /// The CLI reads this over HTTP and a daemon is pushed it over its socket.
+  /// Computed in two places they agreed only by luck, and `online` is the half
+  /// that would have drifted -- it comes from the live socket map, so the two
+  /// surfaces would have disagreed about which machines are up depending on
+  /// which one you asked.
+  /// Takes the state rather than loading it, and that is the fix for a hazard
+  /// this file already documents.
+  ///
+  /// The claim route is safe without a version check only because nothing is
+  /// awaited between its load and its save. The first version of this awaited
+  /// a SECOND `loadSharingState` after the save to build the frame -- two
+  /// reads of one record inside one request, with a write able to land between
+  /// them, which is the exact thing the test about saving over what landed
+  /// while it ran exists to gate. Two concurrent claims and the last frame the
+  /// fleet held omitted one of them.
+  private projectOwnerRows(state: SharingState): RelayProjectOwnersControl["owners"] {
     const online = new Set(this.onlineMachines().map((machine) => machine.id));
-    const owners = Object.entries(state.projectOwners ?? {}).map(([projectRoot, owner]) => ({
+    return Object.entries(state.projectOwners ?? {}).map(([projectRoot, owner]) => ({
       projectRoot,
       ...owner,
       // Whether the owner is reachable right now, because "owned by a laptop
       // that is shut" is the case the whole record exists to make visible.
       online: online.has(owner.machineId),
     }));
-    return json({ ok: true, owners }, 200);
+  }
+
+  /// Tell this account's daemons who owns what.
+  ///
+  /// `broadcastToDaemons`, never `broadcastToClients`: the rows are absolute
+  /// checkout paths and machine ids for the whole fleet.
+  private broadcastProjectOwners(state: SharingState): void {
+    this.broadcastToDaemons({ type: "project_owners", owners: this.projectOwnerRows(state) });
   }
 
   /// Bind a share that already exists to the machine holding its session.

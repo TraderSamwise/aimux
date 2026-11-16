@@ -30,6 +30,50 @@ const LOOP_EXIT_EVENT_TIMEOUT_MS: u64 = 500;
 
 pub trait DaemonAgentTextRuntime {
     fn resolve_project_root(&self, value: &str) -> String;
+    /// Whether THIS machine is running that session.
+    ///
+    /// The one fact that distinguishes a local send from a remote one, and it
+    /// took three attempts to arrive at. Ownership is an exclusive claim on a
+    /// PATH: it does not say where a session lives, so forwarding on it alone
+    /// sent laptop-local input to the owner. Whether this machine is SERVING
+    /// the checkout was wrong twice over -- as liveness it refused input
+    /// whenever the local project service happened to be down, and as registry
+    /// membership it was true of every checkout this machine has ever touched,
+    /// which made the forward unreachable for the case the feature exists for.
+    ///
+    /// A session id is the thing `aimux input` is given, and the runtime
+    /// topology is the inventory that says which sessions this machine runs.
+    /// Asking it is one file read and no subprocess.
+    ///
+    /// Defaults to `true` -- "assume it is mine" -- because that is the answer
+    /// that keeps today's behaviour when a runtime cannot tell.
+    fn hosts_session_locally(&mut self, _project_root: &str, _session_id: &str) -> bool {
+        true
+    }
+    /// Which other machine owns this checkout, and why not if not.
+    ///
+    /// The second value is a reason rather than a bool, because every "no" is
+    /// a different thing to tell somebody: the relay is off, the table has not
+    /// arrived, nobody claimed it, two rows fold together, the owner is this
+    /// machine, or the owner is away.
+    ///
+    /// Defaulted to "nobody else" so a runtime with no relay -- every test
+    /// fake, and the daemon with remote control off -- keeps today's behaviour
+    /// without implementing anything.
+    fn peer_owner_for_input(&self, _project_root: &str) -> (Option<String>, &'static str) {
+        (None, "relay_off")
+    }
+    /// Hand one input to the machine that owns the checkout.
+    ///
+    /// Defaulted to a refusal that names itself rather than to a silent local
+    /// send: a runtime that cannot forward must not pretend it did.
+    fn forward_agent_input(
+        &mut self,
+        _machine_id: &str,
+        _body: &Value,
+    ) -> Result<(u16, Value), String> {
+        Err("this runtime cannot forward input to another machine".to_owned())
+    }
     fn get_project_service_json(
         &mut self,
         project: &str,
@@ -700,6 +744,99 @@ pub fn agent_input_text_route(
     // agent-to-agent send with.
     let from = string_param(route_url, body, "from").filter(|value| !value.trim().is_empty());
     let task = string_param(route_url, body, "task").filter(|value| !value.trim().is_empty());
+    // Consulted BEFORE the local attempt, deliberately. "This session is not
+    // running here" is a 500 with a message, not an identity, so deciding
+    // from it would mean parsing an error string -- and the owner record is
+    // the fact that actually answers the question.
+    let resolved_for_owner = runtime.resolve_project_root(&project);
+    // Asked FIRST, before the owner table. A session this machine runs is this
+    // machine's business whoever owns the path, and the local path below is the
+    // one that has always handled it.
+    let hosts_session = runtime.hosts_session_locally(&resolved_for_owner, &session_id);
+    let (owner_machine, owner_reason) = if hosts_session {
+        (None, "session_is_here")
+    } else {
+        runtime.peer_owner_for_input(&resolved_for_owner)
+    };
+    if let Some(owner_machine) = owner_machine {
+        // `--force` cannot cross. The owner's allowlist refuses a peer's
+        // `force` by name, so carrying it would turn this into a 403 from
+        // another machine about a flag this one accepted -- and dropping it
+        // silently would deliver unforced input while the person believes
+        // otherwise.
+        if force {
+            return text_error(
+                400,
+                format!(
+                    "Error: --force cannot be sent to {owner_machine}, which owns that checkout: forcing skips the quiet-window check and only the machine at the keyboard can judge it\n"
+                ),
+            );
+        }
+        let mut forwarded = json!({
+            "project": resolved_for_owner,
+            "sessionId": session_id,
+            "text": text,
+        });
+        if let Some(from) = from.clone() {
+            forwarded["from"] = Value::String(from);
+        }
+        if let Some(task) = task.clone() {
+            forwarded["task"] = Value::String(task);
+        }
+        return match runtime.forward_agent_input(&owner_machine, &forwarded) {
+            Ok((status, body)) if (200..300).contains(&status) => {
+                let payload = match body {
+                    Value::Object(mut payload) => {
+                        payload.insert(
+                            "projectRoot".into(),
+                            Value::String(resolved_for_owner.clone()),
+                        );
+                        payload.insert("ownerMachineId".into(), Value::String(owner_machine));
+                        payload
+                            .insert("peerRouting".into(), Value::String(owner_reason.to_owned()));
+                        Value::Object(payload)
+                    }
+                    _ => json!({
+                        "ok": true,
+                        "projectRoot": resolved_for_owner,
+                        "sessionId": session_id,
+                        "ownerMachineId": owner_machine,
+                        // Set here too. Every sibling branch carries it, and
+                        // the one that did not was the fallback nobody looks
+                        // at -- which is where a missing field survives.
+                        "peerRouting": owner_reason,
+                    }),
+                };
+                text_or_json_lines(
+                    route_url,
+                    payload.clone(),
+                    &render_core_agent_input_lines(&payload),
+                )
+            }
+            // The owner's own refusal, carried verbatim and PREFIXED with the
+            // machine that made it. Its rules are stricter than this one's --
+            // input arriving from elsewhere is peer input there, so a command
+            // or a second line to a shell is refused -- and a bare 403 would
+            // read as though this machine had refused its own keyboard.
+            Ok((status, body)) => {
+                let detail = body
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("no reason given");
+                text_error(
+                    status,
+                    format!("Error: {owner_machine} refused it: {detail}\n"),
+                )
+            }
+            Err(error) => text_error(
+                502,
+                format!(
+                    "Error: could not reach {owner_machine}, which owns that checkout: {error}\n"
+                ),
+            ),
+        };
+    }
+
     let (project_response, project_root) =
         match unwrap_project_result(runtime.post_project_service_json(
             &project,
@@ -728,9 +865,20 @@ pub fn agent_input_text_route(
             payload
                 .entry("sessionId")
                 .or_insert_with(|| Value::String(session_id));
+            // Why this went locally, carried rather than discarded. Eight
+            // reasons are only worth naming if somebody can read one: it was
+            // computed and thrown away, which made the whole set decorative.
+            // `--json` carries it, and a person asking why their words did not
+            // reach another machine has the answer in the response.
+            payload.insert("peerRouting".into(), Value::String(owner_reason.to_owned()));
             Value::Object(payload)
         }
-        _ => json!({ "ok": true, "projectRoot": project_root, "sessionId": session_id }),
+        _ => json!({
+            "ok": true,
+            "projectRoot": project_root,
+            "sessionId": session_id,
+            "peerRouting": owner_reason,
+        }),
     };
     text_or_json_lines(
         route_url,

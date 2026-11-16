@@ -288,6 +288,150 @@ describe("RelayObject recording which machine owns a checkout", () => {
     expect(taken.status).toBe(200);
     expect(await taken.json()).toMatchObject({ owner: { machineId: "strix" } });
   });
+
+  function framesTo(socket: ReturnType<typeof fakeSocket>, type: string) {
+    return socket.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])) as Record<string, unknown>)
+      .filter((frame) => frame.type === type);
+  }
+
+  // The owner table is this account's whole fleet in absolute paths. A guest
+  // holds a client socket, so the one thing that must never happen is it
+  // arriving there.
+  it("pushes the owner table to daemons and never to a client", async () => {
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/repo");
+    const owner = fakeSocket(["client", "device:client_1"]);
+    storage.sockets = [mbp, owner];
+
+    const claimed = await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+    expect(claimed.status).toBe(200);
+
+    expect(framesTo(mbp, "project_owners").at(-1)).toEqual({
+      type: "project_owners",
+      owners: [{ projectRoot: "/repo", machineId: "mbp", claimedAt: expect.any(String), online: true }],
+    });
+    expect(framesTo(owner, "project_owners")).toEqual([]);
+  });
+
+  // `online` comes from the live socket map, so it is the column that would
+  // drift if the HTTP read and the pushed frame computed the table separately.
+  //
+  // Two machines, and the SECOND one's row is the one that discriminates. A
+  // claim can only be made by a connected machine, so a single-machine fleet
+  // pushes a frame in which every row is online -- and a separately computed
+  // `online: true` would match it. Strix claims, leaves, and then mbp's claim
+  // is the push that has to carry `online: false` for somebody.
+  it("tells the pushed frame and the read the same thing", async () => {
+    const {
+      sockets: [mbp, strix],
+      storage,
+    } = fleet(["mbp", "strix"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/repo");
+    await report(object, strix, "/other");
+    await claim(object, { projectRoot: "/other", machineId: "strix" });
+    await object.webSocketClose(strix);
+    storage.sockets = [mbp];
+    await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+
+    const pushed = framesTo(mbp, "project_owners").at(-1) as {
+      owners: Array<{ machineId: string; online: boolean }>;
+    };
+    expect(
+      pushed.owners.find((row) => row.machineId === "strix")?.online,
+      "the departed machine's row must say so, or this proves nothing",
+    ).toBe(false);
+    const read = await object.fetch(
+      request("https://relay.aimux.app/projects/owners", {
+        method: "GET",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+      }),
+    );
+    expect(((await read.json()) as { owners: unknown }).owners).toEqual(pushed.owners);
+  });
+
+  // One read of the sharing state to answer one claim.
+  //
+  // The claim route is safe without a version check only because nothing is
+  // awaited between its load and its save -- its own comment says so. The
+  // first version of the owner push awaited a SECOND load after the save to
+  // build the frame, which is two reads of one record inside one request with
+  // a write able to land between them: two concurrent claims and the last
+  // frame the fleet held omitted one of them. The frame is built from the
+  // state already in hand, and this is the gate that says so.
+  //
+  // Counted rather than raced, which is the same shape this file already uses
+  // for the guest-request path: a race is not reproducible in one thread, and
+  // the read count is the property that makes the race impossible.
+  it("reads the sharing state once to answer one claim", async () => {
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/repo");
+
+    storage.reads.clear();
+    const claimed = await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+    expect(claimed.status).toBe(200);
+
+    expect(
+      [...storage.reads.entries()].filter(([, count]) => count > 1),
+      "no record may be read twice inside one claim",
+    ).toEqual([]);
+  });
+
+  // A daemon claims on every start, so the common case is a re-claim of a
+  // checkout it already owns. Pushing a snapshot for those would make the
+  // fleet's morning a broadcast per machine per checkout, and nothing has
+  // changed to tell anyone about.
+  it("does not push the owner table for a re-claim that changed nothing", async () => {
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/repo");
+    await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+    const before = framesTo(mbp, "project_owners").length;
+    expect(before, "the first claim did push").toBeGreaterThan(0);
+
+    const again = await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+    expect(again.status).toBe(200);
+    expect(await again.json()).toMatchObject({ alreadyOwned: true });
+
+    expect(framesTo(mbp, "project_owners").length).toBe(before);
+  });
+
+  // A daemon is not disturbed by another machine coming or going:
+  // `broadcastMachineStatus` goes to client sockets only, and the first
+  // version of this push broadcast on both and broke that -- a test that
+  // already existed caught it.
+  //
+  // Nothing is lost, because `online` is a hint rather than a gate. The
+  // transport refuses a dead target by name, and ownership itself only changes
+  // on a claim, which does still tell everyone.
+  it("does not push the owner table when another machine comes or goes", async () => {
+    const {
+      sockets: [mbp, strix],
+      storage,
+    } = fleet(["mbp", "strix"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/repo");
+    await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+    const before = framesTo(mbp, "project_owners").length;
+
+    await object.webSocketClose(strix);
+
+    expect(framesTo(mbp, "project_owners").length).toBe(before);
+  });
 });
 
 describe("RelayObject letting one machine ask another", () => {

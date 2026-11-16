@@ -137,6 +137,28 @@ export interface RelayProjectEndpointsControl {
   }>;
 }
 
+/// Which machine owns which checkout, pushed to this account's own daemons.
+///
+/// DAEMON SOCKETS ONLY, and that is not a style preference. Every entry is an
+/// absolute checkout path and a machine id, which is the owner's own fleet
+/// described in full -- a guest holds a client socket and must never see it.
+///
+/// A full snapshot rather than a delta, so it is idempotent by replacement: a
+/// daemon that missed one has lost nothing once the next arrives, and there is
+/// no order to get wrong.
+export interface RelayProjectOwnersControl {
+  type: "project_owners";
+  owners: Array<{
+    projectRoot: string;
+    machineId: string;
+    claimedAt: string;
+    /// Advisory. A socket lost to hibernation can linger until the next
+    /// rehydrate, so this is never a precondition for sending -- only a hint
+    /// that saves a sender a round trip it would otherwise waste.
+    online: boolean;
+  }>;
+}
+
 export type RelayMessage =
   | RelayRequest
   | RelayProjectEventsSubscribe
@@ -148,4 +170,5 @@ export type RelayMessage =
   | RelayControl
   | RelaySecurityEventControl
   | RelayNotificationPushControl
-  | RelayProjectEndpointsControl;
+  | RelayProjectEndpointsControl
+  | RelayProjectOwnersControl;
