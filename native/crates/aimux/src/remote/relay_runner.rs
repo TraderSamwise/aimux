@@ -786,16 +786,19 @@ impl RelayRunner {
             self.peer_request_seq.fetch_add(1, Ordering::Relaxed)
         );
         let (sender, receiver) = oneshot::channel();
-        match self.peer_waiters.lock() {
-            Ok(mut waiters) => {
-                waiters.insert(id.clone(), sender);
-            }
-            Err(_) => {
-                return Err(PeerRequestError::NotSent(
-                    "peer_waiters_unavailable".to_owned(),
-                ));
-            }
-        }
+        // Recovered like every other read of this table, rather than refusing.
+        //
+        // This used to return NotSent("peer_waiters_unavailable") on a poisoned
+        // mutex, and poison is PERMANENT -- nothing in this crate clears it,
+        // and the runner outlives reconnects. So one panic anywhere that held
+        // this lock meant every peer request on the machine failed forever,
+        // which is a far worse outcome than proceeding: the mutations here are
+        // single map operations that cannot leave a torn map, which is exactly
+        // what the poison gates below demonstrate.
+        self.peer_waiters
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(id.clone(), sender);
         // Takes the entry out on every way out of this function, including the
         // one no code here can see: a caller inside a `select!` that loses the
         // race is dropped mid-await, and an entry left behind for it is a leak
@@ -2289,6 +2292,23 @@ mod tests {
         );
     }
 
+    /// Poison `project_owners`, which is a different mutex from `peer_waiters`.
+    ///
+    /// Separate, and a test that confuses the two proves nothing about either.
+    fn poison_project_owners(runner: &RelayRunner) {
+        let owners = Arc::clone(&runner.project_owners);
+        let panicked = std::thread::spawn(move || {
+            let _guard = owners.lock().expect("a clean lock to poison");
+            panic!("poisoning the project owner table on purpose");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(
+            runner.project_owners.is_poisoned(),
+            "the owner mutex must actually be poisoned for this test to mean anything"
+        );
+    }
+
     /// A poisoned waiter table still fails its waiters when the socket goes.
     ///
     /// `fail_peer_waiters` exists so that a caller "that learns nothing waits
@@ -2304,7 +2324,6 @@ mod tests {
     /// distinction #537 drew for the project event bus.
     #[test]
     fn a_poisoned_waiter_table_still_fails_its_waiters_and_drops_stale_owners() {
-        crate::async_runtime::init_process_runtime().expect("runtime initialized");
         let runner = RelayRunner::new(
             "wss://relay.example",
             "tok",
@@ -2328,6 +2347,11 @@ mod tests {
         *runner.project_owners.lock().expect("a clean owner table") = Some(Vec::new());
 
         poison_peer_waiters(&runner);
+        // AND the owner table, which is a SEPARATE mutex. Poisoning only
+        // peer_waiters made the project_owners assertion below vacuous: that
+        // lock returned Ok, so `*owners = None` ran whether or not it had been
+        // recovered, and the assertion passed with the old code restored.
+        poison_project_owners(&runner);
 
         // SITE ONE: peer_waiter_count. `unwrap_or(0)` answered "nobody is
         // waiting" for a table it could not read.
@@ -2402,7 +2426,6 @@ mod tests {
     /// the other three.
     #[test]
     fn a_poisoned_waiter_table_still_lets_its_guard_collect_the_entry() {
-        crate::async_runtime::init_process_runtime().expect("runtime initialized");
         let runner = RelayRunner::new(
             "wss://relay.example",
             "tok",
@@ -2453,19 +2476,7 @@ mod tests {
             Arc::new(NoopBridge),
         );
 
-        // Poison via peer_waiters' sibling: project_owners is its own mutex, so
-        // poison it directly to keep the test honest about which lock it means.
-        let owners = Arc::clone(&runner.project_owners);
-        let panicked = std::thread::spawn(move || {
-            let _guard = owners.lock().expect("a clean lock to poison");
-            panic!("poisoning the project owner table on purpose");
-        })
-        .join();
-        assert!(panicked.is_err(), "the poisoning thread must have panicked");
-        assert!(
-            runner.project_owners.is_poisoned(),
-            "the owner mutex must actually be poisoned for this test to mean anything"
-        );
+        poison_project_owners(&runner);
 
         runner.store_project_owners(Vec::new());
 
@@ -2477,5 +2488,55 @@ mod tests {
                 .is_some(),
             "the owner rows handed to store_project_owners were discarded on a poisoned table, so project_owner_for would keep answering Unknown for every later frame too"
         );
+    }
+
+    /// A peer request still registers its waiter after the table is poisoned.
+    ///
+    /// Poison is PERMANENT -- nothing in this crate calls `clear_poison`, and
+    /// the runner outlives reconnects, with `fail_peer_waiters` driven from the
+    /// connection loop. So the old refusal at the registration path was not a
+    /// one-request failure: one panic anywhere that held this lock meant every
+    /// peer request on the machine failed forever with
+    /// "peer_waiters_unavailable". Refusing at the only write path while every
+    /// read recovers is incoherent, and the recovery is safe for exactly the
+    /// reason the other gates here show: every mutation is a single map
+    /// operation.
+    ///
+    /// The request still fails, because this runner has no socket. What it must
+    /// not say any more is that the waiter table was unavailable.
+    #[test]
+    fn a_peer_request_is_not_refused_forever_by_a_poisoned_waiter_table() {
+        let runner = Arc::new(RelayRunner::new(
+            "wss://relay.example",
+            "tok",
+            test_machine(),
+            Arc::new(NoopBridge),
+        ));
+        poison_peer_waiters(&runner);
+
+        // aimux-async-seam: test - drives one request with no socket behind it
+        let outcome = crate::async_runtime::block_on_named("relay:test-poisoned-request", {
+            let runner = Arc::clone(&runner);
+            async move {
+                runner
+                    .request_peer(
+                        "peer-machine",
+                        "GET",
+                        "/health",
+                        &serde_json::json!({}),
+                        Duration::from_millis(10),
+                    )
+                    .await
+            }
+        });
+
+        // Any other outcome means it got past registration, which is the
+        // whole claim.
+        if let Err(super::PeerRequestError::NotSent(reason)) = outcome {
+            assert_ne!(
+                reason, "peer_waiters_unavailable",
+                "a poisoned waiter table still refuses every peer request, and poison never clears, so the feature is dead for the life of the process"
+            );
+        }
     }
 }
