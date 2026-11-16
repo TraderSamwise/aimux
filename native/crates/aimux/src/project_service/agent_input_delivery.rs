@@ -639,12 +639,13 @@ pub async fn run_pending_agent_input_deliveries_async(
             }
             QueuedDeliveryTarget::Blocked(reason) => {
                 reported.insert(pending.session_id.clone());
-                record_agent_input_delivery_failure(
+                record_agent_input_delivery_failure_off_the_worker(
                     context,
                     Some(&pending.session_id),
                     "Agent input delivery blocked",
                     reason.clone(),
-                );
+                )
+                .await;
                 failures.push(reason);
                 remaining.push(pending);
                 continue;
@@ -661,12 +662,13 @@ pub async fn run_pending_agent_input_deliveries_async(
         match decision {
             AgentInputDeliveryDecision::Hold { reason, .. } => {
                 if reason.starts_with("tmux client activity probe failed") {
-                    record_agent_input_delivery_failure(
+                    record_agent_input_delivery_failure_off_the_worker(
                         context,
                         Some(&pending.session_id),
                         "Agent input delivery held",
                         reason.clone(),
-                    );
+                    )
+                    .await;
                     failures.push(reason);
                 }
                 remaining.push(pending);
@@ -686,12 +688,13 @@ pub async fn run_pending_agent_input_deliveries_async(
                         Ok(attempt) => attempt,
                         Err(error) => {
                             failures.push(error.clone());
-                            record_agent_input_delivery_failure(
+                            record_agent_input_delivery_failure_off_the_worker(
                                 context,
                                 Some(&pending.session_id),
                                 "Agent input delivery receipt failed before send",
                                 error,
-                            );
+                            )
+                            .await;
                             remaining.push(pending);
                             continue;
                         }
@@ -722,16 +725,20 @@ pub async fn run_pending_agent_input_deliveries_async(
                                 Ok(receipt) => receipt,
                                 Err(error) => {
                                     failures.push(error.clone());
-                                    record_agent_input_delivery_failure(
+                                    record_agent_input_delivery_failure_off_the_worker(
                                         context,
                                         Some(&pending.session_id),
                                         "Agent input delivery receipt did not finish",
                                         error,
-                                    );
+                                    ).await;
                                     continue;
                                 }
                             };
-                        clear_agent_input_delivery_failure(context, &pending.session_id);
+                        clear_agent_input_delivery_failure_off_the_worker(
+                            context,
+                            &pending.session_id,
+                        )
+                        .await;
                         log_at(
                             LogLevel::Info,
                             "queued agent input delivered",
@@ -759,12 +766,13 @@ pub async fn run_pending_agent_input_deliveries_async(
                         {
                             failures.push(join_error);
                         }
-                        record_agent_input_delivery_failure(
+                        record_agent_input_delivery_failure_off_the_worker(
                             context,
                             Some(&pending.session_id),
                             "Agent input delivery failed",
                             error.clone(),
-                        );
+                        )
+                        .await;
                         failures.push(error);
                         remaining.push(pending);
                     }
@@ -774,7 +782,7 @@ pub async fn run_pending_agent_input_deliveries_async(
     }
 
     for session_id in retiring.difference(&reported) {
-        clear_agent_input_delivery_failure(context, session_id);
+        clear_agent_input_delivery_failure_off_the_worker(context, session_id).await;
     }
 
     let merge_failures =
@@ -812,6 +820,71 @@ pub async fn load_delivery_queue_off_the_worker(
     .await
     // A pool task that never ran is not an unreadable queue.
     .map_err(|error| format!("agent input delivery queue load did not finish: {error}"))?
+}
+
+/// Record a delivery failure without holding an async worker.
+///
+/// `record_agent_input_delivery_failure` read-modify-writes
+/// `dashboard-operation-failures.json` and may mirror a notification.
+async fn record_agent_input_delivery_failure_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    session_id: Option<&str>,
+    title: &'static str,
+    message: String,
+) {
+    let context = Arc::clone(context);
+    let session_id = session_id.map(str::to_owned);
+    let joined = crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "failure-record",
+            "project-service",
+        ),
+        move || {
+            record_agent_input_delivery_failure(&context, session_id.as_deref(), title, message);
+        },
+    )
+    .await;
+    if let Err(error) = joined {
+        // Not silently dropped: a pool task that never ran means the failure
+        // the caller was reporting is now unrecorded, and saying so is the only
+        // way anyone finds out.
+        log_at(
+            LogLevel::Warn,
+            "Agent input delivery failure was not recorded",
+            "agent-input-delivery",
+            Some(json!({ "error": error.to_string() })),
+        );
+    }
+}
+
+/// Clear a delivery failure without holding an async worker.
+///
+/// This is the steady-state one: the end-of-tick retiring loop runs it per
+/// offline session on every tick.
+async fn clear_agent_input_delivery_failure_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    session_id: &str,
+) {
+    let context = Arc::clone(context);
+    let session_id = session_id.to_owned();
+    let joined = crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "failure-clear",
+            "project-service",
+        ),
+        move || clear_agent_input_delivery_failure(&context, &session_id),
+    )
+    .await;
+    if let Err(error) = joined {
+        log_at(
+            LogLevel::Warn,
+            "Agent input delivery failure was not cleared",
+            "agent-input-delivery",
+            Some(json!({ "error": error.to_string() })),
+        );
+    }
 }
 
 /// Resolve one queued entry's target without holding an async worker.
@@ -1788,6 +1861,132 @@ mod tests {
         assert!(
             still_polling,
             "every hop was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied, which is what happens when the per-entry topology read runs inline on the worker rather than on the blocking pool"
+        );
+    }
+
+    /// The delivery failure-store writes do not hold an async worker.
+    ///
+    /// `record_agent_input_delivery_failure` and
+    /// `clear_agent_input_delivery_failure` both read-modify-write
+    /// `dashboard-operation-failures.json`, and the async tick called them
+    /// inline on a pool of two workers. The clear is the one that matters: the
+    /// end-of-tick `retiring.difference(&reported)` loop runs it per session on
+    /// the WAITING path, which is the steady state whenever a queued agent is
+    /// offline, so it is a file read and write per offline session on every
+    /// tick with nothing ever delivered.
+    ///
+    /// Same technique as the topology read: a FIFO with no writer at the store
+    /// path makes `load_state` block forever, because it guards with
+    /// `path.exists()` -- which is TRUE for a FIFO -- and then calls
+    /// `fs::read_to_string`. Both entry points read before they write, so they
+    /// park in the read and never reach `save_state`.
+    ///
+    /// This drives the HOPS rather than the tick, for the reason #540 settled:
+    /// a gate driving the whole tick competes with the real work a tick does on
+    /// a worker and its verdict moves with machine load. The specific
+    /// steady-state call site is covered by
+    /// `the_delivery_tick_clears_failures_off_the_worker`.
+    #[test]
+    fn the_delivery_failure_store_writes_do_not_consume_an_async_worker() {
+        use std::os::unix::fs::FileTypeExt;
+
+        const WORKERS: usize = crate::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
+        const PHASE_TWO_ROUNDS: usize = 20;
+        const PHASE_TWO_SETTLE: Duration = Duration::from_millis(10);
+        let attempts = WORKERS + 2;
+        let quiet_window = Duration::from_secs(30);
+
+        let root = std::env::temp_dir().join(format!("aimux-failure-store-{}", std::process::id()));
+        let state_dir = root.join("state");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&state_dir).expect("state dir");
+
+        let store = crate::project_service::operation_failures::dashboard_operation_failures_path(
+            &state_dir,
+        );
+        let made = std::process::Command::new("mkfifo")
+            .arg(&store)
+            .status()
+            .expect("mkfifo runs");
+        assert!(
+            made.success(),
+            "could not create the FIFO this gate depends on; without it the read returns instantly and the gate proves nothing"
+        );
+
+        let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+            &root,
+            state_dir.clone(),
+        ));
+
+        let async_runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(WORKERS)
+            .enable_all()
+            .build()
+            .expect("a runtime with the project service's worker count");
+        let entered = async_runtime.enter();
+
+        let (polled_tx, polled) = std::sync::mpsc::channel();
+        for index in 0..attempts {
+            let hop_context = Arc::clone(&context);
+            let polled_tx = polled_tx.clone();
+            async_runtime.spawn(async move {
+                polled_tx.send(index).expect("the test is still listening");
+                // The clear, because that is the steady-state one.
+                clear_agent_input_delivery_failure_off_the_worker(&hop_context, "s1").await;
+            });
+        }
+        drop(polled_tx);
+
+        let mut reported = 0;
+        while reported < attempts {
+            match polled.recv_timeout(quiet_window) {
+                Ok(_) => reported += 1,
+                Err(_) => break,
+            }
+        }
+
+        let mut still_polling = true;
+        for _ in 0..PHASE_TWO_ROUNDS {
+            std::thread::sleep(PHASE_TWO_SETTLE);
+            let (yielded_tx, yielded) = std::sync::mpsc::channel();
+            async_runtime.spawn(async move {
+                tokio::task::yield_now().await;
+                let _ = yielded_tx.send(());
+            });
+            if yielded.recv_timeout(quiet_window).is_err() {
+                still_polling = false;
+                break;
+            }
+        }
+
+        // Captured BEFORE teardown, because teardown unlinks the path and a
+        // stat placed with the assertions below would read a path that is
+        // already gone and fail for the wrong reason.
+        //
+        // The check itself guards a real hazard: `save_state` goes through
+        // `atomic_write_impl`, which writes a temp file and RENAMES over the
+        // target. A future write-before-read path would therefore replace this
+        // FIFO with an ordinary file mid-measurement, and the gate would pass
+        // having controlled nothing.
+        let still_a_fifo = fs::symlink_metadata(&store)
+            .map(|metadata| metadata.file_type().is_fifo())
+            .unwrap_or(false);
+
+        drop(entered);
+        async_runtime.shutdown_background();
+        let _ = fs::remove_dir_all(&root);
+
+        assert!(
+            still_a_fifo,
+            "the store path was no longer a FIFO at the end of the measurement, so something wrote over it and this gate stopped controlling the resource it depends on"
+        );
+        assert_eq!(
+            reported, attempts,
+            "{reported} of {attempts} hops were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}: a failure-store write is holding a worker while it waits on the file"
+        );
+        assert!(
+            still_polling,
+            "every hop was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied, which is what happens when the failure-store read-modify-write runs inline on the worker rather than on the blocking pool"
         );
     }
 }
