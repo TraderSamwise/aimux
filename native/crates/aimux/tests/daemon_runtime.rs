@@ -5610,6 +5610,14 @@ impl CannedUpstream {
 /// and consolidating them is its own change -- but a fourth and fifth copy
 /// would have been indefensible.
 ///
+/// WHAT THIS DOES NOT PROVE, checked rather than assumed: it does not protect
+/// the carve-out's EXISTENCE. Disable a route's dispatch arm and this still
+/// passes, necessarily -- with no carve-out both "paths" are the locked path,
+/// so they agree trivially. Parity protects the render SPLIT, that a route
+/// answers identically however it is reached. The lock gate is the only thing
+/// asserting the route is carved out at all, so a route needs both and
+/// "covered by parity" is not the same as "covered".
+///
 /// Compares status AND the whole body across both renderings x three methods x
 /// six header shapes, and asserts the served body contains what the case
 /// claims to exercise. That last part is not decoration: parity compares the
