@@ -3035,18 +3035,32 @@ pub fn handle_daemon_runtime_request_with_mutex(
     // both of which the daemon turns away. Anyone excluded here takes the
     // locked path and is refused there, by the one copy of the rule.
     if request.method == "GET"
-        && pathname == crate::core_command_contract::CORE_API_ROUTES.task_list_text
         && parse_remote_actor(&request.headers).is_none()
         && !crate::daemon::router::has_origin_header(&request.headers)
     {
-        return handle_task_list_without_holding_the_lock(runtime, request);
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.task_list_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::collaboration::resolve_task_list_request,
+                crate::daemon::text::collaboration::render_task_list_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.agent_ps_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::agents::resolve_agent_ps_request,
+                crate::daemon::text::agents::render_agent_ps_result,
+            );
+        }
     }
     let mut runtime = runtime.lock().expect("daemon runtime mutex poisoned");
     handle_daemon_runtime_request(&mut *runtime, request)
 }
 
-/// `aimux task list`, served without the global runtime mutex held across the
-/// upstream hop.
+/// A single-upstream-call core read route, served without the global runtime
+/// mutex held across the upstream hop.
 ///
 /// Every other core text route is dispatched under that one mutex for its
 /// whole duration, blocking HTTP included. On sam-strix that showed up as an
@@ -3061,14 +3075,24 @@ pub fn handle_daemon_runtime_request_with_mutex(
 ///   2. DROP THE GUARD, then make the call
 ///   3. render, which is pure
 ///
-/// The route's resolve and render halves are shared with
-/// `task_list_text_route` rather than reimplemented, because a carve-out means
-/// one route served from two places and `/health` already taught that lesson:
-/// it had two handlers building the same body until they were given one
+/// Each route's resolve and render halves are shared with its locked-path
+/// handler rather than reimplemented, because a carve-out means one route
+/// served from two places and `/health` already taught that lesson: it had two
+/// handlers building the same body until they were given one
 /// `daemon_health_payload` between them.
-fn handle_task_list_without_holding_the_lock(
+///
+/// The guard condition, the lock/unlock split and the ensure-and-retry live
+/// HERE, once, rather than per route. `task_list_text` was carved out first
+/// and shipped twice broken -- once serving callers the router refuses because
+/// the guard was missing, once answering 503 on a cold project because the
+/// ensure-and-retry was missing. A second near-copy of this function is a
+/// second chance to forget either, so a new route supplies only its resolve
+/// and its render.
+fn handle_core_read_route_without_holding_the_lock(
     runtime: &Arc<Mutex<RealDaemonRuntime>>,
     request: DaemonHttpRequest,
+    resolve: impl Fn(&DaemonRouteUrl, Option<&Value>) -> Result<(String, String), DaemonRouteResponse>,
+    render: impl Fn(&DaemonRouteUrl, ProjectServiceJsonResult) -> DaemonRouteResponse,
 ) -> PreparedDaemonResponse {
     handle_daemon_http_request(
         request,
@@ -3093,13 +3117,10 @@ fn handle_task_list_without_holding_the_lock(
                 );
             }
             let route_url = DaemonRouteUrl::parse(path);
-            let (project, route_path) =
-                match crate::daemon::text::collaboration::resolve_task_list_request(
-                    &route_url, body,
-                ) {
-                    Ok(resolved) => resolved,
-                    Err(response) => return response,
-                };
+            let (project, route_path) = match resolve(&route_url, body) {
+                Ok(resolved) => resolved,
+                Err(response) => return response,
+            };
             // Phase one, under the lock: everything that needs the runtime.
             let built = {
                 let mut locked = runtime.lock().expect("daemon runtime mutex poisoned");
@@ -3148,7 +3169,7 @@ fn handle_task_list_without_holding_the_lock(
                 }
                 result => result,
             };
-            crate::daemon::text::collaboration::render_task_list_result(&route_url, result)
+            render(&route_url, result)
         },
     )
 }
