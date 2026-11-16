@@ -1657,6 +1657,165 @@ fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
     peer_thread.join().expect("peer thread");
 }
 
+/// Which pre-dispatch interceptor a worker-starvation check is aiming at.
+#[derive(Debug, Clone, Copy)]
+enum StreamInterceptor {
+    JobEvents,
+    HostAgentStream,
+}
+
+/// Fails when an interceptor holds an async worker while it waits for the
+/// global runtime mutex.
+///
+/// Both stream interceptors run before route dispatch and both need that mutex
+/// -- the one other routes hold across a project-service call. They used to
+/// take it INLINE on the async worker, and `ASYNC_RUNTIME_WORKER_THREADS` is
+/// 2, so two concurrent stream requests during contention parked both workers.
+/// Every other connection task was then accepted and never polled, `/health`
+/// among them, and the watchdog ends the process after three 30s strikes: a
+/// daemon that was merely busy exited as a wedged one.
+///
+/// WHAT DISCRIMINATES, after three attempts that did not.
+///
+/// (1) Two interceptors plus one task that merely yielded, asserting the yield
+/// ran. Passed with the inline locks restored: `spawn` gives no polling order,
+/// so the yield finished first.
+///
+/// (2) Counting how many tasks were polled within a 5s budget. A review ran it
+/// and it FAILED on correct code, reporting the identical number this file's
+/// mutation proof attributes to the regression. Five seconds of CPU starvation
+/// on two worker threads looks exactly like two workers parked on a lock, so
+/// the gate asserted a cause it had not established. A flaky gate that names
+/// the wrong cause is worse than no gate.
+///
+/// (3) Alternating the two interceptors across the tasks. That made detection
+/// depend on polling ORDER: with only some tasks able to park a worker, a run
+/// that polled those last reported every task and passed with the bug present.
+///
+/// So: every task here drives the SAME interceptor, and there are more tasks
+/// than workers. Once `WORKERS` of them are parked nothing can be polled
+/// again, whatever the order. And the budget is a QUIET WINDOW rather than a
+/// deadline -- any task being polled resets it, so the test fails only when
+/// progress STOPS. A starved runtime still progresses, just slowly, and
+/// passes; a parked worker never progresses and fails.
+fn assert_interceptor_does_not_consume_a_worker(interceptor: StreamInterceptor) {
+    const WORKERS: usize = aimux::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
+    let attempts = WORKERS + 2;
+    // A no-progress window, not a latency budget: this is what a true
+    // regression costs to detect, not what a healthy run waits.
+    let quiet_window = Duration::from_secs(30);
+
+    let async_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(WORKERS)
+        .enable_all()
+        .build()
+        .expect("a runtime with production's worker count");
+    let _entered = async_runtime.enter();
+
+    let daemon = Arc::new(Mutex::new(FakeRuntime::empty()));
+    // Held for the whole check, so every interceptor genuinely blocks and none
+    // can pass by racing to an uncontended mutex.
+    let held = daemon.lock().expect("hold the runtime mutex");
+
+    let (polled_tx, polled) = mpsc::channel();
+    for index in 0..attempts {
+        let runtime = Arc::clone(&daemon);
+        let polled_tx = polled_tx.clone();
+        async_runtime.spawn(async move {
+            polled_tx.send(index).expect("the test is still listening");
+            let mut sink: Vec<u8> = Vec::new();
+            match interceptor {
+                StreamInterceptor::JobEvents => {
+                    // With a query string, deliberately. A review pointed out
+                    // that both gates used bare paths, so neither would catch
+                    // a variant that locks inline only when a param is
+                    // present. Its twin below stays bare, so the pair covers
+                    // both shapes.
+                    let request = FakeRuntime::request(
+                        "GET",
+                        &format!(
+                            "{}?all=1",
+                            aimux::core_command_contract::CORE_API_ROUTES.jobs_events
+                        ),
+                    );
+                    let _ = aimux::daemon::jobs::maybe_handle_job_event_stream_request_with_runtime_mutex(
+                        &runtime,
+                        &request,
+                        &mut sink,
+                    )
+                    .await;
+                }
+                StreamInterceptor::HostAgentStream => {
+                    let request = FakeRuntime::request(
+                        "GET",
+                        aimux::core_command_contract::CORE_API_ROUTES.host_agent_stream_text,
+                    );
+                    let _ = aimux::daemon::stream::maybe_handle_host_agent_stream_request_with_runtime_mutex_async(
+                        &runtime,
+                        &request,
+                        &mut sink,
+                    )
+                    .await;
+                }
+            }
+        });
+    }
+    drop(polled_tx);
+
+    let mut reported = 0;
+    while reported < attempts {
+        match polled.recv_timeout(quiet_window) {
+            Ok(_) => reported += 1,
+            Err(_) => break,
+        }
+    }
+
+    // Phase two, and it closes a hole the first phase cannot see.
+    //
+    // A review found that inserting a single `.await` anywhere before the
+    // inline lock makes phase one pass with the bug fully present: the task
+    // yields at that await, its worker is freed, every task gets a first poll
+    // and reports, and only THEN do they all park. Phase one measures "every
+    // task's first poll completed"; the claim is "the lock is not on a
+    // worker". Those coincide only while the lock is reached on the first poll
+    // with no yield point in between, which is true of both interceptors today
+    // and is exactly the kind of thing an unrelated change breaks silently.
+    //
+    // Spawned AFTER the barrier above, which is what makes it sound -- an
+    // earlier attempt spawned a yielding task concurrently and it passed with
+    // the bug, because `spawn` gives no polling order and the yield simply
+    // finished first. Here every interceptor task has already been polled, so
+    // if any of them is holding a worker there is nothing left to poll this.
+    let (yielded_tx, yielded) = mpsc::channel();
+    async_runtime.spawn(async move {
+        tokio::task::yield_now().await;
+        let _ = yielded_tx.send(());
+    });
+    let still_polling = yielded.recv_timeout(quiet_window).is_ok();
+
+    drop(held);
+
+    assert_eq!(
+        reported, attempts,
+        "{interceptor:?}: {reported} of {attempts} tasks were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}. Progress stopped rather than slowed, which a starved runtime does not do: this interceptor is holding a worker while it waits for the runtime mutex, so every other connection task -- /health included -- would be accepted and never answered"
+    );
+    assert!(
+        still_polling,
+        "{interceptor:?}: every task was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied even though each interceptor got its first poll, which is what happens when the lock is taken after an await rather than before one -- /health would be accepted and never answered just the same"
+    );
+}
+
+/// Proved separately from its twin, so neither rides on the other being safe.
+#[test]
+fn the_job_event_stream_interceptor_does_not_consume_an_async_worker() {
+    assert_interceptor_does_not_consume_a_worker(StreamInterceptor::JobEvents);
+}
+
+#[test]
+fn the_host_agent_stream_interceptor_does_not_consume_an_async_worker() {
+    assert_interceptor_does_not_consume_a_worker(StreamInterceptor::HostAgentStream);
+}
+
 /// Every per-connection interceptor declines `/health` without locking.
 ///
 /// The interceptors run BEFORE route dispatch, on an async worker, and two of
