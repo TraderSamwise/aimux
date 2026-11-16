@@ -5846,6 +5846,80 @@ fn the_carved_out_worktree_list_answers_what_the_locked_path_answers() {
         aimux::core_command_contract::CORE_API_ROUTES.worktree_list_text,
         json!({ "other": [] }),
         502,
-        "worktree list",
+        // The whole phrase, not just "worktree list": a fragment that coarse
+        // matches other errors in the same family, which defeats the point of
+        // asserting the body at all -- it is there to prove the case exercises
+        // what it claims.
+        "worktrees is required",
+    );
+}
+
+/// A core read route still starts a project service that is down.
+///
+/// The three earlier carve-outs each have one of these and the two added here
+/// did not, so they shipped two gates against three. The ensure-and-retry now
+/// lives in the shared helper and cannot be forgotten per route, which is why
+/// the gap was low severity -- but nothing per route would notice if that
+/// shared retry broke for a route with a DIFFERENT resolve shape, and
+/// `thread_list`'s query-bearing path is exactly that case.
+fn assert_core_read_route_starts_a_service_that_is_down(
+    fixture_name: &str,
+    route: &str,
+    upstream_body: serde_json::Value,
+) {
+    let fixture = RuntimeFixture::new(fixture_name);
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    // No endpoint file: the service is NOT running. The launcher publishes one
+    // pointing at a real upstream when it is asked to start.
+    let upstream = CannedUpstream::spawn(upstream_body.to_string());
+    let mut launcher = FakeLauncher::new(std::process::id() as i32);
+    launcher.endpoint_port = Some(upstream.port);
+    let launcher = Arc::new(launcher);
+    let runtime = Arc::new(Mutex::new(fixture.runtime_with_launcher(
+        Arc::clone(&launcher),
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    )));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        health_identity,
+        request("GET", &format!("{route}?project={project_root}")),
+    );
+
+    assert_eq!(
+        response.status, 200,
+        "{route} answered {} instead of starting the project service and retrying; without the ensure-and-retry the command returns 503 on any project whose service is not already up, which is the common case after a reboot",
+        response.status
+    );
+    assert_eq!(
+        launcher.calls(),
+        vec![project_root],
+        "{route} should have asked the launcher to start the project service exactly once"
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn the_carved_out_thread_list_still_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "thread-list-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_list_text,
+        json!([{ "thread": { "id": "t-1", "kind": "review", "status": "open" } }]),
+    );
+}
+
+#[test]
+fn the_carved_out_worktree_list_still_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "worktree-list-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.worktree_list_text,
+        json!({ "worktrees": [{ "name": "wt", "path": "/repo/wt" }] }),
     );
 }
