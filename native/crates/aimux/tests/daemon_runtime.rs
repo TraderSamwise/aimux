@@ -277,9 +277,9 @@ fn both_health_routes_answer_the_same_body() {
 /// and on 2026-11-16 that regression was live: on sam-strix eight concurrent
 /// `/health` calls to the installed daemon all returned together at 11.2s,
 /// against a p50 of 0.44ms. `daemon_supervisor.rs` polls this route on a
-/// 400ms client budget, so a daemon that was up and listening was reported as
-/// one that had not started -- the CLI printed "still waiting for aimux
-/// daemon at 127.0.0.1:43190 (40s)".
+/// 2.5s client budget (`DAEMON_HEALTH_PROBE_TIMEOUT_MS`), so a daemon that was
+/// up and listening was reported as one that had not started -- the CLI
+/// printed "still waiting for aimux daemon at 127.0.0.1:43190 (40s)".
 ///
 /// This is the one latency claim about `/health` that needs no load and no
 /// wall-clock budget: hold the lock, ask for health, require an answer. It is
@@ -308,11 +308,12 @@ fn health_answers_while_another_request_holds_the_runtime_mutex() {
         let _ = sender.send(response);
     });
 
-    let response = receiver
-        .recv_timeout(Duration::from_secs(10))
-        .expect("/health answered while the runtime mutex was held");
+    // Released before the assert, so a failure still joins the probe and runs
+    // `cleanup` instead of panicking with the lock in hand.
+    let answered = receiver.recv_timeout(Duration::from_secs(10));
     drop(held);
     probe.join().expect("health probe thread");
+    let response = answered.expect("/health answered while the runtime mutex was held");
 
     let body: Value = serde_json::from_slice(&response.body).expect("health json");
     assert_eq!(response.status, 200);
@@ -658,6 +659,11 @@ fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
     let address = listener.local_addr().expect("daemon address");
     let request_count = 60 * 5 + 1;
     let server_runtime = Arc::clone(&runtime);
+    // Hoisted, because deriving it per request took the global mutex on every
+    // one of the 301 requests below -- including the post-load `/health` this
+    // test exists to ask. That both diverged from production, which passes a
+    // startup copy, and added contention to the thing being measured.
+    let server_health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     let server_join = std::thread::spawn(move || {
         let mut joins = Vec::new();
         for _ in 0..request_count {
@@ -694,8 +700,10 @@ fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
                     },
                     &mut |request| {
                         handle_daemon_runtime_request_with_mutex(
-            &request_runtime,
-            DaemonHealthIdentity::from_runtime(&request_runtime), request)
+                            &request_runtime,
+                            server_health_identity,
+                            request,
+                        )
                     },
                 );
             }));
@@ -760,10 +768,18 @@ fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
     //
     // Narrowed from a first draft that said "nothing in the suite puts a
     // wall-clock bound on these routes", which a review refuted:
-    // `daemon_supervisor.rs` asks `/health` with a 400ms client budget and
-    // bounds the call at 5s. That gates the CLIENT giving up on a daemon that
-    // never answers, not the daemon's latency, which is the distinction the
-    // first draft lost.
+    // `daemon_supervisor.rs` asks `/health` with a client budget and bounds
+    // the call. That gates the CLIENT giving up on a daemon that never
+    // answers, not the daemon's latency, which is the distinction the first
+    // draft lost.
+    //
+    // The refutation named "a 400ms client budget", and that number was never
+    // real: `DAEMON_HEALTH_PROBE_TIMEOUT_MS` is 2_500 and has been since the
+    // constant was introduced in 3b6620134. A 2026-11-16 change read this
+    // comment, trusted it, and copied 400ms into two more places before a
+    // review caught it. The figure is gone rather than corrected inline,
+    // because the point here does not need one and a number in a comment is
+    // what went stale.
     //
     // This was the only post-load responsiveness gate in the repo and it is a
     // liveness gate now -- a deliberate trade, since the alternative is a

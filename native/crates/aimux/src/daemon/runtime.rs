@@ -2836,7 +2836,7 @@ fn project_service_info_value() -> Value {
 /// The two fields `/health` answers with, read without the runtime mutex.
 ///
 /// `/health` is what every readiness wait polls, and `daemon_supervisor.rs`
-/// polls it on a 400ms client budget. It was already written as a route that
+/// polls it on a 2.5s client budget. It was already written as a route that
 /// does no slow work -- and then took the global runtime mutex anyway, for two
 /// fields that are never written after startup. So whenever any other route
 /// held that mutex, readiness was answered late or not at all, and the CLI

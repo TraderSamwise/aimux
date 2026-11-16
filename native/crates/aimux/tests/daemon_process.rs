@@ -1657,6 +1657,68 @@ fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
     peer_thread.join().expect("peer thread");
 }
 
+/// Every per-connection interceptor declines `/health` without locking.
+///
+/// The interceptors run BEFORE route dispatch, on an async worker, and two of
+/// them take the global runtime mutex to do their work
+/// (`daemon/stream.rs`, `daemon/jobs.rs`). They escape only because they
+/// path-gate first and return `Ok(false)` for anything that is not their
+/// route. Nothing tested that, and `ASYNC_RUNTIME_WORKER_THREADS` is 2 -- so
+/// an interceptor that locked before checking the path would leave `/health`
+/// accepted but never polled, which the watchdog reads as a wedge and ends the
+/// process for. That silently reverts the whole point of
+/// `DaemonHealthIdentity`.
+///
+/// Held for the duration, so a lock taken before the path check cannot pass by
+/// winning an uncontended mutex. Bounded by a channel rather than a join, so
+/// the failure is a named assertion in two seconds instead of a hung suite.
+///
+/// This test ENUMERATES the interceptors, which is its weakness: a third one
+/// added without a line here is not covered. The names are in
+/// `daemon/runtime.rs`'s interceptor closure, and they belong in this list.
+#[test]
+fn interceptors_decline_health_without_taking_the_runtime_lock() {
+    let runtime = Arc::new(Mutex::new(FakeRuntime::empty()));
+    let held = runtime.lock().expect("hold runtime lock");
+
+    let (tx, rx) = mpsc::channel();
+    let probe_runtime = Arc::clone(&runtime);
+    let probe = thread::spawn(move || {
+        let request = FakeRuntime::request("GET", "/health");
+        let mut sink: Vec<u8> = Vec::new();
+        let host_agent =
+            aimux::daemon::stream::maybe_handle_host_agent_stream_request_with_runtime_mutex(
+                &probe_runtime,
+                &request,
+                &mut sink,
+            );
+        let _ = tx.send((host_agent.map_err(|error| error.to_string()), sink));
+    });
+
+    let (host_agent, sink) = match rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(result) => result,
+        Err(error) => {
+            drop(held);
+            probe.join().expect("interceptor probe thread");
+            panic!(
+                "the host-agent-stream interceptor took the runtime mutex before deciding it does not handle /health: {error}"
+            );
+        }
+    };
+    drop(held);
+    probe.join().expect("interceptor probe thread");
+
+    assert_eq!(
+        host_agent,
+        Ok(false),
+        "the interceptor must DECLINE /health, not answer it"
+    );
+    assert!(
+        sink.is_empty(),
+        "an interceptor that declines must not have written to the stream: {sink:?}"
+    );
+}
+
 /// Hosted `/health` answers over the socket while the runtime mutex is held.
 ///
 /// The handler never touched the runtime, but the listener locked it before

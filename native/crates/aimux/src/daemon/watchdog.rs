@@ -150,11 +150,30 @@ pub fn probe_health_within(host: &str, port: u16, timeout: Duration) -> Result<(
 /// a healthy daemon: `/health` measured p50 0.44ms and 11.2s under
 /// contention, past the 10s timeout, and the log records
 /// `consecutiveFailures: 3`, `exitCode: 70` at 10:18:08Z against a daemon
-/// whose own health route was answering in microseconds. The tight budget
-/// below is earned by `DaemonHealthIdentity` and the two gates that hold it
-/// there -- `health_answers_while_another_request_holds_the_runtime_mutex` and
-/// `hosted_health_answers_over_the_socket_while_the_runtime_lock_is_held`. If
-/// either is ever deleted, this budget stops being safe.
+/// whose own health route was answering in microseconds.
+///
+/// `DaemonHealthIdentity` removed that, and it was the dominant cause and the
+/// only measured one. It is NOT the only way this probe can time out, so the
+/// budget below is not fully earned yet. What remains, named rather than
+/// implied:
+///
+/// - The blocking pool is a FIFO queue. Every route waiting on the runtime
+///   mutex holds a thread in it, and core text routes still hold that mutex
+///   across their call to the project service. Enough in-flight requests and
+///   the probe's own task queues without starting --
+///   `async_runtime::spawn_blocking_named` says this out loud.
+/// - `ASYNC_RUNTIME_WORKER_THREADS` is 2, and the per-connection interceptors
+///   at `daemon/stream.rs` and `daemon/jobs.rs` take a blocking lock inline on
+///   a worker. Two concurrent stream requests during contention can leave
+///   `/health` accepted but never polled. Every periodic task offloads to
+///   `spawn_blocking` correctly; the interceptors do not.
+/// - Those interceptors escape only because they path-gate BEFORE locking. An
+///   interceptor that locks first would revert the whole fix silently, which
+///   is why `health_answers_through_the_listener_while_the_runtime_lock_is_held`
+///   drives a real socket through the listener rather than calling the route.
+///
+/// So: the three gates named here are what make the tight budget defensible,
+/// and they do not make it unconditional.
 #[derive(Debug, Clone, Copy)]
 pub struct WatchdogBudget {
     pub label: &'static str,
