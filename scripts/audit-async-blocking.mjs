@@ -40,8 +40,15 @@ const HAZARDS = [
     //
     // Scoped to a SHARED mutex arriving as an `Arc<Mutex<..>>` parameter,
     // because that is the one whose hold time is someone else's to decide. A
-    // function's own short-lived internal mutex is not this bug, and there are
-    // 96 of those -- a rule that flagged them would have to be switched off.
+    // function's own short-lived internal mutex is a different question.
+    //
+    // Measured, after two bad counts: 8 async fns in the crate take a blocking
+    // `.lock()` on their own stack, 3 of them inside `mod tests` and 5 in
+    // production, and none of the 5 is the daemon's global runtime mutex --
+    // they are in the project service and the relay runner, locking their own
+    // state. So widening this rule is triageable rather than impossible; it is
+    // simply a different piece of work, and nobody has established those five
+    // hold the lock long enough to matter.
     //
     // Locking inside a `spawn_blocking_named` closure is the fix, not the
     // hazard, so those bodies are removed before the check.
