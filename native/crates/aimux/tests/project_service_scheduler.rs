@@ -2579,3 +2579,257 @@ fn the_delivery_queue_load_does_not_consume_an_async_worker() {
 fn the_delivery_merge_and_save_does_not_consume_an_async_worker() {
     assert_delivery_hop_does_not_consume_a_worker(DeliveryHop::MergeAndSave);
 }
+
+/// A delivery receipt write does not hold an async worker while it waits for
+/// the metadata lock.
+///
+/// `begin_input_delivery` and `finish_input_delivery` both go through
+/// `persist_receipt`, which takes `acquire_state_update_lock` on the metadata
+/// state path, then reads and rewrites that metadata. The delivery tick calls
+/// them TWICE PER DELIVERED ENTRY from its own async stack, and the project
+/// service runs two async workers -- so a queue of N entries is 2N lock
+/// acquisitions on those two workers, each able to sleep in a retry loop until
+/// ACQUIRE_TIMEOUT if another writer holds it.
+///
+/// HOW THIS GATES A *BOUNDED* PARK, which is the part that needed solving.
+/// Unlike the queue mutex, this lock gives up after ACQUIRE_TIMEOUT, so a
+/// single call parks a worker and then returns. A progress check cannot see
+/// that: progress resumes. I proved that on PR #534, where a gate holding this
+/// very lock directory passed with the hop mutated back onto the worker.
+///
+/// So the tasks call the receipt write in a LOOP until told to stop, and with
+/// the write inline that loop body contains no await at all -- the first
+/// `WORKERS` tasks own both workers permanently and PHASE ONE times out. That
+/// is what the 2-of-4 failure is.
+///
+/// BE PRECISE ABOUT WHAT THIS DOES NOT CATCH, because I first wrote that the
+/// looping makes the park continuous and phase two sees it, and a review was
+/// right that it does not. Phase two cannot see a bounded park: a 30s window
+/// against a 2s ACQUIRE_TIMEOUT means a variant that locks on a worker but
+/// keeps one await per iteration gets the probe polled inside the gap and
+/// passes. This gate keys on "the loop never yields", which is the shape the
+/// real code had. Catching the await-per-iteration variant would need a
+/// latency budget, and that is what made these checks flaky on a loaded
+/// runner.
+#[test]
+fn a_delivery_receipt_write_does_not_consume_an_async_worker() {
+    const WORKERS: usize = aimux::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
+    let attempts = WORKERS + 2;
+    let quiet_window = Duration::from_secs(30);
+
+    let root = std::env::temp_dir().join(format!(
+        "aimux-delivery-receipt-worker-{}",
+        std::process::id()
+    ));
+    let state_dir = root.join("state");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&state_dir).expect("state dir");
+    let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+        &root,
+        state_dir.clone(),
+    ));
+
+    let async_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(WORKERS)
+        .enable_all()
+        .build()
+        .expect("a runtime with the project service's worker count");
+    let _entered = async_runtime.enter();
+
+    // Held for the whole check, so every receipt write contends.
+    let held =
+        aimux::state_update_lock::acquire_state_update_lock(&metadata_state_path(&state_dir))
+            .expect("hold the metadata state-update lock");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let (polled_tx, polled) = mpsc::channel();
+    let mut handles = Vec::new();
+    for index in 0..attempts {
+        let hop_context = Arc::clone(&context);
+        let polled_tx = polled_tx.clone();
+        let stop = Arc::clone(&stop);
+        handles.push(async_runtime.spawn(async move {
+            polled_tx.send(index).expect("the test is still listening");
+            while !stop.load(Ordering::Relaxed) {
+                let _ =
+                    aimux::project_service::input_delivery_receipt::begin_input_delivery_off_the_worker(
+                        &hop_context,
+                        format!("session-{index}"),
+                        "window-1".to_owned(),
+                    )
+                    .await;
+            }
+        }));
+    }
+    drop(polled_tx);
+
+    let mut reported = 0;
+    while reported < attempts {
+        match polled.recv_timeout(quiet_window) {
+            Ok(_) => reported += 1,
+            Err(_) => break,
+        }
+    }
+
+    let mut still_polling = true;
+    for _ in 0..PHASE_TWO_ROUNDS {
+        std::thread::sleep(PHASE_TWO_SETTLE);
+        let (yielded_tx, yielded) = mpsc::channel();
+        async_runtime.spawn(async move {
+            tokio::task::yield_now().await;
+            let _ = yielded_tx.send(());
+        });
+        if yielded.recv_timeout(quiet_window).is_err() {
+            still_polling = false;
+            break;
+        }
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    drop(held);
+    for handle in handles {
+        handle.abort();
+    }
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(
+        reported, attempts,
+        "{reported} of {attempts} receipt writers were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}"
+    );
+    assert!(
+        still_polling,
+        "every receipt writer was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied: a receipt write is waiting for the metadata lock on an async worker, so the tick's other work -- and anything else on this runtime -- would be accepted and never polled"
+    );
+}
+
+/// The FINISH receipt write does not consume an async worker either.
+///
+/// Its twin above gated only `begin`. A review pointed out that
+/// `finish_input_delivery_off_the_worker` had zero test references, so
+/// reverting it alone passed the whole suite -- the un-updated-caller class,
+/// against the claim in `input_delivery_receipt.rs` that each hop is proved.
+/// Both halves are gated now, separately, so neither rides on the other.
+#[test]
+fn a_finish_receipt_write_does_not_consume_an_async_worker() {
+    const WORKERS: usize = aimux::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
+    let attempts = WORKERS + 2;
+    let quiet_window = Duration::from_secs(30);
+
+    let root = std::env::temp_dir().join(format!(
+        "aimux-finish-receipt-worker-{}",
+        std::process::id()
+    ));
+    let state_dir = root.join("state");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&state_dir).expect("state dir");
+    let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+        &root,
+        state_dir.clone(),
+    ));
+
+    let async_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(WORKERS)
+        .enable_all()
+        .build()
+        .expect("a runtime with the project service's worker count");
+    let _entered = async_runtime.enter();
+
+    // An attempt to finish. Taken through the begin hop so the shape is the
+    // real one rather than a hand-built value.
+    let begin = aimux::project_service::input_delivery_receipt::begin_input_delivery_off_the_worker(
+        &context,
+        "session-finish".to_owned(),
+        "window-1".to_owned(),
+    );
+    // aimux-async-seam: test - sync test drives async handler
+    let attempt = async_runtime.block_on(begin).expect("an attempt to finish");
+
+    let held =
+        aimux::state_update_lock::acquire_state_update_lock(&metadata_state_path(&state_dir))
+            .expect("hold the metadata state-update lock");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let (polled_tx, polled) = mpsc::channel();
+    let mut handles = Vec::new();
+    for index in 0..attempts {
+        let hop_context = Arc::clone(&context);
+        let hop_attempt = attempt.clone();
+        let polled_tx = polled_tx.clone();
+        let stop = Arc::clone(&stop);
+        handles.push(async_runtime.spawn(async move {
+            polled_tx.send(index).expect("the test is still listening");
+            while !stop.load(Ordering::Relaxed) {
+                let _ =
+                    aimux::project_service::input_delivery_receipt::finish_input_delivery_off_the_worker(
+                        &hop_context,
+                        hop_attempt.clone(),
+                        Err("gate".to_owned()),
+                    )
+                    .await;
+            }
+        }));
+    }
+    drop(polled_tx);
+
+    let mut reported = 0;
+    while reported < attempts {
+        match polled.recv_timeout(quiet_window) {
+            Ok(_) => reported += 1,
+            Err(_) => break,
+        }
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    drop(held);
+    for handle in handles {
+        handle.abort();
+    }
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(
+        reported, attempts,
+        "{reported} of {attempts} finish writers were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}: a finish receipt write is waiting for the metadata lock on an async worker"
+    );
+}
+
+/// The delivery tick calls the receipt HOPS, never the blocking functions.
+///
+/// This is the one check that would have caught the real risk, and nothing had
+/// it. The two gates above prove the hops keep their work off the workers; they
+/// say nothing about whether the tick still USES them. A review found that
+/// reverting either call site -- or the finish wrapper entirely -- passed the
+/// whole suite unchanged, which is the un-updated-caller class AGENTS.md names,
+/// and it sat directly against this module's own claim that each hop is proved.
+///
+/// A source assertion rather than a behavioural one, deliberately. Driving the
+/// tick far enough to reach a receipt write needs a live session in the
+/// topology and a deliverable target, and a fixture that elaborate is its own
+/// source of false confidence. `daemon_host_agent.rs` uses the same shape for
+/// the same reason.
+#[test]
+fn the_delivery_tick_calls_the_receipt_hops_not_the_blocking_writes() {
+    let source = include_str!("../src/project_service/agent_input_delivery.rs");
+    let marker = "pub async fn run_pending_agent_input_deliveries_async";
+    let block = source
+        .split(marker)
+        .nth(1)
+        .and_then(|tail| tail.split("\n/// Each of these is a named").next())
+        .expect("the async delivery tick");
+
+    assert!(
+        block.contains("begin_input_delivery_off_the_worker("),
+        "the tick must take the begin receipt write off the async worker"
+    );
+    assert!(
+        block.contains("finish_input_delivery_off_the_worker("),
+        "the tick must take the finish receipt write off the async worker"
+    );
+    assert!(
+        !block.contains("input_delivery_receipt::begin_input_delivery("),
+        "the tick called begin_input_delivery directly again: that takes the metadata state-update lock on one of two async workers, twice per delivered entry"
+    );
+    assert!(
+        !block.contains("input_delivery_receipt::finish_input_delivery("),
+        "the tick called finish_input_delivery directly again: same lock, same two workers"
+    );
+}
