@@ -4934,8 +4934,38 @@ fn the_agent_ps_route_does_not_hold_the_runtime_lock_across_its_upstream_call() 
 /// rather than trusting the shared machinery. `agent_ps_text` is in
 /// `local_cli_text_routes`, so a remote actor and an `Origin` are each refused
 /// on the route, not in the access decision.
+///
+/// Run over TWO upstream payloads, because the first version was happy-path
+/// only: it never produced a liveness refusal, so the carve-out's refusal
+/// rendering had no coverage and was correct only because
+/// `render_agent_ps_payload` happens to be shared. That is the shape of
+/// "currently correct for a reason no test states" that this route already
+/// shipped twice. Two refusals are vacuous only when they are refusals for the
+/// WRONG reason; two liveness refusals that must match byte for byte is a real
+/// parity claim, and it is the one that catches a future carve-out that
+/// renders without the check.
 #[test]
 fn the_carved_out_agent_ps_answers_what_the_locked_path_answers() {
+    assert_agent_ps_parity(
+        "a live agent",
+        AgentPsUpstream::spawn_live(),
+        200,
+        "from-the-upstream",
+    );
+    assert_agent_ps_parity(
+        "a failed liveness query",
+        AgentPsUpstream::spawn_unverified(),
+        503,
+        "could not verify agent tmux liveness: tmux socket busy",
+    );
+}
+
+fn assert_agent_ps_parity(
+    label: &str,
+    upstream: AgentPsUpstream,
+    expected_status: u16,
+    expected_body_fragment: &str,
+) {
     let fixture = RuntimeFixture::new("agent-ps-parity");
     let project = fixture.project("repo");
     let mut resolver = fixture.resolver();
@@ -4944,7 +4974,6 @@ fn the_carved_out_agent_ps_answers_what_the_locked_path_answers() {
         .expect("register project");
     let project_root = project.to_string_lossy().into_owned();
 
-    let upstream = AgentPsUpstream::spawn();
     let state_dir = resolver.project_state_dir_for(&project_root);
     fs::create_dir_all(&state_dir).expect("project state dir");
     save_metadata_endpoint(
@@ -4960,16 +4989,12 @@ fn the_carved_out_agent_ps_answers_what_the_locked_path_answers() {
 
     let runtime = Arc::new(Mutex::new(fixture.runtime()));
 
+    // Status AND the whole body. The first version compared a coarse tuple,
+    // which cannot see two paths rendering the same refusal differently.
     let served = |response: aimux::daemon::http::PreparedDaemonResponse| {
-        let status = response.status;
-        let body = String::from_utf8(response.body).expect("body");
         (
-            status,
-            body.contains("from-the-upstream"),
-            serde_json::from_str::<Value>(&body)
-                .ok()
-                .and_then(|json| json["agents"].as_array().map(|agents| agents.len()))
-                .is_some(),
+            response.status,
+            String::from_utf8(response.body).expect("body"),
         )
     };
     let ps_request = |method: &str, path: &str, header: Option<(&str, &str)>| {
@@ -4998,8 +5023,13 @@ fn the_carved_out_agent_ps_answers_what_the_locked_path_answers() {
             ps_request("GET", &path, None),
         ));
         assert_eq!(
-            local.0, 200,
-            "a local caller must be served agent ps at {path}, otherwise this test compares two refusals"
+            local.0, expected_status,
+            "{label}: a local caller must reach the upstream's answer at {path}, otherwise this compares two unrelated failures"
+        );
+        assert!(
+            local.1.contains(expected_body_fragment),
+            "{label}: the served body did not mention {expected_body_fragment:?} at {path}, so this case is not exercising what it claims: {}",
+            local.1
         );
 
         for method in ["GET", "HEAD", "POST"] {
@@ -5025,7 +5055,7 @@ fn the_carved_out_agent_ps_answers_what_the_locked_path_answers() {
                 };
                 assert_eq!(
                     through_carve_out, through_lock,
-                    "the carve-out answered {method} {header:?} at {path} differently from the locked path"
+                    "{label}: the carve-out answered {method} {header:?} at {path} differently from the locked path"
                 );
             }
         }
@@ -5033,31 +5063,51 @@ fn the_carved_out_agent_ps_answers_what_the_locked_path_answers() {
     fixture.cleanup();
 }
 
-/// A project service that answers agent-list requests with one live agent.
+/// A project service that answers agent-list requests with a given payload.
 struct AgentPsUpstream {
     port: u16,
 }
 
 impl AgentPsUpstream {
-    fn spawn() -> Self {
+    /// One live agent and no liveness complaint.
+    ///
+    /// There is deliberately NO `tmuxVerified` key here. An earlier version of
+    /// this fixture set `tmuxVerified: true` and claimed in a comment that it
+    /// was what kept the route from refusing. That was wrong twice over:
+    /// `reject_unverified_tmux_liveness` keys on
+    /// `tmuxLiveWindowQuery.ok == false`, and `tmuxVerified` has no readers in
+    /// the daemon at all. The payload avoided the refusal because the
+    /// `tmuxLiveWindowQuery` key is absent, which is the function's first `?`.
+    fn spawn_live() -> Self {
+        Self::spawn_serving(
+            json!({
+                "agents": [{
+                    "id": "from-the-upstream",
+                    "sessionId": "from-the-upstream",
+                    "status": "running"
+                }]
+            })
+            .to_string(),
+        )
+    }
+
+    /// A liveness query that failed, which the route must refuse with 503.
+    fn spawn_unverified() -> Self {
+        Self::spawn_serving(
+            json!({
+                "agents": [],
+                "tmuxLiveWindowQuery": { "ok": false, "error": "tmux socket busy" }
+            })
+            .to_string(),
+        )
+    }
+
+    fn spawn_serving(body: String) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind agent ps upstream");
         let port = listener.local_addr().expect("upstream addr").port();
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { break };
-                // `tmuxVerified` matters: the route refuses an unverified
-                // liveness payload, and a refusal on both paths would make the
-                // parity comparison vacuous.
-                let body = json!({
-                    "agents": [{
-                        "id": "from-the-upstream",
-                        "sessionId": "from-the-upstream",
-                        "status": "running",
-                        "tmuxVerified": true
-                    }],
-                    "tmuxVerified": true
-                })
-                .to_string();
                 let response = format!(
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                     body.len(),
@@ -5088,7 +5138,7 @@ fn the_carved_out_agent_ps_route_still_starts_a_project_service_that_is_down() {
         .expect("register project");
     let project_root = project.to_string_lossy().into_owned();
 
-    let upstream = AgentPsUpstream::spawn();
+    let upstream = AgentPsUpstream::spawn_live();
     let mut launcher = FakeLauncher::new(std::process::id() as i32);
     launcher.endpoint_port = Some(upstream.port);
     let launcher = Arc::new(launcher);

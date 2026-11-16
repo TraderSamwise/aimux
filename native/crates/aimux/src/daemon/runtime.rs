@@ -3081,6 +3081,14 @@ pub fn handle_daemon_runtime_request_with_mutex(
 /// handlers building the same body until they were given one
 /// `daemon_health_payload` between them.
 ///
+/// A 503 from `render` does NOT reach the ensure-and-retry, and the status
+/// collision invites the opposite conclusion. The retry inspects the
+/// `ProjectServiceJsonResult` that `send_project_service_json` returned,
+/// before `render` is called at all, so a 503 the route synthesises later --
+/// `aimux ps` refusing an unverified tmux liveness query, for instance --
+/// cannot restart a project service. The locked path behaves the same way,
+/// because its retry lives inside `get_hot_or_ensured_project_service_json`.
+///
 /// The guard condition, the lock/unlock split and the ensure-and-retry live
 /// HERE, once, rather than per route. `task_list_text` was carved out first
 /// and shipped twice broken -- once serving callers the router refuses because
