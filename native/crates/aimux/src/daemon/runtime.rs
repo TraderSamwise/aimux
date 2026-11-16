@@ -1344,16 +1344,25 @@ impl RealDaemonRuntime {
         }
     }
 
-    fn request_project_service_json(
+    /// Everything `request_project_service_json` needs the runtime for, and
+    /// nothing it does not.
+    ///
+    /// Split out because the blocking half needs NOTHING from `self` once the
+    /// request exists, and the daemon holds one global mutex around a whole
+    /// route. A caller that wants the upstream hop to happen unlocked builds
+    /// the request here, drops the guard, and sends it with
+    /// `send_project_service_json`. That is the 0.55s staircase measured on
+    /// sam-strix: eight concurrent `aimux task list` runs served one at a time.
+    pub fn build_project_service_json_request(
         &mut self,
         project: &str,
         route_path: &str,
         body: Option<Value>,
         timeout_ms: Option<u64>,
-    ) -> ProjectServiceJsonResult {
+    ) -> Result<(String, DaemonJsonRequest), DaemonRouteResponse> {
         let project_root = self.resolve_project_root_value(project);
         let Some(endpoint) = self.metadata_endpoint_for_root(&project_root) else {
-            return ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
+            return Err(crate::daemon::routing::text_error(
                 503,
                 format!("Error: project service unavailable for {project_root}"),
             ));
@@ -1368,33 +1377,31 @@ impl RealDaemonRuntime {
         if body_text.is_some() {
             headers.insert("content-type".to_owned(), "application/json".to_owned());
         }
-        let request = DaemonJsonRequest {
-            url: format!("http://{}:{}{}", endpoint.host, endpoint.port, route_path),
-            method,
-            headers,
-            body: body_text,
-            timeout_ms,
-        };
-        match execute_loopback_json_request(&request) {
-            Ok(response) if (200..300).contains(&response.status) => {
-                ProjectServiceJsonResult::ok(project_root, response.json)
-            }
-            Ok(response) => {
-                let message = response
-                    .json
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("project service request failed");
-                ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
-                    response.status,
-                    format!("Error: {message}"),
-                ))
-            }
-            Err(error) => ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
-                502,
-                format!("Error: {error}"),
-            )),
-        }
+        Ok((
+            project_root,
+            DaemonJsonRequest {
+                url: format!("http://{}:{}{}", endpoint.host, endpoint.port, route_path),
+                method,
+                headers,
+                body: body_text,
+                timeout_ms,
+            },
+        ))
+    }
+
+    fn request_project_service_json(
+        &mut self,
+        project: &str,
+        route_path: &str,
+        body: Option<Value>,
+        timeout_ms: Option<u64>,
+    ) -> ProjectServiceJsonResult {
+        let (project_root, request) =
+            match self.build_project_service_json_request(project, route_path, body, timeout_ms) {
+                Ok(resolved) => resolved,
+                Err(response) => return ProjectServiceJsonResult::error(response),
+            };
+        send_project_service_json(&project_root, &request)
     }
 
     fn read_project_online_agent_count(&mut self, project: &ProjectsRouteProject) -> Option<usize> {
@@ -3017,8 +3024,133 @@ pub fn handle_daemon_runtime_request_with_mutex(
             },
         );
     }
+    // The same condition the `doctor_versions` carve-out above carries, and for
+    // the same reason. `task_list_text` is in `local_cli_text_routes`, so
+    // `daemon/router.rs` refuses it two ways -- 403 "core text routes are
+    // loopback-only" for a remote actor, 403 "core text routes are cli-only"
+    // for a request with an `Origin` header. Those refusals live on the route,
+    // not in the access decision, and `assert_remote_access_allowed` allows an
+    // Owner actor and no actor alike. A carve-out without this condition
+    // therefore SERVES the task list to a relay-stamped owner and to a browser,
+    // both of which the daemon turns away. Anyone excluded here takes the
+    // locked path and is refused there, by the one copy of the rule.
+    if request.method == "GET"
+        && pathname == crate::core_command_contract::CORE_API_ROUTES.task_list_text
+        && parse_remote_actor(&request.headers).is_none()
+        && !crate::daemon::router::has_origin_header(&request.headers)
+    {
+        return handle_task_list_without_holding_the_lock(runtime, request);
+    }
     let mut runtime = runtime.lock().expect("daemon runtime mutex poisoned");
     handle_daemon_runtime_request(&mut *runtime, request)
+}
+
+/// `aimux task list`, served without the global runtime mutex held across the
+/// upstream hop.
+///
+/// Every other core text route is dispatched under that one mutex for its
+/// whole duration, blocking HTTP included. On sam-strix that showed up as an
+/// even 0.55s staircase: eight concurrent `aimux task list` runs completed one
+/// at a time, 16.15s through 19.92s, while a control that sends no daemon
+/// request did not queue at all. `/health` was taken out of the queue first,
+/// because the watchdog polls it and was ending healthy daemons; this is the
+/// queue itself.
+///
+/// Three phases. The runtime is needed for the first and nothing else:
+///   1. lock, resolve the project and build the request
+///   2. DROP THE GUARD, then make the call
+///   3. render, which is pure
+///
+/// The route's resolve and render halves are shared with
+/// `task_list_text_route` rather than reimplemented, because a carve-out means
+/// one route served from two places and `/health` already taught that lesson:
+/// it had two handlers building the same body until they were given one
+/// `daemon_health_payload` between them.
+fn handle_task_list_without_holding_the_lock(
+    runtime: &Arc<Mutex<RealDaemonRuntime>>,
+    request: DaemonHttpRequest,
+) -> PreparedDaemonResponse {
+    handle_daemon_http_request(
+        request,
+        |method, path, body, headers| {
+            // An empty project list is sound only because of the condition
+            // on the carve-out above: the list is consulted for Operator and
+            // Peer actors, and `parse_remote_actor(..).is_none()` means there
+            // is no actor at all. The proxy fast path has to exclude those two
+            // roles explicitly for the same reason.
+            build_daemon_route_context(method, path, body, headers.clone(), &[])
+        },
+        |_, path, body, context, _| {
+            if let Some(access) = &context.access_decision
+                && !access.ok
+            {
+                return DaemonRouteResponse::json(
+                    access.status.unwrap_or(403),
+                    json!({
+                        "ok": false,
+                        "error": access.error.as_deref().unwrap_or("remote access denied")
+                    }),
+                );
+            }
+            let route_url = DaemonRouteUrl::parse(path);
+            let (project, route_path) =
+                match crate::daemon::text::collaboration::resolve_task_list_request(
+                    &route_url, body,
+                ) {
+                    Ok(resolved) => resolved,
+                    Err(response) => return response,
+                };
+            // Phase one, under the lock: everything that needs the runtime.
+            let built = {
+                let mut locked = runtime.lock().expect("daemon runtime mutex poisoned");
+                locked.build_project_service_json_request(&project, &route_path, None, None)
+            };
+            // The guard is gone by here. That is the whole point of the carve-out.
+            let hot = match built {
+                Ok((project_root, json_request)) => {
+                    send_project_service_json(&project_root, &json_request)
+                }
+                Err(response) => ProjectServiceJsonResult::error(response),
+            };
+
+            // `get_hot_or_ensured_project_service_json` is what the generic
+            // route reaches through this trait, and on 502 or 503 it STARTS the
+            // project service and retries. Dropping that would mean
+            // `aimux task list` stopped working on a project whose service is
+            // not up -- a 503 where it used to start the service and answer.
+            // So the retry is mirrored here, with the same split: the ensure
+            // mutates the runtime and is locked, the send is not.
+            let result = match hot {
+                ProjectServiceJsonResult::Err { response }
+                    if response.status == 502 || response.status == 503 =>
+                {
+                    let ensured = {
+                        let mut locked = runtime.lock().expect("daemon runtime mutex poisoned");
+                        match locked.ensure_project_service_for_text_request(&project) {
+                            Ok(project_root) => locked.build_project_service_json_request(
+                                &project_root,
+                                &route_path,
+                                None,
+                                None,
+                            ),
+                            Err(error) => Err(crate::daemon::routing::text_error(
+                                502,
+                                format!("Error: {error}"),
+                            )),
+                        }
+                    };
+                    match ensured {
+                        Ok((project_root, json_request)) => {
+                            send_project_service_json(&project_root, &json_request)
+                        }
+                        Err(response) => ProjectServiceJsonResult::error(response),
+                    }
+                }
+                result => result,
+            };
+            crate::daemon::text::collaboration::render_task_list_result(&route_url, result)
+        },
+    )
 }
 
 /// The fast path builds its access context with an EMPTY project list, which
@@ -12486,5 +12618,40 @@ mod tests {
         ];
         let rc = unsafe { libc::utimes(c_path.as_ptr(), times.as_ptr()) };
         assert_eq!(rc, 0, "utimes failed for {}", path.display());
+    }
+}
+
+/// The blocking half of a project-service call, which needs no runtime at all.
+///
+/// Free rather than a method so that a caller which wants the hop unlocked
+/// CAN have it: build the request with `build_project_service_json_request`
+/// under the guard, drop the guard, come here. It does not by itself prevent
+/// anything -- `request_project_service_json` calls it from `&mut self`, so on
+/// every route that still goes through the generic locked dispatch this runs
+/// with the mutex held exactly as before. Nothing gates that, and the earlier
+/// claim that there was "nothing to hold the mutex through" was wrong.
+pub fn send_project_service_json(
+    project_root: &str,
+    request: &DaemonJsonRequest,
+) -> ProjectServiceJsonResult {
+    match execute_loopback_json_request(request) {
+        Ok(response) if (200..300).contains(&response.status) => {
+            ProjectServiceJsonResult::ok(project_root.to_owned(), response.json)
+        }
+        Ok(response) => {
+            let message = response
+                .json
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("project service request failed");
+            ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
+                response.status,
+                format!("Error: {message}"),
+            ))
+        }
+        Err(error) => ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
+            502,
+            format!("Error: {error}"),
+        )),
     }
 }

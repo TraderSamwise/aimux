@@ -623,15 +623,24 @@ pub fn handoff_mutation_text_route(
     handoff_mutation_response(route_url, json, input.action)
 }
 
-pub fn task_list_text_route(
-    runtime: &mut impl DaemonCollaborationTextRuntime,
+/// Phase one of the task list route: which project, and which upstream path.
+///
+/// Pure, and public, because this route is served from two places. The daemon
+/// carves it out ahead of the generic locked dispatch so the blocking hop to
+/// the project service happens WITHOUT the global runtime mutex held -- that
+/// serialization is the 0.55s staircase measured on sam-strix, where eight
+/// concurrent `aimux task list` runs completed one at a time. Both paths call
+/// this, and both render through `render_task_list_result`, so the two cannot
+/// drift -- the lesson `/health` taught when it had two routes building the
+/// same body. What actually holds them together is
+/// `the_carved_out_task_list_answers_what_the_locked_path_answers`; the shared
+/// helpers only make agreement easy, and the carve-out shipped once with these
+/// helpers in place and the router's refusals missing.
+pub fn resolve_task_list_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
-) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
+) -> Result<(String, String), DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
     let mut query = Vec::new();
     if let Some(session) = trimmed_param(route_url, body, "session") {
         query.push(format!("session={}", url_encode(&session)));
@@ -644,12 +653,28 @@ pub fn task_list_text_route(
     } else {
         format!("{}?{}", project_routes::tasks::LIST, query.join("&"))
     };
-    let (json, _) =
-        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
-            Ok(result) => result,
-            Err(response) => return response,
-        };
-    let tasks = match required_project_service_array(&json, "task list", "tasks") {
+    Ok((project, route_path))
+}
+
+/// Phase three from a raw project-service result.
+///
+/// The carve-out in `daemon/runtime.rs` calls this rather than unwrapping the
+/// result itself, so the unwrap and the render stay in one module and there is
+/// one less thing for the two call paths to disagree about.
+pub fn render_task_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    render_task_list_payload(route_url, &json)
+}
+
+/// Phase three: the upstream's JSON into the route's response. Pure.
+pub fn render_task_list_payload(route_url: &DaemonRouteUrl, json: &Value) -> DaemonRouteResponse {
+    let tasks = match required_project_service_array(json, "task list", "tasks") {
         Ok(tasks) => tasks,
         Err(response) => return response,
     };
@@ -659,6 +684,23 @@ pub fn task_list_text_route(
         payload.clone(),
         &render_core_task_list_lines(&payload),
     )
+}
+
+pub fn task_list_text_route(
+    runtime: &mut impl DaemonCollaborationTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let (project, route_path) = match resolve_task_list_request(route_url, body) {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
+    let (json, _) =
+        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
+            Ok(result) => result,
+            Err(response) => return response,
+        };
+    render_task_list_payload(route_url, &json)
 }
 
 pub fn review_list_text_route(

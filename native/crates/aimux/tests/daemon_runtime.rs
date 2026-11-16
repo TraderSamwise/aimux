@@ -4463,3 +4463,395 @@ fn overseer_watch_rejects_invalid_published_inventory_before_spawning_or_assigni
         fixture.cleanup();
     }
 }
+
+/// A listener that accepts and never answers.
+///
+/// This is what makes the lock question answerable without a latency budget.
+/// Core text routes build their `DaemonJsonRequest` with `timeout_ms: None`,
+/// so `execute_loopback_json_request` waits forever. A route that holds the
+/// runtime mutex across that call therefore holds it FOREVER, which turns
+/// "does the daemon still answer other routes" from a timing question into a
+/// progress question -- the only kind these gates can ask without becoming
+/// flaky on a loaded runner.
+struct HangingUpstream {
+    port: u16,
+    /// Signals each accepted connection. This is the gate's BARRIER, and the
+    /// upstream has to be the one to provide it: the route blocks inside its
+    /// HTTP call, so it can never signal "I am in the call" afterwards itself.
+    /// Without this the second thread races the first and can take the lock
+    /// before the first one wants it, which passes the gate while the bug is
+    /// present -- the same way an earlier interceptor gate passed by timing
+    /// luck.
+    accepted: mpsc::Receiver<()>,
+    /// The accepted connections, kept so the test can close them and let the
+    /// parked route finish, rather than leaving a thread wedged and files open
+    /// under the fixture root for the rest of the binary.
+    held: Arc<Mutex<Vec<TcpStream>>>,
+    _listener: TcpListener,
+}
+
+impl HangingUpstream {
+    fn spawn() -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind hanging upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
+        let accepting = listener.try_clone().expect("clone hanging upstream");
+        let (accepted_tx, accepted) = mpsc::channel();
+        let held: Arc<Mutex<Vec<TcpStream>>> = Arc::new(Mutex::new(Vec::new()));
+        let holding = Arc::clone(&held);
+        std::thread::spawn(move || {
+            // Accept and hold. Never write a byte, never close.
+            for stream in accepting.incoming() {
+                match stream {
+                    Ok(stream) => {
+                        holding.lock().expect("held streams").push(stream);
+                        if accepted_tx.send(()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        Self {
+            port,
+            accepted,
+            held,
+            _listener: listener,
+        }
+    }
+
+    /// Wait until the route is genuinely inside its upstream call.
+    ///
+    /// This closes TWO silent-pass modes, not one. The obvious one is the race:
+    /// a second thread that takes the lock before the first one wants it proves
+    /// nothing. The other is vacuity -- if the metadata endpoint ever stopped
+    /// resolving, the route would fail fast without making any call at all, the
+    /// probe would answer 200, and the gate would pass in milliseconds while
+    /// testing nothing. Because a TCP accept happens from inside
+    /// `execute_loopback_json_request`, requiring one proves the route really
+    /// reached the hop, so that second mode now fails loudly here instead.
+    fn wait_for_the_route_to_reach_the_call(&self) {
+        self.accepted
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the task list route never opened a connection to its upstream");
+    }
+
+    /// Let the parked route finish, so no thread stays wedged.
+    fn release(&self) {
+        for stream in self.held.lock().expect("held streams").iter() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+/// A core text route does not hold the runtime mutex across its project-service call.
+///
+/// This is the serialization measured on sam-strix: eight concurrent
+/// `aimux task list` runs completed as an even 0.55s staircase, one at a time,
+/// because every core text route holds the one global runtime mutex for its
+/// whole duration -- including the blocking HTTP hop to the project service.
+/// `/health` was taken out of that queue first, which stopped the watchdog
+/// ending healthy daemons; this is the queue itself.
+///
+/// The route's work splits in three with no trait change: resolve the request
+/// (needs the runtime, fast), make the call (needs nothing from the runtime
+/// once the request is built), render (pure). Only the middle phase must run
+/// unlocked.
+#[test]
+fn a_core_text_route_does_not_hold_the_runtime_lock_across_its_upstream_call() {
+    let fixture = RuntimeFixture::new("task-list-lock");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+
+    let upstream = HangingUpstream::spawn();
+    let project_root = project.to_string_lossy().into_owned();
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: upstream.port,
+            // The fixture's verifier trusts this process, so the endpoint
+            // reads as a live project service.
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    // Thread one: a core text route whose upstream never answers.
+    let stuck_runtime = Arc::clone(&runtime);
+    let stuck_path = format!(
+        "{}?project={}",
+        aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+        project_root
+    );
+    let stuck = std::thread::spawn(move || {
+        let _ = handle_daemon_runtime_request_with_mutex(
+            &stuck_runtime,
+            health_identity,
+            request("GET", &stuck_path),
+        );
+    });
+
+    // THE BARRIER. Until the upstream reports a connection, the stuck route may
+    // not have reached its HTTP call at all, and a second thread that takes the
+    // lock before the first one wants it proves nothing. The gate's first form
+    // was missing this.
+    upstream.wait_for_the_route_to_reach_the_call();
+
+    // Thread two: any other route. It needs the runtime, so it can only answer
+    // if the stuck route is not sitting on the mutex.
+    //
+    // WHY `/projects` IS A MEANINGFUL PROBE, because it is not obvious: it has
+    // its own fast path ahead of this carve-out, so it looks like a route that
+    // never takes the mutex at all. It does -- `daemon_project_read_snapshot`
+    // locks just long enough to clone the resolver and the verifier, then does
+    // the slow directory work unlocked. That brief acquisition is the thing
+    // this gate detects. If `/projects` is ever made snapshot-free, this gate
+    // goes quietly vacuous and must move to another route that still needs the
+    // runtime; the mutation proof in the commit body is what would catch that.
+    let other_runtime = Arc::clone(&runtime);
+    let (answered_tx, answered) = mpsc::channel();
+    std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &other_runtime,
+            health_identity,
+            request("GET", "/projects"),
+        );
+        let _ = answered_tx.send(response.status);
+    });
+
+    // A quiet window, not a deadline: the stuck route holds its lock forever
+    // when this regresses, so the failure is permanent rather than slow and a
+    // loaded machine cannot turn a pass into a fail.
+    let outcome = answered.recv_timeout(Duration::from_secs(30));
+
+    assert_eq!(
+        outcome.ok(),
+        Some(200),
+        "GET /projects never answered while a core text route waited on an upstream that never replies. The route is holding the global runtime mutex across its project-service call, which is the 0.55s staircase measured on sam-strix: every aimux command on the machine queues behind whichever one is slowest"
+    );
+
+    // Close the held connection so the parked route errors out and finishes,
+    // instead of leaving a wedged thread and open files under the fixture root.
+    upstream.release();
+    let _ = stuck.join();
+    fixture.cleanup();
+}
+
+/// A project service that answers task-list requests.
+struct TaskListUpstream {
+    port: u16,
+}
+
+impl TaskListUpstream {
+    fn spawn() -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind task list upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let body =
+                    json!({ "tasks": [{ "id": "t1", "title": "from the upstream" }] }).to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                use std::io::Write;
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        Self { port }
+    }
+}
+
+/// The carve-out still STARTS a project service that is not running.
+///
+/// This is a regression the carve-out nearly shipped, so it gets a gate of its
+/// own. `aimux task list` reaches the project service through
+/// `DaemonCollaborationTextRuntime::get_project_service_json`, which is
+/// `get_hot_or_ensured_project_service_json`: on 502 or 503 it starts the
+/// service and retries. A carve-out that calls build+send directly answers 503
+/// instead, so the command would stop working on any project whose service is
+/// not already up -- the common case after a reboot.
+#[test]
+fn the_carved_out_task_list_route_still_starts_a_project_service_that_is_down() {
+    let fixture = RuntimeFixture::new("task-list-cold");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    // No endpoint file: the project service is NOT running. The launcher
+    // publishes one pointing at a real upstream when asked to start it.
+    let upstream = TaskListUpstream::spawn();
+    let mut launcher = FakeLauncher::new(std::process::id() as i32);
+    launcher.endpoint_port = Some(upstream.port);
+    let launcher = Arc::new(launcher);
+    let runtime = Arc::new(Mutex::new(fixture.runtime_with_launcher(
+        Arc::clone(&launcher),
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    )));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        health_identity,
+        request(
+            "GET",
+            &format!(
+                "{}?project={}",
+                aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+                project_root
+            ),
+        ),
+    );
+
+    assert_eq!(
+        response.status, 200,
+        "the carved-out route answered {} instead of starting the project service and retrying. Without the ensure-and-retry the generic route performs, `aimux task list` returns 503 on any project whose service is not already up",
+        response.status
+    );
+    assert_eq!(
+        launcher.calls(),
+        vec![project_root],
+        "the route should have asked the launcher to start the project service exactly once"
+    );
+    fixture.cleanup();
+}
+
+/// The carved-out task list answers exactly what the locked path answers.
+///
+/// This is the test the `doctor_versions` carve-out already had and mine did
+/// not, and its absence is how I shipped a carve-out that served the task list
+/// to callers the daemon refuses. `task_list_text` is in
+/// `local_cli_text_routes`, so the router turns away a remote actor ("core text
+/// routes are loopback-only") and a request carrying an `Origin` ("core text
+/// routes are cli-only"). Those refusals live on the route, and
+/// `assert_remote_access_allowed` allows an Owner actor and no actor alike, so
+/// a carve-out missing that condition answers 200 where the daemon answers 403.
+///
+/// Comparing the two paths against each other is the point: a per-path test
+/// passes happily while the paths disagree, which is exactly how this class
+/// survives.
+#[test]
+fn the_carved_out_task_list_answers_what_the_locked_path_answers() {
+    let fixture = RuntimeFixture::new("task-list-parity");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    // A live upstream, so a local caller really is SERVED at both renderings.
+    // Without it both paths would refuse everything and the comparison would
+    // pass for free.
+    let upstream = TaskListUpstream::spawn();
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: upstream.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+
+    let served = |response: aimux::daemon::http::PreparedDaemonResponse| {
+        let status = response.status;
+        let body = String::from_utf8(response.body).expect("body");
+        // WHICH rendering, not merely that something came back: a carve-out
+        // that dropped the query string would still answer 200, with text
+        // where `--json` expects JSON.
+        (
+            status,
+            body.contains("from the upstream"),
+            serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|json| json["tasks"].as_array().map(|tasks| tasks.len()))
+                .is_some(),
+        )
+    };
+    let task_request = |method: &str, path: &str, header: Option<(&str, &str)>| {
+        let mut request = request(method, path);
+        if let Some((name, value)) = header {
+            request.headers.insert(name.into(), value.into());
+        }
+        request
+    };
+
+    for path in [
+        format!(
+            "{}?project={}",
+            aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+            project_root
+        ),
+        format!(
+            "{}?project={}&json=1",
+            aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+            project_root
+        ),
+    ] {
+        // Not vacuous: a local caller is really served at both paths.
+        let local = served(handle_daemon_runtime_request_with_mutex(
+            &runtime,
+            DaemonHealthIdentity::from_runtime(&runtime),
+            task_request("GET", &path, None),
+        ));
+        assert_eq!(
+            local.0, 200,
+            "a local caller must be served the task list at {path}, otherwise this test compares two refusals"
+        );
+
+        for method in ["GET", "HEAD", "POST"] {
+            for header in [
+                None,
+                Some(("x-aimux-actor-role", "owner")),
+                Some(("x-aimux-actor-role", "guest")),
+                Some(("x-aimux-actor-role", "operator")),
+                // An origin CORS ALLOWS, so the request reaches the route and
+                // the cli-only rule is what refuses it. A cross-origin value
+                // would be rejected before any route ran, and the `Origin`
+                // half of the condition could go missing unnoticed.
+                Some(("origin", "http://localhost:3000")),
+                Some(("Origin", "http://localhost:3000")),
+            ] {
+                let through_carve_out = served(handle_daemon_runtime_request_with_mutex(
+                    &runtime,
+                    DaemonHealthIdentity::from_runtime(&runtime),
+                    task_request(method, &path, header),
+                ));
+                let through_lock = {
+                    let mut locked = runtime.lock().expect("runtime lock");
+                    served(handle_daemon_runtime_request(
+                        &mut *locked,
+                        task_request(method, &path, header),
+                    ))
+                };
+                assert_eq!(
+                    through_carve_out, through_lock,
+                    "the carve-out answered {method} {header:?} at {path} differently from the locked path"
+                );
+            }
+        }
+    }
+    fixture.cleanup();
+}
