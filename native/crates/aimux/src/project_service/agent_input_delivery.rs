@@ -795,6 +795,25 @@ pub async fn run_pending_agent_input_deliveries_async(
 ///
 /// Naming each hop gives each one a gate that drives the real production call,
 /// and each is mutation-proved on its own.
+pub async fn load_delivery_queue_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    path: &Path,
+) -> Result<AgentInputDeliveryState, String> {
+    let context = Arc::clone(context);
+    let path = path.to_path_buf();
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "queue-load",
+            "project-service",
+        ),
+        move || load_delivery_queue_under_lock(&context, &path),
+    )
+    .await
+    // A pool task that never ran is not an unreadable queue.
+    .map_err(|error| format!("agent input delivery queue load did not finish: {error}"))?
+}
+
 /// Resolve one queued entry's target without holding an async worker.
 ///
 /// `resolve_queued_delivery_target` reads the runtime topology file through
@@ -830,25 +849,6 @@ async fn resolve_queued_delivery_target_off_the_worker(
     .await
     // A pool task that never ran is not an unresolvable target.
     .map_err(|error| format!("agent input delivery target resolve did not finish: {error}"))
-}
-
-pub async fn load_delivery_queue_off_the_worker(
-    context: &Arc<ProjectServiceRequestContext>,
-    path: &Path,
-) -> Result<AgentInputDeliveryState, String> {
-    let context = Arc::clone(context);
-    let path = path.to_path_buf();
-    crate::async_runtime::spawn_blocking_named(
-        crate::async_runtime::scoped_task_name(
-            AGENT_INPUT_DELIVERY_TASK_NAME,
-            "queue-load",
-            "project-service",
-        ),
-        move || load_delivery_queue_under_lock(&context, &path),
-    )
-    .await
-    // A pool task that never ran is not an unreadable queue.
-    .map_err(|error| format!("agent input delivery queue load did not finish: {error}"))?
 }
 
 /// Publishes the queued-input counts off the worker.
