@@ -447,6 +447,14 @@ impl Drop for WaitNotice {
     }
 }
 
+/// What the "still waiting" line calls the thing it is waiting for.
+///
+/// Separate from the request path so the wording is provable without a socket
+/// and a stalled daemon.
+fn wait_notice_subject(method: &str, host: &str, port: u16, target: &str) -> String {
+    format!("aimux daemon at {host}:{port} ({method} {target})")
+}
+
 fn execute_loopback_http_request(
     request: &DaemonJsonRequest,
 ) -> Result<Vec<u8>, CoreCommandTransportError> {
@@ -455,10 +463,18 @@ fn execute_loopback_http_request(
     let timeout = request_timeout(request.timeout_ms);
     // Only an unbounded wait needs this. A request with a timeout ends by
     // itself and says so; a long-lived stream is waiting by design.
+    //
+    // The method and route are named because the address alone was read as
+    // "the daemon has not started": a connected socket on a listening daemon
+    // produced "still waiting for aimux daemon at 127.0.0.1:43190 (40s)",
+    // which says nothing about which request is stuck. Whoever sees this next
+    // should be able to tell a cold start from one slow route.
     let _notice = timeout.is_none().then(|| {
-        WaitNotice::start(format!(
-            "aimux daemon at {}:{}",
-            endpoint.host, endpoint.port
+        WaitNotice::start(wait_notice_subject(
+            request.method.as_str(),
+            &endpoint.host,
+            endpoint.port,
+            &endpoint.target,
         ))
     });
     stream
@@ -1247,6 +1263,25 @@ mod tests {
             started.elapsed() < Duration::from_millis(250),
             "dropping the notice must not wait on a poll interval: {:?}",
             started.elapsed()
+        );
+    }
+
+    /// The wait names the request, not just the address.
+    ///
+    /// "still waiting for aimux daemon at 127.0.0.1:43190 (40s)" was read as a
+    /// daemon that had not started, on a box where the daemon was listening
+    /// and one route was slow. The address cannot tell those apart; the method
+    /// and route can.
+    #[test]
+    fn wait_notice_names_the_request_it_is_waiting_on() {
+        let subject = wait_notice_subject("GET", "127.0.0.1", 43190, "/core/task/list-text?x=1");
+        assert!(
+            subject.contains("GET") && subject.contains("/core/task/list-text"),
+            "a wait nobody can attribute to a route is not a diagnosis: {subject}"
+        );
+        assert!(
+            subject.contains("127.0.0.1:43190"),
+            "the address still has to be there, for the two-daemon setup: {subject}"
         );
     }
 

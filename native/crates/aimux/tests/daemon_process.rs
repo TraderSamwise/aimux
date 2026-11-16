@@ -5,7 +5,9 @@ use aimux::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
 };
 use aimux::daemon::process::handle_daemon_runtime_request;
-use aimux::daemon::runtime::{RealDaemonRuntime, handle_daemon_runtime_request_with_mutex};
+use aimux::daemon::runtime::{
+    DaemonHealthIdentity, RealDaemonRuntime, handle_daemon_runtime_request_with_mutex,
+};
 use aimux::daemon::server::DaemonHttpRequest;
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::agents::{DaemonAgentTextRuntime, ProjectServicePostOptions};
@@ -1344,11 +1346,15 @@ fn runtime_mutex_wrapper_routes_owner_get_proxy_without_head_of_line_blocking() 
     request
         .headers
         .insert("x-aimux-actor-role".into(), "owner".into());
+    // Before the hold, not inside it: `from_runtime` takes the same mutex,
+    // and these tests exist to prove a route answers while it is held.
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     let held = runtime.lock().expect("hold runtime lock");
     let (response_tx, response_rx) = mpsc::channel();
     let request_runtime = Arc::clone(&runtime);
     let request_thread = thread::spawn(move || {
-        let response = handle_daemon_runtime_request_with_mutex(&request_runtime, request);
+        let response =
+            handle_daemon_runtime_request_with_mutex(&request_runtime, health_identity, request);
         response_tx
             .send(response)
             .expect("send proxy response before lock release");
@@ -1409,11 +1415,15 @@ fn runtime_mutex_wrapper_routes_owner_post_proxy_without_head_of_line_blocking()
     request
         .body_chunks
         .push(br#"{"sessionId":"s","text":"hello"}"#.to_vec());
+    // Before the hold, not inside it: `from_runtime` takes the same mutex,
+    // and these tests exist to prove a route answers while it is held.
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     let held = runtime.lock().expect("hold runtime lock");
     let (response_tx, response_rx) = mpsc::channel();
     let request_runtime = Arc::clone(&runtime);
     let request_thread = thread::spawn(move || {
-        let response = handle_daemon_runtime_request_with_mutex(&request_runtime, request);
+        let response =
+            handle_daemon_runtime_request_with_mutex(&request_runtime, health_identity, request);
         response_tx
             .send(response)
             .expect("send proxy response before lock release");
@@ -1465,7 +1475,11 @@ fn runtime_mutex_wrapper_still_denies_guest_desktop_state_proxy_fast_path() {
         .headers
         .insert("x-aimux-actor-role".into(), "guest".into());
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request);
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request,
+    );
 
     assert_eq!(response.status, 403);
     assert_eq!(
@@ -1497,7 +1511,11 @@ fn runtime_mutex_wrapper_still_denies_guest_live_pane_input_proxy_fast_path() {
         .body_chunks
         .push(br#"{"sessionId":"s","text":"hello"}"#.to_vec());
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request);
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request,
+    );
 
     assert_eq!(response.status, 403);
     assert_eq!(
@@ -1591,6 +1609,9 @@ fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
         },
     )));
 
+    // Before the hold, not inside it: `from_runtime` takes the same mutex,
+    // and these tests exist to prove a route answers while it is held.
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     let held = runtime.lock().expect("hold runtime lock");
 
     // The control: a guest proxy request is on the fast path, so it is
@@ -1602,7 +1623,8 @@ fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
         request
             .headers
             .insert("x-aimux-actor-role".into(), "guest".into());
-        let response = handle_daemon_runtime_request_with_mutex(&guest_runtime, request);
+        let response =
+            handle_daemon_runtime_request_with_mutex(&guest_runtime, health_identity, request);
         guest_tx.send(response.status).expect("send guest status");
     });
     assert_eq!(
@@ -1616,8 +1638,11 @@ fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
     let peer_runtime = Arc::clone(&runtime);
     let (peer_tx, peer_rx) = mpsc::channel();
     let peer_thread = thread::spawn(move || {
-        let response =
-            handle_daemon_runtime_request_with_mutex(&peer_runtime, peer_input_request());
+        let response = handle_daemon_runtime_request_with_mutex(
+            &peer_runtime,
+            health_identity,
+            peer_input_request(),
+        );
         peer_tx.send(response.status).expect("send peer status");
     });
     assert!(

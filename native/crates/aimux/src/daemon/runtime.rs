@@ -2833,8 +2833,44 @@ fn project_service_info_value() -> Value {
         .unwrap_or_else(|error| json!({ "error": error.to_string() }))
 }
 
+/// The two fields `/health` answers with, read without the runtime mutex.
+///
+/// `/health` is what every readiness wait polls, and `daemon_supervisor.rs`
+/// polls it on a 400ms client budget. It was already written as a route that
+/// does no slow work -- and then took the global runtime mutex anyway, for two
+/// fields that are never written after startup. So whenever any other route
+/// held that mutex, readiness was answered late or not at all, and the CLI
+/// printed "still waiting for aimux daemon at <host>:<port>" about a daemon
+/// that was up and listening the whole time.
+///
+/// Measured on sam-strix, 2026-11-16, against the installed daemon on :43190:
+/// `/health` at p50 was 0.44ms and at max 4.5s over 20 sequential calls, and
+/// eight concurrent calls all returned together at 11.2s. Nothing in the route
+/// is slow; every outlier was a wait for someone else's lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DaemonHealthIdentity {
+    pub pid: i32,
+    pub port: u16,
+}
+
+impl DaemonHealthIdentity {
+    /// Takes the runtime mutex once, to copy two values out of it.
+    ///
+    /// The daemon calls this at startup, before the serve loop, and keeps the
+    /// result for the process's life. Calling it per request would hand the
+    /// lock back exactly the route this type exists to keep out of it.
+    pub fn from_runtime(runtime: &Arc<Mutex<RealDaemonRuntime>>) -> Self {
+        let runtime = runtime.lock().expect("daemon runtime mutex poisoned");
+        Self {
+            pid: runtime.info.pid,
+            port: runtime.info.port,
+        }
+    }
+}
+
 pub fn handle_daemon_runtime_request_with_mutex(
     runtime: &Arc<Mutex<RealDaemonRuntime>>,
+    health_identity: DaemonHealthIdentity,
     request: DaemonHttpRequest,
 ) -> PreparedDaemonResponse {
     let route_url = DaemonRouteUrl::parse(&request.path);
@@ -2845,7 +2881,7 @@ pub fn handle_daemon_runtime_request_with_mutex(
             |method, path, body, headers| {
                 build_daemon_route_context(method, path, body, headers.clone(), &[])
             },
-            |_, _, _, context, issued_at| {
+            |_, _, _, context, _issued_at| {
                 if let Some(access) = &context.access_decision
                     && !access.ok
                 {
@@ -2857,17 +2893,17 @@ pub fn handle_daemon_runtime_request_with_mutex(
                         }),
                     );
                 }
-                let info = {
-                    let runtime = runtime.lock().expect("daemon runtime mutex poisoned");
-                    runtime.current_daemon_info(issued_at)
-                };
+                // No `runtime.lock()` here, deliberately. See
+                // `DaemonHealthIdentity`: this route is the readiness probe,
+                // and taking the global mutex made it answer at the speed of
+                // whatever unrelated work happened to hold it.
                 DaemonRouteResponse::json(
                     200,
                     json!({
                         "ok": true,
                         "kind": DAEMON_HEALTH_KIND,
-                        "pid": info.pid,
-                        "port": info.port,
+                        "pid": health_identity.pid,
+                        "port": health_identity.port,
                         "serviceInfo": project_service_info_value(),
                     }),
                 )
@@ -3368,6 +3404,9 @@ pub fn run_daemon_internal() -> Result<()> {
         runtime.connect_relay_on_startup();
     }
     let route_runtime = Arc::clone(&runtime);
+    // Once, here, and never again for the daemon's life. `/health` answers
+    // from this copy so the readiness probe never queues behind the mutex.
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     let stream_runtime = Arc::clone(&runtime);
     let shutdown_runtime = Arc::clone(&runtime);
     // Off the async runtime on purpose: a watchdog scheduled on the runtime it
@@ -3377,7 +3416,9 @@ pub fn run_daemon_internal() -> Result<()> {
     let serve_result = crate::async_runtime::process_runtime().block_on(
         serve_daemon_http_with_metadata_and_interceptor_until(
             DaemonListenConfig { host, port },
-            move |request| handle_daemon_runtime_request_with_mutex(&route_runtime, request),
+            move |request| {
+                handle_daemon_runtime_request_with_mutex(&route_runtime, health_identity, request)
+            },
             || crate::daemon::listener::DaemonRequestMetadata {
                 issued_at: now_iso(),
                 stopping: crate::process_signals::received_shutdown_signal().is_some(),
