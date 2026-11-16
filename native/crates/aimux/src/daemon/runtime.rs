@@ -1223,23 +1223,8 @@ impl RealDaemonRuntime {
     }
 
     fn metadata_endpoint_for_root(&self, project_root: &str) -> Option<MetadataApiEndpoint> {
-        let mut resolver = self.resolver.clone();
-        let state_dir = resolver.project_state_dir_for(project_root);
-        let project_id = compute_project_id(Path::new(project_root));
-        load_metadata_endpoint(state_dir).filter(|endpoint| {
-            self.project_service_process_verifier
-                .is_live_native_project_service(&ProjectServiceState {
-                    project_id: project_id.clone(),
-                    project_root: project_root.to_owned(),
-                    pid: endpoint.pid,
-                    started_at: String::new(),
-                    updated_at: String::new(),
-                    status: None,
-                    restart_count: None,
-                    last_restart_at: None,
-                    last_exit: None,
-                })
-        })
+        let (resolver, verifier) = self.project_service_resolution_handles();
+        resolve_live_metadata_endpoint(resolver, &verifier, project_root)
     }
 
     fn remove_project_with_tmux_stop(
@@ -1353,6 +1338,19 @@ impl RealDaemonRuntime {
     /// the request here, drops the guard, and sends it with
     /// `send_project_service_json`. That is the 0.55s staircase measured on
     /// sam-strix: eight concurrent `aimux task list` runs served one at a time.
+    /// Delegates, so there is exactly one copy of the resolution SEMANTICS.
+    ///
+    /// The first version of this split shared only `build_daemon_json_request`
+    /// -- the half that shapes a URL and headers -- and left duplicated the
+    /// half that decides whether this endpoint is the right PROCESS: the
+    /// synthesized `ProjectServiceState` handed to the liveness filter, the
+    /// `compute_project_id` input, and the 503 text. That is the drift the
+    /// shared builder was supposed to prevent, applied to the trivial half.
+    /// A future change to what the filter is given -- honouring `status`, say
+    /// -- would have landed in one copy.
+    ///
+    /// It needs nothing from `self` beyond the two handles, which is why it can
+    /// be a wrapper at all.
     pub fn build_project_service_json_request(
         &mut self,
         project: &str,
@@ -1360,17 +1358,10 @@ impl RealDaemonRuntime {
         body: Option<Value>,
         timeout_ms: Option<u64>,
     ) -> Result<(String, DaemonJsonRequest), DaemonRouteResponse> {
-        let project_root = self.resolve_project_root_value(project);
-        let Some(endpoint) = self.metadata_endpoint_for_root(&project_root) else {
-            return Err(crate::daemon::routing::text_error(
-                503,
-                format!("Error: project service unavailable for {project_root}"),
-            ));
-        };
-        Ok((
-            project_root,
-            build_daemon_json_request(&endpoint, route_path, body, timeout_ms),
-        ))
+        let (resolver, verifier) = self.project_service_resolution_handles();
+        resolve_project_service_json_request(
+            resolver, &verifier, project, route_path, body, timeout_ms,
+        )
     }
 
     /// The resolver and the verifier, for a caller that wants to resolve an
@@ -1529,17 +1520,12 @@ impl RealDaemonRuntime {
                 timeout_ms,
             );
         };
-        let body_text = body.to_string();
-        let request = DaemonJsonRequest {
-            url: format!("http://{}:{}{}", endpoint.host, endpoint.port, route_path),
-            method: DaemonHttpMethod::Post,
-            headers: BTreeMap::from([
-                ("accept".to_owned(), "application/json".to_owned()),
-                ("content-type".to_owned(), "application/json".to_owned()),
-            ]),
-            body: Some(body_text),
-            timeout_ms,
-        };
+        // The shared builder, not a third hand-rolled copy of the same POST
+        // shape. This one survived the first pass and is exactly the `/health`
+        // failure the split was meant to end: the same accept and
+        // content-type headers and the same URL format, written out again.
+        let request =
+            build_daemon_json_request(&endpoint, route_path, Some(body.clone()), timeout_ms);
         match execute_loopback_json_request(&request) {
             Ok(response) if (200..300).contains(&response.status) => {
                 ProjectServiceJsonResult::ok(project_root, response.json)
@@ -3195,7 +3181,7 @@ fn handle_core_read_route_without_holding_the_lock(
             // The guard is gone by here, and the resolution below is where the
             // spawns live.
             let built = resolve_project_service_json_request(
-                &resolver,
+                resolver,
                 &verifier,
                 &project,
                 &route_path,
@@ -12756,6 +12742,43 @@ fn build_daemon_json_request(
     }
 }
 
+/// Which endpoint, if any, is a LIVE project service for this root.
+///
+/// The one copy of the liveness semantics. What lives here is not the URL
+/// shape -- that is `build_daemon_json_request` -- but the decision about
+/// whether an endpoint belongs to the right PROCESS: the `compute_project_id`
+/// input and the synthesized `ProjectServiceState` the verifier is handed.
+///
+/// It was duplicated between the method and the unlocked resolution after the
+/// first pass of this split, which shared the trivial half and left the half
+/// that matters in two places. A future change to what the filter is given --
+/// honouring `status`, say, or keying on `started_at` -- would have landed in
+/// one copy and silently diverged the two paths. The parity tests could not
+/// have caught that, because they compare the paths against each other and
+/// both would have been wrong in the same direction only until someone edited
+/// one.
+fn resolve_live_metadata_endpoint(
+    mut resolver: PathResolver,
+    verifier: &Arc<dyn ProjectServiceProcessVerifier>,
+    project_root: &str,
+) -> Option<MetadataApiEndpoint> {
+    let state_dir = resolver.project_state_dir_for(project_root);
+    let project_id = compute_project_id(Path::new(project_root));
+    load_metadata_endpoint(state_dir).filter(|endpoint| {
+        verifier.is_live_native_project_service(&ProjectServiceState {
+            project_id: project_id.clone(),
+            project_root: project_root.to_owned(),
+            pid: endpoint.pid,
+            started_at: String::new(),
+            updated_at: String::new(),
+            status: None,
+            restart_count: None,
+            last_restart_at: None,
+            last_exit: None,
+        })
+    })
+}
+
 /// Everything phase one used to do under the lock, with no `&self` to hold the
 /// guard through.
 ///
@@ -12780,33 +12803,20 @@ fn build_daemon_json_request(
 /// serving a request from an unrelated listener, and the retry cannot recover
 /// that because the request would SUCCEED against the wrong process.
 pub fn resolve_project_service_json_request(
-    resolver: &PathResolver,
+    mut resolver: PathResolver,
     verifier: &Arc<dyn ProjectServiceProcessVerifier>,
     project: &str,
     route_path: &str,
     body: Option<Value>,
     timeout_ms: Option<u64>,
 ) -> Result<(String, DaemonJsonRequest), DaemonRouteResponse> {
-    let mut resolver = resolver.clone();
+    // By value: the caller already cloned it under the guard, and cloning
+    // again here would pay the map copy twice.
     let project_root = resolver
         .resolve_repo_root(project)
         .to_string_lossy()
         .into_owned();
-    let state_dir = resolver.project_state_dir_for(&project_root);
-    let project_id = compute_project_id(Path::new(&project_root));
-    let endpoint = load_metadata_endpoint(state_dir).filter(|endpoint| {
-        verifier.is_live_native_project_service(&ProjectServiceState {
-            project_id: project_id.clone(),
-            project_root: project_root.clone(),
-            pid: endpoint.pid,
-            started_at: String::new(),
-            updated_at: String::new(),
-            status: None,
-            restart_count: None,
-            last_restart_at: None,
-            last_exit: None,
-        })
-    });
+    let endpoint = resolve_live_metadata_endpoint(resolver, verifier, &project_root);
     let Some(endpoint) = endpoint else {
         return Err(crate::daemon::routing::text_error(
             503,
