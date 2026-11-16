@@ -2934,20 +2934,40 @@ fn the_delivery_tick_clears_failures_off_the_worker() {
         }
     }
     let body = &SOURCE[start..end.expect("the tick's body closes")];
+    // The guard has to name the function that actually FOLLOWS the tick in
+    // source order, which is `load_delivery_queue_off_the_worker` -- naming the
+    // clear hop was weak, because the slice would have to run much further to
+    // reach it, so a modest overshoot went undetected.
     assert!(
-        !body.contains("async fn clear_agent_input_delivery_failure_off_the_worker"),
-        "the slice overshoots into a hop definition, which is what made an earlier test of this shape vacuous"
+        !body.contains("pub async fn load_delivery_queue_off_the_worker"),
+        "the slice overshoots past the end of the tick into the next function, which is what made an earlier test of this shape vacuous"
+    );
+    assert!(
+        !body.contains("async fn clear_retiring_delivery_failures_off_the_worker"),
+        "the slice overshoots into a hop definition"
     );
 
-    // The retiring loop SPECIFICALLY, not just somewhere in the function.
-    let retiring = body
-        .find("for session_id in retiring.difference(&reported)")
-        .expect("the end-of-tick retiring loop is still spelled this way");
-    let retiring_loop = &body[retiring..];
-    let retiring_loop = &retiring_loop[..retiring_loop.find('}').expect("the loop closes")];
+    // The RETIRING SET specifically, not just somewhere in the function. The
+    // steady-state cost lives here: `retiring` is populated on the Waiting
+    // branch, so this is a store write per offline session on every tick, and
+    // a test that only checked the function somewhere would miss it.
+    //
+    // It is now one batched hop rather than a per-session loop, because the
+    // per-session version put an await inside the loop and `run_task_once`
+    // wraps a tick in `tokio::time::timeout`, which DROPS the future -- so the
+    // loop could be cut half way and leave some banners retired and others
+    // not. The batch restores the atomicity the await-free loop used to have.
+    let batched = body
+        .find("clear_retiring_delivery_failures_off_the_worker(")
+        .expect("the end-of-tick retiring clear still goes through the batch hop");
+    let args = &body[batched..];
+    let args = &args[..args
+        .find(")\n")
+        .or_else(|| args.find(",\n    )"))
+        .unwrap_or(args.len())];
     assert!(
-        retiring_loop.contains("clear_agent_input_delivery_failure_off_the_worker("),
-        "the end-of-tick retiring loop clears failures inline on the async worker; this is the steady-state path for an offline agent, a file read and write per session on every tick"
+        args.contains("retiring.difference(&reported)"),
+        "the batched clear is not being handed the retiring set, so the steady-state path for an offline agent may not be covered at all: {args}"
     );
 
     // Spelling-independent across the whole tick: every call must go through a

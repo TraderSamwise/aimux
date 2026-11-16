@@ -639,13 +639,16 @@ pub async fn run_pending_agent_input_deliveries_async(
             }
             QueuedDeliveryTarget::Blocked(reason) => {
                 reported.insert(pending.session_id.clone());
-                record_agent_input_delivery_failure_off_the_worker(
+                if let Err(error) = record_agent_input_delivery_failure_off_the_worker(
                     context,
                     Some(&pending.session_id),
                     "Agent input delivery blocked",
                     reason.clone(),
                 )
-                .await;
+                .await
+                {
+                    failures.push(error);
+                }
                 failures.push(reason);
                 remaining.push(pending);
                 continue;
@@ -662,13 +665,16 @@ pub async fn run_pending_agent_input_deliveries_async(
         match decision {
             AgentInputDeliveryDecision::Hold { reason, .. } => {
                 if reason.starts_with("tmux client activity probe failed") {
-                    record_agent_input_delivery_failure_off_the_worker(
+                    if let Err(error) = record_agent_input_delivery_failure_off_the_worker(
                         context,
                         Some(&pending.session_id),
                         "Agent input delivery held",
                         reason.clone(),
                     )
-                    .await;
+                    .await
+                    {
+                        failures.push(error);
+                    }
                     failures.push(reason);
                 }
                 remaining.push(pending);
@@ -688,13 +694,16 @@ pub async fn run_pending_agent_input_deliveries_async(
                         Ok(attempt) => attempt,
                         Err(error) => {
                             failures.push(error.clone());
-                            record_agent_input_delivery_failure_off_the_worker(
+                            if let Err(error) = record_agent_input_delivery_failure_off_the_worker(
                                 context,
                                 Some(&pending.session_id),
                                 "Agent input delivery receipt failed before send",
                                 error,
                             )
-                            .await;
+                            .await
+                            {
+                                failures.push(error);
+                            }
                             remaining.push(pending);
                             continue;
                         }
@@ -725,20 +734,25 @@ pub async fn run_pending_agent_input_deliveries_async(
                                 Ok(receipt) => receipt,
                                 Err(error) => {
                                     failures.push(error.clone());
-                                    record_agent_input_delivery_failure_off_the_worker(
+                                    if let Err(error) = record_agent_input_delivery_failure_off_the_worker(
                                         context,
                                         Some(&pending.session_id),
                                         "Agent input delivery receipt did not finish",
                                         error,
-                                    ).await;
+                                    ).await {
+                                        failures.push(error);
+                                    }
                                     continue;
                                 }
                             };
-                        clear_agent_input_delivery_failure_off_the_worker(
+                        if let Err(error) = clear_agent_input_delivery_failure_off_the_worker(
                             context,
                             &pending.session_id,
                         )
-                        .await;
+                        .await
+                        {
+                            failures.push(error);
+                        }
                         log_at(
                             LogLevel::Info,
                             "queued agent input delivered",
@@ -766,13 +780,16 @@ pub async fn run_pending_agent_input_deliveries_async(
                         {
                             failures.push(join_error);
                         }
-                        record_agent_input_delivery_failure_off_the_worker(
+                        if let Err(error) = record_agent_input_delivery_failure_off_the_worker(
                             context,
                             Some(&pending.session_id),
                             "Agent input delivery failed",
                             error.clone(),
                         )
-                        .await;
+                        .await
+                        {
+                            failures.push(error);
+                        }
                         failures.push(error);
                         remaining.push(pending);
                     }
@@ -781,8 +798,13 @@ pub async fn run_pending_agent_input_deliveries_async(
         }
     }
 
-    for session_id in retiring.difference(&reported) {
-        clear_agent_input_delivery_failure_off_the_worker(context, session_id).await;
+    if let Err(error) = clear_retiring_delivery_failures_off_the_worker(
+        context,
+        retiring.difference(&reported).cloned().collect(),
+    )
+    .await
+    {
+        failures.push(error);
     }
 
     let merge_failures =
@@ -831,10 +853,10 @@ async fn record_agent_input_delivery_failure_off_the_worker(
     session_id: Option<&str>,
     title: &'static str,
     message: String,
-) {
+) -> Result<(), String> {
     let context = Arc::clone(context);
     let session_id = session_id.map(str::to_owned);
-    let joined = crate::async_runtime::spawn_blocking_named(
+    crate::async_runtime::spawn_blocking_named(
         crate::async_runtime::scoped_task_name(
             AGENT_INPUT_DELIVERY_TASK_NAME,
             "failure-record",
@@ -844,31 +866,59 @@ async fn record_agent_input_delivery_failure_off_the_worker(
             record_agent_input_delivery_failure(&context, session_id.as_deref(), title, message);
         },
     )
-    .await;
-    if let Err(error) = joined {
-        // Not silently dropped: a pool task that never ran means the failure
-        // the caller was reporting is now unrecorded, and saying so is the only
-        // way anyone finds out.
-        log_at(
-            LogLevel::Warn,
-            "Agent input delivery failure was not recorded",
-            "agent-input-delivery",
-            Some(json!({ "error": error.to_string() })),
-        );
-    }
+    .await
+    // Returned, not logged. The first version wrote a Warn line and carried
+    // on, which left `finish_agent_input_delivery_task` reporting Ok for a
+    // tick whose failure was never recorded. Every other hop in this file
+    // returns its join error and the caller pushes it into `failures`, which
+    // is in scope at each of these call sites.
+    .map_err(|error| format!("agent input delivery failure record did not finish: {error}"))
 }
 
-/// Clear a delivery failure without holding an async worker.
+/// Clear every retiring session's delivery failure in ONE pool task.
 ///
-/// This is the steady-state one: the end-of-tick retiring loop runs it per
-/// offline session on every tick.
+/// The end-of-tick loop used to call the single-session clear per session,
+/// which was both N round trips and a cancellation hazard. `run_task_once`
+/// wraps a tick in `tokio::time::timeout`, and a timeout DROPS the future, so
+/// a loop with an await in its body can be cut between iterations and leave
+/// some banners retired and others not. Before this file had any awaits there
+/// the loop was uncancellable. Doing the whole set in one blocking task gives
+/// that atomicity back -- `spawn_blocking` work is not cancelled by the
+/// future being dropped, so either the batch runs or it was never started --
+/// and costs one hop instead of N.
+async fn clear_retiring_delivery_failures_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    session_ids: Vec<String>,
+) -> Result<(), String> {
+    if session_ids.is_empty() {
+        return Ok(());
+    }
+    let context = Arc::clone(context);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "failure-clear-batch",
+            "project-service",
+        ),
+        move || {
+            for session_id in &session_ids {
+                clear_agent_input_delivery_failure(&context, session_id);
+            }
+        },
+    )
+    .await
+    // A pool task that never ran is not a set of cleared banners.
+    .map_err(|error| format!("agent input delivery failure clear did not finish: {error}"))
+}
+
+/// Clear one session's delivery failure without holding an async worker.
 async fn clear_agent_input_delivery_failure_off_the_worker(
     context: &Arc<ProjectServiceRequestContext>,
     session_id: &str,
-) {
+) -> Result<(), String> {
     let context = Arc::clone(context);
     let session_id = session_id.to_owned();
-    let joined = crate::async_runtime::spawn_blocking_named(
+    crate::async_runtime::spawn_blocking_named(
         crate::async_runtime::scoped_task_name(
             AGENT_INPUT_DELIVERY_TASK_NAME,
             "failure-clear",
@@ -876,15 +926,8 @@ async fn clear_agent_input_delivery_failure_off_the_worker(
         ),
         move || clear_agent_input_delivery_failure(&context, &session_id),
     )
-    .await;
-    if let Err(error) = joined {
-        log_at(
-            LogLevel::Warn,
-            "Agent input delivery failure was not cleared",
-            "agent-input-delivery",
-            Some(json!({ "error": error.to_string() })),
-        );
-    }
+    .await
+    .map_err(|error| format!("agent input delivery failure clear did not finish: {error}"))
 }
 
 /// Resolve one queued entry's target without holding an async worker.
@@ -1932,7 +1975,10 @@ mod tests {
             async_runtime.spawn(async move {
                 polled_tx.send(index).expect("the test is still listening");
                 // The clear, because that is the steady-state one.
-                clear_agent_input_delivery_failure_off_the_worker(&hop_context, "s1").await;
+                // The result is irrelevant here: the gate measures whether
+                // the worker stayed free, and this call never returns because
+                // the store path is a writerless FIFO.
+                let _ = clear_agent_input_delivery_failure_off_the_worker(&hop_context, "s1").await;
             });
         }
         drop(polled_tx);
@@ -1968,18 +2014,29 @@ mod tests {
         // target. A future write-before-read path would therefore replace this
         // FIFO with an ordinary file mid-measurement, and the gate would pass
         // having controlled nothing.
-        let still_a_fifo = fs::symlink_metadata(&store)
-            .map(|metadata| metadata.file_type().is_fifo())
-            .unwrap_or(false);
+        // Three outcomes, not two. `unwrap_or(false)` folded a stat ERROR into
+        // "something wrote over it", which is the repo's own flagged pattern:
+        // an ENOENT means something UNLINKED the path, which is a different
+        // fault from a rename having replaced it, and reporting the wrong one
+        // sends the next reader to the wrong place.
+        let store_kind = match fs::symlink_metadata(&store) {
+            Ok(metadata) if metadata.file_type().is_fifo() => Ok(()),
+            Ok(metadata) => Err(format!(
+                "the store path is no longer a FIFO but a {:?}; something wrote over it, which is what `atomic_write_impl`'s temp-file rename does, and this gate stopped controlling the resource it depends on",
+                metadata.file_type()
+            )),
+            Err(error) => Err(format!(
+                "could not stat the store path at the end of the measurement: {error}. That is not the same as it having been replaced -- something removed it, and this gate proved nothing either way"
+            )),
+        };
 
         drop(entered);
         async_runtime.shutdown_background();
         let _ = fs::remove_dir_all(&root);
 
-        assert!(
-            still_a_fifo,
-            "the store path was no longer a FIFO at the end of the measurement, so something wrote over it and this gate stopped controlling the resource it depends on"
-        );
+        if let Err(reason) = store_kind {
+            panic!("{reason}");
+        }
         assert_eq!(
             reported, attempts,
             "{reported} of {attempts} hops were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}: a failure-store write is holding a worker while it waits on the file"
