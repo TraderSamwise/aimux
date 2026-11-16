@@ -1726,9 +1726,17 @@ fn assert_interceptor_does_not_consume_a_worker(interceptor: StreamInterceptor) 
             let mut sink: Vec<u8> = Vec::new();
             match interceptor {
                 StreamInterceptor::JobEvents => {
+                    // With a query string, deliberately. A review pointed out
+                    // that both gates used bare paths, so neither would catch
+                    // a variant that locks inline only when a param is
+                    // present. Its twin below stays bare, so the pair covers
+                    // both shapes.
                     let request = FakeRuntime::request(
                         "GET",
-                        aimux::core_command_contract::CORE_API_ROUTES.jobs_events,
+                        &format!(
+                            "{}?all=1",
+                            aimux::core_command_contract::CORE_API_ROUTES.jobs_events
+                        ),
                     );
                     let _ = aimux::daemon::jobs::maybe_handle_job_event_stream_request_with_runtime_mutex(
                         &runtime,
@@ -1761,11 +1769,39 @@ fn assert_interceptor_does_not_consume_a_worker(interceptor: StreamInterceptor) 
             Err(_) => break,
         }
     }
+
+    // Phase two, and it closes a hole the first phase cannot see.
+    //
+    // A review found that inserting a single `.await` anywhere before the
+    // inline lock makes phase one pass with the bug fully present: the task
+    // yields at that await, its worker is freed, every task gets a first poll
+    // and reports, and only THEN do they all park. Phase one measures "every
+    // task's first poll completed"; the claim is "the lock is not on a
+    // worker". Those coincide only while the lock is reached on the first poll
+    // with no yield point in between, which is true of both interceptors today
+    // and is exactly the kind of thing an unrelated change breaks silently.
+    //
+    // Spawned AFTER the barrier above, which is what makes it sound -- an
+    // earlier attempt spawned a yielding task concurrently and it passed with
+    // the bug, because `spawn` gives no polling order and the yield simply
+    // finished first. Here every interceptor task has already been polled, so
+    // if any of them is holding a worker there is nothing left to poll this.
+    let (yielded_tx, yielded) = mpsc::channel();
+    async_runtime.spawn(async move {
+        tokio::task::yield_now().await;
+        let _ = yielded_tx.send(());
+    });
+    let still_polling = yielded.recv_timeout(quiet_window).is_ok();
+
     drop(held);
 
     assert_eq!(
         reported, attempts,
         "{interceptor:?}: {reported} of {attempts} tasks were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}. Progress stopped rather than slowed, which a starved runtime does not do: this interceptor is holding a worker while it waits for the runtime mutex, so every other connection task -- /health included -- would be accepted and never answered"
+    );
+    assert!(
+        still_polling,
+        "{interceptor:?}: every task was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied even though each interceptor got its first poll, which is what happens when the lock is taken after an await rather than before one -- /health would be accepted and never answered just the same"
     );
 }
 
