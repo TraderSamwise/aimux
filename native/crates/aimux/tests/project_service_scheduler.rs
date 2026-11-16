@@ -2898,3 +2898,88 @@ fn the_delivery_tick_resolves_targets_off_the_worker() {
         "the async delivery tick resolves a target inline on the worker: {direct} direct call(s) to resolve_queued_delivery_target beside {through_hop} through the hop"
     );
 }
+
+/// The async delivery tick writes the failure store through the hops.
+///
+/// The worker gate in the module proves the hops keep off the workers; nothing
+/// in it proves the tick CALLS them, and the call site that matters most is the
+/// end-of-tick `retiring.difference(&reported)` loop, which runs the clear per
+/// offline session on the WAITING path. That is the steady state whenever a
+/// queued agent is offline, so a gate driving only a blocked or held entry
+/// would miss the costliest path in the function.
+#[test]
+fn the_delivery_tick_clears_failures_off_the_worker() {
+    const SOURCE: &str = include_str!("../src/project_service/agent_input_delivery.rs");
+    const TICK: &str = "pub async fn run_pending_agent_input_deliveries_async(";
+
+    // Brace-counted. Slicing to the next `pub ` swallowed a private hop's own
+    // definition once already and made that test's positive assertion vacuous.
+    let start = SOURCE
+        .find(TICK)
+        .expect("the async delivery tick is still named this");
+    let open = start + SOURCE[start..].find('{').expect("the tick has a body");
+    let mut depth = 0usize;
+    let mut end = None;
+    for (offset, character) in SOURCE[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(open + offset + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let body = &SOURCE[start..end.expect("the tick's body closes")];
+    // The guard has to name the function that actually FOLLOWS the tick in
+    // source order, which is `load_delivery_queue_off_the_worker` -- naming the
+    // clear hop was weak, because the slice would have to run much further to
+    // reach it, so a modest overshoot went undetected.
+    assert!(
+        !body.contains("pub async fn load_delivery_queue_off_the_worker"),
+        "the slice overshoots past the end of the tick into the next function, which is what made an earlier test of this shape vacuous"
+    );
+    assert!(
+        !body.contains("async fn clear_retiring_delivery_failures_off_the_worker"),
+        "the slice overshoots into a hop definition"
+    );
+
+    // The RETIRING SET specifically, not just somewhere in the function. The
+    // steady-state cost lives here: `retiring` is populated on the Waiting
+    // branch, so this is a store write per offline session on every tick, and
+    // a test that only checked the function somewhere would miss it.
+    //
+    // It is now one batched hop rather than a per-session loop, because the
+    // per-session version put an await inside the loop and `run_task_once`
+    // wraps a tick in `tokio::time::timeout`, which DROPS the future -- so the
+    // loop could be cut half way and leave some banners retired and others
+    // not. The batch restores the atomicity the await-free loop used to have.
+    let batched = body
+        .find("clear_retiring_delivery_failures_off_the_worker(")
+        .expect("the end-of-tick retiring clear still goes through the batch hop");
+    let args = &body[batched..];
+    let args = &args[..args
+        .find(")\n")
+        .or_else(|| args.find(",\n    )"))
+        .unwrap_or(args.len())];
+    assert!(
+        args.contains("retiring.difference(&reported)"),
+        "the batched clear is not being handed the retiring set, so the steady-state path for an offline agent may not be covered at all: {args}"
+    );
+
+    // Spelling-independent across the whole tick: every call must go through a
+    // hop, so counting the base names must leave nothing direct.
+    for base in [
+        "record_agent_input_delivery_failure(",
+        "clear_agent_input_delivery_failure(",
+    ] {
+        let direct = body.matches(base).count();
+        assert_eq!(
+            direct, 0,
+            "the async delivery tick still calls {base} inline on the worker: {direct} direct call(s)"
+        );
+    }
+}
