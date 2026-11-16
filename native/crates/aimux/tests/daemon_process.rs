@@ -1657,6 +1657,75 @@ fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
     peer_thread.join().expect("peer thread");
 }
 
+/// Hosted `/health` answers over the socket while the runtime mutex is held.
+///
+/// The handler never touched the runtime, but the listener locked it before
+/// dispatching anyway, so the answer waited on whatever else held it. That
+/// matters more here than locally: `relay_endpoints.rs` has the watchdog read
+/// an unanswered `/health` as a WEDGED daemon, so a daemon that was merely
+/// busy reported itself to the relay as broken.
+///
+/// The twin below is the other direction -- an operator proxy still waits,
+/// because it needs the project list the runtime owns. One route escaping the
+/// lock must not mean all of them do.
+#[test]
+fn hosted_health_answers_over_the_socket_while_the_runtime_lock_is_held() {
+    let fixture = HostedFixture::new("hosted-health-under-lock");
+    let runtime = Arc::new(Mutex::new(FakeRuntime::empty()));
+    let port = unused_loopback_port();
+    let handle = start_hosted_server_background(
+        HostedConfig {
+            enabled: true,
+            port,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        Arc::clone(&runtime),
+    )
+    .expect("hosted startup")
+    .expect("hosted server starts");
+    let held = runtime.lock().expect("hold runtime lock");
+    let (response_tx, response_rx) = mpsc::channel();
+    let request_thread = thread::spawn(move || {
+        let mut client = connect_loopback_port(port);
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("client timeout");
+        write!(
+            client,
+            "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+        )
+        .expect("write hosted health request");
+        response_tx
+            .send(read_socket_text(&mut client))
+            .expect("send hosted health response");
+    });
+
+    let response = match response_rx.recv_timeout(Duration::from_millis(500)) {
+        Ok(response) => response,
+        Err(error) => {
+            drop(held);
+            request_thread.join().expect("request thread");
+            handle.abort();
+            panic!(
+                "hosted GET /health did not answer within 500ms while the runtime mutex was held: {error}"
+            );
+        }
+    };
+    drop(held);
+    request_thread.join().expect("request thread");
+    handle.abort();
+
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "hosted health must answer 200 without the runtime: {response}"
+    );
+    assert!(
+        response.contains(r#""mode":"hosted""#),
+        "hosted health must still be the hosted answer: {response}"
+    );
+}
+
 #[test]
 fn hosted_operator_post_proxy_still_waits_for_project_binding_runtime_lock() {
     let fixture = HostedFixture::new("operator-post-proxy-still-bound");
