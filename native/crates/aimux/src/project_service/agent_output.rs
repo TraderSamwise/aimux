@@ -1215,12 +1215,18 @@ pub(super) async fn read_agent_output_payload_async(
 ) -> Result<AgentOutputPayloadRead, Box<ProjectServiceDispatchResponse>> {
     let capture_window = agent_output_capture_window(start_line);
     let project_state_dir = context.project_state_dir();
-    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+    // On the blocking pool: this handler runs per request, so a sync read here
+    // parks one of the project service's two async workers.
+    let topology = match crate::project_service::scheduler::read_topology_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await
+    {
         Ok(topology) => topology,
         Err(error) => {
             return Err(Box::new(json_error(
                 500,
-                format!("runtime topology could not be read: {error}"),
+                format!("runtime topology could not be read: {}", error.detail()),
             )));
         }
     };
@@ -1268,7 +1274,16 @@ pub(super) async fn read_agent_output_payload_async(
         return Err(Box::new(json_error(500, error)));
     }
     let output = strip_sgr(output_ansi);
-    let metadata = load_metadata_state(&project_state_dir);
+    // On the blocking pool, like the topology above. `load_metadata_state` is
+    // infallible, so the only error is a pool task that never ran.
+    let metadata = match crate::project_service::scheduler::read_metadata_state_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await
+    {
+        Ok(state) => state,
+        Err(error) => return Err(Box::new(json_error(500, error))),
+    };
     let mut result = Map::new();
     insert_string(&mut result, "sessionId", session_id);
     insert_string(&mut result, "output", &output);

@@ -292,7 +292,13 @@ pub async fn build_statusline_snapshot_async(
     context: &ProjectServiceRequestContext,
 ) -> Result<Value, String> {
     let project_state_dir = context.project_state_dir();
-    let metadata = load_metadata_state(&project_state_dir);
+    // On the blocking pool. `load_metadata_state` is infallible -- a missing or
+    // unreadable file becomes an empty state -- so the only error here is a
+    // pool task that never ran, which is not the same thing.
+    let metadata = crate::project_service::scheduler::read_metadata_state_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await?;
     let desktop_state = if let Some(desktop_state) = context.desktop_state.as_ref() {
         desktop_state.clone()
     } else {
