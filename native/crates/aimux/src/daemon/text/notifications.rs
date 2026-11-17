@@ -7,7 +7,9 @@ use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, boolean_param, notification_mutation_payload,
     required_param, string_param, text_or_json_lines,
 };
-use crate::daemon::text::params::{ProjectServiceJsonResult, required_project_service_array};
+use crate::daemon::text::params::{
+    ProjectServiceJsonResult, required_project_service_array, unwrap_project_result,
+};
 use crate::daemon::text::worktrees::CLI_PROJECT_MUTATION_TIMEOUT_MS;
 use crate::project_api_contract::routes as project_routes;
 use serde_json::{Map, Value, json};
@@ -241,15 +243,6 @@ pub struct NotificationMutationInput {
     route_path: &'static str,
     response_field: &'static str,
     render: fn(&Value) -> Vec<String>,
-}
-
-fn unwrap_project_result(
-    result: ProjectServiceJsonResult,
-) -> Result<(Value, String), DaemonRouteResponse> {
-    match result {
-        ProjectServiceJsonResult::Ok { project_root, json } => Ok((json, project_root)),
-        ProjectServiceJsonResult::Err { response } => Err(response),
-    }
 }
 
 fn trimmed_string(route_url: &DaemonRouteUrl, body: Option<&Value>, name: &str) -> Option<String> {

@@ -16,7 +16,7 @@ use crate::daemon::routing::{
 };
 use crate::daemon::text::params::{
     ProjectServiceJsonResult, required_project_service_array, required_project_service_string,
-    resolve_lifecycle_worktree, resolve_project_relative_path,
+    resolve_lifecycle_worktree, resolve_project_relative_path, unwrap_project_result,
 };
 use crate::native_cli_dispatch::{
     CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_SCRIBE_STATUS_TEXT_ROUTE,
@@ -1567,15 +1567,6 @@ fn reject_unverified_tmux_liveness(json: &Value) -> Option<DaemonRouteResponse> 
         503,
         format!("Error: could not verify agent tmux liveness: {error}"),
     ))
-}
-
-fn unwrap_project_result(
-    result: ProjectServiceJsonResult,
-) -> Result<(Value, String), DaemonRouteResponse> {
-    match result {
-        ProjectServiceJsonResult::Ok { project_root, json } => Ok((json, project_root)),
-        ProjectServiceJsonResult::Err { response } => Err(response),
-    }
 }
 
 fn optional_string(route_url: &DaemonRouteUrl, body: Option<&Value>, name: &str) -> Option<String> {
