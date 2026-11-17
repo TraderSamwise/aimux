@@ -3041,6 +3041,12 @@ pub fn handle_daemon_runtime_request_with_mutex(
                         health_identity.pid,
                         health_identity.port,
                         project_service_info_value(),
+                        // `is_poisoned` does NOT take the lock, so asking costs
+                        // nothing and cannot block -- the property this route
+                        // exists to keep. Without it this handler is the one
+                        // surface that still answers after a route panicked
+                        // under the guard, and it would answer "ready".
+                        runtime.is_poisoned(),
                     ),
                 )
             },
@@ -8048,6 +8054,71 @@ mod tests {
         assert!(
             published.is_empty(),
             "watch owner selection follows the published set"
+        );
+    }
+
+    /// The wiring, not just the payload: the real handler must ASK.
+    ///
+    /// `daemon_health_payload` has its own test for the two bodies. This one
+    /// drives `handle_daemon_runtime_request_with_mutex` against a genuinely
+    /// poisoned runtime, because the bug was never in the payload -- it was
+    /// that the one handler still able to answer did not look.
+    #[test]
+    fn the_health_route_reports_a_poisoned_runtime_without_locking_it() {
+        let fixture = restart_service_fixture("health-poisoned-runtime");
+        let launcher = Arc::new(RestartTestLauncher::new(91_201));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_001]));
+        let runtime = Arc::new(Mutex::new(fixture.runtime(launcher, verifier)));
+
+        // Captured BEFORE poisoning, which is what the daemon does at startup
+        // -- and is why this route can still answer at all once the mutex is
+        // unusable.
+        let identity = DaemonHealthIdentity::from_runtime(&runtime);
+        let expected_pid = identity.pid;
+
+        let poisoner = Arc::clone(&runtime);
+        let panicked = std::thread::spawn(move || {
+            let _guard = poisoner.lock().expect("a clean lock to poison");
+            panic!("poisoning the daemon runtime on purpose");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(
+            runtime.is_poisoned(),
+            "the mutex must actually be poisoned for this test to mean anything"
+        );
+
+        let response = handle_daemon_runtime_request_with_mutex(
+            &runtime,
+            identity,
+            DaemonHttpRequest {
+                method: "GET".to_owned(),
+                path: "/health".to_owned(),
+                headers: Default::default(),
+                body_chunks: Vec::new(),
+                stopping: false,
+                issued_at: "1970-01-01T00:00:00.000Z".to_owned(),
+            },
+        );
+
+        let body: Value = serde_json::from_slice(&response.body).expect("health body is JSON");
+        assert_eq!(
+            body.get("ok"),
+            Some(&Value::Bool(false)),
+            "a poisoned runtime cannot serve, so /health must not report ready: {body}"
+        );
+        assert!(
+            body.get("error")
+                .and_then(Value::as_str)
+                .is_some_and(|error| error.contains("poisoned")),
+            "the answer must name the cause: {body}"
+        );
+        // Still identifiable: the supervisor matches on these, and a probe that
+        // became unrecognisable would be a different failure.
+        assert_eq!(
+            body.get("pid").and_then(Value::as_i64),
+            Some(i64::from(expected_pid)),
+            "the probe must report the identity it was given: {body}"
         );
     }
 

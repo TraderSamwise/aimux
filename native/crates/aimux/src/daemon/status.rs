@@ -41,7 +41,39 @@ pub trait DaemonStatusRuntime {
 /// twice, and `DaemonHealthIdentity` was about to make that two different
 /// derivations of `pid` and `port` -- which is the shape AGENTS.md calls the
 /// bug even when the two currently agree.
-pub fn daemon_health_payload(pid: i32, port: u16, service_info: Value) -> Value {
+/// The one body both `/health` handlers answer with.
+///
+/// `runtime_unusable` is the readiness probe's whole job done honestly. This
+/// route deliberately takes no runtime lock, which is what keeps it answering
+/// while unrelated work holds the mutex -- but it also means a POISONED mutex
+/// leaves this route cheerfully reporting `ok: true` while every other route
+/// panics on `lock().expect(..)`. A probe that says ready when the process can
+/// serve nothing is worse than a slow probe, which is the thing the carve-out
+/// was built to avoid.
+///
+/// The shape follows the scheduler's own diagnostics, which answer a poisoned
+/// health lock with `ok: false` and an error rather than inventing a status.
+/// The HTTP status stays 200 on purpose: nothing in this crate branches on
+/// `ok` for the daemon -- `is_aimux_daemon_health` checks `kind` and `pid` --
+/// so changing the status would alter a contract no in-tree consumer needs
+/// altered, and a caller that only reads the status learns nothing new either
+/// way. Making the field true is the part that is unambiguously right.
+pub fn daemon_health_payload(
+    pid: i32,
+    port: u16,
+    service_info: Value,
+    runtime_unusable: bool,
+) -> Value {
+    if runtime_unusable {
+        return json!({
+            "ok": false,
+            "kind": DAEMON_HEALTH_KIND,
+            "pid": pid,
+            "port": port,
+            "serviceInfo": service_info,
+            "error": "daemon runtime mutex is poisoned, so every route that takes it will panic",
+        });
+    }
     json!({
         "ok": true,
         "kind": DAEMON_HEALTH_KIND,
@@ -64,7 +96,16 @@ pub fn route_status_request(
         let daemon = runtime.current_daemon_info(issued_at);
         return Some(DaemonRouteResponse::json(
             200,
-            daemon_health_payload(daemon.pid, daemon.port, runtime.project_service_info()),
+            daemon_health_payload(
+                daemon.pid,
+                daemon.port,
+                runtime.project_service_info(),
+                // Reaching here means the lock was acquired, so by definition
+                // it was not poisoned. Only the lock-free handler can observe
+                // that state, which is why this is not a second source of
+                // truth drifting from the first.
+                false,
+            ),
         ));
     }
 
@@ -340,4 +381,50 @@ fn percent_decode_lossy(input: &str) -> String {
         }
     }
     String::from_utf8_lossy(&output).into_owned()
+}
+
+#[cfg(test)]
+mod poisoned_runtime_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The readiness probe must not report ready when every other route panics.
+    ///
+    /// `/health` takes no runtime lock, which is what keeps it fast and is also
+    /// why it is the ONE surface still answering after a route panicked under
+    /// the guard. Before this it answered `ok: true` there.
+    #[test]
+    fn a_poisoned_runtime_is_not_reported_as_ready() {
+        let healthy = daemon_health_payload(4_242, 45_992, json!({ "buildStamp": "x" }), false);
+        assert_eq!(healthy.get("ok"), Some(&Value::Bool(true)));
+        assert!(
+            healthy.get("error").is_none(),
+            "a usable runtime must not carry an error: {healthy}"
+        );
+
+        let poisoned = daemon_health_payload(4_242, 45_992, json!({ "buildStamp": "x" }), true);
+        assert_eq!(
+            poisoned.get("ok"),
+            Some(&Value::Bool(false)),
+            "a poisoned runtime cannot serve, so the probe must say so: {poisoned}"
+        );
+        assert!(
+            poisoned
+                .get("error")
+                .and_then(Value::as_str)
+                .is_some_and(|error| error.contains("poisoned")),
+            "the error must name the cause rather than just flipping a flag: {poisoned}"
+        );
+
+        // The identifying fields survive, because the supervisor matches on
+        // `kind` and `pid` -- flipping `ok` must not make the daemon
+        // unrecognisable to the thing that adopts it.
+        for field in ["kind", "pid", "port", "serviceInfo"] {
+            assert_eq!(
+                poisoned.get(field),
+                healthy.get(field),
+                "{field} must be unchanged by the poison report"
+            );
+        }
+    }
 }

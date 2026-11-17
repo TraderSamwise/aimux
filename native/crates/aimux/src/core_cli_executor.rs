@@ -870,6 +870,25 @@ where
     let timeout_ms = timeout_ms.max(1);
     loop {
         match request() {
+            // A reply is not the same as a ready daemon. This accepted ANY
+            // successful response, so a daemon whose runtime mutex is poisoned
+            // -- which makes every route that takes it panic -- verified as a
+            // good restart. `/health` reports that state now, so the check that
+            // matters is cheap: read the field instead of inferring health from
+            // the fact that something answered.
+            //
+            // Not retried, deliberately. Poison does not clear on its own, so
+            // retrying would spend the whole budget to reach the same answer
+            // and report a timeout instead of the cause.
+            Ok(health) if health.get("ok").and_then(Value::as_bool) == Some(false) => {
+                let detail = health
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("daemon reported not ok without saying why");
+                return Err(format!(
+                    "post-restart daemon verification failed: the daemon answered but is not ready: {detail}"
+                ));
+            }
             Ok(health) => return Ok(health),
             Err(error) if post_restart_daemon_verify_error_is_retryable(&error) => {
                 transient_failures += 1;
@@ -3448,6 +3467,53 @@ mod tests {
         assert_eq!(error, "connection reset");
         assert_eq!(*ensure_calls.borrow(), 0);
         assert_eq!(*attempts.borrow(), 1);
+    }
+
+    /// Answering is not being ready.
+    ///
+    /// The verifier used to accept any successful response, so a daemon whose
+    /// runtime mutex is poisoned -- every route that takes it panics -- passed
+    /// post-restart verification. `/health` reports that now, so this reads the
+    /// field rather than inferring health from the fact that something replied.
+    #[test]
+    fn post_restart_daemon_verify_refuses_a_daemon_that_answers_but_is_not_ready() {
+        let attempts = RefCell::new(0);
+        let sleeps = RefCell::new(0);
+
+        let error = request_restarted_daemon_health_until_ready(
+            30_000,
+            || {
+                *attempts.borrow_mut() += 1;
+                Ok(json!({
+                    "ok": false,
+                    "kind": "aimux-daemon",
+                    "pid": 42,
+                    "error": "daemon runtime mutex is poisoned, so every route that takes it will panic",
+                }))
+            },
+            || {
+                *sleeps.borrow_mut() += 1;
+            },
+            || 0,
+        )
+        .expect_err("a daemon reporting not ok must not verify as a good restart");
+
+        assert!(
+            error.contains("answered but is not ready"),
+            "the failure must distinguish a reply from readiness: {error}"
+        );
+        assert!(
+            error.contains("poisoned"),
+            "the daemon's own reason must survive into the error: {error}"
+        );
+        // Poison does not clear on its own, so spending the budget on retries
+        // would report a timeout instead of the cause.
+        assert_eq!(
+            *attempts.borrow(),
+            1,
+            "a not-ready answer must not be retried"
+        );
+        assert_eq!(*sleeps.borrow(), 0);
     }
 
     #[test]
