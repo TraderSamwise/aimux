@@ -160,7 +160,7 @@ pub trait PeriodicTask: Send + 'static {
     /// tasks ride the default conversion; tasks with tick-native config can
     /// override this directly.
     fn tick_multiple(&self) -> u64 {
-        periodic_tick_multiple_from_interval_ms(self.interval_ms())
+        periodic::interval_ms_to_ticks(self.interval_ms())
     }
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a>;
     /// Whether the first run should happen at startup instead of one interval
@@ -403,11 +403,4 @@ pub async fn read_scan_inputs_off_the_worker(
     )
     .await
     .map_err(|error| ScanInputError::NotRead(error.to_string()))?
-}
-
-fn periodic_tick_multiple_from_interval_ms(interval_ms: i64) -> u64 {
-    let interval_ms = interval_ms.max(periodic::MIN_INTERVAL_MS);
-    let ticks =
-        interval_ms.saturating_add(periodic::TICK_INTERVAL_MS - 1) / periodic::TICK_INTERVAL_MS;
-    u64::try_from(ticks).unwrap_or(1).max(1)
 }

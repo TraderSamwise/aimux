@@ -50,8 +50,56 @@ def check(label: str, verdict, exit_code: int, *fragments: str) -> list[str]:
     return problems
 
 
+def check_instrument_is_not_reported_as_a_host_spawner() -> list[str]:
+    """The observed-spawner list must leave out the gate's own `ps` calls.
+
+    On macOS the sampler snapshots every 0.10s, so a five-second window spawns
+    about fifty `ps` processes and each one is a new pid to the next snapshot.
+    They used to be counted, and `ps -axo` then read as the top system spawner
+    on the machine. That is the gate reporting its instrument, and it is read
+    during an incident, which is when a wrong lead costs the most.
+    """
+    problems: list[str] = []
+    samples = [
+        gate.SpawnSample(pid=501, ppid=1, command="tmux new-session"),
+        gate.SpawnSample(pid=502, ppid=1, command="ps -axo pid=,ppid=,command="),
+        gate.SpawnSample(pid=503, ppid=1, command="ps -axo pid=,ppid=,command="),
+        gate.SpawnSample(pid=504, ppid=1, command="/bin/sh -c printf '%s' $$"),
+    ]
+    instrument = {502, 503, 504}
+
+    labels = dict(gate._top_labels_excluding(samples, instrument, 8))
+    if any("ps -axo" in label for label in labels):
+        problems.append(
+            "the gate's own ps calls are still reported as host spawners, which is how "
+            f"'ps -axo' becomes the top spawner on a quiet machine: {labels}"
+        )
+    if any("/bin/sh" in label for label in labels):
+        problems.append(
+            f"the pid-allocation probe is still reported as a host spawner: {labels}"
+        )
+    if labels.get("tmux new-session") != 1:
+        problems.append(
+            "excluding the instrument also dropped a REAL spawner; the exclusion must be "
+            f"by pid, not by command text: {labels}"
+        )
+
+    # And the control: with nothing excluded, the instrument IS counted. Without
+    # this, a helper that returned an empty list would satisfy every assertion
+    # above.
+    unfiltered = dict(gate._top_labels_excluding(samples, set(), 8))
+    if not any("ps -axo" in label for label in unfiltered):
+        problems.append(
+            "the control did not see the instrument even with nothing excluded, so this "
+            f"check cannot tell filtering from an empty result: {unfiltered}"
+        )
+    return problems
+
+
 def main() -> int:
     problems: list[str] = []
+
+    problems += check_instrument_is_not_reported_as_a_host_spawner()
 
     problems += check(
         "quiet host, quiet aimux",
