@@ -3097,7 +3097,10 @@ pub fn handle_daemon_runtime_request_with_mutex(
             // reaching for a NEIGHBOURING field that does exist, such as
             // `review_approve_text`, which compiles and never matches
             // `/core/review/list-text`; the lock gate is what catches that.
-            || pathname == crate::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE)
+            || pathname == crate::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.thread_show_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.task_show_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.outline_list_text)
         && parse_remote_actor(&request.headers).is_none()
         && !crate::daemon::router::has_origin_header(&request.headers)
     {
@@ -3181,6 +3184,30 @@ pub fn handle_daemon_runtime_request_with_mutex(
                 request,
                 crate::daemon::text::collaboration::resolve_review_list_request,
                 crate::daemon::text::collaboration::render_review_list_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.thread_show_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::collaboration::resolve_thread_show_request,
+                crate::daemon::text::collaboration::render_thread_show_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.task_show_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::collaboration::resolve_task_show_request,
+                crate::daemon::text::collaboration::render_task_show_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.outline_list_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::project_content::resolve_outline_list_request,
+                crate::daemon::text::project_content::render_outline_list_result,
             );
         }
     }

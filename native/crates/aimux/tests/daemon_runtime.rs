@@ -5632,6 +5632,31 @@ fn assert_core_read_route_parity(
     expected_status: u16,
     expected_body_fragment: &str,
 ) {
+    assert_core_read_route_parity_with_query(
+        label,
+        fixture_name,
+        route,
+        "",
+        upstream_body,
+        expected_status,
+        expected_body_fragment,
+    );
+}
+
+/// The same, for routes that need more than `project` in the query.
+///
+/// `extra_query` is appended verbatim, so it starts with `&`. thread_show and
+/// task_show require an id, and outline_list's single-entry branch is only
+/// reachable with one.
+fn assert_core_read_route_parity_with_query(
+    label: &str,
+    fixture_name: &str,
+    route: &str,
+    extra_query: &str,
+    upstream_body: serde_json::Value,
+    expected_status: u16,
+    expected_body_fragment: &str,
+) {
     let fixture = RuntimeFixture::new(fixture_name);
     let project = fixture.project("repo");
     let mut resolver = fixture.resolver();
@@ -5670,8 +5695,8 @@ fn assert_core_read_route_parity(
     };
 
     for path in [
-        format!("{route}?project={project_root}"),
-        format!("{route}?project={project_root}&json=1"),
+        format!("{route}?project={project_root}{extra_query}"),
+        format!("{route}?project={project_root}{extra_query}&json=1"),
     ] {
         let local = served(handle_daemon_runtime_request_with_mutex(
             &runtime,
@@ -5721,6 +5746,19 @@ fn assert_core_read_route_parity(
 
 /// A core read route does not hold the runtime mutex across its upstream call.
 fn assert_core_read_route_releases_the_lock(fixture_name: &str, route: &str) {
+    assert_core_read_route_releases_the_lock_with_query(fixture_name, route, "");
+}
+
+/// The same, for routes that need more than `project`.
+///
+/// Without the id, thread_show and task_show REFUSE in their resolve and never
+/// reach the upstream at all, so the hanging-upstream barrier never fires and
+/// the gate fails for the wrong reason.
+fn assert_core_read_route_releases_the_lock_with_query(
+    fixture_name: &str,
+    route: &str,
+    extra_query: &str,
+) {
     let fixture = RuntimeFixture::new(fixture_name);
     let project = fixture.project("repo");
     let mut resolver = fixture.resolver();
@@ -5747,7 +5785,7 @@ fn assert_core_read_route_releases_the_lock(fixture_name: &str, route: &str) {
     let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
 
     let stuck_runtime = Arc::clone(&runtime);
-    let stuck_path = format!("{route}?project={project_root}");
+    let stuck_path = format!("{route}?project={project_root}{extra_query}");
     let stuck = std::thread::spawn(move || {
         let _ = handle_daemon_runtime_request_with_mutex(
             &stuck_runtime,
@@ -5867,6 +5905,21 @@ fn assert_core_read_route_starts_a_service_that_is_down(
     route: &str,
     upstream_body: serde_json::Value,
 ) {
+    assert_core_read_route_starts_a_service_that_is_down_with_query(
+        fixture_name,
+        route,
+        "",
+        upstream_body,
+    );
+}
+
+/// The same, for routes that need more than `project` in the query.
+fn assert_core_read_route_starts_a_service_that_is_down_with_query(
+    fixture_name: &str,
+    route: &str,
+    extra_query: &str,
+    upstream_body: serde_json::Value,
+) {
     let fixture = RuntimeFixture::new(fixture_name);
     let project = fixture.project("repo");
     let mut resolver = fixture.resolver();
@@ -5890,7 +5943,10 @@ fn assert_core_read_route_starts_a_service_that_is_down(
     let response = handle_daemon_runtime_request_with_mutex(
         &runtime,
         health_identity,
-        request("GET", &format!("{route}?project={project_root}")),
+        request(
+            "GET",
+            &format!("{route}?project={project_root}{extra_query}"),
+        ),
     );
 
     assert_eq!(
@@ -6366,5 +6422,170 @@ fn the_cold_path_resolution_does_not_hold_the_runtime_lock() {
     assert!(
         outcome.is_ok(),
         "another route could not be served while the cold path sat in the resolution AFTER its ensure: that resolution is holding the global runtime mutex across its `rev-parse` and `ps`"
+    );
+}
+
+// --------------------------------------------------------------------------
+// thread show, task show and outline list: the three routes that could not
+// join the carve-out until the render could see the request body.
+//
+// thread_show and task_show interpolate an id into their 404, read with
+// `required_param(route_url, body, ..)`. outline_list renders a DIFFERENT
+// payload for a single-entry request, and `entryId` can arrive in the body
+// rather than the query.
+// --------------------------------------------------------------------------
+
+#[test]
+fn the_thread_show_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock_with_query(
+        "thread-show-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_show_text,
+        "&threadId=t-1",
+    );
+}
+
+#[test]
+fn the_carved_out_thread_show_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity_with_query(
+        "a thread with its messages",
+        "thread-show-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_show_text,
+        "&threadId=t-1",
+        json!({
+            "thread": { "id": "from-the-upstream", "kind": "review", "status": "open" },
+            "messages": []
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity_with_query(
+        "a payload with no thread key",
+        "thread-show-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_show_text,
+        "&threadId=t-1",
+        json!({ "other": {} }),
+        502,
+        "thread is required",
+    );
+}
+
+#[test]
+fn the_carved_out_thread_show_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down_with_query(
+        "thread-show-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_show_text,
+        "&threadId=t-1",
+        json!({ "thread": { "id": "t-1", "kind": "review", "status": "open" }, "messages": [] }),
+    );
+}
+
+#[test]
+fn the_task_show_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock_with_query(
+        "task-show-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.task_show_text,
+        "&taskId=k-1",
+    );
+}
+
+#[test]
+fn the_carved_out_task_show_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity_with_query(
+        "a task",
+        "task-show-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.task_show_text,
+        "&taskId=k-1",
+        // `messages` is required too, and `task.id` must be a string.
+        json!({
+            "task": { "id": "from-the-upstream", "title": "a task", "status": "open" },
+            "messages": []
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity_with_query(
+        "a payload with no task key",
+        "task-show-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.task_show_text,
+        "&taskId=k-1",
+        json!({ "other": {} }),
+        502,
+        "task is required",
+    );
+}
+
+#[test]
+fn the_carved_out_task_show_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down_with_query(
+        "task-show-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.task_show_text,
+        "&taskId=k-1",
+        json!({
+            "task": { "id": "k-1", "title": "a task", "status": "open" },
+            "messages": []
+        }),
+    );
+}
+
+#[test]
+fn the_outline_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "outline-list-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.outline_list_text,
+    );
+}
+
+#[test]
+fn the_carved_out_outline_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "an outline entry",
+        "outline-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.outline_list_text,
+        // The renderer reads `entryId`, `title`, `status`, `worktreePath` and
+        // `sessionIds`; an `id` entry renders "undefined [undefined]" and the
+        // case would compare two identically wrong renderings.
+        json!({
+            "entries": [{
+                "entryId": "from-the-upstream",
+                "title": "an entry",
+                "status": "open"
+            }]
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a payload with no entries key",
+        "outline-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.outline_list_text,
+        json!({ "other": [] }),
+        502,
+        "entries is required",
+    );
+    // The single-entry shape, which is the branch that needs `body`: asked for
+    // by query here, since the parity harness sends a GET.
+    assert_core_read_route_parity_with_query(
+        "a single outline entry by id",
+        "outline-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.outline_list_text,
+        "&entryId=e-1",
+        json!({
+            "entry": {
+                "entryId": "from-the-upstream",
+                "title": "an entry",
+                "status": "open"
+            }
+        }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_outline_list_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "outline-list-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.outline_list_text,
+        json!({ "entries": [] }),
     );
 }

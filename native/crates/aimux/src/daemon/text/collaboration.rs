@@ -248,14 +248,53 @@ pub fn thread_show_text_route(
         project_routes::threads::LIST,
         url_encode(&thread_id)
     );
-    let (json, _) =
-        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
-            Ok(result) => result,
-            Err(response) if response.status == 404 => {
-                return text_error(404, format!("aimux: thread not found: {thread_id}"));
-            }
-            Err(response) => return response,
-        };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_thread_show_result(route_url, result)
+}
+
+/// Phase one of `aimux thread show`: everything decidable without the project
+/// service, so the carve-out can resolve under the lock and release it before
+/// the upstream hop.
+pub fn resolve_thread_show_request(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    let thread_id = required_param(route_url, body, "threadId")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: format!(
+            "{}/{}",
+            project_routes::threads::LIST,
+            url_encode(&thread_id)
+        ),
+    })
+}
+
+/// Phase three of `aimux thread show`, from a raw project-service result.
+///
+/// The 404 names the thread, so this re-reads the id.
+///
+/// It does NOT take `body`, and that is worth stating because it looks like it
+/// should: the text-route signature carries one, and this route reads params
+/// with `required_param(route_url, body, ..)`. But `daemon/server.rs` parses a
+/// JSON body ONLY for POST, and every carved-out route is GET-guarded, so
+/// `body` is structurally `None` here. Passing it would be passing `None`.
+pub fn render_thread_show_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) if response.status == 404 => {
+            let thread_id = required_param(route_url, None, "threadId").unwrap_or_default();
+            return text_error(404, format!("aimux: thread not found: {thread_id}"));
+        }
+        Err(response) => return response,
+    };
     let thread = match required_project_service_object(&json, "thread show", "thread") {
         Ok(thread) => thread,
         Err(response) => return response,
@@ -825,14 +864,40 @@ pub fn task_show_text_route(
         Err(response) => return response,
     };
     let route_path = format!("{}/{}", project_routes::tasks::LIST, url_encode(&task_id));
-    let (json, _) =
-        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
-            Ok(result) => result,
-            Err(response) if response.status == 404 => {
-                return text_error(404, format!("aimux: task not found: {task_id}"));
-            }
-            Err(response) => return response,
-        };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls.
+    render_task_show_result(route_url, result)
+}
+
+/// Phase one of `aimux task show`.
+pub fn resolve_task_show_request(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    let task_id = required_param(route_url, body, "taskId")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: format!("{}/{}", project_routes::tasks::LIST, url_encode(&task_id)),
+    })
+}
+
+/// Phase three of `aimux task show`, from a raw project-service result.
+///
+/// The 404 names the task, so this re-reads the id. See
+/// `render_thread_show_result` for why it takes no `body`.
+pub fn render_task_show_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) if response.status == 404 => {
+            let task_id = required_param(route_url, None, "taskId").unwrap_or_default();
+            return text_error(404, format!("aimux: task not found: {task_id}"));
+        }
+        Err(response) => return response,
+    };
     let task = match required_project_service_object(&json, "task show", "task") {
         Ok(task) => task,
         Err(response) => return response,

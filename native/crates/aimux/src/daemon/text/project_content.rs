@@ -145,15 +145,14 @@ fn usage_text_route(
     render_usage_result(route_url, result)
 }
 
-fn outline_list_text_route(
-    runtime: &mut impl DaemonProjectContentTextRuntime,
+/// Phase one of `aimux outline list`: everything decidable without the
+/// project service, so the carve-out can resolve under the lock and release it
+/// before the upstream hop.
+pub fn resolve_outline_list_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
-) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
     let mut route_path = project_routes::work_outline::LIST.to_owned();
     push_project_query(
         &mut route_path,
@@ -185,13 +184,49 @@ fn outline_list_text_route(
         "entryId",
         trimmed_string(route_url, body, "entryId"),
     );
-    let (json, project_root) =
-        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
-            Ok(result) => result,
-            Err(response) => return response,
-        };
-    if route_url.has_search_param("entryId") || body.and_then(|body| body.get("entryId")).is_some()
-    {
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    })
+}
+
+fn outline_list_text_route(
+    runtime: &mut impl DaemonProjectContentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_outline_list_request(route_url, body) {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls.
+    render_outline_list_result(route_url, result)
+}
+
+/// Phase three of `aimux outline list`, from a raw project-service result.
+///
+/// A single-entry request renders a different payload from a list request.
+///
+/// The `entryId` check reads the QUERY only, and the body half of the original
+/// condition is gone rather than carried over: `daemon/server.rs` parses a
+/// JSON body only for POST, and this route is GET-dispatched on both paths, so
+/// `body.and_then(|b| b.get("entryId"))` could never be `Some` here. Keeping
+/// it would have meant threading `Option<&Value>` through the shared render
+/// signature and ten other routes to carry a value that is always `None` --
+/// which I did first, and undid.
+pub fn render_outline_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, project_root) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    if route_url.has_search_param("entryId") {
         let entry = json.get("entry").cloned().unwrap_or(Value::Null);
         let entries = if entry.is_null() {
             Vec::new()
