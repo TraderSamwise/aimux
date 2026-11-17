@@ -198,6 +198,45 @@ reads or mutates shared project state repeatedly after startup, why is it not a
 `PeriodicTask`, and if an event already reports the change, why is it polling at
 all?"
 
+## Blocking Work Inside Async Bodies
+
+The project service runs **two** async worker threads
+(`ASYNC_RUNTIME_WORKER_THREADS`). Two concurrent synchronous reads therefore
+park the entire runtime, which is how a stuck project service used to take the
+daemon with it. So blocking work reached from an async body — a filesystem
+read or write, a lock held across either, a subprocess, a blocking channel
+recv — goes through `crate::async_runtime::spawn_blocking_named`.
+
+`yarn audit:async-blocking` enforces this and runs inside `yarn verify`, so a
+new route that blocks fails before review. Two things about it are worth
+knowing before it fails on you:
+
+**It derives its reader list from the crate, and its blind spot is stated.**
+It finds every sync function that touches the filesystem and flags calls to
+them from async bodies, with three attribution rules: the name must be in scope
+in the calling file, it must have exactly one such definition and no `async`
+sibling, and the call must be a free call. That last rule is why a reader
+reached through a **method** call is invisible to it — `host.execute(...)`
+hid four per-tick state reads that way, and reading the function is what found
+them. `yarn audit:async-blocking --explain-suppressed` prints every call the
+rules declined to claim, with the reason.
+
+**The two markers are different and not interchangeable.**
+
+- `aimux-async-blocking: permanent|transitional|test|fixture - reason`
+  declares blocking that stays, inside an async body. Put it within six lines
+  above the flagged line.
+- `aimux-async-seam: ... - reason` accounts for a `block_on` bridge and is
+  staleness-checked, so it must sit next to its seam. Using one where the other
+  belongs is refused — and if both apply, the blocking marker goes **above** the
+  seam marker, or the seams audit stops finding the seam.
+
+When a hop replaces an inline call, remember that a pool task that never ran is
+not an absent value: give `JoinError` its own message rather than folding it
+into the empty case. `read_runtime_topology` is the model for the distinction —
+it answers a MISSING file with an empty topology and reserves `Err` for a file
+it could not read.
+
 ## App (`app/`)
 
 The browser and native clients live in `app/`. It is one Expo Router app for
