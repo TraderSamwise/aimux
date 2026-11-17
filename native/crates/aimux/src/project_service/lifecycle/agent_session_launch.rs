@@ -517,18 +517,28 @@ pub(super) async fn launch_agent_session_async(
                 .flatten()
         })
         .or_else(|| effective_session_id_flag.as_ref().map(|_| pseudo_uuid_v4()));
-    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+    // On the blocking pool: a route handler runs per REQUEST, so a sync read
+    // here parks one of the project service's two async workers, and two
+    // concurrent requests park both.
+    let topology = match crate::project_service::scheduler::read_topology_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await
+    {
         Ok(topology) => topology,
         Err(error) => {
+            // The launch-failure record keeps its "read-topology" step and the
+            // underlying detail; only where the read RAN has changed.
+            let detail = error.detail().to_owned();
             record_launch_failure(
                 &project_state_dir,
                 &input,
                 "read-topology",
-                &error,
+                &detail,
                 None,
                 None,
             );
-            return Err(error);
+            return Err(detail);
         }
     };
     if !input.allow_replace_session

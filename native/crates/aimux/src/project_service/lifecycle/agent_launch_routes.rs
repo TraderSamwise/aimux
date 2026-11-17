@@ -400,18 +400,28 @@ pub(super) async fn route_agent_spawn_async(
     let team = supervisor_role
         .as_deref()
         .map(|role| supervisor_launch_team_and_env(role, &mut env));
-    let topology = match read_runtime_topology(runtime_topology_path(context.project_state_dir())) {
+    // On the blocking pool: a route handler runs per REQUEST, so a sync read
+    // here parks one of the project service's two async workers, and two
+    // concurrent requests park both.
+    let topology = match crate::project_service::scheduler::read_topology_off_the_worker(
+        context.project_state_dir().to_path_buf(),
+    )
+    .await
+    {
         Ok(topology) => topology,
         Err(error) => {
+            // The failure log keeps its "read-topology" step and its detail;
+            // only where the read RAN has changed.
+            let detail = error.detail().to_owned();
             log_agent_spawn_route_failure(
                 context,
                 "read-topology",
                 Some(&tool_key),
                 None,
                 trimmed_string(body.get("worktreePath")).as_deref(),
-                &error,
+                &detail,
             );
-            return json_error(500, error);
+            return json_error(500, detail);
         }
     };
     let backend_session_id = launch_backend_session_id(tool_config, &command, &args);
@@ -1640,9 +1650,16 @@ async fn resume_agent_session_async(
 ) -> ProjectServiceDispatchResponse {
     let session_id = session_id.to_owned();
     let project_state_dir = context.project_state_dir();
-    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+    // On the blocking pool: a route handler runs per REQUEST, so a sync read
+    // here parks one of the project service's two async workers, and two
+    // concurrent requests park both.
+    let topology = match crate::project_service::scheduler::read_topology_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await
+    {
         Ok(topology) => topology,
-        Err(error) => return json_error(500, error),
+        Err(error) => return json_error(500, error.detail().to_owned()),
     };
     let Some(topology_session) = find_by_id(&topology, "sessions", &session_id) else {
         return json_error(404, format!("Session \"{session_id}\" not found"));
@@ -1666,7 +1683,25 @@ async fn resume_agent_session_async(
         return json_error(400, "unknown agent tool");
     };
     let command = trimmed_string(session.get("command")).unwrap_or_else(|| tool_key.clone());
-    let metadata_state = load_metadata_state(&project_state_dir);
+    // The second read in this route, and the reason it stayed flagged after the
+    // topology moved. `load_metadata_state` is infallible -- it answers a
+    // missing or unreadable file with an empty state -- so there is no error to
+    // propagate from the read itself, but a pool task that never RAN is a
+    // different thing from an empty state and says so.
+    let metadata_state = {
+        let dir = project_state_dir.to_path_buf();
+        match crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::task_name("project-service", "resume-metadata"),
+            move || load_metadata_state(&dir),
+        )
+        .await
+        {
+            Ok(state) => state,
+            Err(error) => {
+                return json_error(500, format!("resume metadata state was not read: {error}"));
+            }
+        }
+    };
     if let Some(stored_session) = metadata_state.sessions.get(&session_id) {
         session = session_with_stored_control_flags(&session, Some(stored_session));
     }
