@@ -434,13 +434,32 @@ impl WaitNotice {
     }
 }
 
+/// Tell the notice thread to stop, recovering a poisoned lock.
+///
+/// The thread recovers poison on BOTH its initial lock and its
+/// `wait_timeout`, and this did not -- an asymmetry with a sharp edge, because
+/// the thread's loop is `while !*finished`. If the flag is never set the
+/// thread never leaves that loop, and `Drop` blocks on `join` forever: a CLI
+/// that hangs instead of exiting.
+///
+/// That is NOT reachable today, and the reason is worth writing down rather
+/// than trusting. Poison needs a panic while the guard is held, and the only
+/// two holders are this function and the notice thread itself -- and the
+/// thread's own `eprintln!` can panic on a closed stderr while holding it. So
+/// poison implies the thread already unwound and is dead, which makes `join`
+/// return at once. The hang needs a THIRD holder of this lock, and nothing
+/// stops someone adding one.
+///
+/// So this is insurance against a latent hazard, not a fix for a live bug.
+fn signal_wait_finished(done: &(Mutex<bool>, Condvar)) {
+    let (lock, signal) = done;
+    *lock.lock().unwrap_or_else(|error| error.into_inner()) = true;
+    signal.notify_all();
+}
+
 impl Drop for WaitNotice {
     fn drop(&mut self) {
-        let (lock, signal) = &*self.done;
-        if let Ok(mut finished) = lock.lock() {
-            *finished = true;
-        }
-        signal.notify_all();
+        signal_wait_finished(&self.done);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -1115,6 +1134,37 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A poisoned wait lock does not strand the notice thread.
+    ///
+    /// The thread's loop is `while !*finished`, so a flag that never becomes
+    /// true is a thread that never exits and a `Drop` that blocks on `join`
+    /// forever. The thread already recovers poison on both its lock and its
+    /// `wait_timeout`; this asserts the other side does too.
+    #[test]
+    fn a_poisoned_wait_lock_is_still_told_the_request_finished() {
+        let done = Arc::new((Mutex::new(false), Condvar::new()));
+
+        let poisoning = Arc::clone(&done);
+        let panicked = std::thread::spawn(move || {
+            let _guard = poisoning.0.lock().expect("a clean lock to poison");
+            panic!("poisoning the wait-notice lock on purpose");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(
+            done.0.is_poisoned(),
+            "the mutex must actually be poisoned for this test to mean anything"
+        );
+
+        signal_wait_finished(&done);
+
+        let finished = done.0.lock().unwrap_or_else(|error| error.into_inner());
+        assert!(
+            *finished,
+            "a poisoned wait lock was never told the request finished, so the notice thread stays in its `while !*finished` loop and Drop blocks on join forever"
+        );
+    }
 
     /// A loopback `ENOTCONN` is retried, not reported.
     ///
