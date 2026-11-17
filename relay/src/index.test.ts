@@ -200,6 +200,98 @@ describe("relay CORS", () => {
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
   });
 
+  // The first segment of a `/shares/...` path is the owner whose object holds
+  // the share -- except when it is a verb. Read as an owner id, `bind` picks a
+  // durable object named "bind": empty, shared by every account, and it
+  // answers "no share for that session" for a share that exists.
+  it("sends a verb-shaped sharing route to the caller's own object", async () => {
+    authMocks.verifyWsToken.mockResolvedValueOnce("user_owner");
+    authMocks.fetchClerkUserProfile.mockResolvedValueOnce({
+      userId: "user_owner",
+      displayName: "Sam",
+      email: "sam@example.com",
+    });
+    const objectFetch = vi.fn(async (_request: Request) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const idFromName = vi.fn(() => ({ name: "user_owner" }));
+    const env = {
+      CLERK_SECRET_KEY: "sk_test",
+      RELAY: { idFromName, get: vi.fn(() => ({ fetch: objectFetch })) },
+    } as unknown as Env;
+
+    const response = await relay.fetch(
+      new Request("https://relay.aimux.app/shares/bind", {
+        method: "POST",
+        headers: { Origin: "https://aimux.app", Authorization: "Bearer clerk-token" },
+        body: JSON.stringify({ projectRoot: "/repo", sessionId: "claude-1", machineId: "mbp" }),
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(idFromName).toHaveBeenCalledWith("user_owner");
+    // Nothing is a share owned by someone else, so nothing claims it is.
+    expect(objectFetch.mock.calls[0][0].headers.get("X-Aimux-Share-Owner-Id")).toBeNull();
+  });
+
+  // Claiming a checkout is a thing a machine says about itself, so the
+  // daemon's token carries it. A browser session has no machine to speak for,
+  // and allowing one would let a phone claim a laptop's repository.
+  it("lets the local CLI claim a project and refuses a browser session", async () => {
+    const objectFetch = vi.fn(async (_request: Request) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const env = {
+      CLERK_SECRET_KEY: "sk_test",
+      RELAY_TOKEN_SECRET: "shhh",
+      RELAY: { idFromName: vi.fn(() => ({ name: "user_owner" })), get: vi.fn(() => ({ fetch: objectFetch })) },
+    } as unknown as Env;
+
+    // A real daemon token, because `isDaemonToken` reads the payload rather
+    // than being mocked: a test that faked it would prove nothing about the
+    // branch the CLI actually takes.
+    const daemonToken = await mintDaemonToken("user_owner", "shhh");
+    const fromCli = await relay.fetch(
+      new Request("https://relay.aimux.app/projects/claim", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${daemonToken}` },
+        body: JSON.stringify({ projectRoot: "/repo", machineId: "mbp" }),
+      }),
+      env,
+    );
+    expect(fromCli.status).toBe(200);
+    expect(objectFetch.mock.calls[0][0].headers.get("X-Aimux-User-Id")).toBe("user_owner");
+
+    authMocks.verifyWsToken.mockResolvedValue("user_owner");
+    const fromBrowser = await relay.fetch(
+      new Request("https://relay.aimux.app/projects/claim", {
+        method: "POST",
+        headers: { Authorization: "Bearer clerk-token" },
+        body: JSON.stringify({ projectRoot: "/repo", machineId: "mbp" }),
+      }),
+      env,
+    );
+    expect(fromBrowser.status).toBe(403);
+    expect(objectFetch).toHaveBeenCalledTimes(1);
+
+    // The read too, not only the claim: its answer is machine ids and
+    // absolute paths, and the CLI is the only thing that asks.
+    const readFromBrowser = await relay.fetch(
+      new Request("https://relay.aimux.app/projects/owners", {
+        method: "GET",
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+      env,
+    );
+    expect(readFromBrowser.status).toBe(403);
+
+    const readFromCli = await relay.fetch(
+      new Request("https://relay.aimux.app/projects/owners", {
+        method: "GET",
+        headers: { Authorization: `Bearer ${daemonToken}` },
+      }),
+      env,
+    );
+    expect(readFromCli.status).toBe(200);
+  });
+
   it("allows Clerk tokens to read but not mutate owner device security", async () => {
     authMocks.verifyWsToken.mockResolvedValue("user_owner");
     const objectFetch = vi.fn(async (_request: Request) => {

@@ -29,6 +29,7 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { type DesktopSession, isSupervisorLaneSession } from "@/lib/desktop-state";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
+import { nativeTooltipRef } from "@/lib/action-tooltip";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import { agentActionsFamily, type AgentRowAction } from "@/stores/agentActions";
 import {
@@ -134,6 +135,14 @@ export function AgentActions({
               : AGENT_ACTION_REFRESH_VIEWS,
           );
           if (opts?.isKill) onKilled?.();
+          // The kill itself succeeded; its reports did not move. Said here
+          // because nothing else will: the registry still has them bound to an
+          // agent that is in the graveyard.
+          const reportsReleaseError = (response as { reportsReleaseError?: unknown })
+            .reportsReleaseError;
+          if (typeof reportsReleaseError === "string" && reportsReleaseError) {
+            return `Killed, but its reports could not be moved up: ${reportsReleaseError}`;
+          }
         },
         onFailed: () => {
           if (localTransition) {
@@ -372,8 +381,14 @@ function ActionButton({
   loading?: boolean;
   label: string;
 }) {
+  // The browser draws this one. A tooltip rendered in the tree is clipped by
+  // an ancestor with `overflow: auto hidden` and cannot escape it, since that
+  // ancestor is also transformed -- see `nativeTooltipRef`. A ref callback
+  // rather than a hook, because this component is called as a plain function
+  // in `agent-start.test.tsx` where no hook can run.
   return (
     <Button
+      ref={nativeTooltipRef(label)}
       variant="outline"
       size="icon"
       onPress={onPress}

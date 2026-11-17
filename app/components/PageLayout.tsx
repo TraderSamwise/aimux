@@ -1,7 +1,8 @@
 import React from "react";
-import { Platform, ScrollView, View, type StyleProp, type ViewStyle } from "react-native";
+import { ScrollView, View, type StyleProp, type ViewStyle } from "react-native";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
+import { scrollKeyboardDismissMode } from "@/lib/keyboard-dismiss-mode";
 import { cn } from "@/lib/utils";
 
 export function Page({
@@ -19,7 +20,7 @@ export function Page({
     <ScrollView
       className={cn("flex-1 bg-background", className)}
       contentContainerClassName={cn("px-4 py-5 md:px-8", contentClassName)}
-      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+      keyboardDismissMode={scrollKeyboardDismissMode}
       keyboardShouldPersistTaps="handled"
     >
       <View className="w-full" style={contentStyle}>

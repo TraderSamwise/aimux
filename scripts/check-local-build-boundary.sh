@@ -138,7 +138,9 @@ check_source_remote_gate() {
     hosted_server.rs \
     mobile_push_bridge.rs \
     relay_client.rs \
+    relay_http.rs \
     relay_runner.rs \
+    remote_project_owners.rs \
     remote_credentials.rs \
     remote_login.rs \
     remote_security_devices.rs \
@@ -262,7 +264,7 @@ remote_help_pattern='^[[:space:]]{2}(remote|hosted|login|logout|whoami|security)
 # tungstenite or other HTTP client (and the full variant is asserted to carry
 # them, so that check fails in both directions). With no client in the tree
 # there is no socket to open, whatever strings survive.
-remote_string_pattern='AIMUX_RELAY_URL|relay[.]aimux[.]app|wss://|ws://|relay_client|relay_runner|daemon::relay|daemon/relay|hosted_server|hosted_cli|remote_login|remote_security_devices|HttpAttachmentUploader'
+remote_string_pattern='AIMUX_RELAY_URL|relay[.]aimux[.]app|wss://|ws://|relay_client|relay_runner|daemon::relay|daemon/relay|hosted_server|hosted_cli|remote_login|remote_security_devices|relay_http|remote_project_owners|HttpAttachmentUploader'
 # Bare crate names, which need a word boundary. `strings` emits runs of
 # adjacent literals from rodata with nothing between them, so an unanchored
 # `ureq` matches the tail of our own `project-ensure` whenever the linker puts

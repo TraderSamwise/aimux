@@ -27,6 +27,14 @@ export function terminalOutputTail(
 /**
  * The pane as styled lines: tmux's colours kept, its full-width rules cut down.
  *
+ * Consecutive rules are NOT merged, and that is deliberate. An attempt to do
+ * so was reverted: reading real output showed two adjacent rules are usually
+ * the top and bottom of an agent's prompt box with the input line between
+ * them, so merging them deletes the bottom border. The rows of a genuinely
+ * wrapped rule are adjacent anyway, and the fix for wrapping is to truncate
+ * to the pane's real column count -- see `terminal-columns.ts` -- not to
+ * clean up afterwards.
+ *
  * A tool draws its rules to the width of *its* pane, which is not the width of
  * this view, so a wrapped rule arrives as two or three rows of box characters.
  * They are capped to one and de-duplicated.

@@ -88,6 +88,7 @@ export const PROJECT_API_ROUTES = {
     input: "/live-pane/input",
     interrupt: "/live-pane/interrupt",
     resize: "/live-pane/resize",
+    select: "/live-pane/select",
   },
   services: {
     create: "/services/create",
@@ -617,7 +618,7 @@ export interface LivePaneSessionInput {
 export interface LivePaneOutputInput extends LivePaneSessionInput {
   startLine?: number;
   mode?: "full" | "chat";
-  purpose?: "stream" | "initial" | "poll" | "history" | "terminal" | "attach" | "preview" | "interrupt";
+  purpose?: "stream" | "initial" | "poll" | "history" | "terminal" | "attach" | "preview" | "interrupt" | "select";
 }
 
 export interface LivePaneOutputResponse extends ProjectApiOk {
@@ -673,7 +674,57 @@ export interface LivePaneOutputResponse extends ProjectApiOk {
    */
   activityText?: string;
   attention?: AgentAttentionState;
+  /**
+   * How the runtime reads the pane's own chrome, projected server-side.
+   *
+   * `selection` is the one clients act on: a pane waiting on a chooser is not
+   * waiting on words, and the service is the only place that fact exists once.
+   * The input verifier reads the same field to stop measuring a composer that
+   * holds no draft, so a client computing its own copy would disagree with the
+   * service about whether the agent is even being asked something.
+   */
+  paneState?: LivePaneState;
   tmuxUnavailable?: TmuxUnavailableMarker;
+}
+
+export interface LivePaneSelectionOption {
+  /** The number the tool showed, when it numbered them at all. */
+  number?: number;
+  label: string;
+  selected: boolean;
+}
+
+export interface LivePaneSelection {
+  /**
+   * Everything the prompt shows above its options, joined.
+   *
+   * Opaque to a client, which echoes it back when it answers. The question
+   * alone does not identify a prompt: Claude's Bash permission asks "Do you
+   * want to proceed?" over the same three labels whether the command is
+   * `rm -rf build` or `rm -rf /`, and the command sits above the question.
+   */
+  subject?: string;
+  question?: string;
+  options: LivePaneSelectionOption[];
+  /** The key hints the tool printed, when it printed any. */
+  footer?: string;
+}
+
+export interface LivePaneState {
+  /** The composer is idle and ready for words. */
+  promptVisible: boolean;
+  errorVisible: boolean;
+  interruptedVisible: boolean;
+  updatePromptVisible: boolean;
+  blockedMessage?: string;
+  /**
+   * The chooser the pane is waiting on, when it is waiting on one.
+   *
+   * Mutually exclusive with `promptVisible` on a real pane: a chooser renders
+   * its selected option on the cursor row, so the composer is never idle while
+   * one is up.
+   */
+  selection?: LivePaneSelection;
 }
 
 export interface AgentOutputStreamInput extends LivePaneOutputInput {
@@ -704,6 +755,7 @@ export interface AgentOutputStreamOutputData {
   outputStartLineClamped?: boolean;
   outputAvailable?: boolean;
   parsed?: unknown;
+  paneState?: LivePaneState;
   tmuxUnavailable?: TmuxUnavailableMarker;
 }
 
@@ -1012,6 +1064,15 @@ export interface ProjectTopologyResponse extends ProjectApiOk {
       sessionId?: string;
       serviceId?: string;
       worktreePath?: string;
+      tool?: string;
+      task?: string;
+      recentOutput?: boolean;
+      /** Who spawned this agent. */
+      parentSessionId?: string;
+      /** Who runs this agent's loop; the edge the org tree is drawn from. */
+      watchedBy?: string;
+      /** It has a manager, and that manager is not among these rows. */
+      managerNotShown?: boolean;
     }>;
   };
 }
@@ -1410,6 +1471,12 @@ export interface KillAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId: string;
   status: "graveyard";
   previousStatus: "running" | "offline";
+  /**
+   * The agent is in the graveyard, but its reports could not be moved up to
+   * its own manager, so the role registry still has them bound to it. Present
+   * only on that failure; the kill itself succeeded either way.
+   */
+  reportsReleaseError?: string;
 }
 
 export interface ReapDeadAgentRecord {
@@ -1445,6 +1512,12 @@ export interface ReapDeadAgentsResponse extends ProjectLifecycleTransitionRespon
   status: "reaped" | "unchanged";
   reaped: ReapDeadAgentRecord[];
   skipped: ReapDeadAgentRecord[];
+  /**
+   * Agents that were reaped but whose reports could not be moved up to their
+   * own manager, so the role registry still has them bound to a dead agent.
+   * Present only on that failure; the reaping itself succeeded either way.
+   */
+  reportsReleaseErrors?: Array<{ sessionId: string; error: string }>;
 }
 
 export interface ResurrectAgentResponse extends ProjectLifecycleTransitionResponse {
@@ -1608,6 +1681,7 @@ export type AgentRoleMutationRefusalReason =
   | "unsupported-role"
   | "target-worktree-required"
   | "active-watch-bindings"
+  | "unplaceable-reports"
   | "metadata-unavailable"
   | "role-registry-unavailable";
 
@@ -1657,10 +1731,15 @@ export type AgentWatchRefusalReason =
   | "invalid-request"
   | "session-not-found"
   | "overseer-required"
-  | "watched-agent-must-be-coder"
+  | "scribe-cannot-be-watched"
+  /** The proposed manager is in the graveyard, so it runs nobody's loop. */
+  | "overseer-departed"
+  | "watch-cycle"
   | "already-watched"
   | "role-registry-unavailable"
   | "metadata-unavailable"
+  /** The runtime topology could not be read, so who is in the graveyard is unknown. */
+  | "topology-unavailable"
   | "lifecycle-mutation-unavailable";
 
 export type AgentWatchResponse =

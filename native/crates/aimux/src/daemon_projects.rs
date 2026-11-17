@@ -4,6 +4,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// Where one project service is listening.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectEndpoint {
+    pub project_root: String,
+    pub host: String,
+    pub port: u16,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectsRouteProject {

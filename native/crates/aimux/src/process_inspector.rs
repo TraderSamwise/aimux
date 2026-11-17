@@ -1,6 +1,8 @@
 use crate::async_subprocess::AsyncCommand;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::ffi::OsString;
 use std::path::Path;
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessArgsEntry {
@@ -129,8 +131,71 @@ fn find_flag(input: &str, flag: &str) -> Option<usize> {
     None
 }
 
+/// Program name to the PATH it was resolved under and the answer, if any.
+///
+/// Named because the inline type was complex enough that clippy asked, and a
+/// name says what the pair means: the PATH is stored so a changed PATH
+/// re-resolves rather than serving a stale absolute path.
+type ResolvedPrograms = HashMap<&'static str, (Option<OsString>, Option<Arc<OsString>>)>;
+
+/// `ps`, resolved once per process rather than spawned by name.
+///
+/// `read_process_args` alone has eleven callers and runs on every
+/// project-service liveness check, so a bare `"ps"` made the OS walk PATH on
+/// every one of them. AGENTS.md's Subprocess Churn section opens with exactly
+/// this: "A bare program name makes the OS walk PATH on every call; on a
+/// developer Mac that is routinely a dozen failed execs before the hit."
+///
+/// Returns `None` rather than an error because every caller here already
+/// treats "could not ask" as "no answer" -- the liveness filter fails closed
+/// on it, which is the safe direction. A memo that cannot resolve simply
+/// re-resolves next call.
+fn ps_program() -> Option<Arc<OsString>> {
+    resolved_program("ps")
+}
+
+/// `ps` for the `try_*` variants, which report a failed resolve rather than
+/// folding it into "no answer".
+///
+/// A named helper so the message lives in one place and the call stays on one
+/// line -- the spawn-site audit matches a single-line marker, and an inline
+/// `ok_or_else` was long enough that rustfmt wrapped it and the gate could no
+/// longer see the site at all.
+fn ps_program_or_error() -> Result<Arc<OsString>, String> {
+    ps_program().ok_or_else(|| "could not resolve ps on PATH".to_owned())
+}
+
+/// `lsof`, resolved once per process. Reached from `read_process_cwd`, which
+/// the liveness filter calls on its second attempt when the args alone do not
+/// match.
+fn lsof_program() -> Option<Arc<OsString>> {
+    resolved_program("lsof")
+}
+
+/// The shared memo, keyed on PATH so a changed PATH re-resolves.
+///
+/// Mirrors `git_delivery::git_program`, including recovering a poisoned guard:
+/// this is a memo, and refusing to resolve because another thread panicked
+/// elsewhere would be worse than reading it again.
+fn resolved_program(name: &'static str) -> Option<Arc<OsString>> {
+    static PROGRAMS: OnceLock<Mutex<ResolvedPrograms>> = OnceLock::new();
+    let path_env = std::env::var_os("PATH");
+    let cache = PROGRAMS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut slot = cache.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some((cached_path, resolved)) = slot.get(name)
+        && *cached_path == path_env
+    {
+        return resolved.clone();
+    }
+    let resolved = crate::program_lookup::resolve_program_from_path(name, path_env.clone(), None)
+        .ok()
+        .map(Arc::new);
+    slot.insert(name, (path_env, resolved.clone()));
+    resolved
+}
+
 pub fn read_process_args(pid: i32) -> Option<String> {
-    let output = AsyncCommand::new("ps")
+    let output = AsyncCommand::new(ps_program()?.as_os_str())
         .args(["-o", "args=", "-p", &pid.to_string()])
         .output()
         .ok()?;
@@ -148,7 +213,7 @@ pub fn read_process_args_with_env(pid: i32) -> Option<String> {
 /// One spawn site: everything that needs a process environment comes through
 /// here, so the subprocess gate can still count them.
 pub fn try_read_process_args_with_env(pid: i32) -> Result<Option<String>, String> {
-    let output = AsyncCommand::new("ps")
+    let output = AsyncCommand::new(ps_program_or_error()?.as_os_str())
         .args(["eww", "-p", &pid.to_string(), "-o", "command="])
         .output()
         .map_err(|error| format!("failed to run ps environment inventory: {error}"))?;
@@ -171,7 +236,7 @@ pub fn list_process_args() -> Vec<ProcessArgsEntry> {
 }
 
 pub fn try_list_process_args() -> Result<Vec<ProcessArgsEntry>, String> {
-    let output = AsyncCommand::new("ps")
+    let output = AsyncCommand::new(ps_program_or_error()?.as_os_str())
         .args(["-axo", "pid=,args="])
         .output()
         .map_err(|error| format!("failed to run ps process inventory: {error}"))?;
@@ -207,7 +272,7 @@ fn parse_process_args_line(line: &str) -> Option<ProcessArgsEntry> {
 /// "are there duplicates?" needs the difference: an empty map would read as
 /// "nothing wrong".
 pub fn try_list_process_parents() -> Result<BTreeMap<i32, i32>, String> {
-    let output = AsyncCommand::new("ps")
+    let output = AsyncCommand::new(ps_program_or_error()?.as_os_str())
         .args(["-axo", "pid=,ppid="])
         .output()
         .map_err(|error| format!("failed to run ps: {error}"))?;
@@ -239,7 +304,7 @@ pub fn list_process_parents() -> Vec<(i32, i32)> {
 }
 
 pub fn read_process_cwd(pid: i32) -> Option<String> {
-    let output = AsyncCommand::new("lsof")
+    let output = AsyncCommand::new(lsof_program()?.as_os_str())
         .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
         .output()
         .ok()?;
@@ -263,7 +328,7 @@ pub fn is_exited_process_state(state: &str) -> bool {
 }
 
 fn read_process_state(pid: i32) -> Option<String> {
-    let output = AsyncCommand::new("ps")
+    let output = AsyncCommand::new(ps_program()?.as_os_str())
         .args(["-o", "stat=", "-p", &pid.to_string()])
         .output()
         .ok()?;
@@ -274,7 +339,7 @@ fn read_process_state(pid: i32) -> Option<String> {
 }
 
 pub fn read_process_start_time(pid: i32) -> Option<String> {
-    let output = AsyncCommand::new("ps")
+    let output = AsyncCommand::new(ps_program()?.as_os_str())
         .args(["-o", "lstart=", "-p", &pid.to_string()])
         .output()
         .ok()?;
@@ -338,21 +403,72 @@ fn pid_signal_zero(pid: i32) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-pub fn is_aimux_project_service_process(
+/// Unknown folds to `false` here, which is what this already did. The
+/// supervisor callers want their own triage -- see
+/// `is_current_native_aimux_project_service_process`, where the same fold was
+/// a bug -- and changing them blind would be the mistake that one was.
+/// Whether this pid is a project service for `expected`, or that `ps` could
+/// not say.
+pub fn aimux_project_service_process(
     pid: i32,
     expected: &ProjectServiceProcessIdentity,
-) -> bool {
+) -> ProcessIdentityMatch {
     process_args_match_with_optional_cwd(pid, read_process_args, read_process_cwd, |args, cwd| {
         is_aimux_project_service_process_args(args, cwd, expected)
     })
 }
 
-pub fn is_aimux_daemon_process(pid: i32) -> bool {
-    read_process_args(pid).is_some_and(|args| is_aimux_daemon_process_args(&args))
+pub fn is_aimux_project_service_process(
+    pid: i32,
+    expected: &ProjectServiceProcessIdentity,
+) -> bool {
+    aimux_project_service_process(pid, expected) == ProcessIdentityMatch::Matches
 }
 
+/// Match a process against an identity, keeping "could not read" apart from
+/// "does not match".
+///
+/// The readers are parameters so the three outcomes can be gated without a
+/// real `ps`.
+fn process_args_identity(
+    pid: i32,
+    read_args: impl FnOnce(i32) -> Option<String>,
+    matches: impl FnOnce(&str) -> bool,
+) -> ProcessIdentityMatch {
+    match read_args(pid) {
+        // `read_process_args` returns `None` when the `ps` spawn fails or exits
+        // non-zero, which is not evidence about the process.
+        None => ProcessIdentityMatch::CouldNotRead,
+        Some(args) if matches(&args) => ProcessIdentityMatch::Matches,
+        Some(_) => ProcessIdentityMatch::DoesNotMatch,
+    }
+}
+
+/// Whether this pid is an aimux daemon, or that `ps` could not say.
+pub fn aimux_daemon_process(pid: i32) -> ProcessIdentityMatch {
+    process_args_identity(pid, read_process_args, is_aimux_daemon_process_args)
+}
+
+/// Whether this pid is a NATIVE aimux daemon, or that `ps` could not say.
+pub fn native_aimux_daemon_process(pid: i32) -> ProcessIdentityMatch {
+    process_args_identity(pid, read_process_args, is_native_aimux_daemon_process_args)
+}
+
+/// `CouldNotRead` folds to `false` here, which is what this already did.
+///
+/// That fold is correct for the callers that keep it, and only for them: they
+/// REFUSE TO ACT on `false`. `stop_daemon_process_info_with` answers "refusing
+/// to signal unverified aimux daemon", and the project-service preflight skips
+/// the entry. A caller that DESTROYS on `false` must use
+/// `aimux_daemon_process` and decide for itself -- folding there is what made a
+/// failed `ps` terminate a live daemon.
+pub fn is_aimux_daemon_process(pid: i32) -> bool {
+    aimux_daemon_process(pid) == ProcessIdentityMatch::Matches
+}
+
+/// See `is_aimux_daemon_process` for why this fold is safe where it is kept.
 pub fn is_native_aimux_daemon_process(pid: i32) -> bool {
-    read_process_args(pid).is_some_and(|args| is_native_aimux_daemon_process_args(&args))
+    native_aimux_daemon_process(pid) == ProcessIdentityMatch::Matches
 }
 
 /// The `AIMUX_HOME` a running process was started with, which is the only thing
@@ -407,23 +523,33 @@ fn first_arg_token(args: &str) -> Option<&str> {
     args.split_whitespace().map(trim_shell_quotes).next()
 }
 
-pub fn is_native_aimux_project_service_process(
-    pid: i32,
-    expected: &ProjectServiceProcessIdentity,
-) -> bool {
-    process_args_match_with_optional_cwd(pid, read_process_args, read_process_cwd, |args, cwd| {
-        is_native_aimux_project_service_process_args(args, cwd, expected)
-    })
-}
-
-pub fn is_current_native_aimux_project_service_process(
+/// Whether this pid is OUR current native project service, or that `ps` could
+/// not tell us.
+///
+/// The third outcome is the point. Its one caller decides whether to TERMINATE
+/// the service, and folding `CouldNotRead` into "not ours" made a failed `ps`
+/// kill a healthy one.
+pub fn current_native_aimux_project_service_process(
     pid: i32,
     expected: &ProjectServiceProcessIdentity,
     expected_binary: &Path,
-) -> bool {
+) -> ProcessIdentityMatch {
     process_args_match_with_optional_cwd(pid, read_process_args, read_process_cwd, |args, cwd| {
         is_current_native_aimux_project_service_process_args(args, cwd, expected, expected_binary)
     })
+}
+
+/// Whether a process matches an identity, or that we could not find out.
+///
+/// Three outcomes, not two, for the same reason `RepoRootLookup` has three:
+/// the answer feeds a decision to TERMINATE, and "ps could not be run" is not
+/// "this is not our process".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessIdentityMatch {
+    Matches,
+    DoesNotMatch,
+    /// The process args could not be read, so the question is unanswered.
+    CouldNotRead,
 }
 
 fn process_args_match_with_optional_cwd(
@@ -431,14 +557,21 @@ fn process_args_match_with_optional_cwd(
     read_args: impl FnOnce(i32) -> Option<String>,
     read_cwd: impl FnOnce(i32) -> Option<String>,
     matches: impl Fn(&str, Option<&str>) -> bool,
-) -> bool {
+) -> ProcessIdentityMatch {
+    // `read_args` returns `None` when the `ps` spawn fails or exits non-zero,
+    // which is indistinguishable here from a process that does not match --
+    // and it used to be reported as exactly that.
     let Some(args) = read_args(pid) else {
-        return false;
+        return ProcessIdentityMatch::CouldNotRead;
     };
     if matches(&args, None) {
-        return true;
+        return ProcessIdentityMatch::Matches;
     }
-    matches(&args, read_cwd(pid).as_deref())
+    if matches(&args, read_cwd(pid).as_deref()) {
+        ProcessIdentityMatch::Matches
+    } else {
+        ProcessIdentityMatch::DoesNotMatch
+    }
 }
 
 pub fn is_aimux_project_service_process_args(
@@ -518,6 +651,88 @@ fn normalize_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `process_args_identity` keeps a failed read apart from a mismatch.
+    ///
+    /// All three outcomes are asserted: an enum that always answered
+    /// `CouldNotRead` would satisfy a test that only checked the failure, and
+    /// would make every daemon look unverifiable forever.
+    #[test]
+    fn a_failed_daemon_args_read_is_could_not_read_not_a_mismatch() {
+        assert_eq!(
+            process_args_identity(
+                42,
+                |_| Some("aimux daemon".to_owned()),
+                |args| args.contains("daemon")
+            ),
+            ProcessIdentityMatch::Matches,
+            "a readable matching process must report Matches, or the other cases prove nothing"
+        );
+        assert_eq!(
+            process_args_identity(
+                42,
+                |_| Some("something else".to_owned()),
+                |args| args.contains("daemon")
+            ),
+            ProcessIdentityMatch::DoesNotMatch,
+            "a readable non-matching process must report DoesNotMatch"
+        );
+        assert_eq!(
+            // Exactly what `read_process_args` returns when `ps` fails.
+            process_args_identity(42, |_| None, |args| args.contains("daemon")),
+            ProcessIdentityMatch::CouldNotRead,
+            "a failed args read reported as DoesNotMatch is what let a broken ps terminate a live daemon and report a running service as stopped"
+        );
+    }
+
+    /// A failed args read is its own outcome, not "does not match".
+    ///
+    /// The helper takes its readers as closures, so this drives the real
+    /// three-way logic with a `read_args` that fails the way a broken `ps`
+    /// does. Both other outcomes are asserted alongside it, because an enum
+    /// that always answered `CouldNotRead` would pass a test that only checked
+    /// the failure case.
+    #[test]
+    fn a_failed_args_read_is_could_not_read_not_a_mismatch() {
+        let matched = process_args_match_with_optional_cwd(
+            4242,
+            |_| Some("aimux __project-service-internal /repo".to_owned()),
+            |_| None,
+            |args, _| args.contains("__project-service-internal"),
+        );
+        assert_eq!(
+            matched,
+            ProcessIdentityMatch::Matches,
+            "a readable process whose args match must report Matches, or the other two cases prove nothing"
+        );
+
+        let mismatched = process_args_match_with_optional_cwd(
+            4242,
+            |_| Some("some other process".to_owned()),
+            |_| None,
+            |args, _| args.contains("__project-service-internal"),
+        );
+        assert_eq!(
+            mismatched,
+            ProcessIdentityMatch::DoesNotMatch,
+            "a readable process whose args do not match must report DoesNotMatch"
+        );
+
+        let unreadable = process_args_match_with_optional_cwd(
+            4242,
+            // Exactly what `read_process_args` returns when the `ps` spawn
+            // fails or exits non-zero.
+            |_| None,
+            |_| None,
+            |args, _| args.contains("__project-service-internal"),
+        );
+        assert_eq!(
+            unreadable,
+            ProcessIdentityMatch::CouldNotRead,
+            "a failed args read reported as DoesNotMatch is what made a broken ps terminate a healthy project service"
+        );
+    }
+
     use std::cell::Cell;
     use std::path::Path;
 
@@ -548,7 +763,7 @@ mod tests {
             },
         );
 
-        assert!(matched);
+        assert_eq!(matched, ProcessIdentityMatch::Matches);
         assert_eq!(cwd_calls.get(), 0);
     }
 
@@ -571,7 +786,7 @@ mod tests {
             |args, cwd| is_native_aimux_project_service_process_args(args, cwd, &expected),
         );
 
-        assert!(matched);
+        assert_eq!(matched, ProcessIdentityMatch::Matches);
         assert_eq!(cwd_calls.get(), 1);
     }
 
@@ -584,5 +799,30 @@ mod tests {
             Some("/Users/sam/.aimux".to_owned())
         );
         assert_eq!(process_env_value(args, "MISSING"), None);
+    }
+
+    /// `ps` is resolved once per process, not per call.
+    ///
+    /// `read_process_args` alone has eleven callers and runs on every
+    /// project-service liveness check. Spawned by bare name, each of those
+    /// made the OS walk PATH -- the hazard AGENTS.md's Subprocess Churn
+    /// section opens with. The same allocation on a second call is what
+    /// "resolved once" means observably; a memo that re-resolved would hand
+    /// back a different `Arc`.
+    #[test]
+    fn ps_is_resolved_once_per_process() {
+        let Some(first) = super::ps_program() else {
+            eprintln!("skipping: ps is not on PATH here, so there is nothing to memoise");
+            return;
+        };
+        let second = super::ps_program().expect("ps resolved once already");
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "ps was resolved twice, so the memo is not holding and every liveness check pays a PATH walk"
+        );
+        assert!(
+            std::path::Path::new(first.as_os_str()).is_absolute(),
+            "ps resolved to {first:?}, which is not absolute, so the OS still has to search for it"
+        );
     }
 }

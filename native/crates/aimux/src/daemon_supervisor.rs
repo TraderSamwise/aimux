@@ -13,9 +13,10 @@ use crate::daemon_state::{
 use crate::debug_logging::log_lifecycle_always;
 use crate::paths::PathResolver;
 use crate::process_inspector::{
-    ProcessFingerprint, ProjectServiceProcessIdentity, is_aimux_daemon_process,
-    is_aimux_daemon_process_args, is_aimux_project_service_process, is_native_aimux_daemon_process,
-    is_pid_alive, process_fingerprint_matches, read_process_fingerprint,
+    ProcessFingerprint, ProcessIdentityMatch, ProjectServiceProcessIdentity, aimux_daemon_process,
+    aimux_project_service_process, is_aimux_daemon_process, is_aimux_daemon_process_args,
+    is_aimux_project_service_process, is_pid_alive, native_aimux_daemon_process,
+    process_fingerprint_matches, read_process_fingerprint,
 };
 use crate::project_service_manifest::{
     ProjectServiceManifest, get_project_service_manifest, is_stale_against_daemon, manifests_match,
@@ -495,7 +496,9 @@ pub fn ensure_daemon_running_at(
                         clear_daemon_info(resolver.daemon_info_path())?;
                     } else if !is_matching_daemon_health(&health, &manifest) {
                         clear_daemon_info(resolver.daemon_info_path())?;
-                    } else if !is_native_aimux_daemon_process(existing.pid) {
+                    } else if daemon_may_be_terminated_as_foreign(native_aimux_daemon_process(
+                        existing.pid,
+                    )) {
                         let _ = terminate_daemon_on_default_port(existing.pid);
                         clear_daemon_info(resolver.daemon_info_path())?;
                     } else {
@@ -680,7 +683,7 @@ fn probe_default_daemon_with_manifest(
                 .into(),
         ));
     }
-    if !is_native_aimux_daemon_process(pid) {
+    if daemon_may_be_terminated_as_foreign(native_aimux_daemon_process(pid)) {
         terminate_daemon_on_default_port(pid)?;
         clear_daemon_info(resolver.daemon_info_path())?;
         return Ok(None);
@@ -916,15 +919,43 @@ where
     })
 }
 
+/// Whether a daemon may be terminated for being someone else's.
+///
+/// `DoesNotMatch` only. `CouldNotRead` means `ps` could not be run, which is
+/// not evidence that the daemon is foreign -- and both callers reach this
+/// AFTER the daemon has answered a health check from a matching build, so a
+/// failed subprocess read was overriding positive HTTP evidence that it is
+/// alive and ours, and killing it.
+fn daemon_may_be_terminated_as_foreign(identity: ProcessIdentityMatch) -> bool {
+    matches!(identity, ProcessIdentityMatch::DoesNotMatch)
+}
+
+/// Whether a process we signalled can be treated as gone.
+///
+/// `DoesNotMatch` only -- the pid is no longer our process, so it exited. Note
+/// this folds the OPPOSITE way from `daemon_may_be_terminated_as_foreign` on
+/// the same `CouldNotRead`: there, unknown must not destroy, so it answers
+/// "ours"; here, unknown must not claim success, so it answers "not exited".
+/// Both are "do not act on missing data", and they are opposite booleans,
+/// which is why every site in this class needs its own decision rather than a
+/// shared rule.
+///
+/// Claiming exit on unknown skipped the SIGKILL escalation and the timeout
+/// error, and recorded a service as stopped while it may still have been
+/// running.
+fn signalled_process_has_exited(identity: ProcessIdentityMatch) -> bool {
+    matches!(identity, ProcessIdentityMatch::DoesNotMatch)
+}
+
 fn wait_for_daemon_info_exit(info: &AimuxDaemonInfo, timeout_ms: u64) -> bool {
     let deadline = current_unix_millis() + u128::from(timeout_ms);
     while current_unix_millis() < deadline {
-        if !is_aimux_daemon_process(info.pid) {
+        if signalled_process_has_exited(aimux_daemon_process(info.pid)) {
             return true;
         }
         sleep_ms(100);
     }
-    !is_aimux_daemon_process(info.pid)
+    signalled_process_has_exited(aimux_daemon_process(info.pid))
 }
 
 fn wait_for_project_service_info_exit(project: &ProjectServiceState, timeout_ms: u64) -> bool {
@@ -934,12 +965,12 @@ fn wait_for_project_service_info_exit(project: &ProjectServiceState, timeout_ms:
     };
     let deadline = current_unix_millis() + u128::from(timeout_ms);
     while current_unix_millis() < deadline {
-        if !is_aimux_project_service_process(project.pid, &expected) {
+        if signalled_process_has_exited(aimux_project_service_process(project.pid, &expected)) {
             return true;
         }
         sleep_ms(100);
     }
-    !is_aimux_project_service_process(project.pid, &expected)
+    signalled_process_has_exited(aimux_project_service_process(project.pid, &expected))
 }
 
 pub type VerifyProjectServiceHook<'a> = Box<dyn Fn(&ProjectServiceState) -> bool + 'a>;
@@ -1283,4 +1314,50 @@ fn percent_encode(value: &str) -> String {
         }
     }
     encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The two dispositions over the same unknown, and they are opposites.
+    ///
+    /// This is one test rather than two deliberately: the whole point is that
+    /// `CouldNotRead` answers `false` to "may I terminate this" and `false` to
+    /// "has it exited", which are opposite BOOLEANS for the same "do not act
+    /// on missing data". Asserting them side by side is what stops someone
+    /// later "simplifying" the two into one shared fold.
+    ///
+    /// Every outcome is asserted for both, because a disposition that always
+    /// answered `false` would pass a test checking only the unknown case --
+    /// and would never terminate a genuinely foreign daemon, nor ever observe
+    /// an exit.
+    #[test]
+    fn an_unreadable_identity_neither_terminates_a_daemon_nor_reports_an_exit() {
+        assert!(
+            !daemon_may_be_terminated_as_foreign(ProcessIdentityMatch::CouldNotRead),
+            "a daemon whose args could not be read was treated as foreign and terminated; both callers reach this AFTER it answered a health check from a matching build"
+        );
+        assert!(
+            daemon_may_be_terminated_as_foreign(ProcessIdentityMatch::DoesNotMatch),
+            "a daemon that genuinely is not ours must still be terminable, or this guard would never fire"
+        );
+        assert!(
+            !daemon_may_be_terminated_as_foreign(ProcessIdentityMatch::Matches),
+            "our own daemon must never be terminated as foreign"
+        );
+
+        assert!(
+            !signalled_process_has_exited(ProcessIdentityMatch::CouldNotRead),
+            "an unreadable identity was reported as an exit; that skips the SIGKILL escalation and the timeout error, and records a service as stopped while it may still be running"
+        );
+        assert!(
+            signalled_process_has_exited(ProcessIdentityMatch::DoesNotMatch),
+            "a pid that is no longer our process has exited, or no stop would ever complete"
+        );
+        assert!(
+            !signalled_process_has_exited(ProcessIdentityMatch::Matches),
+            "a process still matching ours has not exited"
+        );
+    }
 }

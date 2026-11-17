@@ -76,6 +76,16 @@ function getWebSocketToken(request: Request): string | null {
   return null;
 }
 
+/// `/shares/<segment>` routes whose segment is a verb, not an owner id.
+///
+/// Every other `/shares/...` path names the owner whose durable object holds
+/// the share, so the first segment picks the object. A verb read as an owner
+/// id picks an object named after the verb instead: empty, shared by every
+/// account, and it answers "share not found" for a share that exists. The
+/// list is here rather than inline so the next such route has one place to
+/// declare itself.
+const SHARE_VERB_SEGMENTS = new Set(["invite", "bind"]);
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -110,7 +120,7 @@ export default {
       return addCorsHeaders(await stub.fetch(request));
     }
 
-    if (isOwnerSecurityPath(url.pathname)) {
+    if (isOwnerSecurityPath(url.pathname) || isProjectOwnerPath(url.pathname)) {
       const authHeader = request.headers.get("Authorization");
       const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
       if (!bearerToken) {
@@ -119,6 +129,23 @@ export default {
       const tokenIsDaemon = isDaemonToken(bearerToken);
       if (isOwnerSecurityMutationPath(url.pathname) && !tokenIsDaemon) {
         return corsResponse(JSON.stringify({ ok: false, error: "Device approval requires local CLI auth" }), 403);
+      }
+      // Claiming a checkout is a thing a machine says about itself, so it is
+      // the daemon's token that carries it. A browser session has no machine
+      // to speak for, and allowing one would let a phone claim a laptop's
+      // repository.
+      // The read as well as the claim: it answers with machine ids and
+      // absolute paths, it has exactly one consumer, and the comment on
+      // `isProjectOwnerPath` said "with the daemon token" while half of it
+      // took a browser session.
+      if (isProjectOwnerPath(url.pathname) && !tokenIsDaemon) {
+        return corsResponse(
+          JSON.stringify({
+            ok: false,
+            error: "Project ownership is read and written by the local CLI",
+          }),
+          403,
+        );
       }
       let userId: string;
       try {
@@ -208,10 +235,11 @@ export default {
       }
       const inviteAcceptMatch = url.pathname.match(/^\/shares\/invite\/([^/]+)\/([^/]+)\/accept$/);
       const ownerScopedMatch = url.pathname.match(/^\/shares\/([^/]+)(?:\/|$)/);
+      const ownerScopedSegment = ownerScopedMatch ? decodeURIComponent(ownerScopedMatch[1]) : undefined;
       const ownerUserId = inviteAcceptMatch
         ? decodeURIComponent(inviteAcceptMatch[1])
-        : ownerScopedMatch && decodeURIComponent(ownerScopedMatch[1]) !== "invite"
-          ? decodeURIComponent(ownerScopedMatch[1])
+        : ownerScopedSegment && !SHARE_VERB_SEGMENTS.has(ownerScopedSegment)
+          ? ownerScopedSegment
           : userId;
       const relayId = env.RELAY.idFromName(ownerUserId);
       const stub = env.RELAY.get(relayId);
@@ -438,6 +466,17 @@ async function handleHostedAttachmentUpload(request: Request, env: Env): Promise
       400,
     );
   }
+}
+
+/// The owner's own project-ownership routes.
+///
+/// Separate from the share routes because those authenticate a person's
+/// browser session, and both of these are the local CLI with the daemon
+/// token: the claim because a machine is speaking for itself, the read
+/// because its answer is machine ids and absolute paths and the CLI is its
+/// only consumer. `/shares/...` would 401 a CLI holding that token.
+function isProjectOwnerPath(pathname: string): boolean {
+  return pathname === "/projects/claim" || pathname === "/projects/owners";
 }
 
 function isOwnerSecurityPath(pathname: string): boolean {

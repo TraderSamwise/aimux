@@ -1,6 +1,7 @@
 use crate::daemon::routing::DaemonRouteUrl;
+use crate::machine_identity::is_valid_machine_id;
 use crate::project_api_contract::routes as project_routes;
-use crate::proxy_project_binding::parse_proxy_target;
+use crate::proxy_project_binding::{PEER_AGENT_INPUT_ROUTE, parse_proxy_target};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -14,6 +15,14 @@ pub enum RemoteActorRole {
     Owner,
     Guest,
     Operator,
+    /// Another of this account's own machines, asking through the relay.
+    ///
+    /// Deliberately not Owner. The owner's own app is stamped `owner` and the
+    /// daemon loops those straight back into its whole API, so a peer given
+    /// that stamp would be every machine holding every other machine's
+    /// keyboard. A peer gets its own allowlist, as narrow as the work it is
+    /// for.
+    Peer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +55,10 @@ pub struct RemoteActor {
     pub email: Option<String>,
     pub share_id: Option<String>,
     pub share_session_id: Option<String>,
+    /// Which machine a peer request came from, stamped by the relay from the
+    /// socket it arrived on. Never read from the frame: the point of it is
+    /// that the caller cannot choose it.
+    pub peer_machine_id: Option<String>,
     pub principal: Option<RemoteOperatorPrincipal>,
 }
 
@@ -94,12 +107,14 @@ pub fn parse_remote_actor(headers: &BTreeMap<String, String>) -> Option<RemoteAc
             email: None,
             share_id: None,
             share_session_id: None,
+            peer_machine_id: None,
             principal: None,
         });
     };
     let role = match role_text {
         "owner" => RemoteActorRole::Owner,
         "guest" => RemoteActorRole::Guest,
+        "peer" => RemoteActorRole::Peer,
         _ => RemoteActorRole::Guest,
     };
     Some(RemoteActor {
@@ -120,6 +135,7 @@ pub fn parse_remote_actor(headers: &BTreeMap<String, String>) -> Option<RemoteAc
             .or_else(|| json_actor.as_ref().and_then(|actor| actor.email.clone())),
         share_id: header_value(headers, "x-aimux-share-id").map(str::to_owned),
         share_session_id: header_value(headers, "x-aimux-share-session-id").map(str::to_owned),
+        peer_machine_id: header_value(headers, "x-aimux-peer-machine-id").map(str::to_owned),
         principal: None,
     })
 }
@@ -140,7 +156,173 @@ pub fn assert_remote_access_allowed(
             assert_operator_allowed(actor, method, pathname, route_url, context)
         }
         RemoteActorRole::Guest => assert_guest_allowed(actor, method, pathname, route_url, context),
+        RemoteActorRole::Peer => assert_peer_allowed(actor, method, pathname, context),
     }
+}
+
+/// What another of this account's machines may ask this one to do.
+///
+/// Exactly one thing: submit input to an agent, on a project service this
+/// machine actually runs. Everything else is refused by the name of the route
+/// that was tried.
+///
+/// The first draft opened `/tasks/assign` and `/tasks/accept`, which read as
+/// the narrowest thing that could carry a handoff. It is not narrow. A task's
+/// `description` is interpolated verbatim into the reconciliation briefing the
+/// loop types into an overseer's pane, so posting a task is writing into the
+/// agent that spawns other agents -- one hop later and with nobody's name on
+/// it. That is why the route that did open is the one where the words are
+/// already understood to be words typed at an agent, and where the sender is
+/// taken from the stamp rather than from the body.
+///
+/// WHAT THIS DOES NOT NARROW, said out loud because the route name suggests
+/// otherwise: within a project this machine owns, a peer may write to ANY of
+/// that project's sessions. There is no per-session grant here as there is for
+/// a shared guest, because a guest is a stranger holding one chat and a peer
+/// is this account's own other Mac -- the point of it is an overseer steering
+/// a coder it did not spawn. The bound thing is the project, not the session.
+///
+/// The project IS bound, and that is load-bearing rather than incidental. The
+/// proxy's own host check (`proxy_host_allowed`) validates the host and not
+/// the port, so without this a peer could name any loopback port that answers
+/// `POST /agents/input` -- including something that is not an Aimux project
+/// service at all. `context.project_root` is resolved from this daemon's real
+/// project list, so a port that is not one of this machine's project services
+/// has no project root and is refused. What `Some` proves is narrow and
+/// enough: exactly one registry project of this daemon, with a live service,
+/// records this host and port.
+///
+/// It does NOT consult the project-owner records, and that is deliberate
+/// rather than overlooked. Ownership says which machine owns a checkout, so
+/// that a session is steered from one place; it does not say which of this
+/// account's own machines may speak to an agent this machine is already
+/// running. Every peer here is one of Sam's Macs, and the question this gate
+/// answers is "is the thing on that port mine", not "whose checkout is it".
+fn assert_peer_allowed(
+    actor: &RemoteActor,
+    method: &str,
+    pathname: &str,
+    context: RemoteAccessContext<'_>,
+) -> RemoteAccessDecision {
+    let Some(origin) = actor
+        .peer_machine_id
+        .as_deref()
+        .map(str::trim)
+        // `is_valid_machine_id` rather than "not empty": this id is about to
+        // be written into the text an agent reads, and a stamp that is not a
+        // machine id is not evidence of a machine. It also rejects
+        // `unidentified`, the name every daemon with no persisted identity
+        // shares, which makes it a label rather than an identity.
+        .filter(|machine| is_valid_machine_id(machine))
+    else {
+        // The relay stamps this beside the role, from the socket the frame
+        // arrived on. A peer role without one did not come from where it
+        // claims.
+        return RemoteAccessDecision::deny(
+            403,
+            "peer request did not say which machine it came from",
+        );
+    };
+    let proxy_sub_path = parse_proxy_target(pathname).map(|proxy| proxy.sub_path);
+    let route = proxy_sub_path
+        .clone()
+        .unwrap_or_else(|| pathname.to_owned());
+    // Two doors to the same thing, and the second is the one a peer on another
+    // machine can actually use: the proxy route needs a host and a port, which
+    // a sender across the relay has no way to learn, while this one carries
+    // the project and lets the owner supply its own address.
+    //
+    // The body rules below apply to both, which is why they are checked after
+    // this and not inside either arm.
+    let names_a_project = pathname == PEER_AGENT_INPUT_ROUTE;
+    let refuse_route = || {
+        RemoteAccessDecision::deny(
+            403,
+            format!("no route is open to peer machine {origin}: {route}"),
+        )
+    };
+    if proxy_sub_path.as_deref() != Some(project_routes::agents::INPUT) && !names_a_project {
+        // `live_pane::INPUT` shares a handler with the route above and is
+        // deliberately NOT here: it is the door a shared guest writes to, and
+        // its guest arm keys on a share session a peer does not have.
+        return refuse_route();
+    }
+    // Its own sentence, separate from the route refusal above. Sharing one
+    // made the test for this indistinguishable from the test for the route:
+    // both asserted a 403 carrying the same words, so a change to either rule
+    // kept the other's test green.
+    //
+    // `== "POST"`, not a case-insensitive compare, because the body parser is
+    // exact (`daemon/server.rs:56`) and the two must agree about what a POST
+    // is. Accepting `post` here would hand this function a request whose body
+    // was never read, which makes every body check below pass by being asked
+    // about `None` -- the field refusals would be vacuous rather than wrong,
+    // which is harder to notice.
+    if method != "POST" {
+        return RemoteAccessDecision::deny(
+            403,
+            format!("peer machine {origin} may only POST to {route}"),
+        );
+    }
+    if context.project_root.is_none() {
+        // Each door says which thing it could not find, because they are
+        // different mistakes: a port this machine does not serve, or a project
+        // this machine does not run.
+        return RemoteAccessDecision::deny(
+            403,
+            if names_a_project {
+                format!("peer machine {origin} named a project this machine is not serving")
+            } else {
+                format!(
+                    "peer machine {origin} named a port that is not one of this machine's project services"
+                )
+            },
+        );
+    }
+    if context
+        .body
+        .and_then(|body| body.get("force"))
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        // `force` skips the quiet-window probe, which is what stops input
+        // landing in the middle of a turn. A machine that is not here cannot
+        // judge that, and the agent it would interrupt is not its own.
+        return RemoteAccessDecision::deny(
+            403,
+            format!("peer machine {origin} cannot force unattended delivery"),
+        );
+    }
+    if context
+        .body
+        .and_then(|body| body.get("attachmentIds"))
+        .and_then(Value::as_array)
+        .is_some_and(|ids| !ids.is_empty())
+    {
+        // Attachment ids resolve against THIS machine's own records, so an id
+        // from another machine either misses or hits a stranger's file.
+        return RemoteAccessDecision::deny(
+            403,
+            format!("peer machine {origin} cannot attach this machine's files"),
+        );
+    }
+    if context
+        .body
+        .and_then(|body| body.get("sharedChatActor"))
+        .is_some_and(|actor| !actor.is_null())
+    {
+        // A peer's sender comes from the stamp. `sharedChatActor` is the body
+        // field that composes the OTHER attribution prefix, it is not
+        // alphabet-filtered the way a sender id is, and it is tried before the
+        // sender -- so a peer sending one would be choosing the name on the
+        // line. The composer also puts the stamped peer first, which makes
+        // this the second of two locks rather than the only one.
+        return RemoteAccessDecision::deny(
+            403,
+            format!("peer machine {origin} cannot name the author of its own input"),
+        );
+    }
+    RemoteAccessDecision::allow()
 }
 
 pub fn assert_operator_stream_allowed(
@@ -439,6 +621,11 @@ fn shared_guest_write_route(sub_path: &str) -> bool {
     matches!(
         sub_path,
         project_routes::live_pane::INPUT
+            // Answering the agent's own question. Withholding this leaves a
+            // guest watching a chooser it is trusted to type `2` into but not
+            // trusted to press, which is not a narrower share -- it is the
+            // same authority through a worse route.
+            | project_routes::live_pane::SELECT
             | project_routes::ATTACHMENTS
             // Both spellings of interrupt: the GUI sends the live-pane one and
             // the gate is about the capability, not about which client asked.
@@ -487,9 +674,13 @@ fn body_session_id(body: Option<&Value>) -> Option<String> {
 }
 
 fn body_text(body: Option<&Value>) -> bool {
+    // The same trim the route that refuses this applies. Its deny set was a
+    // strict subset, so nothing diverged yet -- but two gates answering "is
+    // there any text here" with two definitions is how the last four of
+    // these started.
     body.and_then(|body| body.get("text"))
         .and_then(Value::as_str)
-        .map(str::trim)
+        .map(crate::project_service::agent_input::shared_chat_trim)
         .is_some_and(|value| !value.is_empty())
 }
 

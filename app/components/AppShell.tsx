@@ -19,7 +19,7 @@ import Reanimated, {
 } from "react-native-reanimated";
 import { MonitorSidebar } from "@/components/MonitorSidebar";
 import { NotificationStartupBanner } from "@/components/NotificationStartupBanner";
-import { PairDeviceDialog, APPROVE_COMMAND } from "@/components/PairDeviceDialog";
+import { PairDeviceDialog, approveCommand } from "@/components/PairDeviceDialog";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SharedSidebar } from "@/components/SharedSidebar";
 import { ChatChromeMotion } from "@/components/ChatChromeMotion";
@@ -34,9 +34,16 @@ import { pairingPromptDeviceKey, shouldOpenPairingPrompt } from "@/lib/pairing-p
 import { ResponsiveViewportProvider, useResponsiveViewportValue } from "@/lib/responsive-viewport";
 import { useRouteShare } from "@/lib/use-route-share";
 import { useSidebarKeyboard } from "@/lib/sidebar-keyboard";
+import { sidebarOpenForPresentation } from "@/lib/sidebar-visibility";
+import { contentLayerStyle, topChromeLayerStyle } from "@/lib/top-chrome-layer";
 import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
 import { desktopAppZoomAtom, desktopAppZoomScale, stepDesktopAppZoom } from "@/stores/settings";
-import { chatChromeVisibleAtom, chatFocusModeAtom, sidebarOpenAtom } from "@/stores/ui";
+import {
+  chatChromeVisibleAtom,
+  chatFocusModeAtom,
+  sidebarForcedHiddenAtom,
+  sidebarOpenAtom,
+} from "@/stores/ui";
 
 const DRAWER_WIDTH = 320;
 const SIDEBAR_SURFACE_MOTION_MS = 110;
@@ -53,6 +60,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const usesDrawerSidebar = !usesPersistentSidebar;
 
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
+  const [sidebarForcedHidden, setSidebarForcedHidden] = useAtom(sidebarForcedHiddenAtom);
   const setDesktopAppZoom = useSetAtom(desktopAppZoomAtom);
   const pathname = usePathname();
   const chatChromeVisible = useAtomValue(chatChromeVisibleAtom);
@@ -83,9 +91,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     topInset: resolvedTopInset,
   });
 
+  // Both directions. This only ever closed the sidebar, so narrowing the
+  // window hid it and widening never brought it back.
   useEffect(() => {
-    if (!usesPersistentSidebar) setSidebarOpen(false);
-  }, [setSidebarOpen, usesPersistentSidebar]);
+    setSidebarOpen(
+      sidebarOpenForPresentation({
+        persistent: usesPersistentSidebar,
+        forcedHidden: sidebarForcedHidden,
+      }),
+    );
+  }, [setSidebarOpen, sidebarForcedHidden, usesPersistentSidebar]);
 
   // Keyed on the rendered sidebar state, so focus mode hides the drawer from
   // the keyboard restore logic without changing the stored sidebar preference.
@@ -160,12 +175,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         variant="ghost"
         size="icon"
         accessibilityLabel="Toggle sidebar"
-        onPress={() => setSidebarOpen((v) => !v)}
+        onPress={() => {
+          const next = !sidebarOpen;
+          setSidebarOpen(next);
+          // On a window wide enough to hold the sidebar, this is the reader
+          // saying so, and it has to survive a resize or the restore above
+          // would undo it on the next width change.
+          if (usesPersistentSidebar) setSidebarForcedHidden(!next);
+        }}
       >
         <Menu size={20} color="#a1a1aa" />
       </Button>
     ),
-    [setSidebarOpen],
+    [setSidebarForcedHidden, setSidebarOpen, sidebarOpen, usesPersistentSidebar],
   );
   const desktopSidebarSurface = overlayTopChrome ? (
     <View className="flex-1 bg-[#161719]">
@@ -205,13 +227,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <View className="flex-1 bg-background">
       <ResponsiveViewportProvider value={viewport}>
         <View style={shellZoomStyle}>
-          <View
-            style={
-              overlayTopChrome
-                ? { left: 0, position: "absolute", right: 0, top: 0, zIndex: 60 }
-                : { flexShrink: 0 }
-            }
-          >
+          <View style={topChromeLayerStyle(overlayTopChrome)}>
             <ChatChromeMotion
               direction="top"
               distance={topChromeHideDistance}
@@ -222,7 +238,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {showPairingBanner ? (
                 <Pressable
                   accessibilityLabel="Pair this browser"
-                  accessibilityHint={`Run ${APPROVE_COMMAND} on your Mac to approve this device.`}
+                  accessibilityHint={`Run ${approveCommand(pendingApproval?.deviceId, pendingApproval?.approvalCode)} on your Mac to approve this device.`}
                   onPress={() => setPairingDialogOpen(true)}
                   className="flex-row items-center border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 active:bg-amber-500/20"
                 >
@@ -232,11 +248,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       Approve this browser to connect
                     </Text>
                     <Text className="mt-0.5 text-[12px] text-amber-100/80" numberOfLines={1}>
-                      Run {APPROVE_COMMAND}
-                      {pendingApproval?.approvalCode
-                        ? ` and match code ${pendingApproval.approvalCode}`
-                        : ""}
-                      .
+                      {/* The whole command, code included. Telling someone to
+                          "match the code" left them to find the device id,
+                          which this banner never showed. */}
+                      Run {approveCommand(pendingApproval?.deviceId, pendingApproval?.approvalCode)}
                     </Text>
                   </View>
                 </Pressable>
@@ -249,7 +264,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               visible={!chatFocused && !chatChromeVisible}
             />
           ) : null}
-          <View className="flex-1 flex-row">
+          <View
+            className="flex-1 flex-row"
+            style={contentLayerStyle(usesDrawerSidebar && effectiveSidebarOpen)}
+          >
             {usesPersistentSidebar ? (
               <Reanimated.View
                 pointerEvents={effectiveSidebarOpen ? "auto" : "none"}

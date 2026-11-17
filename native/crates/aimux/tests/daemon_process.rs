@@ -5,7 +5,9 @@ use aimux::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
 };
 use aimux::daemon::process::handle_daemon_runtime_request;
-use aimux::daemon::runtime::{RealDaemonRuntime, handle_daemon_runtime_request_with_mutex};
+use aimux::daemon::runtime::{
+    DaemonHealthIdentity, RealDaemonRuntime, handle_daemon_runtime_request_with_mutex,
+};
 use aimux::daemon::server::DaemonHttpRequest;
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::agents::{DaemonAgentTextRuntime, ProjectServicePostOptions};
@@ -272,6 +274,7 @@ impl DaemonCoreCommandRuntime for FakeRuntime {
         &mut self,
         _project_root: &str,
         _session_id: &str,
+        _overseer_session_id: Option<&str>,
         _goal: Option<&str>,
         _instructions: Option<&str>,
     ) -> Result<Value, CoreCommandFailure> {
@@ -1343,11 +1346,15 @@ fn runtime_mutex_wrapper_routes_owner_get_proxy_without_head_of_line_blocking() 
     request
         .headers
         .insert("x-aimux-actor-role".into(), "owner".into());
+    // Before the hold, not inside it: `from_runtime` takes the same mutex,
+    // and these tests exist to prove a route answers while it is held.
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     let held = runtime.lock().expect("hold runtime lock");
     let (response_tx, response_rx) = mpsc::channel();
     let request_runtime = Arc::clone(&runtime);
     let request_thread = thread::spawn(move || {
-        let response = handle_daemon_runtime_request_with_mutex(&request_runtime, request);
+        let response =
+            handle_daemon_runtime_request_with_mutex(&request_runtime, health_identity, request);
         response_tx
             .send(response)
             .expect("send proxy response before lock release");
@@ -1408,11 +1415,15 @@ fn runtime_mutex_wrapper_routes_owner_post_proxy_without_head_of_line_blocking()
     request
         .body_chunks
         .push(br#"{"sessionId":"s","text":"hello"}"#.to_vec());
+    // Before the hold, not inside it: `from_runtime` takes the same mutex,
+    // and these tests exist to prove a route answers while it is held.
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     let held = runtime.lock().expect("hold runtime lock");
     let (response_tx, response_rx) = mpsc::channel();
     let request_runtime = Arc::clone(&runtime);
     let request_thread = thread::spawn(move || {
-        let response = handle_daemon_runtime_request_with_mutex(&request_runtime, request);
+        let response =
+            handle_daemon_runtime_request_with_mutex(&request_runtime, health_identity, request);
         response_tx
             .send(response)
             .expect("send proxy response before lock release");
@@ -1464,7 +1475,11 @@ fn runtime_mutex_wrapper_still_denies_guest_desktop_state_proxy_fast_path() {
         .headers
         .insert("x-aimux-actor-role".into(), "guest".into());
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request);
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request,
+    );
 
     assert_eq!(response.status, 403);
     assert_eq!(
@@ -1496,12 +1511,468 @@ fn runtime_mutex_wrapper_still_denies_guest_live_pane_input_proxy_fast_path() {
         .body_chunks
         .push(br#"{"sessionId":"s","text":"hello"}"#.to_vec());
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request);
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request,
+    );
 
     assert_eq!(response.status, 403);
     assert_eq!(
         json_body(&response)["error"],
         "shared guest route requires an authorized share session"
+    );
+}
+
+fn peer_input_request() -> DaemonHttpRequest {
+    let mut request = FakeRuntime::request("POST", "/proxy/127.0.0.1/43210/agents/input");
+    request
+        .headers
+        .insert("x-aimux-actor-role".into(), "peer".into());
+    request
+        .headers
+        .insert("x-aimux-peer-machine-id".into(), "mbp".into());
+    request
+        .headers
+        .insert("content-type".into(), "application/json".into());
+    request
+        .body_chunks
+        .push(br#"{"sessionId":"s","text":"hello","from":"claude-utymep"}"#.to_vec());
+    request
+}
+
+/// A peer's input reaches a project service this machine runs -- and nothing
+/// else that happens to answer on a loopback port.
+///
+/// The proxy validates the HOST and not the port (`proxy_host_allowed`), so
+/// the allowlist asks instead whether the target resolves to one of this
+/// daemon's own projects. Both directions, because either alone passes for
+/// the wrong reason: the real project is forwarded, and the identical request
+/// against a daemon that runs no project on that port is refused by name and
+/// forwards nothing.
+#[test]
+fn a_peer_input_proxy_is_bound_to_a_project_this_daemon_runs() {
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    let forwarded = handle_daemon_runtime_request(&mut runtime, peer_input_request());
+    assert_eq!(
+        forwarded.status,
+        200,
+        "a peer naming this daemon's own project service must be forwarded: {}",
+        String::from_utf8_lossy(&forwarded.body)
+    );
+    assert!(
+        runtime
+            .calls
+            .iter()
+            .any(|call| call.starts_with("proxy-json:POST:http://127.0.0.1:43210/agents/input")),
+        "calls: {:?}",
+        runtime.calls
+    );
+
+    let mut stranger = FakeRuntime::empty();
+    let refused = handle_daemon_runtime_request(&mut stranger, peer_input_request());
+    assert_eq!(refused.status, 403);
+    assert_eq!(
+        json_body(&refused)["error"],
+        "peer machine mbp named a port that is not one of this machine's project services"
+    );
+    assert!(
+        stranger.calls.is_empty(),
+        "nothing may be forwarded on a refusal: {:?}",
+        stranger.calls
+    );
+}
+
+/// And the binding above only has an answer on the LOCKED path.
+///
+/// The proxy fast path builds its access context with an EMPTY project list,
+/// which says "not ours" about every port including the right one. An
+/// operator was already excluded for that reason; a peer is excluded for the
+/// same one. The observable is the runtime lock itself: a caller on the fast
+/// path is answered while the lock is held, and a caller that needs the
+/// project list is not.
+///
+/// The guest is the control. Without it this test passes for a request that
+/// blocks for any reason at all -- and a guest really is served from the fast
+/// path, so the pair separates "needs the lock" from "is slow".
+#[test]
+fn a_peer_input_proxy_is_not_answered_from_the_project_less_fast_path() {
+    let fixture = HostedFixture::new("peer-proxy-needs-project-binding");
+    let runtime = Arc::new(Mutex::new(RealDaemonRuntime::new(
+        fixture.resolver.clone(),
+        AimuxDaemonInfo {
+            pid: 123,
+            port: 43191,
+            started_at: "started".into(),
+            updated_at: "updated".into(),
+        },
+    )));
+
+    // Before the hold, not inside it: `from_runtime` takes the same mutex,
+    // and these tests exist to prove a route answers while it is held.
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+    let held = runtime.lock().expect("hold runtime lock");
+
+    // The control: a guest proxy request is on the fast path, so it is
+    // answered with the lock held.
+    let guest_runtime = Arc::clone(&runtime);
+    let (guest_tx, guest_rx) = mpsc::channel();
+    let guest_thread = thread::spawn(move || {
+        let mut request = FakeRuntime::request("GET", "/proxy/127.0.0.1/43210/desktop-state");
+        request
+            .headers
+            .insert("x-aimux-actor-role".into(), "guest".into());
+        let response =
+            handle_daemon_runtime_request_with_mutex(&guest_runtime, health_identity, request);
+        guest_tx.send(response.status).expect("send guest status");
+    });
+    assert_eq!(
+        guest_rx.recv_timeout(Duration::from_secs(2)),
+        Ok(403),
+        "a guest proxy request must still be answered from the fast path"
+    );
+    guest_thread.join().expect("guest thread");
+
+    // The peer cannot be, because its decision needs the project list.
+    let peer_runtime = Arc::clone(&runtime);
+    let (peer_tx, peer_rx) = mpsc::channel();
+    let peer_thread = thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &peer_runtime,
+            health_identity,
+            peer_input_request(),
+        );
+        peer_tx.send(response.status).expect("send peer status");
+    });
+    assert!(
+        peer_rx.recv_timeout(Duration::from_millis(500)).is_err(),
+        "a peer proxy request was answered while the runtime lock was held, so it took the fast path and its project list was empty"
+    );
+    drop(held);
+    assert!(
+        peer_rx.recv_timeout(Duration::from_secs(2)).is_ok(),
+        "the peer request must complete once the lock is released"
+    );
+    peer_thread.join().expect("peer thread");
+}
+
+/// Which pre-dispatch interceptor a worker-starvation check is aiming at.
+#[derive(Debug, Clone, Copy)]
+enum StreamInterceptor {
+    JobEvents,
+    HostAgentStream,
+}
+
+/// Fails when an interceptor holds an async worker while it waits for the
+/// global runtime mutex.
+///
+/// Both stream interceptors run before route dispatch and both need that mutex
+/// -- the one other routes hold across a project-service call. They used to
+/// take it INLINE on the async worker, and `ASYNC_RUNTIME_WORKER_THREADS` is
+/// 2, so two concurrent stream requests during contention parked both workers.
+/// Every other connection task was then accepted and never polled, `/health`
+/// among them, and the watchdog ends the process after three 30s strikes: a
+/// daemon that was merely busy exited as a wedged one.
+///
+/// WHAT DISCRIMINATES, after three attempts that did not.
+///
+/// (1) Two interceptors plus one task that merely yielded, asserting the yield
+/// ran. Passed with the inline locks restored: `spawn` gives no polling order,
+/// so the yield finished first.
+///
+/// (2) Counting how many tasks were polled within a 5s budget. A review ran it
+/// and it FAILED on correct code, reporting the identical number this file's
+/// mutation proof attributes to the regression. Five seconds of CPU starvation
+/// on two worker threads looks exactly like two workers parked on a lock, so
+/// the gate asserted a cause it had not established. A flaky gate that names
+/// the wrong cause is worse than no gate.
+///
+/// (3) Alternating the two interceptors across the tasks. That made detection
+/// depend on polling ORDER: with only some tasks able to park a worker, a run
+/// that polled those last reported every task and passed with the bug present.
+///
+/// So: every task here drives the SAME interceptor, and there are more tasks
+/// than workers. Once `WORKERS` of them are parked nothing can be polled
+/// again, whatever the order. And the budget is a QUIET WINDOW rather than a
+/// deadline -- any task being polled resets it, so the test fails only when
+/// progress STOPS. A starved runtime still progresses, just slowly, and
+/// passes; a parked worker never progresses and fails.
+/// Phase two probes this many times, pausing between rounds so the tasks have
+/// actually reached their lock. Matches the project-service gates from PR #534,
+/// where a single probe was proved to race.
+const PHASE_TWO_ROUNDS: usize = 20;
+const PHASE_TWO_SETTLE: Duration = Duration::from_millis(10);
+
+fn assert_interceptor_does_not_consume_a_worker(interceptor: StreamInterceptor) {
+    const WORKERS: usize = aimux::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
+    let attempts = WORKERS + 2;
+    // A no-progress window, not a latency budget: this is what a true
+    // regression costs to detect, not what a healthy run waits.
+    let quiet_window = Duration::from_secs(30);
+
+    let async_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(WORKERS)
+        .enable_all()
+        .build()
+        .expect("a runtime with production's worker count");
+    let _entered = async_runtime.enter();
+
+    let daemon = Arc::new(Mutex::new(FakeRuntime::empty()));
+    // Held for the whole check, so every interceptor genuinely blocks and none
+    // can pass by racing to an uncontended mutex.
+    let held = daemon.lock().expect("hold the runtime mutex");
+
+    let (polled_tx, polled) = mpsc::channel();
+    for index in 0..attempts {
+        let runtime = Arc::clone(&daemon);
+        let polled_tx = polled_tx.clone();
+        async_runtime.spawn(async move {
+            polled_tx.send(index).expect("the test is still listening");
+            let mut sink: Vec<u8> = Vec::new();
+            match interceptor {
+                StreamInterceptor::JobEvents => {
+                    // With a query string, deliberately. A review pointed out
+                    // that both gates used bare paths, so neither would catch
+                    // a variant that locks inline only when a param is
+                    // present. Its twin below stays bare, so the pair covers
+                    // both shapes.
+                    let request = FakeRuntime::request(
+                        "GET",
+                        &format!(
+                            "{}?all=1",
+                            aimux::core_command_contract::CORE_API_ROUTES.jobs_events
+                        ),
+                    );
+                    let _ = aimux::daemon::jobs::maybe_handle_job_event_stream_request_with_runtime_mutex(
+                        &runtime,
+                        &request,
+                        &mut sink,
+                    )
+                    .await;
+                }
+                StreamInterceptor::HostAgentStream => {
+                    let request = FakeRuntime::request(
+                        "GET",
+                        aimux::core_command_contract::CORE_API_ROUTES.host_agent_stream_text,
+                    );
+                    let _ = aimux::daemon::stream::maybe_handle_host_agent_stream_request_with_runtime_mutex_async(
+                        &runtime,
+                        &request,
+                        &mut sink,
+                    )
+                    .await;
+                }
+            }
+        });
+    }
+    drop(polled_tx);
+
+    let mut reported = 0;
+    while reported < attempts {
+        match polled.recv_timeout(quiet_window) {
+            Ok(_) => reported += 1,
+            Err(_) => break,
+        }
+    }
+
+    // Phase two, and it closes a hole the first phase cannot see.
+    //
+    // A review found that inserting a single `.await` anywhere before the
+    // inline lock makes phase one pass with the bug fully present: the task
+    // yields at that await, its worker is freed, every task gets a first poll
+    // and reports, and only THEN do they all park. Phase one measures "every
+    // task's first poll completed"; the claim is "the lock is not on a
+    // worker". Those coincide only while the lock is reached on the first poll
+    // with no yield point in between, which is true of both interceptors today
+    // and is exactly the kind of thing an unrelated change breaks silently.
+    //
+    // Spawned AFTER the barrier, and probed REPEATEDLY. Both halves matter.
+    //
+    // After the barrier, because an earlier attempt spawned a yielding task
+    // concurrently and it passed with the bug: `spawn` gives no polling order
+    // and the yield simply finished first.
+    //
+    // Repeatedly, because a single probe after the barrier STILL races. Every
+    // task reports before it awaits, so the barrier can clear while the tasks
+    // are still inside their await and have not reached the lock; the probe
+    // then runs on a free worker and passes. These two gates did catch their
+    // yield-then-lock mutation with one probe, but by timing luck rather than
+    // by design -- `yield_now` resumes on the same worker almost at once, so
+    // parking happened to finish before the drain loop above did. A slower
+    // await does not: on PR #534 the identical single-probe shape let a
+    // pool-hop-then-lock mutation through unchanged, which is what sent me
+    // back here to strengthen these.
+    //
+    // So: pause briefly so the tasks have actually reached their lock, then
+    // require progress to CONTINUE. The pause is not a latency budget -- it
+    // only has to exceed "an await resumes" -- and the loop costs a fifth of a
+    // second on a pass.
+    let mut still_polling = true;
+    for _ in 0..PHASE_TWO_ROUNDS {
+        std::thread::sleep(PHASE_TWO_SETTLE);
+        let (yielded_tx, yielded) = mpsc::channel();
+        async_runtime.spawn(async move {
+            tokio::task::yield_now().await;
+            let _ = yielded_tx.send(());
+        });
+        if yielded.recv_timeout(quiet_window).is_err() {
+            still_polling = false;
+            break;
+        }
+    }
+
+    drop(held);
+
+    assert_eq!(
+        reported, attempts,
+        "{interceptor:?}: {reported} of {attempts} tasks were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}. Progress stopped rather than slowed, which a starved runtime does not do: this interceptor is holding a worker while it waits for the runtime mutex, so every other connection task -- /health included -- would be accepted and never answered"
+    );
+    assert!(
+        still_polling,
+        "{interceptor:?}: every task was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied even though each interceptor got its first poll, which is what happens when the lock is taken after an await rather than before one -- /health would be accepted and never answered just the same"
+    );
+}
+
+/// Proved separately from its twin, so neither rides on the other being safe.
+#[test]
+fn the_job_event_stream_interceptor_does_not_consume_an_async_worker() {
+    assert_interceptor_does_not_consume_a_worker(StreamInterceptor::JobEvents);
+}
+
+#[test]
+fn the_host_agent_stream_interceptor_does_not_consume_an_async_worker() {
+    assert_interceptor_does_not_consume_a_worker(StreamInterceptor::HostAgentStream);
+}
+
+/// Every per-connection interceptor declines `/health` without locking.
+///
+/// The interceptors run BEFORE route dispatch, on an async worker, and two of
+/// them take the global runtime mutex to do their work
+/// (`daemon/stream.rs`, `daemon/jobs.rs`). They escape only because they
+/// path-gate first and return `Ok(false)` for anything that is not their
+/// route. Nothing tested that, and `ASYNC_RUNTIME_WORKER_THREADS` is 2 -- so
+/// an interceptor that locked before checking the path would leave `/health`
+/// accepted but never polled, which the watchdog reads as a wedge and ends the
+/// process for. That silently reverts the whole point of
+/// `DaemonHealthIdentity`.
+///
+/// Held for the duration, so a lock taken before the path check cannot pass by
+/// winning an uncontended mutex. Bounded by a channel rather than a join, so
+/// the failure is a named assertion in two seconds instead of a hung suite.
+///
+/// This test ENUMERATES the interceptors, which is its weakness: a third one
+/// added without a line here is not covered. The names are in
+/// `daemon/runtime.rs`'s interceptor closure, and they belong in this list.
+#[test]
+fn interceptors_decline_health_without_taking_the_runtime_lock() {
+    let runtime = Arc::new(Mutex::new(FakeRuntime::empty()));
+    let held = runtime.lock().expect("hold runtime lock");
+
+    let (tx, rx) = mpsc::channel();
+    let probe_runtime = Arc::clone(&runtime);
+    let probe = thread::spawn(move || {
+        let request = FakeRuntime::request("GET", "/health");
+        let mut sink: Vec<u8> = Vec::new();
+        let host_agent =
+            aimux::daemon::stream::maybe_handle_host_agent_stream_request_with_runtime_mutex(
+                &probe_runtime,
+                &request,
+                &mut sink,
+            );
+        let _ = tx.send((host_agent.map_err(|error| error.to_string()), sink));
+    });
+
+    let (host_agent, sink) = match rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(result) => result,
+        Err(error) => {
+            drop(held);
+            probe.join().expect("interceptor probe thread");
+            panic!(
+                "the host-agent-stream interceptor took the runtime mutex before deciding it does not handle /health: {error}"
+            );
+        }
+    };
+    drop(held);
+    probe.join().expect("interceptor probe thread");
+
+    assert_eq!(
+        host_agent,
+        Ok(false),
+        "the interceptor must DECLINE /health, not answer it"
+    );
+    assert!(
+        sink.is_empty(),
+        "an interceptor that declines must not have written to the stream: {sink:?}"
+    );
+}
+
+/// Hosted `/health` answers over the socket while the runtime mutex is held.
+///
+/// The handler never touched the runtime, but the listener locked it before
+/// dispatching anyway, so the answer waited on whatever else held it. That
+/// matters more here than locally: `relay_endpoints.rs` has the watchdog read
+/// an unanswered `/health` as a WEDGED daemon, so a daemon that was merely
+/// busy reported itself to the relay as broken.
+///
+/// The twin below is the other direction -- an operator proxy still waits,
+/// because it needs the project list the runtime owns. One route escaping the
+/// lock must not mean all of them do.
+#[test]
+fn hosted_health_answers_over_the_socket_while_the_runtime_lock_is_held() {
+    let fixture = HostedFixture::new("hosted-health-under-lock");
+    let runtime = Arc::new(Mutex::new(FakeRuntime::empty()));
+    let port = unused_loopback_port();
+    let handle = start_hosted_server_background(
+        HostedConfig {
+            enabled: true,
+            port,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        Arc::clone(&runtime),
+    )
+    .expect("hosted startup")
+    .expect("hosted server starts");
+    let held = runtime.lock().expect("hold runtime lock");
+    let (response_tx, response_rx) = mpsc::channel();
+    let request_thread = thread::spawn(move || {
+        let mut client = connect_loopback_port(port);
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("client timeout");
+        write!(
+            client,
+            "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+        )
+        .expect("write hosted health request");
+        response_tx
+            .send(read_socket_text(&mut client))
+            .expect("send hosted health response");
+    });
+
+    let response = match response_rx.recv_timeout(Duration::from_millis(500)) {
+        Ok(response) => response,
+        Err(error) => {
+            drop(held);
+            request_thread.join().expect("request thread");
+            handle.abort();
+            panic!(
+                "hosted GET /health did not answer within 500ms while the runtime mutex was held: {error}"
+            );
+        }
+    };
+    drop(held);
+    request_thread.join().expect("request thread");
+    handle.abort();
+
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "hosted health must answer 200 without the runtime: {response}"
+    );
+    assert!(
+        response.contains(r#""mode":"hosted""#),
+        "hosted health must still be the hosted answer: {response}"
     );
 }
 

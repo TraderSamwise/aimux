@@ -114,6 +114,49 @@ describe("chatTranscriptPlaceholderState", () => {
     });
   });
 
+  it("keeps loading when a transient blip lands during the first load", () => {
+    // Sam opened a shared chat and saw "Transcript unavailable -- Relay not
+    // connected" with a Retry button, which then loaded by itself: the first
+    // request had hit one of the relay's dead windows while the link was
+    // flapping. A retry nobody pressed succeeded, so the reader was asked to
+    // act on something already fixing itself.
+    expect(
+      chatTranscriptPlaceholderState({
+        initialStatus: "loading",
+        lastError: "Relay not connected",
+        messageCount: 0,
+      }),
+    ).toMatchObject({ kind: "loading", title: "Loading transcript" });
+  });
+
+  it("still shows a real failure immediately, even while loading", () => {
+    // The inverse, and the reason this is scoped to transient errors. The
+    // message is the one the project service really returns for a session
+    // that is gone (`json_error(404, format!("Session \"{session_id}\" not
+    // found"))`), not an invented string: a permanent failure must not hide
+    // behind a spinner.
+    expect(
+      chatTranscriptPlaceholderState({
+        initialStatus: "loading",
+        lastError: 'Session "claude-6t1ucu" not found',
+        messageCount: 0,
+      }),
+    ).toMatchObject({ kind: "error", message: 'Session "claude-6t1ucu" not found' });
+  });
+
+  it("surfaces a transient error once the load is no longer in flight", () => {
+    // "Then either work or fail": once loading has settled, a blip that never
+    // resolved IS the failure, and holding the spinner for ever would be the
+    // other half of the same bug.
+    expect(
+      chatTranscriptPlaceholderState({
+        initialStatus: "timed-out",
+        lastError: "Relay not connected",
+        messageCount: 0,
+      }),
+    ).toMatchObject({ kind: "error", message: "Relay not connected" });
+  });
+
   it("shows an empty transcript state only after loading has settled cleanly", () => {
     expect(
       chatTranscriptPlaceholderState({

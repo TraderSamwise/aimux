@@ -42,36 +42,65 @@ pub fn route_host_agent_text_request(
     Some(host_agent_read_text_route(runtime, &route_url, body))
 }
 
-pub fn host_agent_read_text_route(
-    runtime: &mut impl DaemonHostAgentTextRuntime,
+/// Phase one of `aimux host agent-read`: everything decidable without the
+/// project service, so the carve-out can resolve under the lock and release it
+/// before the upstream hop.
+///
+/// Three params, two of them required and one fallible: `startLine` is parsed
+/// here, so a bad value refuses before the lock is ever taken rather than
+/// after the upstream call.
+pub fn resolve_host_agent_read_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
-) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
-    let session_id = match required_param(route_url, body, "sessionId") {
-        Ok(session_id) => session_id,
-        Err(response) => return response,
-    };
-    let start_line = match integer_param(
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    let session_id = required_param(route_url, body, "sessionId")?;
+    let start_line = integer_param(
         route_url,
         body,
         "startLine",
         DEFAULT_AGENT_OUTPUT_START_LINE,
         Some("start-line"),
-    ) {
-        Ok(start_line) => start_line,
+    )?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: format!(
+            "{}?sessionId={}&startLine={}",
+            project_routes::live_pane::OUTPUT,
+            encode_query_component(&session_id),
+            start_line
+        ),
+    })
+}
+
+pub fn host_agent_read_text_route(
+    runtime: &mut impl DaemonHostAgentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_host_agent_read_request(route_url, body) {
+        Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let route_path = format!(
-        "{}?sessionId={}&startLine={}",
-        project_routes::live_pane::OUTPUT,
-        encode_query_component(&session_id),
-        start_line
-    );
-    match runtime.get_project_service_json(&project, &route_path) {
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_host_agent_read_result(route_url, result)
+}
+
+/// Phase three of `aimux host agent-read`, from a raw project-service result.
+///
+/// The only carve-out render that answers RAW TEXT rather than rendered lines,
+/// which is why it reaches for `DaemonRouteResponse::text` directly.
+pub fn render_host_agent_read_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    match result {
         ProjectServiceJsonResult::Ok { json, .. } => {
             let output = json.get("output").and_then(Value::as_str).unwrap_or("");
             if route_url.search_param("json") == Some("1") {

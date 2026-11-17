@@ -231,6 +231,27 @@ where
     .await
 }
 
+/// Whether this request may be answered without a blocking thread.
+///
+/// Every daemon route is dispatched through `spawn_blocking` because a route
+/// may read a file, take the global runtime mutex, or shell out. `/health` is
+/// the one that must not: it is the readiness probe, and queueing it behind
+/// the pool means the probe reports on the pool's health by refusing to
+/// answer. With tokio's default 512 blocking threads that needs 512 stuck
+/// routes, which sounds unreachable until a machine is thrashing and every
+/// tmux call is timing out -- the shape where a readiness answer matters most.
+///
+/// Safe for this route and no other, because `/health` is already the one
+/// route that takes no lock and does no I/O: `handle_daemon_runtime_request_with_mutex`
+/// answers it from `DaemonHealthIdentity` and the `OnceLock`-cached service
+/// info, deliberately and with a comment saying why. Any route that can block
+/// must keep the hop, which is why this is a pathname test rather than a flag
+/// a caller could set.
+pub fn answerable_without_a_blocking_thread(request: &DaemonHttpRequest) -> bool {
+    request.method == "GET"
+        && crate::daemon::routing::DaemonRouteUrl::parse(&request.path).pathname() == "/health"
+}
+
 async fn handle_daemon_connection_with_metadata<Stream, Handle>(
     stream: &mut Stream,
     metadata: DaemonRequestMetadata,
@@ -242,11 +263,15 @@ where
 {
     let bytes = read_http_request_async(stream).await?;
     let request = parse_daemon_http_request_with_metadata(&bytes, metadata)?;
-    let response = spawn_blocking_named(task_name("daemon-listener", "route"), move || {
+    let response = if answerable_without_a_blocking_thread(&request) {
         handle(request)
-    })
-    .await
-    .map_err(|error| DaemonListenerError::Io(io::Error::other(error.to_string())))?;
+    } else {
+        spawn_blocking_named(task_name("daemon-listener", "route"), move || {
+            handle(request)
+        })
+        .await
+        .map_err(|error| DaemonListenerError::Io(io::Error::other(error.to_string())))?
+    };
     write_prepared_response_async(stream, &response).await?;
     Ok(())
 }
@@ -270,11 +295,15 @@ where
     if intercept(&request, stream).await? {
         return Ok(());
     }
-    let response = spawn_blocking_named(task_name("daemon-listener", "route"), move || {
+    let response = if answerable_without_a_blocking_thread(&request) {
         handle(request)
-    })
-    .await
-    .map_err(|error| DaemonListenerError::Io(io::Error::other(error.to_string())))?;
+    } else {
+        spawn_blocking_named(task_name("daemon-listener", "route"), move || {
+            handle(request)
+        })
+        .await
+        .map_err(|error| DaemonListenerError::Io(io::Error::other(error.to_string())))?
+    };
     write_prepared_response_async(stream, &response).await?;
     Ok(())
 }
@@ -300,6 +329,15 @@ where
     // `block_on_named` -- would be refused and panic here. The real daemon
     // routes through the interceptor variant above, which does spawn_blocking;
     // anything wiring the route handler through THIS one has to do the same.
+    //
+    // The panic is the loud failure. The quiet one is worse and is why this
+    // note matters: a handler that merely WAITS here -- for the runtime mutex,
+    // for a lock someone else holds -- parks an async worker instead of
+    // panicking, and there are two of them. Every other connection task is
+    // then accepted and never polled, `/health` among them, and the watchdog
+    // ends the process after three failed probes. That is not hypothetical; it
+    // is what the two stream interceptors did until 2026-11-16, and it reads
+    // in the log as a wedged daemon rather than a busy one.
     let response = handle(request);
     write_prepared_response_async(stream, &response).await?;
     Ok(())

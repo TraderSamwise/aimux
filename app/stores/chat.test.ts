@@ -13,6 +13,9 @@ import {
   outputAnsiFamily,
   outputAvailableFamily,
   outputBufferFamily,
+  answeringOptionFamily,
+  paneSelectionFamily,
+  paneStateFamily,
   activityTextFamily,
   transcriptStartLineFamily,
 } from "@/stores/chat";
@@ -33,6 +36,7 @@ describe("chat output store", () => {
       agentStateKey: agentKey("agent-1"),
       output: "hello",
       outputAnsi: undefined,
+      paneState: undefined,
       messages: [],
     });
 
@@ -46,6 +50,7 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       tmuxUnavailable: { ok: false, error: "tmux capture-pane timed out after 2s" },
     });
 
@@ -57,6 +62,7 @@ describe("chat output store", () => {
       agentStateKey: agentKey("agent-1"),
       output: "",
       outputAnsi: undefined,
+      paneState: undefined,
       messages: [],
     });
 
@@ -72,6 +78,7 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       activity: "running",
       activityText: "Working...",
     });
@@ -90,6 +97,7 @@ describe("chat output store", () => {
       agentStateKey: agentKey("agent-1"),
       output: "stale output",
       outputAnsi: undefined,
+      paneState: undefined,
     });
 
     expect(store.get(outputBufferFamily(agentKey("agent-1")))).toBe("stale output");
@@ -106,6 +114,7 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       activity: "done",
       activityText: "",
     });
@@ -124,6 +133,7 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       activity: "running",
       activityText: "Working...",
     });
@@ -142,6 +152,7 @@ describe("chat output store", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       activity: "running",
       activityText: "Working...",
     });
@@ -166,6 +177,7 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "Published events: 21",
       outputAnsi: undefined,
+      paneState: undefined,
       messages: [message],
     });
 
@@ -178,12 +190,14 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "one",
       outputAnsi: undefined,
+      paneState: undefined,
       messages: [message],
     });
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       output: "two",
       outputAnsi: undefined,
+      paneState: undefined,
     });
 
     expect(store.get(transcriptFamily(agentKey("agent-1")))).toEqual([]);
@@ -195,6 +209,7 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "plain",
       outputAnsi: "\x1b[31mplain",
+      paneState: undefined,
     });
 
     expect(store.get(outputAnsiFamily(agentKey("agent-1")))).toBe("\x1b[31mplain");
@@ -207,6 +222,7 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "plain",
       outputAnsi: undefined,
+      paneState: undefined,
     });
 
     expect(store.get(outputAnsiFamily(agentKey("agent-1")))).toBe("plain");
@@ -218,10 +234,12 @@ describe("the projected transcript", () => {
       agentStateKey: agentKey("agent-1"),
       output: "plain",
       outputAnsi: "\x1b[32mplain",
+      paneState: undefined,
     });
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       messages: [message],
     });
 
@@ -304,6 +322,7 @@ describe("the projected transcript", () => {
         sessionId: "agent-1",
         output: "work",
         outputAnsi: undefined,
+        paneState: undefined,
         startLine: -120,
         activity: "running",
         activityText: "Working... (3s)",
@@ -331,6 +350,7 @@ describe("the projected transcript", () => {
         sessionId: "agent-1",
         output: "work",
         outputAnsi: undefined,
+        paneState: undefined,
         startLine: -120,
         activity: "running",
         activityText: "Working... (3s)",
@@ -374,6 +394,7 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       outputAvailable: true,
       startLine: -640,
       messages: [older, newer],
@@ -381,6 +402,7 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       outputAvailable: true,
       startLine: -160,
       messages: [newer, newest],
@@ -425,6 +447,7 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       outputAvailable: true,
       startLine: -640,
       messages: [repeatedA, repeatedB],
@@ -432,6 +455,7 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       outputAvailable: true,
       startLine: -160,
       messages: [smallerWindowRepeatedB, newest],
@@ -622,6 +646,7 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       activity: "running",
       activityText: "Perambulating...",
     });
@@ -629,13 +654,231 @@ describe("the projected transcript", () => {
     store.set(applyOutputSnapshotAtom, {
       agentStateKey: agentKey("agent-1"),
       outputAnsi: undefined,
+      paneState: undefined,
       activity: "interrupted",
       activityText: "",
     });
 
     expect(store.get(activityTextFamily(agentKey("agent-1")))).toBe("");
   });
+
+  it("holds the chooser the service read, and drops it once the pane stops showing one", () => {
+    const store = createStore();
+    const selection = {
+      question: "Do you want to create hello.txt?",
+      options: [
+        { number: 1, label: "Yes", selected: true },
+        { number: 3, label: "No", selected: false },
+      ],
+    };
+
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: agentKey("agent-1"),
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection },
+    });
+    expect(store.get(paneSelectionFamily(agentKey("agent-1")))).toEqual(selection);
+
+    // The answered chooser. `paneState` arrives on every read, so the control
+    // has to go away on the one after the answer — a chooser still on screen
+    // is a control that answers nothing.
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: agentKey("agent-1"),
+      outputAnsi: undefined,
+      paneState: IDLE_PANE,
+    });
+    expect(store.get(paneSelectionFamily(agentKey("agent-1")))).toBeUndefined();
+  });
+
+  it("leaves the chooser alone when a service too old to project one sends nothing", () => {
+    const store = createStore();
+    const selection = { options: [{ label: "No, exit", selected: true }] };
+
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: agentKey("agent-1"),
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection },
+    });
+    // Absent `paneState` is "this service does not say", not "no chooser".
+    // Clearing on it would clear on every poll and the control could never
+    // render against an older daemon mid-upgrade.
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: agentKey("agent-1"),
+      outputAnsi: undefined,
+      paneState: undefined,
+    });
+
+    expect(store.get(paneSelectionFamily(agentKey("agent-1")))).toEqual(selection);
+  });
+
+  it("holds the answer marker until the pane says the chooser moved on", () => {
+    const store = createStore();
+    const key = agentKey("agent-1");
+
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection: PERMISSION_CHOOSER },
+    });
+    store.set(answeringOptionFamily(key), "Yes");
+
+    // The same chooser arriving again is not confirmation of anything: the
+    // answered question stays on screen for a round trip after the request
+    // resolves, and releasing here is what let a second press answer the next
+    // question instead.
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection: PERMISSION_CHOOSER },
+    });
+    expect(store.get(answeringOptionFamily(key))).toBe("Yes");
+
+    // A different question, with the same labels and numbers, IS the chooser
+    // moving on.
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection: NEXT_CHOOSER },
+    });
+    expect(store.get(answeringOptionFamily(key))).toBeNull();
+  });
+
+  it("releases a held answer when the pane can no longer be read", () => {
+    const store = createStore();
+    const key = agentKey("agent-1");
+
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection: PERMISSION_CHOOSER },
+    });
+    store.set(answeringOptionFamily(key), "Yes");
+
+    // An agent that exits stops producing paneState at all, so the frame that
+    // would confirm the answer never comes. Holding forever leaves every row
+    // disabled with `sending…` on one of them.
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: undefined,
+      tmuxUnavailable: { ok: false, error: "Session is not running" },
+    });
+
+    expect(store.get(answeringOptionFamily(key))).toBeNull();
+  });
+
+  it("releases a held answer when the stream for that session fails", () => {
+    const store = createStore();
+    const key = agentKey("agent-1");
+    store.set(answeringOptionFamily(key), "Yes");
+
+    store.set(ingestEventAtom, {
+      projectStateKey: TEST_PROJECT_KEY,
+      event: { type: "error", sessionId: "agent-1", error: "stream lost" },
+    });
+
+    // We do not know whether the answer landed, and pretending it is still in
+    // flight disables the chooser for good.
+    expect(store.get(answeringOptionFamily(key))).toBeNull();
+  });
+
+  it("lets Stop clear the chooser it knows it dismissed", () => {
+    const store = createStore();
+    const key = agentKey("agent-1");
+
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection: PERMISSION_CHOOSER },
+    });
+    store.set(answeringOptionFamily(key), "Yes");
+
+    // Stop sends Esc, which dismisses whatever chooser was up. This is the one
+    // local writer that knows that, and it used to say "the service did not
+    // say" — so Stop, the obvious thing to press when a row has been showing
+    // `sending…`, moved neither the chooser nor the held answer.
+    store.set(markOutputInterruptedAtom, key);
+
+    expect(store.get(paneSelectionFamily(key))).toBeUndefined();
+    expect(store.get(answeringOptionFamily(key))).toBeNull();
+  });
+
+  it("keeps one agent's answer marker out of another's chooser", () => {
+    const store = createStore();
+
+    store.set(answeringOptionFamily(agentKey("agent-1")), "Yes");
+
+    // The chat screen is one component instance reused across route params, so
+    // a marker held in the component followed the user to another agent and
+    // claimed an answer was being sent to a chooser it had never touched.
+    expect(store.get(answeringOptionFamily(agentKey("agent-2")))).toBeNull();
+  });
+
+  it("derives the chooser from the pane state it arrived in", () => {
+    const store = createStore();
+    const key = agentKey("agent-1");
+
+    store.set(applyOutputSnapshotAtom, {
+      agentStateKey: key,
+      outputAnsi: undefined,
+      paneState: { ...IDLE_PANE, selection: PERMISSION_CHOOSER },
+    });
+
+    // One source, so the chooser and the rest of the pane state cannot
+    // disagree about whether a prompt is up.
+    expect(store.get(paneStateFamily(key))?.promptVisible).toBe(true);
+    expect(store.get(paneSelectionFamily(key))).toEqual(PERMISSION_CHOOSER);
+  });
+
+  it("carries the chooser in from the event stream too", () => {
+    const store = createStore();
+    const selection = {
+      options: [
+        { number: 1, label: "Yes", selected: true },
+        { number: 2, label: "No", selected: false },
+      ],
+    };
+
+    store.set(ingestEventAtom, {
+      projectStateKey: TEST_PROJECT_KEY,
+      event: {
+        type: "agent_output",
+        sessionId: "agent-1",
+        startLine: 0,
+        output: "pane",
+        messages: [],
+        paneState: { ...IDLE_PANE, selection },
+      },
+    });
+
+    expect(store.get(paneSelectionFamily(agentKey("agent-1")))).toEqual(selection);
+  });
 });
+
+const PERMISSION_CHOOSER = {
+  question: "Do you want to create hello.txt?",
+  options: [
+    { number: 1, label: "Yes", selected: true },
+    { number: 2, label: "No", selected: false },
+  ],
+};
+
+const NEXT_CHOOSER = {
+  // The next permission prompt. Same labels, same numbers, different question
+  // — which is exactly why an answer cannot be released on the label alone.
+  question: "Do you want to run rm -rf build?",
+  options: [
+    { number: 1, label: "Yes", selected: true },
+    { number: 2, label: "No", selected: false },
+  ],
+};
+
+const IDLE_PANE = {
+  promptVisible: true,
+  errorVisible: false,
+  interruptedVisible: false,
+  updatePromptVisible: false,
+};
 
 // One project on one machine, so these tests key an agent the way the app does.
 const TEST_PROJECT_KEY = projectStateKey({ machineId: "mbp", path: "/repo" });

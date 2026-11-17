@@ -12,6 +12,18 @@ export type TerminalVisibleOutput<TLine> = {
   outputAvailable: boolean;
   outputText: string;
   sessionKey: string;
+  /**
+   * The column count these lines were truncated at.
+   *
+   * The freeze below is about CONTENT -- it holds the view still while
+   * someone reads. Geometry is not content: rotating the phone or narrowing
+   * the browser re-truncates every rule without changing a byte of
+   * `outputText`, so without this the frozen lines keep the old width and
+   * every rule wraps until the reader scrolls back to the bottom. That is
+   * the original bug, reappearing in the one state where it is hardest to
+   * escape.
+   */
+  columns: number;
 };
 
 export function terminalVisibleOutputForPinned<TLine>(input: {
@@ -19,6 +31,7 @@ export function terminalVisibleOutputForPinned<TLine>(input: {
   outputAvailable: boolean;
   outputText: string;
   sessionKey: string;
+  columns: number;
 }): TerminalVisibleOutput<TLine> {
   return input;
 }
@@ -34,6 +47,9 @@ export function terminalVisibleOutputForLiveChange<TLine>(
   },
 ): TerminalVisibleOutput<TLine> {
   if (current.sessionKey !== liveOutput.sessionKey || intent === "pinned") return liveOutput;
+  // A different width is a different rendering of the same bytes, so the
+  // content freeze has nothing to say about it.
+  if (current.columns !== liveOutput.columns) return liveOutput;
   if (current.outputText.length === 0) return liveOutput;
   // A history page deepens the window, and the snapshot it arrives in is the
   // whole window as of the fetch -- so a working agent's page is deeper at the

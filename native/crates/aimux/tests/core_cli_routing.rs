@@ -263,6 +263,28 @@ fn agent_identity_parser_matches_project_json_forms() {
 }
 
 #[test]
+fn task_parser_accepts_a_workstream_on_assign_and_list() {
+    let assigned = parse_core_task_args(&[
+        "task",
+        "assign",
+        "do the thing",
+        "--to",
+        "codex-1",
+        "--stream",
+        "deaws",
+    ])
+    .expect("assign parses");
+    assert_eq!(assigned.stream.as_deref(), Some("deaws"));
+
+    let listed = parse_core_task_args(&["task", "list", "--stream=deaws"]).expect("list parses");
+    assert_eq!(listed.stream.as_deref(), Some("deaws"));
+
+    // Not every subcommand takes it, and a task without one is normal.
+    let plain = parse_core_task_args(&["task", "list"]).expect("list parses");
+    assert_eq!(plain.stream, None);
+}
+
+#[test]
 fn agent_input_parser_preserves_variadic_text_and_project_option() {
     assert_eq!(
         parse_core_agent_input_args(&["input", "claude-1", "hello", "there", "--project", "/repo"]),
@@ -271,6 +293,8 @@ fn agent_input_parser_preserves_variadic_text_and_project_option() {
             text: "hello there".into(),
             project: Some("/repo".into()),
             force: false,
+            from: None,
+            task: None,
         })
     );
     assert_eq!(
@@ -280,6 +304,76 @@ fn agent_input_parser_preserves_variadic_text_and_project_option() {
             text: "--flag".into(),
             project: None,
             force: true,
+            from: None,
+            task: None,
+        })
+    );
+    // `--from` names the sending agent. Without it the send is unsigned,
+    // which is what a person typing into their own terminal is.
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hi", "--from", "claude-utymep"]),
+        Some(CoreAgentInputArgs {
+            session_id: "claude-1".into(),
+            text: "hi".into(),
+            project: None,
+            force: false,
+            from: Some("claude-utymep".into()),
+            task: None,
+        })
+    );
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hi", "--from=claude-utymep"]),
+        Some(CoreAgentInputArgs {
+            session_id: "claude-1".into(),
+            text: "hi".into(),
+            project: None,
+            force: false,
+            from: Some("claude-utymep".into()),
+            task: None,
+        })
+    );
+    // `--task` links the send to the row it is acting on.
+    assert_eq!(
+        parse_core_agent_input_args(&[
+            "input",
+            "claude-1",
+            "hi",
+            "--from",
+            "claude-utymep",
+            "--task",
+            "task-1",
+        ])
+        .and_then(|parsed| parsed.task),
+        Some("task-1".into())
+    );
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hi", "--task=task-1"])
+            .and_then(|parsed| parsed.task),
+        Some("task-1".into())
+    );
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hi", "--task", "--force"]),
+        None
+    );
+    // A flag where the sender should be is a mistake, not a sender.
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hi", "--from", "--force"]),
+        None
+    );
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "hi", "--from="]),
+        None
+    );
+    // After `--`, it is text like anything else.
+    assert_eq!(
+        parse_core_agent_input_args(&["input", "claude-1", "--", "--from", "x"]),
+        Some(CoreAgentInputArgs {
+            session_id: "claude-1".into(),
+            text: "--from x".into(),
+            project: None,
+            force: false,
+            from: None,
+            task: None,
         })
     );
     assert_eq!(parse_core_agent_input_args(&["input", "claude-1"]), None);
@@ -1192,6 +1286,7 @@ fn task_parser_matches_workflow_forms() {
     assert_eq!(
         assign,
         Some(CoreTaskArgs {
+            stream: None,
             command: "task".into(),
             subcommand: "assign".into(),
             task_id: None,
@@ -1874,6 +1969,13 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["graveyard", "cleanup", "--dry-run"],
         vec!["projects"],
         vec!["projects", "list", "--json"],
+        // Ownership is recorded in the relay, so these are remote commands
+        // standing beside a local one.
+        vec!["projects", "claim"],
+        vec!["projects", "claim", "/repo", "--take"],
+        vec!["projects", "claim", "--json"],
+        vec!["projects", "owners"],
+        vec!["projects", "owners", "--json"],
         vec!["remote", "status", "--json"],
         vec!["remote", "enable"],
         vec!["remote", "disable"],
@@ -1924,6 +2026,10 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["doctor", "exchange", "--project"],
         vec!["doctor", "lifecycle", "--include-active"],
         vec!["projects", "list", "extra", "--json"],
+        vec!["projects", "owners", "/repo"],
+        vec!["projects", "claim", "--force"],
+        // Somebody asking for help, not a checkout called `-h`.
+        vec!["projects", "claim", "-h"],
         vec!["remote", "enable", "--json"],
         vec!["remote", "disable", "extra"],
         vec!["remote", "enable", "--help"],

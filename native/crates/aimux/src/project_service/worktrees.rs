@@ -14,6 +14,7 @@ use crate::daemon_state::try_load_metadata_state;
 use crate::team_contract::session_with_stored_control_flags;
 
 use crate::runtime_topology::LIVE_WORKTREE_STATUSES;
+use crate::team_contract::{manager_session_id, team_string_field};
 const MAX_VISIBLE_ATTACHED_AGENTS_PER_WORKTREE: usize = 5;
 
 pub fn route_worktree_read_request(
@@ -707,21 +708,11 @@ fn last_used_at(last_used_by_id: &Value, id: &str) -> Option<String> {
 }
 
 fn is_teammate_session(session: &Value) -> bool {
-    team_string_field(session, "parentSessionId").is_some()
+    manager_session_id(session).is_some()
 }
 
 fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
-}
-
-fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value
-        .get("team")
-        .and_then(Value::as_object)
-        .and_then(|team| team.get(key))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
 }
 
 fn array_field<'a>(value: &'a Value, key: &str) -> &'a [Value] {

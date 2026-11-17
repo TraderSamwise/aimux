@@ -85,16 +85,25 @@ pub fn route_team_text_request(
     None
 }
 
-pub fn team_show_text_route(
-    runtime: &mut impl DaemonTeamTextRuntime,
+/// Phase one of `aimux team show`: everything decidable without the project
+/// service, so the carve-out can resolve under the lock and release it before
+/// the upstream hop.
+pub fn resolve_team_show_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: project_routes::team::CONFIG.to_owned(),
+    })
+}
+
+/// Phase three of `aimux team show`, from a raw project-service result.
+pub fn render_team_show_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
 ) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
-    let result = runtime.get_project_service_json(&project, project_routes::team::CONFIG);
     let payload = match team_payload_from_result(result, "team show", None) {
         Ok(payload) => payload,
         Err(response) => return response,
@@ -104,6 +113,25 @@ pub fn team_show_text_route(
         payload.clone(),
         &render_core_team_show_lines(&payload),
     )
+}
+
+pub fn team_show_text_route(
+    runtime: &mut impl DaemonTeamTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_team_show_request(route_url, body) {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_team_show_result(route_url, result)
 }
 
 pub fn team_init_text_route(

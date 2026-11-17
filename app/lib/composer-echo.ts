@@ -7,6 +7,13 @@ export interface AcceptedComposerEcho {
   createdAtMs: number;
   message: ChatMessage;
   settled?: boolean;
+  /// Whether this send should ever appear in the PARSED transcript.
+  ///
+  /// False for a command: the agent consumes it and need not write a user
+  /// turn, so its echo expiring says nothing about delivery. The echo is
+  /// still queued -- it is what draws the bubble and the awaiting-echo footer
+  /// -- it just does not become "Send not confirmed yet" when it times out.
+  expectsTranscriptEcho?: boolean;
 }
 
 export interface ComposerEchoMergeResult {
@@ -15,6 +22,14 @@ export interface ComposerEchoMergeResult {
   droppedUnconfirmedCount: number;
   droppedExpiredCount: number;
   droppedTranscriptAdvancedCount: number;
+  /// Echoes that expired and were never going to be echoed anyway.
+  ///
+  /// Separated from `droppedExpiredCount` rather than merged into it: this one
+  /// must not raise an error, and must still be COUNTED. A command aimed at a
+  /// wedged agent is exactly the send worth measuring, and suppressing the
+  /// error without recording anything left it invisible to the user and to
+  /// Sentry at the same time.
+  droppedCommandEchoCount: number;
 }
 
 export const COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS = 10_000;
@@ -43,6 +58,29 @@ function confirmationSlotIndex(
   return -1;
 }
 
+/**
+ * Whether two echo lists hold the same echoes.
+ *
+ * `mergeAcceptedComposerEchoes` always allocates a fresh `echoes` array, so a
+ * reference check against its input is ALWAYS unequal. An effect that both
+ * depends on the echo state and writes it back on reference inequality
+ * therefore never settles: set state, re-render, merge, new array, set state.
+ * That is an infinite render loop, and it hung the app suite.
+ *
+ * Element identity is the right grain. The merge reuses an echo object when
+ * nothing about it changed and allocates a new one only when it actually
+ * transitions, so comparing element by element reaches a fixed point after at
+ * most one write.
+ */
+export function sameAcceptedComposerEchoes(
+  left: readonly AcceptedComposerEcho[],
+  right: readonly AcceptedComposerEcho[],
+): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return left.every((echo, index) => echo === right[index]);
+}
+
 export function mergeAcceptedComposerEchoes(
   parsedMessages: readonly ChatMessage[],
   acceptedEchoes: readonly AcceptedComposerEcho[],
@@ -55,6 +93,7 @@ export function mergeAcceptedComposerEchoes(
     return {
       messages: [...parsedMessages],
       echoes: [],
+      droppedCommandEchoCount: 0,
       droppedExpiredCount: 0,
       droppedTranscriptAdvancedCount: 0,
       droppedUnconfirmedCount: 0,
@@ -69,6 +108,7 @@ export function mergeAcceptedComposerEchoes(
   let droppedUnconfirmedCount = 0;
   let droppedExpiredCount = 0;
   let droppedTranscriptAdvancedCount = 0;
+  let droppedCommandEchoCount = 0;
 
   for (const accepted of acceptedEchoes) {
     const matchIndex = confirmationSlotIndex(parsedMessages, accepted, claimedParsedIndexes);
@@ -86,7 +126,13 @@ export function mergeAcceptedComposerEchoes(
       if (transcriptAdvanced) {
         droppedTranscriptAdvancedCount += 1;
       } else if (expired) {
-        droppedExpiredCount += 1;
+        // A command's echo expiring is the expected ending, not a failure --
+        // but it is still worth counting, under its own name.
+        if (accepted.expectsTranscriptEcho === false) {
+          droppedCommandEchoCount += 1;
+        } else {
+          droppedExpiredCount += 1;
+        }
       }
       continue;
     }
@@ -106,6 +152,7 @@ export function mergeAcceptedComposerEchoes(
   return {
     messages,
     echoes: retainedEchoes,
+    droppedCommandEchoCount,
     droppedExpiredCount,
     droppedTranscriptAdvancedCount,
     droppedUnconfirmedCount,

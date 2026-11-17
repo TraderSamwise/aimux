@@ -415,6 +415,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    // aimux-async-blocking: test - the recorder's own file write is precisely what
+    // this asserts, so it has to happen where the test can observe it
     async fn runtime_health_recorder_write_failure_is_scheduler_visible() {
         let root = unique_temp_dir("runtime-health-recorder-write-failure");
         fs::create_dir_all(&root).expect("root dir");
@@ -449,6 +451,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    // aimux-async-blocking: test - the recorder's own file write is precisely what
+    // this asserts, so it has to happen where the test can observe it
     async fn runtime_health_recorder_successful_write_records_clean_run() {
         let root = unique_temp_dir("runtime-health-recorder-success");
         let state_dir = root.join(".aimux");

@@ -16,7 +16,7 @@ use crate::daemon::routing::{
 };
 use crate::daemon::text::params::{
     ProjectServiceJsonResult, required_project_service_array, required_project_service_string,
-    resolve_lifecycle_worktree, resolve_project_relative_path,
+    resolve_lifecycle_worktree, resolve_project_relative_path, unwrap_project_result,
 };
 use crate::native_cli_dispatch::{
     CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_SCRIBE_STATUS_TEXT_ROUTE,
@@ -30,6 +30,50 @@ const LOOP_EXIT_EVENT_TIMEOUT_MS: u64 = 500;
 
 pub trait DaemonAgentTextRuntime {
     fn resolve_project_root(&self, value: &str) -> String;
+    /// Whether THIS machine is running that session.
+    ///
+    /// The one fact that distinguishes a local send from a remote one, and it
+    /// took three attempts to arrive at. Ownership is an exclusive claim on a
+    /// PATH: it does not say where a session lives, so forwarding on it alone
+    /// sent laptop-local input to the owner. Whether this machine is SERVING
+    /// the checkout was wrong twice over -- as liveness it refused input
+    /// whenever the local project service happened to be down, and as registry
+    /// membership it was true of every checkout this machine has ever touched,
+    /// which made the forward unreachable for the case the feature exists for.
+    ///
+    /// A session id is the thing `aimux input` is given, and the runtime
+    /// topology is the inventory that says which sessions this machine runs.
+    /// Asking it is one file read and no subprocess.
+    ///
+    /// Defaults to `true` -- "assume it is mine" -- because that is the answer
+    /// that keeps today's behaviour when a runtime cannot tell.
+    fn hosts_session_locally(&mut self, _project_root: &str, _session_id: &str) -> bool {
+        true
+    }
+    /// Which other machine owns this checkout, and why not if not.
+    ///
+    /// The second value is a reason rather than a bool, because every "no" is
+    /// a different thing to tell somebody: the relay is off, the table has not
+    /// arrived, nobody claimed it, two rows fold together, the owner is this
+    /// machine, or the owner is away.
+    ///
+    /// Defaulted to "nobody else" so a runtime with no relay -- every test
+    /// fake, and the daemon with remote control off -- keeps today's behaviour
+    /// without implementing anything.
+    fn peer_owner_for_input(&self, _project_root: &str) -> (Option<String>, &'static str) {
+        (None, "relay_off")
+    }
+    /// Hand one input to the machine that owns the checkout.
+    ///
+    /// Defaulted to a refusal that names itself rather than to a silent local
+    /// send: a runtime that cannot forward must not pretend it did.
+    fn forward_agent_input(
+        &mut self,
+        _machine_id: &str,
+        _body: &Value,
+    ) -> Result<(u16, Value), String> {
+        Err("this runtime cannot forward input to another machine".to_owned())
+    }
     fn get_project_service_json(
         &mut self,
         project: &str,
@@ -695,11 +739,121 @@ pub fn agent_input_text_route(
         Err(response) => return response,
     };
     let force = boolean_param(route_url, body, "force", false);
+    // Forwarded, not dropped. This route used to pass exactly sessionId, text
+    // and force, which is why the project service had nothing to attribute an
+    // agent-to-agent send with.
+    let from = string_param(route_url, body, "from").filter(|value| !value.trim().is_empty());
+    let task = string_param(route_url, body, "task").filter(|value| !value.trim().is_empty());
+    // Consulted BEFORE the local attempt, deliberately. "This session is not
+    // running here" is a 500 with a message, not an identity, so deciding
+    // from it would mean parsing an error string -- and the owner record is
+    // the fact that actually answers the question.
+    let resolved_for_owner = runtime.resolve_project_root(&project);
+    // Asked FIRST, before the owner table. A session this machine runs is this
+    // machine's business whoever owns the path, and the local path below is the
+    // one that has always handled it.
+    let hosts_session = runtime.hosts_session_locally(&resolved_for_owner, &session_id);
+    let (owner_machine, owner_reason) = if hosts_session {
+        (None, "session_is_here")
+    } else {
+        runtime.peer_owner_for_input(&resolved_for_owner)
+    };
+    if let Some(owner_machine) = owner_machine {
+        // `--force` cannot cross. The owner's allowlist refuses a peer's
+        // `force` by name, so carrying it would turn this into a 403 from
+        // another machine about a flag this one accepted -- and dropping it
+        // silently would deliver unforced input while the person believes
+        // otherwise.
+        if force {
+            return text_error(
+                400,
+                format!(
+                    "Error: --force cannot be sent to {owner_machine}, which owns that checkout: forcing skips the quiet-window check and only the machine at the keyboard can judge it\n"
+                ),
+            );
+        }
+        let mut forwarded = json!({
+            "project": resolved_for_owner,
+            "sessionId": session_id,
+            "text": text,
+        });
+        if let Some(from) = from.clone() {
+            forwarded["from"] = Value::String(from);
+        }
+        if let Some(task) = task.clone() {
+            forwarded["task"] = Value::String(task);
+        }
+        return match runtime.forward_agent_input(&owner_machine, &forwarded) {
+            Ok((status, body)) if (200..300).contains(&status) => {
+                let payload = match body {
+                    Value::Object(mut payload) => {
+                        payload.insert(
+                            "projectRoot".into(),
+                            Value::String(resolved_for_owner.clone()),
+                        );
+                        payload.insert("ownerMachineId".into(), Value::String(owner_machine));
+                        payload
+                            .insert("peerRouting".into(), Value::String(owner_reason.to_owned()));
+                        Value::Object(payload)
+                    }
+                    _ => json!({
+                        "ok": true,
+                        "projectRoot": resolved_for_owner,
+                        "sessionId": session_id,
+                        "ownerMachineId": owner_machine,
+                        // Set here too. Every sibling branch carries it, and
+                        // the one that did not was the fallback nobody looks
+                        // at -- which is where a missing field survives.
+                        "peerRouting": owner_reason,
+                    }),
+                };
+                text_or_json_lines(
+                    route_url,
+                    payload.clone(),
+                    &render_core_agent_input_lines(&payload),
+                )
+            }
+            // The owner's own refusal, carried verbatim and PREFIXED with the
+            // machine that made it. Its rules are stricter than this one's --
+            // input arriving from elsewhere is peer input there, so a command
+            // or a second line to a shell is refused -- and a bare 403 would
+            // read as though this machine had refused its own keyboard.
+            Ok((status, body)) => {
+                let detail = body
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("no reason given");
+                text_error(
+                    status,
+                    format!("Error: {owner_machine} refused it: {detail}\n"),
+                )
+            }
+            Err(error) => text_error(
+                502,
+                format!(
+                    "Error: could not reach {owner_machine}, which owns that checkout: {error}\n"
+                ),
+            ),
+        };
+    }
+
     let (project_response, project_root) =
         match unwrap_project_result(runtime.post_project_service_json(
             &project,
             project_routes::agents::INPUT,
-            json!({ "sessionId": session_id, "text": text, "force": force }),
+            {
+                // Added only when given. A null `from` would be a new field
+                // on every request that predates attribution.
+                let mut forwarded =
+                    json!({ "sessionId": session_id, "text": text, "force": force });
+                if let Some(from) = from {
+                    forwarded["from"] = Value::String(from);
+                }
+                if let Some(task) = task {
+                    forwarded["task"] = Value::String(task);
+                }
+                forwarded
+            },
             ProjectServicePostOptions::ensure_if_unreachable(),
         )) {
             Ok(result) => result,
@@ -711,9 +865,20 @@ pub fn agent_input_text_route(
             payload
                 .entry("sessionId")
                 .or_insert_with(|| Value::String(session_id));
+            // Why this went locally, carried rather than discarded. Eight
+            // reasons are only worth naming if somebody can read one: it was
+            // computed and thrown away, which made the whole set decorative.
+            // `--json` carries it, and a person asking why their words did not
+            // reach another machine has the answer in the response.
+            payload.insert("peerRouting".into(), Value::String(owner_reason.to_owned()));
             Value::Object(payload)
         }
-        _ => json!({ "ok": true, "projectRoot": project_root, "sessionId": session_id }),
+        _ => json!({
+            "ok": true,
+            "projectRoot": project_root,
+            "sessionId": session_id,
+            "peerRouting": owner_reason,
+        }),
     };
     text_or_json_lines(
         route_url,
@@ -722,25 +887,61 @@ pub fn agent_input_text_route(
     )
 }
 
+/// Phase one of `aimux ps`: which project, and which upstream path.
+///
+/// Pure, and public, because this route is served from two places -- the
+/// generic locked dispatch and the carve-out in `daemon/runtime.rs` that keeps
+/// the global runtime mutex off the upstream hop. Both call this and
+/// `render_agent_ps_result`, so the two cannot answer differently.
+pub fn resolve_agent_ps_request(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: project_routes::agents::LIST.to_owned(),
+    })
+}
+
+/// Phase three of `aimux ps`, from a raw project-service result.
+pub fn render_agent_ps_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    render_agent_ps_payload(route_url, &json)
+}
+
 pub fn agent_ps_text_route(
     runtime: &mut impl DaemonAgentTextRuntime,
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
 ) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_agent_ps_request(route_url, body) {
+        Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let (json, _) = match unwrap_project_result(
-        runtime.get_project_service_json(&project, project_routes::agents::LIST),
-    ) {
-        Ok(result) => result,
-        Err(response) => return response,
-    };
-    if let Some(response) = reject_unverified_tmux_liveness(&json) {
+    let (json, _) =
+        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
+            Ok(result) => result,
+            Err(response) => return response,
+        };
+    render_agent_ps_payload(route_url, &json)
+}
+
+/// Phase three proper: the upstream's JSON into the route's response. Pure.
+fn render_agent_ps_payload(route_url: &DaemonRouteUrl, json: &Value) -> DaemonRouteResponse {
+    if let Some(response) = reject_unverified_tmux_liveness(json) {
         return response;
     }
-    let agents = match required_project_service_array(&json, "agent ps", "agents") {
+    let agents = match required_project_service_array(json, "agent ps", "agents") {
         Ok(agents) => agents,
         Err(response) => return response,
     };
@@ -771,13 +972,40 @@ fn agent_filtered_text_route(
     body: Option<&Value>,
     kind: AgentFilterKind,
 ) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
+    // Phase one is `resolve_agent_list_request`, SHARED with `aimux agents`
+    // rather than copied: both routes want the same project param and the same
+    // upstream path, and two copies of that would be two things to keep in
+    // step for no gain.
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_agent_list_request(route_url, body) {
+        Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let (json, _) = match unwrap_project_result(
-        runtime.get_project_service_json(&project, project_routes::agents::LIST),
-    ) {
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_agent_filtered_result(route_url, result, kind)
+}
+
+/// Phase three of the three filtered agent reads, from a raw project-service
+/// result.
+///
+/// The filter kind comes from the DISPATCHER, not the URL -- three pathnames
+/// reach one route function -- so the carve-out cannot pass it through a render
+/// signature that takes only the url and the result. Hence the three thin
+/// wrappers below: one shared resolve, one shared body, three kinds captured
+/// by name.
+/// Private because the kind is an internal detail: the carve-out reaches the
+/// three named wrappers, never this.
+fn render_agent_filtered_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+    kind: AgentFilterKind,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
         Ok(result) => result,
         Err(response) => return response,
     };
@@ -853,25 +1081,92 @@ fn agent_filtered_text_route(
     text_or_json_lines(route_url, payload.clone(), &lines)
 }
 
+/// Phase three for `/core/loop/list-text`.
+pub fn render_loop_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    render_agent_filtered_result(route_url, result, AgentFilterKind::Loop)
+}
+
+/// Phase three for `/core/overseer/status-text`.
+pub fn render_overseer_status_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    render_agent_filtered_result(route_url, result, AgentFilterKind::Overseer)
+}
+
+/// Phase three for `/core/scribe/status-text`.
+pub fn render_scribe_status_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    render_agent_filtered_result(route_url, result, AgentFilterKind::Scribe)
+}
+
+/// Phase one of `aimux agents`: which project, and which upstream path.
+///
+/// Pure, and public, because this route is served from two places -- the
+/// generic locked dispatch and the carve-out in `daemon/runtime.rs` that keeps
+/// the global runtime mutex off the upstream hop.
+pub fn resolve_agent_list_request(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: project_routes::agents::LIST.to_owned(),
+    })
+}
+
+/// Phase three of `aimux agents`, from a raw project-service result.
+///
+/// Unlike `aimux ps` this route RENDERS the project root the result carries,
+/// so the unwrap has to keep it rather than discard it. That difference is why
+/// these routes are converted one at a time instead of in a batch.
+pub fn render_agent_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, project_root) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    render_agent_list_payload(route_url, &json, &project_root)
+}
+
 pub fn agent_list_text_route(
     runtime: &mut impl DaemonAgentTextRuntime,
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
 ) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_agent_list_request(route_url, body) {
+        Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let (json, project_root) = match unwrap_project_result(
-        runtime.get_project_service_json(&project, project_routes::agents::LIST),
-    ) {
-        Ok(result) => result,
-        Err(response) => return response,
-    };
-    if let Some(response) = reject_unverified_tmux_liveness(&json) {
+    let (json, project_root) =
+        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
+            Ok(result) => result,
+            Err(response) => return response,
+        };
+    render_agent_list_payload(route_url, &json, &project_root)
+}
+
+/// Phase three proper: the upstream's JSON into the route's response. Pure.
+fn render_agent_list_payload(
+    route_url: &DaemonRouteUrl,
+    json: &Value,
+    project_root: &str,
+) -> DaemonRouteResponse {
+    if let Some(response) = reject_unverified_tmux_liveness(json) {
         return response;
     }
-    let agents = match required_project_service_array(&json, "agent list", "agents") {
+    let agents = match required_project_service_array(json, "agent list", "agents") {
         Ok(agents) => agents,
         Err(response) => return response,
     };
@@ -1325,15 +1620,6 @@ fn reject_unverified_tmux_liveness(json: &Value) -> Option<DaemonRouteResponse> 
     ))
 }
 
-fn unwrap_project_result(
-    result: ProjectServiceJsonResult,
-) -> Result<(Value, String), DaemonRouteResponse> {
-    match result {
-        ProjectServiceJsonResult::Ok { project_root, json } => Ok((json, project_root)),
-        ProjectServiceJsonResult::Err { response } => Err(response),
-    }
-}
-
 fn optional_string(route_url: &DaemonRouteUrl, body: Option<&Value>, name: &str) -> Option<String> {
     string_param(route_url, body, name).filter(|value| !value.is_empty())
 }
@@ -1497,6 +1783,77 @@ mod tests {
         assert_eq!(
             runtime.forwarded_lane(),
             json!({ "kind": "worktree", "worktreePath": "/repo/feature" })
+        );
+    }
+
+    /// The hop that drops things. This route translates a text command into
+    /// the project-service call, so a field it does not name simply never
+    /// arrives -- which is exactly why agent-to-agent input carried no sender
+    /// for as long as it did. The project-service tests cannot see this,
+    /// because they post to that service directly.
+    #[test]
+    fn agent_input_text_forwards_the_sender_to_the_project_service() {
+        let mut runtime = FakeAgentRuntime::default();
+        let route_url = DaemonRouteUrl::parse("/core/agents/input-text?json=1");
+
+        let response = agent_input_text_route(
+            &mut runtime,
+            &route_url,
+            Some(&json!({
+                "project": "/repo",
+                "sessionId": "claude-psmp2r",
+                "text": "test a cheaper hypothesis first",
+                "from": "claude-utymep",
+                "task": "task-1",
+            })),
+        );
+
+        assert_eq!(response.status, 200, "{:?}", response.body);
+        let forwarded = runtime
+            .forwarded_bodies
+            .last()
+            .expect("the route forwards a body");
+        assert_eq!(
+            forwarded.get("from").and_then(Value::as_str),
+            Some("claude-utymep")
+        );
+        // The task the send is acting on, for the same reason: a field this
+        // hop does not name simply never arrives.
+        assert_eq!(
+            forwarded.get("task").and_then(Value::as_str),
+            Some("task-1")
+        );
+        assert_eq!(
+            forwarded.get("text").and_then(Value::as_str),
+            Some("test a cheaper hypothesis first")
+        );
+    }
+
+    /// And a send that names nobody still forwards cleanly, so every caller
+    /// that predates the field keeps working.
+    #[test]
+    fn agent_input_text_forwards_no_sender_when_none_was_given() {
+        let mut runtime = FakeAgentRuntime::default();
+        let route_url = DaemonRouteUrl::parse("/core/agents/input-text?json=1");
+
+        let response = agent_input_text_route(
+            &mut runtime,
+            &route_url,
+            Some(&json!({
+                "project": "/repo",
+                "sessionId": "claude-psmp2r",
+                "text": "plain words",
+            })),
+        );
+
+        assert_eq!(response.status, 200, "{:?}", response.body);
+        let forwarded = runtime
+            .forwarded_bodies
+            .last()
+            .expect("the route forwards a body");
+        assert!(
+            forwarded.get("from").map(Value::is_null).unwrap_or(true),
+            "an unsigned send names nobody: {forwarded:?}"
         );
     }
 

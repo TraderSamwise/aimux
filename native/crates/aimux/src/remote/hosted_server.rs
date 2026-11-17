@@ -726,6 +726,13 @@ where
             })
         },
         &mut |request| {
+            // Before the lock, deliberately. See
+            // `hosted_response_without_runtime`: these answers need no
+            // runtime, and taking the mutex first made the relay's health
+            // watchdog call a busy daemon a wedged one.
+            if let Some(response) = hosted_response_without_runtime(handle_state, &request) {
+                return response;
+            }
             let mut runtime = handle_runtime
                 .lock()
                 .expect("hosted daemon runtime mutex poisoned");
@@ -791,6 +798,16 @@ where
                 crate::async_runtime::spawn_blocking_named(
                     crate::async_runtime::task_name("hosted", "route"),
                     move || {
+                        // Before the lock. This is the closure the socket
+                        // actually reaches -- the sync dispatch below has the
+                        // same guard, and having it only there is how the
+                        // first version of this fix passed a source read and
+                        // failed its own gate.
+                        if let Some(response) =
+                            hosted_response_without_runtime(&handle_state, &request)
+                        {
+                            return response;
+                        }
                         let mut runtime = handle_runtime
                             .lock()
                             .expect("hosted daemon runtime mutex poisoned");
@@ -1551,17 +1568,49 @@ pub fn handle_hosted_daemon_request(
     handle_hosted_daemon_request_from_peer(runtime, state, request, None)
 }
 
+/// The hosted answers that need no runtime at all.
+///
+/// Separated so the listener can give them BEFORE taking the daemon runtime
+/// mutex. `/health` is the one that matters: `relay_endpoints.rs` has the
+/// watchdog read an unanswered `/health` as a wedged daemon, and this handler
+/// never touched the runtime -- but the listener locked it first anyway, so a
+/// daemon merely holding that mutex for another request reported itself to the
+/// relay as broken.
+///
+/// Called from both the listener and `handle_hosted_daemon_request_from_peer`,
+/// so a direct caller cannot get a different answer than the socket does.
+pub fn hosted_response_without_runtime(
+    state: &HostedServerState,
+    request: &DaemonHttpRequest,
+) -> Option<PreparedDaemonResponse> {
+    if request.stopping {
+        return Some(hosted_json(
+            503,
+            json!({ "ok": false, "error": "aimux daemon is stopping" }),
+        ));
+    }
+    let route_url = DaemonRouteUrl::parse(&request.path);
+    if request.method.to_uppercase() == "GET" && route_url.pathname() == "/health" {
+        return Some(hosted_json(
+            200,
+            json!({
+                "ok": true,
+                "mode": "hosted",
+                "lockdown": state.lockdown.is_locked_down(unix_millis(SystemTime::now())),
+            }),
+        ));
+    }
+    None
+}
+
 pub fn handle_hosted_daemon_request_from_peer(
     runtime: &mut impl DaemonRouteRuntime,
     state: &HostedServerState,
     request: DaemonHttpRequest,
     peer_address: Option<&str>,
 ) -> PreparedDaemonResponse {
-    if request.stopping {
-        return hosted_json(
-            503,
-            json!({ "ok": false, "error": "aimux daemon is stopping" }),
-        );
+    if let Some(response) = hosted_response_without_runtime(state, &request) {
+        return response;
     }
 
     let route_url = DaemonRouteUrl::parse(&request.path);
@@ -1570,12 +1619,6 @@ pub fn handle_hosted_daemon_request_from_peer(
         .lockdown
         .is_locked_down(unix_millis(SystemTime::now()));
 
-    if method == "GET" && route_url.pathname() == "/health" {
-        return hosted_json(
-            200,
-            json!({ "ok": true, "mode": "hosted", "lockdown": locked_down }),
-        );
-    }
     if locked_down {
         return hosted_json(
             503,

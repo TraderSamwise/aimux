@@ -942,7 +942,13 @@ async fn run_task_future(future: PeriodicTaskFuture<'_>) -> TaskFutureResult {
     .await
 }
 
-fn interval_ms_to_ticks(interval_ms: i64) -> u64 {
+/// How many scheduler ticks an interval rounds up to.
+///
+/// Public because the project-service scheduler had its own copy of this
+/// arithmetic. Two copies of one conversion agree only by luck, and the way
+/// this class shows up is a task whose reported interval and actual schedule
+/// disagree.
+pub fn interval_ms_to_ticks(interval_ms: i64) -> u64 {
     let interval_ms = interval_ms.max(MIN_INTERVAL_MS);
     let ticks = interval_ms.saturating_add(TICK_INTERVAL_MS - 1) / TICK_INTERVAL_MS;
     u64::try_from(ticks).unwrap_or(1).max(1)

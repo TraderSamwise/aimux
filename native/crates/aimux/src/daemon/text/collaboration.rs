@@ -13,6 +13,7 @@ use crate::daemon::routing::{
 };
 use crate::daemon::text::params::{
     ProjectServiceJsonResult, required_project_service_array, required_project_service_object,
+    unwrap_project_result,
 };
 use crate::daemon::text::worktrees::CLI_PROJECT_MUTATION_TIMEOUT_MS;
 use crate::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE;
@@ -156,15 +157,15 @@ pub fn route_collaboration_text_request(
     None
 }
 
-pub fn thread_list_text_route(
-    runtime: &mut impl DaemonCollaborationTextRuntime,
+/// Phase one of `aimux thread list`: which project, and which upstream path.
+///
+/// Pure, and public, because this route is served from two places -- the
+/// generic locked dispatch and the shared carve-out in `daemon/runtime.rs`.
+pub fn resolve_thread_list_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
-) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
     let session = trimmed_param(route_url, body, "session");
     let route_path = session
         .map(|session| {
@@ -175,11 +176,50 @@ pub fn thread_list_text_route(
             )
         })
         .unwrap_or_else(|| project_routes::threads::LIST.to_owned());
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    })
+}
+
+/// Phase three of `aimux thread list`, from a raw project-service result.
+pub fn render_thread_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    render_thread_list_payload(route_url, json)
+}
+
+pub fn thread_list_text_route(
+    runtime: &mut impl DaemonCollaborationTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_thread_list_request(route_url, body) {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
     let (json, _) =
         match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
             Ok(result) => result,
             Err(response) => return response,
         };
+    render_thread_list_payload(route_url, json)
+}
+
+/// Phase three proper. Pure.
+///
+/// Takes the json by value because this route passes it to
+/// `text_or_json_lines` as the JSON body as well as into the payload, so a
+/// borrow would just force a clone at the call site.
+fn render_thread_list_payload(route_url: &DaemonRouteUrl, json: Value) -> DaemonRouteResponse {
     if !json.is_array() {
         return text_error(
             502,
@@ -208,14 +248,53 @@ pub fn thread_show_text_route(
         project_routes::threads::LIST,
         url_encode(&thread_id)
     );
-    let (json, _) =
-        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
-            Ok(result) => result,
-            Err(response) if response.status == 404 => {
-                return text_error(404, format!("aimux: thread not found: {thread_id}"));
-            }
-            Err(response) => return response,
-        };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_thread_show_result(route_url, result)
+}
+
+/// Phase one of `aimux thread show`: everything decidable without the project
+/// service, so the carve-out can resolve under the lock and release it before
+/// the upstream hop.
+pub fn resolve_thread_show_request(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    let thread_id = required_param(route_url, body, "threadId")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: format!(
+            "{}/{}",
+            project_routes::threads::LIST,
+            url_encode(&thread_id)
+        ),
+    })
+}
+
+/// Phase three of `aimux thread show`, from a raw project-service result.
+///
+/// The 404 names the thread, so this re-reads the id.
+///
+/// It does NOT take `body`, and that is worth stating because it looks like it
+/// should: the text-route signature carries one, and this route reads params
+/// with `required_param(route_url, body, ..)`. But `daemon/server.rs` parses a
+/// JSON body ONLY for POST, and every carved-out route is GET-guarded, so
+/// `body` is structurally `None` here. Passing it would be passing `None`.
+pub fn render_thread_show_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) if response.status == 404 => {
+            let thread_id = required_param(route_url, None, "threadId").unwrap_or_default();
+            return text_error(404, format!("aimux: thread not found: {thread_id}"));
+        }
+        Err(response) => return response,
+    };
     let thread = match required_project_service_object(&json, "thread show", "thread") {
         Ok(thread) => thread,
         Err(response) => return response,
@@ -623,15 +702,24 @@ pub fn handoff_mutation_text_route(
     handoff_mutation_response(route_url, json, input.action)
 }
 
-pub fn task_list_text_route(
-    runtime: &mut impl DaemonCollaborationTextRuntime,
+/// Phase one of the task list route: which project, and which upstream path.
+///
+/// Pure, and public, because this route is served from two places. The daemon
+/// carves it out ahead of the generic locked dispatch so the blocking hop to
+/// the project service happens WITHOUT the global runtime mutex held -- that
+/// serialization is the 0.55s staircase measured on sam-strix, where eight
+/// concurrent `aimux task list` runs completed one at a time. Both paths call
+/// this, and both render through `render_task_list_result`, so the two cannot
+/// drift -- the lesson `/health` taught when it had two routes building the
+/// same body. What actually holds them together is
+/// `the_carved_out_task_list_answers_what_the_locked_path_answers`; the shared
+/// helpers only make agreement easy, and the carve-out shipped once with these
+/// helpers in place and the router's refusals missing.
+pub fn resolve_task_list_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
-) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
     let mut query = Vec::new();
     if let Some(session) = trimmed_param(route_url, body, "session") {
         query.push(format!("session={}", url_encode(&session)));
@@ -644,12 +732,31 @@ pub fn task_list_text_route(
     } else {
         format!("{}?{}", project_routes::tasks::LIST, query.join("&"))
     };
-    let (json, _) =
-        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
-            Ok(result) => result,
-            Err(response) => return response,
-        };
-    let tasks = match required_project_service_array(&json, "task list", "tasks") {
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    })
+}
+
+/// Phase three from a raw project-service result.
+///
+/// The carve-out in `daemon/runtime.rs` calls this rather than unwrapping the
+/// result itself, so the unwrap and the render stay in one module and there is
+/// one less thing for the two call paths to disagree about.
+pub fn render_task_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    render_task_list_payload(route_url, &json)
+}
+
+/// Phase three: the upstream's JSON into the route's response. Pure.
+pub fn render_task_list_payload(route_url: &DaemonRouteUrl, json: &Value) -> DaemonRouteResponse {
+    let tasks = match required_project_service_array(json, "task list", "tasks") {
         Ok(tasks) => tasks,
         Err(response) => return response,
     };
@@ -661,18 +768,65 @@ pub fn task_list_text_route(
     )
 }
 
+pub fn task_list_text_route(
+    runtime: &mut impl DaemonCollaborationTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_task_list_request(route_url, body) {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
+    let (json, _) =
+        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
+            Ok(result) => result,
+            Err(response) => return response,
+        };
+    render_task_list_payload(route_url, &json)
+}
+
+/// Phase one of `aimux review list`: everything decidable without the project
+/// service, so the carve-out can resolve under the lock and release it before
+/// the upstream hop.
+pub fn resolve_review_list_request(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: project_routes::tasks::LIST.to_owned(),
+    })
+}
+
 pub fn review_list_text_route(
     runtime: &mut impl DaemonCollaborationTextRuntime,
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
 ) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_review_list_request(route_url, body) {
+        Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let (json, _) = match unwrap_project_result(
-        runtime.get_project_service_json(&project, project_routes::tasks::LIST),
-    ) {
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_review_list_result(route_url, result)
+}
+
+/// Phase three of `aimux review list`, from a raw project-service result.
+pub fn render_review_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
         Ok(result) => result,
         Err(response) => return response,
     };
@@ -710,14 +864,40 @@ pub fn task_show_text_route(
         Err(response) => return response,
     };
     let route_path = format!("{}/{}", project_routes::tasks::LIST, url_encode(&task_id));
-    let (json, _) =
-        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
-            Ok(result) => result,
-            Err(response) if response.status == 404 => {
-                return text_error(404, format!("aimux: task not found: {task_id}"));
-            }
-            Err(response) => return response,
-        };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls.
+    render_task_show_result(route_url, result)
+}
+
+/// Phase one of `aimux task show`.
+pub fn resolve_task_show_request(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    let task_id = required_param(route_url, body, "taskId")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: format!("{}/{}", project_routes::tasks::LIST, url_encode(&task_id)),
+    })
+}
+
+/// Phase three of `aimux task show`, from a raw project-service result.
+///
+/// The 404 names the task, so this re-reads the id. See
+/// `render_thread_show_result` for why it takes no `body`.
+pub fn render_task_show_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) if response.status == 404 => {
+            let task_id = required_param(route_url, None, "taskId").unwrap_or_default();
+            return text_error(404, format!("aimux: task not found: {task_id}"));
+        }
+        Err(response) => return response,
+    };
     let task = match required_project_service_object(&json, "task show", "task") {
         Ok(task) => task,
         Err(response) => return response,
@@ -1092,15 +1272,6 @@ fn task_mutation_response(
         payload.insert("followUpTask".into(), follow_up_task.clone());
     }
     text_or_json_lines(route_url, json, &render(&Value::Object(payload)))
-}
-
-fn unwrap_project_result(
-    result: ProjectServiceJsonResult,
-) -> Result<(Value, String), DaemonRouteResponse> {
-    match result {
-        ProjectServiceJsonResult::Ok { project_root, json } => Ok((json, project_root)),
-        ProjectServiceJsonResult::Err { response } => Err(response),
-    }
 }
 
 fn optional_string(route_url: &DaemonRouteUrl, body: Option<&Value>, name: &str) -> Option<String> {

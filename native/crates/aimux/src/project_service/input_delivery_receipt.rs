@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Value, json};
@@ -92,6 +93,62 @@ fn persist_receipt(
         None,
     );
     Ok(true)
+}
+
+/// The two receipt writes, off the async worker.
+///
+/// Both of these go through `persist_receipt`, which takes
+/// `acquire_state_update_lock` on the metadata state path and then reads and
+/// rewrites that metadata. The delivery tick calls them TWICE PER DELIVERED
+/// ENTRY from its own async stack, and the project service runs two async
+/// workers -- so a queue of N entries was 2N lock acquisitions on those two
+/// workers, each able to sleep in a retry loop until `ACQUIRE_TIMEOUT` when
+/// another writer holds it.
+///
+/// A pool hop costs microseconds against a lock acquisition that can sleep for
+/// seconds, so paying one per call is the right trade even though there are
+/// two per entry.
+///
+/// The gate is `a_delivery_receipt_write_does_not_consume_an_async_worker`,
+/// and it was written and PROVED FAILING against the inline shape before this
+/// existed -- 2 of 4 writers polled on 2 workers. That order matters: on the
+/// previous change I built the fix first and the gate second, and the gate
+/// turned out to prove only the span it happened to reach.
+pub async fn begin_input_delivery_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    session_id: String,
+    window_id: String,
+) -> Result<InputDeliveryAttempt, String> {
+    let context = Arc::clone(context);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("input-delivery-receipt", "begin"),
+        move || begin_input_delivery(&context, &session_id, &window_id),
+    )
+    .await
+    // A pool task that never ran is not a failed receipt.
+    .map_err(|error| format!("input delivery receipt did not start: {error}"))?
+}
+
+pub async fn finish_input_delivery_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    attempt: InputDeliveryAttempt,
+    result: Result<PromptDeliveryVerification, String>,
+) -> Result<Value, String> {
+    let context = Arc::clone(context);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("input-delivery-receipt", "finish"),
+        move || {
+            // `finish_input_delivery` wants the error borrowed and the
+            // verification owned, which is what this reshapes.
+            let borrowed = match &result {
+                Ok(verification) => Ok(*verification),
+                Err(error) => Err(error.as_str()),
+            };
+            finish_input_delivery(&context, &attempt, borrowed)
+        },
+    )
+    .await
+    .map_err(|error| format!("input delivery receipt did not finish: {error}"))
 }
 
 pub fn finish_input_delivery(

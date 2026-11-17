@@ -41,6 +41,7 @@ use super::session_visibility::{
 };
 use super::usage::{load_last_used_state, parse_recency_timestamp};
 use super::visual_clients::VisualClientLeaseRoute;
+use crate::team_contract::team_string_field;
 
 const LIVE_SERVICE_STATUSES: &[&str] = &["starting", "running"];
 const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
@@ -340,10 +341,45 @@ pub async fn route_switchable_agent_request_async(
             &project_state_dir,
         );
     }
-    let metadata = load_metadata_state(&project_state_dir);
+    // On the blocking pool. `load_metadata_state` is infallible -- a missing or
+    // unreadable file becomes an empty state -- so the only error here is a
+    // pool task that never ran, which is not the same thing.
+    let metadata = match crate::project_service::scheduler::read_metadata_state_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await
+    {
+        Ok(state) => state,
+        Err(error) => {
+            return Some(ProjectServiceDispatchResponse::json(
+                500,
+                json!({ "ok": false, "error": error }),
+            ));
+        }
+    };
     let projection =
         topology_switchable_entries_for_context_async(context, &topology, &metadata.sessions).await;
-    let last_used = load_last_used_state(&project_state_dir);
+    // On the blocking pool: `load_last_used_state` reads through
+    // `fs::read_to_string` and answers any failure with an empty state, so the
+    // only error is a pool task that never ran -- which is not the same thing
+    // and says so.
+    let last_used = {
+        let dir = project_state_dir.to_path_buf();
+        match crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::task_name("project-service", "last-used-state"),
+            move || load_last_used_state(&dir),
+        )
+        .await
+        {
+            Ok(state) => state,
+            Err(error) => {
+                return Some(ProjectServiceDispatchResponse::json(
+                    500,
+                    json!({ "ok": false, "error": format!("last-used state was not read: {error}") }),
+                ));
+            }
+        }
+    };
     let mut items = list_switchable_agent_items(
         &projection.entries,
         &metadata.sessions,
@@ -1353,16 +1389,6 @@ fn activity_chip(value: &str) -> Option<(&'static str, &'static str)> {
         "interrupted" => Some(("idle", "Interrupted")),
         _ => None,
     }
-}
-
-fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value
-        .get("team")
-        .and_then(Value::as_object)
-        .and_then(|team| team.get(key))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
 }
 
 fn target_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {

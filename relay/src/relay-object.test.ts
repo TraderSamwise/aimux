@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_MACHINES_PER_ROOM } from "./machines";
-import { RelayObject } from "./relay-object";
+import { MAX_MACHINES_PER_ROOM, UNSEQUENCED_CONNECTION, connectionSequenceFromTags } from "./machines";
+import { MAX_PROJECT_ENDPOINT_REPORTS, RelayObject } from "./relay-object";
+import projectEndpointsContract from "../../testdata/contracts/v1/relay-project-endpoints.json";
 import { deviceProofMessage } from "./security";
 import type { Env } from "./types";
 
@@ -18,8 +19,12 @@ vi.mock("cloudflare:workers", () => ({
 
 class MemoryStorage {
   private values = new Map<string, unknown>();
+  /// How many times each key was read, so a route can be asked whether it
+  /// reads the same record twice to answer one question.
+  readonly reads = new Map<string, number>();
 
   async get<T>(key: string): Promise<T | undefined> {
+    this.reads.set(key, (this.reads.get(key) ?? 0) + 1);
     return this.values.get(key) as T | undefined;
   }
 
@@ -158,6 +163,455 @@ describe("RelayObject request hibernation", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+// Two of the owner's machines, both connected to the object that belongs to
+// that owner. The account boundary is therefore closed by construction rather
+// than by a check -- which is why the tests here are about the SECOND
+// boundary: being on the account is not being at the keyboard.
+// Ownership of a checkout is the deliberate record the ledger work needs
+// before anything resolves to an owner. It moves by hand, never by election,
+// and a second machine learning that it is NOT the owner is the whole point.
+describe("RelayObject recording which machine owns a checkout", () => {
+  function fleet(machines: string[]) {
+    const sockets = machines.map((id) =>
+      fakeSocket(["daemon", `user:user_owner`, `machine:${id}`, `machineName:sam-${id}`]),
+    );
+    return { sockets, storage: storageWithSockets(sockets) };
+  }
+
+  function report(object: RelayObject, socket: ReturnType<typeof fakeSocket>, projectRoot: string) {
+    return object.webSocketMessage(
+      socket,
+      JSON.stringify({
+        type: "project_endpoints",
+        projects: [{ projectRoot, host: "relay.aimux.app", port: 443 }],
+      }),
+    );
+  }
+
+  function claim(object: RelayObject, body: Record<string, unknown>) {
+    return object.fetch(
+      request("https://relay.aimux.app/projects/claim", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+        body,
+      }),
+    );
+  }
+
+  it("records the claim, and says who holds it", async () => {
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/Users/sam/cs/aimux");
+
+    const claimed = await claim(object, { projectRoot: "/Users/sam/cs/aimux", machineId: "mbp" });
+
+    expect(claimed.status).toBe(200);
+    expect(await claimed.json()).toMatchObject({ ok: true, alreadyOwned: false, owner: { machineId: "mbp" } });
+
+    const listed = await object.fetch(
+      request("https://relay.aimux.app/projects/owners", {
+        method: "GET",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+      }),
+    );
+    expect(await listed.json()).toMatchObject({
+      ok: true,
+      owners: [{ projectRoot: "/Users/sam/cs/aimux", machineId: "mbp", online: true }],
+    });
+  });
+
+  it("refuses a second machine while the owner is connected, and names it", async () => {
+    const {
+      sockets: [mbp, strix],
+      storage,
+    } = fleet(["mbp", "strix"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/Users/sam/cs/aimux");
+    await report(object, strix, "/Users/sam/cs/aimux");
+    expect((await claim(object, { projectRoot: "/Users/sam/cs/aimux", machineId: "mbp" })).status).toBe(200);
+
+    const refused = await claim(object, { projectRoot: "/Users/sam/cs/aimux", machineId: "strix" });
+
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      ok: false,
+      refusal: "held-by-a-connected-machine",
+      heldBy: { machineId: "mbp" },
+      // In the sentence, because the sentence is the only part that reaches a
+      // person: the CLI's relay client returns `error` and drops every field
+      // beside it, so the name in `heldBy` was a name nobody ever saw.
+      error: "Another machine owns that checkout and is connected right now: mbp",
+    });
+  });
+
+  // The case the record exists for: the owner is a laptop that is shut, and
+  // the work has to be able to carry on somewhere.
+  it("says the owner is away, and lets another machine take it", async () => {
+    const {
+      sockets: [mbp, strix],
+      storage,
+    } = fleet(["mbp", "strix"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/Users/sam/cs/aimux");
+    await report(object, strix, "/Users/sam/cs/aimux");
+    expect((await claim(object, { projectRoot: "/Users/sam/cs/aimux", machineId: "mbp" })).status).toBe(200);
+
+    // mbp goes away; only strix is left on the socket list.
+    const awake = storageWithSockets([strix]);
+    await awake.put("sharing-state:v1", await storage.get("sharing-state:v1"));
+    const reopened = createObject(awake, {} as unknown as Env);
+    await report(reopened, strix, "/Users/sam/cs/aimux");
+
+    const listed = await reopened.fetch(
+      request("https://relay.aimux.app/projects/owners", {
+        method: "GET",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+      }),
+    );
+    expect(await listed.json(), "the owner is named and marked away").toMatchObject({
+      owners: [{ machineId: "mbp", online: false }],
+    });
+
+    const taken = await claim(reopened, { projectRoot: "/Users/sam/cs/aimux", machineId: "strix" });
+    expect(taken.status).toBe(200);
+    expect(await taken.json()).toMatchObject({ owner: { machineId: "strix" } });
+  });
+
+  function framesTo(socket: ReturnType<typeof fakeSocket>, type: string) {
+    return socket.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])) as Record<string, unknown>)
+      .filter((frame) => frame.type === type);
+  }
+
+  // The owner table is this account's whole fleet in absolute paths. A guest
+  // holds a client socket, so the one thing that must never happen is it
+  // arriving there.
+  it("pushes the owner table to daemons and never to a client", async () => {
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/repo");
+    const owner = fakeSocket(["client", "device:client_1"]);
+    storage.sockets = [mbp, owner];
+
+    const claimed = await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+    expect(claimed.status).toBe(200);
+
+    expect(framesTo(mbp, "project_owners").at(-1)).toEqual({
+      type: "project_owners",
+      owners: [{ projectRoot: "/repo", machineId: "mbp", claimedAt: expect.any(String), online: true }],
+    });
+    expect(framesTo(owner, "project_owners")).toEqual([]);
+  });
+
+  // `online` comes from the live socket map, so it is the column that would
+  // drift if the HTTP read and the pushed frame computed the table separately.
+  //
+  // Two machines, and the SECOND one's row is the one that discriminates. A
+  // claim can only be made by a connected machine, so a single-machine fleet
+  // pushes a frame in which every row is online -- and a separately computed
+  // `online: true` would match it. Strix claims, leaves, and then mbp's claim
+  // is the push that has to carry `online: false` for somebody.
+  it("tells the pushed frame and the read the same thing", async () => {
+    const {
+      sockets: [mbp, strix],
+      storage,
+    } = fleet(["mbp", "strix"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/repo");
+    await report(object, strix, "/other");
+    await claim(object, { projectRoot: "/other", machineId: "strix" });
+    await object.webSocketClose(strix);
+    storage.sockets = [mbp];
+    await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+
+    const pushed = framesTo(mbp, "project_owners").at(-1) as {
+      owners: Array<{ machineId: string; online: boolean }>;
+    };
+    expect(
+      pushed.owners.find((row) => row.machineId === "strix")?.online,
+      "the departed machine's row must say so, or this proves nothing",
+    ).toBe(false);
+    const read = await object.fetch(
+      request("https://relay.aimux.app/projects/owners", {
+        method: "GET",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+      }),
+    );
+    expect(((await read.json()) as { owners: unknown }).owners).toEqual(pushed.owners);
+  });
+
+  // One read of the sharing state to answer one claim.
+  //
+  // The claim route is safe without a version check only because nothing is
+  // awaited between its load and its save -- its own comment says so. The
+  // first version of the owner push awaited a SECOND load after the save to
+  // build the frame, which is two reads of one record inside one request with
+  // a write able to land between them: two concurrent claims and the last
+  // frame the fleet held omitted one of them. The frame is built from the
+  // state already in hand, and this is the gate that says so.
+  //
+  // Counted rather than raced, which is the same shape this file already uses
+  // for the guest-request path: a race is not reproducible in one thread, and
+  // the read count is the property that makes the race impossible.
+  it("reads the sharing state once to answer one claim", async () => {
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/repo");
+
+    storage.reads.clear();
+    const claimed = await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+    expect(claimed.status).toBe(200);
+
+    expect(
+      [...storage.reads.entries()].filter(([, count]) => count > 1),
+      "no record may be read twice inside one claim",
+    ).toEqual([]);
+  });
+
+  // A daemon claims on every start, so the common case is a re-claim of a
+  // checkout it already owns. Pushing a snapshot for those would make the
+  // fleet's morning a broadcast per machine per checkout, and nothing has
+  // changed to tell anyone about.
+  it("does not push the owner table for a re-claim that changed nothing", async () => {
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/repo");
+    await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+    const before = framesTo(mbp, "project_owners").length;
+    expect(before, "the first claim did push").toBeGreaterThan(0);
+
+    const again = await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+    expect(again.status).toBe(200);
+    expect(await again.json()).toMatchObject({ alreadyOwned: true });
+
+    expect(framesTo(mbp, "project_owners").length).toBe(before);
+  });
+
+  // A daemon is not disturbed by another machine coming or going:
+  // `broadcastMachineStatus` goes to client sockets only, and the first
+  // version of this push broadcast on both and broke that -- a test that
+  // already existed caught it.
+  //
+  // Nothing is lost, because `online` is a hint rather than a gate. The
+  // transport refuses a dead target by name, and ownership itself only changes
+  // on a claim, which does still tell everyone.
+  it("does not push the owner table when another machine comes or goes", async () => {
+    const {
+      sockets: [mbp, strix],
+      storage,
+    } = fleet(["mbp", "strix"]);
+    const object = createObject(storage, {} as unknown as Env);
+    await report(object, mbp, "/repo");
+    await claim(object, { projectRoot: "/repo", machineId: "mbp" });
+    const before = framesTo(mbp, "project_owners").length;
+
+    await object.webSocketClose(strix);
+
+    expect(framesTo(mbp, "project_owners").length).toBe(before);
+  });
+});
+
+describe("RelayObject letting one machine ask another", () => {
+  function fleet() {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const strix = fakeSocket(["daemon", "user:user_owner", "machine:strix", "machineName:sam-strix"]);
+    return { mbp, strix, storage: storageWithSockets([mbp, strix]) };
+  }
+
+  function ask(machineId: string | undefined, id = "peer-1") {
+    return JSON.stringify({
+      id,
+      type: "request",
+      ...(machineId ? { machineId } : {}),
+      method: "POST",
+      path: "/tasks/assign",
+      body: { taskId: "t1" },
+      headers: { "X-Aimux-Actor-Role": "owner" },
+    });
+  }
+
+  it("carries the request to the machine it named, and back again", async () => {
+    const { mbp, strix, storage } = fleet();
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(mbp, ask("strix"));
+
+    const forwarded = JSON.parse(String(strix.send.mock.calls.at(-1)?.[0])) as {
+      id: string;
+      headers: Record<string, string>;
+    };
+    // Not `owner`. The owner's own app is stamped that, and the daemon hands
+    // those to its whole API -- a peer carrying it would be every machine
+    // holding every other machine's keyboard. What the caller claimed is
+    // stripped, and the origin is stamped from the socket, not the frame.
+    expect(forwarded.headers["X-Aimux-Actor-Role"]).toBe("peer");
+    expect(forwarded.headers["X-Aimux-Peer-Machine-Id"]).toBe("mbp");
+
+    await object.webSocketMessage(
+      strix,
+      JSON.stringify({ id: forwarded.id, type: "response", status: 200, body: { ok: true } }),
+    );
+
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      id: "peer-1",
+      type: "response",
+      status: 200,
+      body: { ok: true },
+    });
+  });
+
+  // Every message rebuilds the live maps from the sockets, and the rebuild
+  // used to read only the clients' attachments: a peer request died on the
+  // next frame of any kind, a pong included.
+  it("still knows who asked after the object has hibernated", async () => {
+    const { mbp, strix, storage } = fleet();
+    const object = createObject(storage, {} as unknown as Env);
+    await object.webSocketMessage(mbp, ask("strix"));
+    const forwarded = JSON.parse(String(strix.send.mock.calls.at(-1)?.[0])) as { id: string };
+
+    const woken = createObject(storage, {} as unknown as Env);
+    // A pong is the cheapest frame there is, and it was enough to lose it.
+    await woken.webSocketMessage(mbp, JSON.stringify({ type: "pong" }));
+    await woken.webSocketMessage(
+      strix,
+      JSON.stringify({ id: forwarded.id, type: "response", status: 200, body: { ok: true } }),
+    );
+
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      id: "peer-1",
+      status: 200,
+    });
+  });
+
+  it("refuses a request that names no machine, rather than picking one", async () => {
+    const { mbp, strix, storage } = fleet();
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(mbp, ask(undefined));
+
+    expect(strix.send).not.toHaveBeenCalled();
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      id: "peer-1",
+      status: 400,
+      body: { refusal: "peer-target-unnamed" },
+    });
+  });
+
+  it("refuses a machine naming itself, instead of looping", async () => {
+    const { mbp, storage } = fleet();
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(mbp, ask("mbp"));
+
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      status: 400,
+      body: { refusal: "peer-target-is-self" },
+    });
+  });
+
+  // A project service refuses with 502 and 503 as well, so an unmarked
+  // refusal leaves the asking daemon unable to tell "the peer's service is
+  // down" from "the relay would not carry this" -- two problems with two
+  // fixes, wearing the same number.
+  it("signs the refusals it makes itself", async () => {
+    const { mbp, storage } = fleet();
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(mbp, ask(undefined));
+
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      source: "relay",
+      status: 400,
+    });
+  });
+
+  // The per-origin cap bounds what one machine can send and says nothing
+  // about what one machine can be sent: several machines, each politely under
+  // its own eight, still land all of them on one socket at once, and the
+  // owner's own app waits behind them.
+  it("stops a fleet filling one machine's queue between them", async () => {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const mini = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    const strix = fakeSocket(["daemon", "user:user_owner", "machine:strix", "machineName:sam-strix"]);
+    // A third asker, so the refusal cannot be its own eight coming back.
+    const air = fakeSocket(["daemon", "user:user_owner", "machine:air", "machineName:sam-air"]);
+    const object = createObject(storageWithSockets([mbp, mini, strix, air]), {} as unknown as Env);
+
+    for (let index = 0; index < 8; index += 1) {
+      await object.webSocketMessage(mbp, ask("strix", `mbp-${index}`));
+    }
+    for (let index = 0; index < 8; index += 1) {
+      await object.webSocketMessage(mini, ask("strix", `mini-${index}`));
+    }
+    expect(strix.send).toHaveBeenCalledTimes(16);
+
+    // Nothing of its own in flight, and still refused: the limit here is the
+    // machine being asked, not the one asking.
+    await object.webSocketMessage(air, ask("strix", "air-first"));
+
+    expect(strix.send).toHaveBeenCalledTimes(16);
+    expect(JSON.parse(String(air.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      id: "air-first",
+      status: 429,
+      body: { refusal: "peer-target-saturated" },
+    });
+  });
+
+  it("refuses a machine that is not connected", async () => {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const object = createObject(storageWithSockets([mbp]), {} as unknown as Env);
+
+    await object.webSocketMessage(mbp, ask("strix"));
+
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      status: 503,
+      body: { refusal: "peer-target-offline" },
+    });
+  });
+
+  // A daemon answers its socket one request at a time, and the owner's own
+  // app shares that socket. A peer sending faster than its target can answer
+  // is not going faster; it is queueing work in front of the person.
+  it("stops one machine filling another's queue", async () => {
+    const { mbp, strix, storage } = fleet();
+    const object = createObject(storage, {} as unknown as Env);
+
+    for (let index = 0; index < 8; index += 1) {
+      await object.webSocketMessage(mbp, ask("strix", `peer-${index}`));
+    }
+    expect(strix.send).toHaveBeenCalledTimes(8);
+
+    await object.webSocketMessage(mbp, ask("strix", "peer-over"));
+
+    expect(strix.send).toHaveBeenCalledTimes(8);
+    expect(JSON.parse(String(mbp.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      id: "peer-over",
+      status: 429,
+      body: { refusal: "peer-too-many-in-flight" },
+    });
   });
 });
 
@@ -1291,7 +1745,11 @@ describe("RelayObject owner device security", () => {
   });
 });
 
-function createObject(storage: MemoryStorage & { sockets?: Array<ReturnType<typeof fakeSocket>> }, env: Env) {
+function createObject(
+  storage: MemoryStorage & { sockets?: Array<ReturnType<typeof fakeSocket>> },
+  env: Env,
+  acceptedTagSets: string[][] = [],
+) {
   const tags = new Map<WebSocket, string[]>();
   return new RelayObject(
     {
@@ -1300,6 +1758,7 @@ function createObject(storage: MemoryStorage & { sockets?: Array<ReturnType<type
       getTags: (ws: WebSocket) => tags.get(ws) ?? (ws as WebSocket & { tags?: string[] }).tags ?? [],
       acceptWebSocket: (ws: WebSocket, acceptedTags: string[]) => {
         tags.set(ws, acceptedTags);
+        acceptedTagSets.push(acceptedTags);
         storage.sockets = [...(storage.sockets ?? []), ws as ReturnType<typeof fakeSocket>];
       },
     } as unknown as DurableObjectState,
@@ -1360,7 +1819,11 @@ describe("RelayObject refreshing a share its guests already hold", () => {
         })),
       },
     } as unknown as Env);
-    await createAcceptedShareInOwnerObject(object);
+    // Named, because a checkout that moved and a different checkout look the
+    // same to a caller that cannot say which machine it is: following the one
+    // would adopt the other, and move guests into a project nobody shared
+    // with them. With the machine said, the share is unmistakably the same.
+    await createAcceptedShareInOwnerObject(object, "mbp");
     upserted.length = 0;
 
     const moved = await object.fetch(
@@ -1371,6 +1834,7 @@ describe("RelayObject refreshing a share its guests already hold", () => {
         email: "owner@example.com",
         body: {
           projectRoot: "/Users/sam/code/scratch",
+          machineId: "mbp",
           sessionId: "claude-k4lihz",
           email: "second@example.com",
         },
@@ -1393,6 +1857,7 @@ describe("RelayObject refreshing a share its guests already hold", () => {
         email: "owner@example.com",
         body: {
           projectRoot: "/Users/sam/code/scratch",
+          machineId: "mbp",
           sessionId: "claude-k4lihz",
           email: "third@example.com",
         },
@@ -1404,8 +1869,1133 @@ describe("RelayObject refreshing a share its guests already hold", () => {
   });
 });
 
-async function createAcceptedShareInOwnerObject(object: RelayObject): Promise<string> {
-  const invite = await createInvite(object);
+// A project service binds a fresh port on every start, and a share stored the
+// endpoint it was created with. So the first restart after a share was made
+// left it proxying to a port nothing was listening on -- the daemon connected,
+// the agent working, every request from that share refused -- and the only
+// repair was issuing another invite, which emails somebody.
+// A share made before a share recorded its host names no machine, so the
+// route refuses every guest request with a message about a disconnected host
+// -- while the host is online. Re-inviting repairs it and emails somebody who
+// already accepted; this route says the same thing with no invite attached.
+describe("RelayObject pointing a share at the machine that holds it", () => {
+  function envRecording(upserted: { userId: string; hostBound?: boolean }[]) {
+    return {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn((id: { name: string }) => ({
+          fetch: vi.fn(async (url: string, init?: RequestInit) => {
+            if (String(url).includes("/internal/accepted-shares/upsert")) {
+              const body = JSON.parse(String(init?.body)) as { share: { hostBound?: boolean } };
+              upserted.push({ userId: id.name, hostBound: body.share.hostBound });
+            }
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env;
+  }
+
+  /// The machine has to be connected AND to have reported the checkout, so a
+  /// bind test needs daemon sockets and a report, not just a share.
+  function fleet(machines: string[]) {
+    const sockets = machines.map((id) =>
+      fakeSocket(["daemon", "user:user_owner", `machine:${id}`, `machineName:sam-${id}`]),
+    );
+    return { sockets, storage: storageWithSockets(sockets) };
+  }
+
+  async function reportCheckout(
+    object: RelayObject,
+    socket: ReturnType<typeof fakeSocket>,
+    projectRoot: string,
+    port = 443,
+  ) {
+    await object.webSocketMessage(
+      socket,
+      JSON.stringify({
+        type: "project_endpoints",
+        projects: [{ projectRoot, host: "relay.aimux.app", port }],
+      }),
+    );
+  }
+
+  function bind(object: RelayObject, body: Record<string, unknown>, userId = "user_owner"): Promise<Response> {
+    return object.fetch(
+      request("https://relay.aimux.app/shares/bind", {
+        method: "POST",
+        userId,
+        name: "Owner",
+        email: "owner@example.com",
+        body,
+      }),
+    );
+  }
+
+  it("binds the share the guests already hold, and tells them it is routable", async () => {
+    const upserted: { userId: string; hostBound?: boolean }[] = [];
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    await reportCheckout(object, mbp, "/Users/sam/cs/scratch");
+    upserted.length = 0;
+
+    const bound = await bind(object, { shareId, machineId: "mbp" });
+
+    expect(bound.status).toBe(200);
+    expect(await bound.json()).toMatchObject({
+      ok: true,
+      alreadyBound: false,
+      share: { id: shareId, hostBound: true },
+    });
+    const state = await storage.get<{ shares: Record<string, { machineId?: string }> }>("sharing-state:v1");
+    expect(state!.shares[shareId].machineId).toBe("mbp");
+    expect(upserted).toEqual([{ userId: "user_guest", hostBound: true }]);
+  });
+
+  // A second press must not bump the version and push every guest a refresh
+  // of a record that did not change.
+  it("writes nothing when the share already points there", async () => {
+    const upserted: { userId: string; hostBound?: boolean }[] = [];
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    await reportCheckout(object, mbp, "/Users/sam/cs/scratch");
+    expect((await bind(object, { shareId, machineId: "mbp" })).status).toBe(200);
+    upserted.length = 0;
+
+    const again = await bind(object, { shareId, machineId: "mbp" });
+
+    expect(again.status).toBe(200);
+    expect(await again.json()).toMatchObject({ ok: true, alreadyBound: true });
+    expect(upserted).toEqual([]);
+  });
+
+  // Defence in depth, said plainly: the worker sends `/shares/bind` to the
+  // CALLER's own object, so in production a second account never reaches this
+  // one at all. What this pins is that the object does not rely on that.
+  it("will not let another account point someone else's share anywhere", async () => {
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    await reportCheckout(object, mbp, "/Users/sam/cs/scratch");
+
+    const refused = await bind(object, { shareId, machineId: "mbp" }, "user_guest");
+
+    expect(refused.status).toBe(404);
+    expect(await refused.json()).toMatchObject({ ok: false, refusal: "no-such-share" });
+    const state = await storage.get<{ shares: Record<string, { machineId?: string }> }>("sharing-state:v1");
+    expect(state!.shares[shareId].machineId).toBeUndefined();
+  });
+
+  // There is no unbind route and a re-invite builds a second share, so
+  // refusing a move would make one wrong press permanent.
+  it("moves a share the owner pointed at the wrong machine", async () => {
+    const {
+      sockets: [mbp, strix],
+      storage,
+    } = fleet(["mbp", "strix"]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    await reportCheckout(object, mbp, "/Users/sam/cs/scratch");
+    await reportCheckout(object, strix, "/Users/sam/cs/scratch", 444);
+    expect((await bind(object, { shareId, machineId: "strix" })).status).toBe(200);
+
+    const corrected = await bind(object, { shareId, machineId: "mbp" });
+
+    expect(corrected.status).toBe(200);
+    expect(await corrected.json()).toMatchObject({ ok: true, alreadyBound: false });
+    const state = await storage.get<{ shares: Record<string, { machineId?: string }> }>("sharing-state:v1");
+    expect(state!.shares[shareId].machineId).toBe("mbp");
+  });
+
+  // A bind onto a machine that is not here would report success and leave the
+  // share refusing every guest until that machine came back.
+  it("refuses a machine that is not connected", async () => {
+    const {
+      sockets: [mbp],
+      storage,
+    } = fleet(["mbp"]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    await reportCheckout(object, mbp, "/Users/sam/cs/scratch");
+
+    const refused = await bind(object, { shareId, machineId: "strix" });
+
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ ok: false, refusal: "machine-offline" });
+  });
+
+  // Connected, and has never said it has this checkout. Nothing else says the
+  // target holds the project, let alone the session.
+  it("refuses a machine that has not reported the share's checkout", async () => {
+    const {
+      sockets: [mbp, strix],
+      storage,
+    } = fleet(["mbp", "strix"]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    await reportCheckout(object, mbp, "/Users/sam/cs/scratch");
+    await reportCheckout(object, strix, "/Users/sam/cs/something-else", 444);
+
+    const refused = await bind(object, { shareId, machineId: "strix" });
+
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      ok: false,
+      refusal: "machine-does-not-hold-checkout",
+    });
+  });
+});
+
+// A report loads the sharing state, then spends up to twenty cross-object
+// fetches pushing summaries to guests, then saves. Anything written in that
+// window was being saved over -- and a bind pressed while a machine reports
+// is the common case, because a report goes out on every connect.
+describe("RelayObject saving a report over what landed while it ran", () => {
+  it("keeps a bind that was pressed while the report was pushing summaries", async () => {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const storage = storageWithSockets([mbp]);
+    let bindDuringFanOut: (() => Promise<void>) | undefined;
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({
+          fetch: vi.fn(async (url: string) => {
+            // The window itself: one of the report's own awaits, with the
+            // owner pressing the button inside it.
+            if (String(url).includes("/internal/accepted-shares/upsert")) {
+              const pressing = bindDuringFanOut;
+              bindDuringFanOut = undefined;
+              if (pressing) await pressing();
+            }
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    // The machine reports the checkout once, so the bind has its evidence.
+    await object.webSocketMessage(
+      mbp,
+      JSON.stringify({
+        type: "project_endpoints",
+        projects: [{ projectRoot: "/Users/sam/cs/scratch", host: "relay.aimux.app", port: 443 }],
+      }),
+    );
+
+    bindDuringFanOut = async () => {
+      const bound = await object.fetch(
+        request("https://relay.aimux.app/shares/bind", {
+          method: "POST",
+          userId: "user_owner",
+          name: "Owner",
+          email: "owner@example.com",
+          body: { shareId, machineId: "mbp", projectRoot: "/Users/sam/cs/scratch" },
+        }),
+      );
+      expect(bound.status, "the premise: the bind succeeded").toBe(200);
+    };
+
+    // A second report, on a moved port, so there is a fan-out to land inside.
+    await object.webSocketMessage(
+      mbp,
+      JSON.stringify({
+        type: "project_endpoints",
+        projects: [{ projectRoot: "/Users/sam/cs/scratch", host: "relay.aimux.app", port: 8443 }],
+      }),
+    );
+
+    const state = await storage.get<{
+      shares: Record<string, { machineId?: string; serviceEndpoint?: { port: number } }>;
+    }>("sharing-state:v1");
+    expect(state!.shares[shareId].machineId, "the bind survived the report").toBe("mbp");
+    // And the report still did its own job.
+    expect(state!.shares[shareId].serviceEndpoint?.port).toBe(8443);
+  });
+
+  // The bind pushes the same summary to the same guests, and records the ones
+  // it could not reach. This path cannot see that, and carrying its own
+  // snapshot over the top lost them -- so the guest kept an unroutable copy
+  // and nothing was owed, which no later report would notice because the
+  // endpoint matches by then.
+  it("keeps the guests a bind in the window could not reach", async () => {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const storage = storageWithSockets([mbp]);
+    let bindDuringFanOut: (() => Promise<void>) | undefined;
+    // The bind's own push fails; the report's succeeds. That is the ordering
+    // that loses a guest.
+    let failTheUpsert = false;
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({
+          fetch: vi.fn(async (url: string) => {
+            if (!String(url).includes("/internal/accepted-shares/upsert")) {
+              return new Response("{}", { status: 200 });
+            }
+            if (failTheUpsert) return new Response("nope", { status: 500 });
+            const pressing = bindDuringFanOut;
+            bindDuringFanOut = undefined;
+            if (pressing) await pressing();
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const report = (port: number) =>
+      object.webSocketMessage(
+        mbp,
+        JSON.stringify({
+          type: "project_endpoints",
+          projects: [{ projectRoot: "/Users/sam/cs/scratch", host: "relay.aimux.app", port }],
+        }),
+      );
+    await report(443);
+
+    // Recorded, not asserted, in here: this runs inside the refresh's own
+    // try/catch, so a failed expectation would be swallowed and the test
+    // would pass on the fallback path instead of the one under test.
+    let bindOutcome: { status: number; body: unknown } | undefined;
+    bindDuringFanOut = async () => {
+      failTheUpsert = true;
+      const bound = await object.fetch(
+        request("https://relay.aimux.app/shares/bind", {
+          method: "POST",
+          userId: "user_owner",
+          name: "Owner",
+          email: "owner@example.com",
+          body: { shareId, machineId: "mbp", projectRoot: "/Users/sam/cs/scratch" },
+        }),
+      );
+      bindOutcome = { status: bound.status, body: await bound.json() };
+      failTheUpsert = false;
+    };
+    await report(8443);
+    expect(bindOutcome, "the premise: the bind landed inside the fan-out").toBeDefined();
+    expect(bindOutcome?.status, "the premise: the bind succeeded").toBe(200);
+    expect(bindOutcome?.body, "the premise: its push to the guest failed").toMatchObject({
+      staleReceivers: ["user_guest"],
+    });
+
+    const state = await storage.get<{
+      shares: Record<string, { staleReceivers?: string[] }>;
+    }>("sharing-state:v1");
+    expect(state!.shares[shareId].staleReceivers, "the guest is still owed a copy").toEqual(["user_guest"]);
+  });
+
+  // Two reports from ONE machine overlap: the connect frame and the
+  // thirty-second reminder, and the gate opens during the fan-out. The first
+  // one's save used to revert the second one's port -- leaving the share
+  // proxying where nothing listens -- and erase the guest the second one
+  // could not reach, so nothing was owed and no later report noticed.
+  it("does not revert a second report that landed while it was fanning out", async () => {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const storage = storageWithSockets([mbp]);
+    let secondReport: (() => Promise<void>) | undefined;
+    let failTheUpsert = false;
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({
+          fetch: vi.fn(async (url: string) => {
+            if (!String(url).includes("/internal/accepted-shares/upsert")) {
+              return new Response("{}", { status: 200 });
+            }
+            if (failTheUpsert) return new Response("nope", { status: 500 });
+            const interleaved = secondReport;
+            secondReport = undefined;
+            if (interleaved) await interleaved();
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+    const report = (port: number) =>
+      object.webSocketMessage(
+        mbp,
+        JSON.stringify({
+          type: "project_endpoints",
+          projects: [{ projectRoot: "/Users/sam/cs/scratch", host: "relay.aimux.app", port }],
+        }),
+      );
+    await report(443);
+
+    let secondRan = false;
+    secondReport = async () => {
+      secondRan = true;
+      // The newer port, and its push to the guest fails.
+      failTheUpsert = true;
+      await report(9443);
+      failTheUpsert = false;
+    };
+    await report(8443);
+    expect(secondRan, "the premise: the second report landed inside the first").toBe(true);
+
+    const state = await storage.get<{
+      shares: Record<string, { serviceEndpoint?: { port: number }; staleReceivers?: string[] }>;
+    }>("sharing-state:v1");
+    expect(state!.shares[shareId].serviceEndpoint?.port, "the newer port stands").toBe(9443);
+    expect(state!.shares[shareId].staleReceivers, "and the guest it missed is owed").toEqual(["user_guest"]);
+  });
+
+  it("keeps the roots another machine reported while this report ran", async () => {
+    const mbp = fakeSocket(["daemon", "user:user_owner", "machine:mbp", "machineName:sam-mbp"]);
+    const strix = fakeSocket(["daemon", "user:user_owner", "machine:strix", "machineName:sam-strix"]);
+    const storage = storageWithSockets([mbp, strix]);
+    let reportDuringFanOut: (() => Promise<void>) | undefined;
+    const object = createObject(storage, {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn(() => ({
+          fetch: vi.fn(async (url: string) => {
+            if (String(url).includes("/internal/accepted-shares/upsert")) {
+              const interleaved = reportDuringFanOut;
+              reportDuringFanOut = undefined;
+              if (interleaved) await interleaved();
+            }
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env);
+    const shareId = await createAcceptedShareInOwnerObject(object);
+
+    const reportRoots = (
+      socket: ReturnType<typeof fakeSocket>,
+      projects: Array<{ projectRoot: string; port: number }>,
+    ) =>
+      object.webSocketMessage(
+        socket,
+        JSON.stringify({
+          type: "project_endpoints",
+          projects: projects.map(({ projectRoot, port }) => ({
+            projectRoot,
+            host: "relay.aimux.app",
+            port,
+          })),
+        }),
+      );
+    const report = (socket: ReturnType<typeof fakeSocket>, projectRoot: string, port: number) =>
+      reportRoots(socket, [{ projectRoot, port }]);
+
+    // The share has to be bound for a report to speak for it at all: with two
+    // machines connected, one that names no host is deliberately left alone.
+    await report(mbp, "/Users/sam/cs/scratch", 443);
+    const bound = await object.fetch(
+      request("https://relay.aimux.app/shares/bind", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+        body: { shareId, machineId: "mbp", projectRoot: "/Users/sam/cs/scratch" },
+      }),
+    );
+    expect(bound.status, "the premise: the share is bound to mbp").toBe(200);
+
+    // strix has reported nothing when mbp's next report loads its snapshot,
+    // and reports for the first time inside mbp's fan-out.
+    let interleavedRan = false;
+    reportDuringFanOut = async () => {
+      interleavedRan = true;
+      await report(strix, "/Users/sam/cs/other", 444);
+    };
+    // Two roots, so this report moves an endpoint AND teaches something: the
+    // index is only rewritten when a report learned something, so a test that
+    // only moves a port never reaches the line under test.
+    await reportRoots(mbp, [
+      { projectRoot: "/Users/sam/cs/scratch", port: 8443 },
+      { projectRoot: "/Users/sam/cs/extra", port: 9443 },
+    ]);
+    expect(interleavedRan, "the premise: strix reported inside mbp's fan-out").toBe(true);
+
+    const state = await storage.get<{ machineProjectRoots?: Record<string, string[]> }>("sharing-state:v1");
+    // Assigning the index wholesale from mbp's snapshot reverted strix -- and
+    // a machine's roots are how a share that names no host is routed, so the
+    // revert aimed a guest at a host without the checkout.
+    expect(state!.machineProjectRoots).toEqual({
+      mbp: ["/Users/sam/cs/extra", "/Users/sam/cs/scratch"],
+      strix: ["/Users/sam/cs/other"],
+    });
+  });
+});
+
+describe("RelayObject following a project service onto its new port", () => {
+  function envRecording(
+    upserted: { userId: string; port?: number }[],
+    receiverDown?: { value: boolean },
+    attempted?: string[],
+  ) {
+    return {
+      RELAY: {
+        idFromName: vi.fn((name: string) => ({ name })),
+        get: vi.fn((id: { name: string }) => ({
+          fetch: vi.fn(async (url: string, init?: RequestInit) => {
+            if (String(url).includes("/internal/accepted-shares/upsert")) {
+              const body = JSON.parse(String(init?.body)) as {
+                share: { id: string; serviceEndpoint?: { port?: number } };
+              };
+              attempted?.push(body.share.id);
+              if (receiverDown?.value) return new Response("nope", { status: 500 });
+              upserted.push({ userId: id.name, port: body.share.serviceEndpoint?.port });
+            }
+            return new Response("{}", { status: 200 });
+          }),
+        })),
+      },
+    } as unknown as Env;
+  }
+
+  async function shareBoundTo(
+    object: RelayObject,
+    machineId: string | undefined,
+    port: number,
+    sessionId = "claude-psmp2r",
+    projectRoot = "/Users/sam/cs/tealstreet-next",
+  ): Promise<string> {
+    const response = await object.fetch(
+      request("https://relay.aimux.app/shares/invite", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+        body: {
+          projectRoot,
+          serviceEndpoint: { host: "127.0.0.1", port },
+          machineId,
+          sessionId,
+          email: "guest@example.com",
+        },
+      }),
+    );
+    expect(response.status).toBe(201);
+    const accepted = await object.fetch(
+      request(
+        `https://relay.aimux.app/shares/invite/user_owner/${new URL(
+          ((await response.json()) as { acceptUrl: string }).acceptUrl,
+        ).pathname
+          .split("/")
+          .at(-2)!}/accept`,
+        { method: "POST", userId: "user_guest", name: "Guest", email: "guest@example.com" },
+      ),
+    );
+    expect(accepted.status).toBe(200);
+    return ((await accepted.json()) as { share: { id: string } }).share.id;
+  }
+
+  /// Invite and accept one more participant onto an existing share.
+  async function addGuest(object: RelayObject, userId: string, email: string): Promise<void> {
+    const invited = await object.fetch(
+      request("https://relay.aimux.app/shares/invite", {
+        method: "POST",
+        userId: "user_owner",
+        name: "Owner",
+        email: "owner@example.com",
+        body: {
+          projectRoot: "/Users/sam/cs/tealstreet-next",
+          serviceEndpoint: { host: "127.0.0.1", port: 44659 },
+          machineId: "mini",
+          sessionId: "claude-psmp2r",
+          email,
+        },
+      }),
+    );
+    expect(invited.status).toBe(201);
+    const accepted = await object.fetch(
+      request(
+        `https://relay.aimux.app/shares/invite/user_owner/${new URL(
+          ((await invited.json()) as { acceptUrl: string }).acceptUrl,
+        ).pathname
+          .split("/")
+          .at(-2)!}/accept`,
+        { method: "POST", userId, name: userId, email },
+      ),
+    );
+    expect(accepted.status).toBe(200);
+  }
+
+  function storedEndpoint(storage: MemoryStorage, shareId: string) {
+    return storage
+      .get<{ shares: Record<string, { serviceEndpoint?: { host: string; port: number } }> }>("sharing-state:v1")
+      .then((state) => state!.shares[shareId].serviceEndpoint);
+  }
+
+  // The daemon builds this frame in Rust and asserts the same file. Neither
+  // side's own tests would notice a renamed field, and the relay answers
+  // nothing, so a mismatch would be silent -- every share would stay on the
+  // port its invite was written with, which is the bug the frame exists to
+  // fix.
+  it("reads the frame shape the daemon actually sends", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const contractProject = projectEndpointsContract.example.projects[0];
+    const shareId = await shareBoundTo(object, "mini", 44659, "claude-psmp2r", contractProject.projectRoot);
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+    await object.webSocketMessage(daemon, JSON.stringify(projectEndpointsContract.example.frame));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({
+      host: contractProject.host,
+      port: contractProject.port,
+    });
+    expect(upserted).toEqual([{ userId: "user_guest", port: contractProject.port }]);
+  });
+
+  it("caps the report where the contract says it is capped", () => {
+    expect(MAX_PROJECT_ENDPOINT_REPORTS).toBe(projectEndpointsContract.maxProjectsPerFrame);
+  });
+
+  const endpointsFrame = (port: number) =>
+    JSON.stringify({
+      type: "project_endpoints",
+      projects: [{ projectRoot: "/Users/sam/cs/tealstreet-next", host: "127.0.0.1", port }],
+    });
+
+  it("moves the stored endpoint and pushes it to the guests holding a copy", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, "mini", 44659);
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+    // A guest reads its own object's cached copy, so saving the canonical
+    // record here only fixes the owner -- without the push the guest keeps
+    // proxying to the dead port, which is the same bug one hop over.
+    expect(upserted).toEqual([{ userId: "user_guest", port: 49226 }]);
+  });
+
+  it("writes nothing when the service is still on the port the share has", async () => {
+    // This frame arrives on every daemon connect. Saving storage and fanning
+    // out to every guest each time would be a write per reconnect, and the
+    // relay's edge reconnects tens of times a day.
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    await shareBoundTo(object, "mini", 49226);
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+    // The first report teaches the object which machine holds this checkout,
+    // which is a real change and is written. Steady state is the second one.
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    const put = vi.spyOn(storage, "put");
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+
+    expect(put).not.toHaveBeenCalled();
+    expect(upserted).toEqual([]);
+    put.mockRestore();
+  });
+
+  // Round 3's rule for a share that names no host, through the route rather
+  // than through the helper: hardcoding the caller's flag to either value
+  // used to leave the whole suite green, so the rule was a comment as far as
+  // the tests were concerned -- the un-updated-caller class exactly.
+  it("moves a share with no host when the reporting daemon is the only machine", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+    expect(upserted).toEqual([{ userId: "user_guest", port: 49226 }]);
+  });
+
+  it("leaves a share with no host alone while a second daemon is connected", async () => {
+    // Unroutable either way with two machines up, so moving its endpoint
+    // could only be a guess -- and the two machines would take turns, every
+    // turn a durable write and a push to every guest.
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+    upserted.length = 0;
+
+    const mini = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    const mbp2 = fakeSocket(["daemon", "user:user_owner", "machine:mbp2", "machineName:sam-mbp2"]);
+    storage.sockets = [mini, mbp2];
+    // Once to teach it the roots, as above; the assertion is about the share.
+    await object.webSocketMessage(mini, endpointsFrame(49226));
+    const put = vi.spyOn(storage, "put");
+    await object.webSocketMessage(mini, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    expect(upserted).toEqual([]);
+    expect(put).not.toHaveBeenCalled();
+    put.mockRestore();
+  });
+
+  // One machine connected is not the same fact as "this sender is it". A
+  // socket can be superseded or evicted while a frame it sent is still being
+  // handled, and then the account's one machine is somebody else -- who this
+  // daemon may not speak for.
+  it("will not speak for a share with no host when the one machine is somebody else", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+    upserted.length = 0;
+
+    const mbp2 = fakeSocket(["daemon", "user:user_owner", "machine:mbp2", "machineName:sam-mbp2"]);
+    // Deliberately absent from the socket list: this is the superseded one.
+    const gone = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [mbp2];
+    await object.webSocketMessage(gone, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    expect(upserted).toEqual([]);
+  });
+
+  // A daemon that connected without a usable machine id is tagged
+  // `unidentified`. Reading that as "claims no machine" let it move every
+  // machine-bound share in the account onto its own ports.
+  it("will not move a machine-bound share for a daemon with no machine identity", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, "mini", 44659);
+    upserted.length = 0;
+
+    const nameless = fakeSocket(["daemon", "user:user_owner", "machine:unidentified"]);
+    storage.sockets = [nameless];
+    await object.webSocketMessage(nameless, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    expect(upserted).toEqual([]);
+  });
+
+  // Which shares these are is read from the socket's own tags. A daemon that
+  // claims someone else's project in the frame must not move their share.
+  it("will not move a share the sending machine does not hold", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, "mini", 44659);
+    upserted.length = 0;
+
+    const other = fakeSocket(["daemon", "user:user_owner", "machine:mbp2", "machineName:sam-mbp2"]);
+    storage.sockets = [other];
+    await object.webSocketMessage(other, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    expect(upserted).toEqual([]);
+  });
+
+  // A guest routes on the copy in ITS object, so a refresh that failed leaves
+  // that guest on the dead port while the owner's record is right -- and the
+  // endpoint comparison would then never look at that share again, because by
+  // then it matches every report.
+  it("retries a receiver whose own copy could not be refreshed", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const receiverDown = { value: false };
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted, receiverDown));
+    const shareId = await shareBoundTo(object, "mini", 44659);
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+
+    // The move lands on the owner's record, but the guest's object is down.
+    receiverDown.value = true;
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+    expect(upserted).toEqual([]);
+
+    // While that guest is still down, a repeat report retries it and finds
+    // nothing new to record -- so it must not write storage. This report
+    // arrives every thirty seconds and on every daemon connect.
+    const put = vi.spyOn(storage, "put");
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    expect(put).not.toHaveBeenCalled();
+    put.mockRestore();
+
+    // The guest's object recovers. The next report moves nothing at all, and
+    // has to reach that guest anyway.
+    receiverDown.value = false;
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    expect(upserted).toEqual([{ userId: "user_guest", port: 49226 }]);
+
+    // And once it has landed, the share stops being retried.
+    upserted.length = 0;
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    expect(upserted).toEqual([]);
+  });
+
+  // The owed list is compared with the one on the record to decide whether
+  // anything changed. Participants come back in acceptance order, so on a
+  // share whose guests were accepted out of alphabetical order an unsorted
+  // list reads as a change every time -- a storage write every thirty
+  // seconds, for ever, recording the same two failures.
+  it("does not write storage again when the same guests fail in a different order", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const receiverDown = { value: false };
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted, receiverDown));
+    const shareId = await shareBoundTo(object, "mini", 44659);
+    // Accepted second, sorts first.
+    await addGuest(object, "user_aaa", "aaa@example.com");
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+
+    receiverDown.value = true;
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    const stored = await storage.get<{
+      shares: Record<string, { staleReceivers?: string[] }>;
+    }>("sharing-state:v1");
+    expect(stored!.shares[shareId].staleReceivers).toEqual(["user_aaa", "user_guest"]);
+
+    // Same two guests, same failure, nothing new to record.
+    const put = vi.spyOn(storage, "put");
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    expect(put).not.toHaveBeenCalled();
+    put.mockRestore();
+  });
+
+  // A bounded budget taken from the front of the list every time is a budget
+  // one permanently unreachable guest owns for ever: the shares behind it are
+  // never attempted at all, which is the original bug for everyone on them.
+  it("works through every owed share rather than retrying the same ones", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const attempted: string[] = [];
+    // Reachable while the shares are made -- accepting an invite writes the
+    // guest's own index, and that has to succeed for the share to exist.
+    const receiverDown = { value: false };
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted, receiverDown, attempted));
+
+    const shareIds: string[] = [];
+    for (let index = 0; index < 30; index += 1) {
+      shareIds.push(await shareBoundTo(object, "mini", 44659, `claude-${index}`));
+    }
+    attempted.length = 0;
+    upserted.length = 0;
+    receiverDown.value = true;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+
+    // Every guest is unreachable, so every share stays owed. Three reports.
+    for (let report = 0; report < 3; report += 1) {
+      await object.webSocketMessage(daemon, endpointsFrame(49226));
+    }
+
+    expect(attempted.length).toBe(60);
+    expect(new Set(attempted).size, "every owed share was attempted").toBe(shareIds.length);
+    expect(upserted).toEqual([]);
+  });
+
+  // Each refresh is a cross-object fetch per guest, and the retry means a
+  // report that moves nothing can still owe one on every share it matched.
+  // A machine reports every thirty seconds.
+  it("refreshes a bounded number of shares per report, and carries the rest over", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+
+    // Thirty shares on one root, all bound to the same machine.
+    const shareIds: string[] = [];
+    for (let index = 0; index < 30; index += 1) {
+      shareIds.push(await shareBoundTo(object, "mini", 44659, `claude-${index}`));
+    }
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+
+    expect(upserted.length).toBe(20);
+    // Every share still moved -- the cap is on the guest fan-out, not on the
+    // record, so no share is left pointing at the dead port.
+    for (const shareId of shareIds) {
+      expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 49226 });
+    }
+
+    // The ten left over are owed, and go out on the next report even though
+    // that report moves nothing.
+    upserted.length = 0;
+    await object.webSocketMessage(daemon, endpointsFrame(49226));
+    expect(upserted.length).toBe(10);
+  });
+
+  // Routing a guest's request needs the sharing state, and so does deciding
+  // whether the guest may make it. Loading it twice is two reads of the same
+  // record inside one request, on the hot path of every poll a shared chat
+  // makes -- and the two reads could disagree, since a write can land between
+  // them.
+  it("reads the sharing state once to answer one guest request", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [daemon, guest];
+    await object.webSocketMessage(daemon, endpointsFrame(44659));
+
+    storage.reads.clear();
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({
+        id: "req-1",
+        type: "request",
+        method: "GET",
+        path: "/proxy/127.0.0.1/44659/agents/history?sessionId=claude-psmp2r",
+      }),
+    );
+
+    expect(JSON.parse(String(daemon.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      type: "request",
+    });
+    expect(storage.reads.get("sharing-state:v1")).toBe(1);
+  });
+
+  // The SECOND route that resolves a shared target. The first version of the
+  // gate above covered only the request route, so reverting this one to load
+  // the state again left the suite green -- the un-updated-caller class, on
+  // the gate written to catch it.
+  it("reads the sharing state once to answer a guest's event subscription", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [daemon, guest];
+    await object.webSocketMessage(daemon, endpointsFrame(44659));
+    daemon.send.mockClear();
+
+    storage.reads.clear();
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({
+        id: "sub-1",
+        type: "project_events_subscribe",
+        path: "/proxy/127.0.0.1/44659/events?sessionId=claude-psmp2r",
+      }),
+    );
+
+    const errors = guest.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "project_events_error");
+    expect(errors, `the subscription must route: ${JSON.stringify(errors)}`).toEqual([]);
+    expect(storage.reads.get("sharing-state:v1")).toBe(1);
+  });
+
+  // The eviction rule proved through the REPORT ROUTE, not by calling the
+  // helper with the option. Deleting the wiring that tells it who is
+  // connected left the helper's own tests green -- the un-updated-caller
+  // class, on the commit that said it had closed exactly that.
+  it("keeps a reporting host that a full index would otherwise evict", async () => {
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording([]));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+
+    // A hundred ids nothing is connected to any more -- what `ephemeral`
+    // leaves behind, one per restart that could not read its identity file.
+    const stored = await storage.get<Record<string, unknown>>("sharing-state:v1");
+    const machineProjectRoots: Record<string, string[]> = {};
+    for (let index = 0; index < 100; index += 1) {
+      machineProjectRoots[`zz-stale-${String(index).padStart(3, "0")}`] = [`/Users/sam/cs/old-${index}`];
+    }
+    await storage.put("sharing-state:v1", { ...stored, machineProjectRoots });
+
+    // Both live ids sort BEFORE every stale one, so eviction by id alone
+    // takes the host as soon as it is not the machine reporting.
+    const host = fakeSocket(["daemon", "user:user_owner", "machine:aaa-host", "machineName:sam-host"]);
+    const other = fakeSocket(["daemon", "user:user_owner", "machine:aab-other", "machineName:sam-other"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [host, other, guest];
+    await object.webSocketMessage(host, endpointsFrame(44659));
+    await object.webSocketMessage(
+      other,
+      JSON.stringify({
+        type: "project_endpoints",
+        projects: [{ projectRoot: "/Users/sam/cs/aimux", host: "127.0.0.1", port: 43001 }],
+      }),
+    );
+    host.send.mockClear();
+    other.send.mockClear();
+
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({
+        id: "req-1",
+        type: "request",
+        method: "GET",
+        path: "/proxy/127.0.0.1/44659/agents/history?sessionId=claude-psmp2r",
+      }),
+    );
+
+    const refusals = guest.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "response" && frame.status >= 400);
+    expect(refusals, `a full index must not refuse the host that reported: ${JSON.stringify(refusals)}`).toEqual([]);
+    expect(JSON.parse(String(host.send.mock.calls.at(-1)?.[0]))).toMatchObject({ type: "request" });
+    expect(other.send).not.toHaveBeenCalled();
+  });
+
+  // What the "widened" answer actually does, stated rather than assumed. An
+  // unreadable report index, or a machine the ceiling evicted, puts every
+  // connected machine back in the running -- and that is the PRE-report
+  // behaviour, which refuses as soon as there is more than one candidate. So
+  // widening is the safe direction only in the sense that it cannot send a
+  // guest to the wrong host; it is not harmless.
+  it("routes a widened share with one machine up and refuses it with two", async () => {
+    for (const machines of [["mini"], ["mini", "mbp2"]]) {
+      const storage = storageWithSockets([]);
+      const object = createObject(storage, envRecording([]));
+      const shareId = await shareBoundTo(object, undefined, 44659);
+      const sockets = machines.map((id) =>
+        fakeSocket(["daemon", `user:user_owner`, `machine:${id}`, `machineName:sam-${id}`]),
+      );
+      const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+      storage.sockets = [...sockets, guest];
+      // No endpoint report at all, so nothing has claimed the root.
+
+      await object.webSocketMessage(
+        guest,
+        JSON.stringify({
+          id: "req-1",
+          type: "request",
+          method: "GET",
+          path: "/proxy/127.0.0.1/44659/agents/history?sessionId=claude-psmp2r",
+        }),
+      );
+
+      const refusals = guest.send.mock.calls
+        .map((call) => JSON.parse(String(call[0])))
+        .filter((frame) => frame.type === "response" && frame.status >= 400);
+      if (machines.length === 1) {
+        expect(refusals, `one machine up must route: ${JSON.stringify(refusals)}`).toEqual([]);
+      } else {
+        expect(refusals).toHaveLength(1);
+        expect(refusals[0].status).toBe(503);
+      }
+    }
+  });
+
+  // A share that names no host used to route only while exactly ONE machine
+  // was connected, so starting a second daemon anywhere killed it -- with an
+  // error saying the machine hosting it was not connected, while that machine
+  // was right there. The reports say which machine has the checkout, and this
+  // is the route actually using them.
+  it("routes a share with no host to the machine that reported its checkout", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, undefined, 44659);
+
+    const mini = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    const mbp2 = fakeSocket(["daemon", "user:user_owner", "machine:mbp2", "machineName:sam-mbp2"]);
+    const guest = fakeSocket(["client", `share:${shareId}`, "user:user_guest"]);
+    storage.sockets = [mini, mbp2, guest];
+
+    // Only the mini has this checkout, and says so.
+    await object.webSocketMessage(mini, endpointsFrame(44659));
+    mini.send.mockClear();
+
+    await object.webSocketMessage(
+      guest,
+      JSON.stringify({
+        id: "req-1",
+        type: "request",
+        method: "GET",
+        path: "/proxy/127.0.0.1/44659/agents/history?sessionId=claude-psmp2r",
+      }),
+    );
+
+    const refusals = guest.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "response" && frame.status >= 400);
+    expect(refusals, `two machines up must not make this unroutable: ${JSON.stringify(refusals)}`).toEqual([]);
+    expect(JSON.parse(String(mini.send.mock.calls.at(-1)?.[0]))).toMatchObject({ type: "request" });
+    expect(mbp2.send).not.toHaveBeenCalled();
+  });
+
+  // Each entry is a pass over every share this object holds, so an unbounded
+  // array is unbounded work inside one request.
+  it("reads at most a fleet's worth of endpoints from one frame", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    const shareId = await shareBoundTo(object, "mini", 44659);
+    upserted.length = 0;
+
+    const daemon = fakeSocket(["daemon", "user:user_owner", "machine:mini", "machineName:sam-mini"]);
+    storage.sockets = [daemon];
+    // The real entry sits past the cap, behind a thousand decoys.
+    await object.webSocketMessage(
+      daemon,
+      JSON.stringify({
+        type: "project_endpoints",
+        projects: [
+          ...Array.from({ length: 1_000 }, (_, index) => ({
+            projectRoot: `/decoy/${index}`,
+            host: "127.0.0.1",
+            port: 1_024 + index,
+          })),
+          { projectRoot: "/Users/sam/cs/tealstreet-next", host: "127.0.0.1", port: 49226 },
+        ],
+      }),
+    );
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    expect(upserted).toEqual([]);
+  });
+
+  // Anything a client sends is a claim about itself, and this frame rewrites
+  // where every share for a project points.
+  it("ignores the frame from a client socket", async () => {
+    const upserted: { userId: string; port?: number }[] = [];
+    const storage = storageWithSockets([]);
+    const object = createObject(storage, envRecording(upserted));
+    // Every other rule in the path has to say yes, or this proves nothing
+    // about the daemon check -- which is what it had quietly become. So: a
+    // share that names no host, and one connected daemon as nameless as a
+    // client socket is, which makes the single-machine rule agree that this
+    // sender speaks for the account. The daemon check is then the only thing
+    // between the frame and the write.
+    const shareId = await shareBoundTo(object, undefined, 44659);
+    upserted.length = 0;
+
+    const nameless = fakeSocket(["daemon", "user:user_owner", "machine:unidentified"]);
+    const client = fakeSocket(["client", "user:user_owner", "device:client_1"]);
+    storage.sockets = [nameless, client];
+    await object.webSocketMessage(client, endpointsFrame(49226));
+
+    expect(await storedEndpoint(storage, shareId)).toEqual({ host: "127.0.0.1", port: 44659 });
+    expect(upserted).toEqual([]);
+  });
+});
+
+async function createAcceptedShareInOwnerObject(object: RelayObject, machineId?: string): Promise<string> {
+  const invite = await createInvite(object, machineId);
   const accepted = await object.fetch(
     request(`https://relay.aimux.app/shares/invite/user_owner/${invite.token}/accept`, {
       method: "POST",
@@ -1419,7 +3009,7 @@ async function createAcceptedShareInOwnerObject(object: RelayObject): Promise<st
   return body.share.id;
 }
 
-async function createInvite(object: RelayObject): Promise<{ token: string }> {
+async function createInvite(object: RelayObject, machineId?: string): Promise<{ token: string }> {
   const response = await object.fetch(
     request("https://relay.aimux.app/shares/invite", {
       method: "POST",
@@ -1429,6 +3019,7 @@ async function createInvite(object: RelayObject): Promise<{ token: string }> {
       body: {
         projectRoot: "/Users/sam/cs/scratch",
         serviceEndpoint: { host: "relay.aimux.app", port: 443 },
+        ...(machineId ? { machineId } : {}),
         sessionId: "claude-k4lihz",
         email: "guest@example.com",
       },
@@ -1565,8 +3156,14 @@ describe("RelayObject machines", () => {
     );
   });
 
-  function daemonSocket(machineId: string, machineName: string) {
-    return fakeSocket(["daemon", "user:user_owner", `machine:${machineId}`, `machineName:${machineName}`]);
+  function daemonSocket(machineId: string, machineName: string, connectedSeq?: number) {
+    return fakeSocket([
+      "daemon",
+      "user:user_owner",
+      `machine:${machineId}`,
+      `machineName:${machineName}`,
+      ...(connectedSeq === undefined ? [] : [`conn:${connectedSeq}`]),
+    ]);
   }
 
   async function connectDaemon(object: RelayObject, query: string) {
@@ -1618,6 +3215,107 @@ describe("RelayObject machines", () => {
     expect(mbp.send).toHaveBeenCalledWith(expect.stringContaining("Replaced by new daemon connection"));
     expect(strix.close).not.toHaveBeenCalled();
     expect(strix.send).not.toHaveBeenCalled();
+  });
+
+  // sam-mini flapped for days: 88 of its last 100 closes were `1000 Replaced`,
+  // each within two seconds of connecting, while the daemon logged ZERO runner
+  // replacements. The relay was evicting the socket it had just accepted.
+  //
+  // `rehydrateSockets` decided which of two sockets for one machine was newer
+  // by their position in `getWebSockets()`, which Cloudflare does not document
+  // as ordered. Rebuilt in the other order -- which is what hibernation can
+  // hand back -- it kept the dead socket and closed the live one, so the
+  // daemon reconnected into the same verdict for ever.
+  it("keeps the newest daemon socket however getWebSockets orders them", async () => {
+    for (const order of ["accept", "reversed"] as const) {
+      const stale = daemonSocket("mini", "sam-mini", 1);
+      const live = daemonSocket("mini", "sam-mini", 2);
+      const sockets = order === "accept" ? [stale, live] : [live, stale];
+      const object = createObject(storageWithSockets(sockets), {} as unknown as Env);
+
+      await object.webSocketMessage(live, JSON.stringify({ type: "ping" }));
+
+      expect(live.close, `live socket closed when rebuilt in ${order} order`).not.toHaveBeenCalled();
+      expect(stale.close, `stale socket survived in ${order} order`).toHaveBeenCalledWith(1000, "Replaced");
+    }
+  });
+
+  // A socket whose peer vanished can sit in `getWebSockets()` long after it is
+  // useless, and every message rebuilds these maps from that list. Closing
+  // that corpse was marking the machine superseded on EVERY message and
+  // failing the work registered in the same pass -- so the daemon stayed
+  // connected and reported `online: true` while every request through it came
+  // back 502 "Daemon connection replaced", for ever. That is what sam-mini
+  // looked like from the browser: one disconnect in the daemon log, a healthy
+  // relay, and a shared chat that could not load a single thing.
+  it("does not fail work for a machine that still has a live socket", async () => {
+    const stale = daemonSocket("mini", "sam-mini", 1);
+    const live = daemonSocket("mini", "sam-mini", 2);
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([stale, live, client]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects", machineId: "mini" }),
+    );
+    expect(JSON.parse(String(live.send.mock.calls.at(-1)?.[0]))).toMatchObject({
+      type: "request",
+      path: "/projects",
+    });
+    client.send.mockClear();
+
+    // The second message is where this bit: the request is no longer a local
+    // variable, it is rebuilt from the socket's attachment by the rebuild
+    // that the message triggers -- and was then failed by that same rebuild,
+    // before the daemon it was sent to ever had a chance to answer.
+    await object.webSocketMessage(client, JSON.stringify({ type: "ping" }));
+
+    const answers = client.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "response");
+    expect(answers, `the live socket can still answer: ${JSON.stringify(answers)}`).toEqual([]);
+    expect(stale.close).toHaveBeenCalledWith(1000, "Replaced");
+  });
+
+  // The other direction, where a replacement really is a loss: a NEW daemon
+  // socket arrives for a machine that already had one. That socket never had
+  // the old one's work, so the connect path fails it rather than leaving the
+  // client to wait out the request TTL.
+  it("fails work when a new daemon connection replaces the old one", async () => {
+    const original = daemonSocket("mini", "sam-mini", 1);
+    const client = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([original, client]);
+    const object = createObject(storage, {} as unknown as Env);
+    await object.webSocketMessage(
+      client,
+      JSON.stringify({ id: "req-1", type: "request", method: "GET", path: "/projects", machineId: "mini" }),
+    );
+    client.send.mockClear();
+
+    await connectDaemon(object, "?machineId=mini&machineName=sam-mini");
+
+    const answers = client.send.mock.calls
+      .map((call) => JSON.parse(String(call[0])))
+      .filter((frame) => frame.type === "response" && frame.status === 502);
+    expect(answers.length, "the client is told, not left to time out").toBeGreaterThan(0);
+  });
+
+  // The rule above reads recency off a tag, so the connect path has to write
+  // one. Without this the sockets in production all tie as unsequenced and the
+  // decision silently falls back to `getWebSockets()` order -- the exact bug,
+  // with the test above still green because it tags its sockets by hand.
+  it("stamps each accepted daemon socket with a rising connection sequence", async () => {
+    const acceptedTagSets: string[][] = [];
+    const object = createObject(storageWithSockets([]), {} as unknown as Env, acceptedTagSets);
+
+    await connectDaemon(object, "?machineId=mini&machineName=sam-mini");
+    await connectDaemon(object, "?machineId=mini&machineName=sam-mini");
+
+    const sequences = acceptedTagSets.map((set) => connectionSequenceFromTags(set));
+    expect(sequences).toHaveLength(2);
+    expect(sequences[0]).toBeGreaterThan(UNSEQUENCED_CONNECTION);
+    expect(sequences[1]).toBeGreaterThan(sequences[0]);
   });
 
   it("sends a request to the machine the client named", async () => {

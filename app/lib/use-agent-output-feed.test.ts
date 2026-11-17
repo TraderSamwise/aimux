@@ -23,6 +23,20 @@ describe("initial agent output feed status", () => {
     });
   });
 
+  it("moves a still-loading feed to timed-out", () => {
+    // The positive transition, which nothing pinned. Both tests here asserted
+    // a NO-OP, so changing the guard from `status === "loading"` to
+    // `"timed-out"` left the suite green while killing two things at once:
+    // the twelve-second mount timeout, and the escape from a failed retry
+    // that the hang fix depends on. One word, two bugs, no failing test.
+    expect(
+      initialAgentOutputFeedTimedOutState(
+        { key: "endpoint:session:chat", status: "loading" },
+        "endpoint:session:chat",
+      ),
+    ).toEqual({ key: "endpoint:session:chat", status: "timed-out" });
+  });
+
   it("ignores stale timeout callbacks from a previous feed key", () => {
     const current: InitialAgentOutputFeedState = {
       key: "endpoint:session:full",
@@ -77,5 +91,24 @@ describe("the feed hands over the start line it was served", () => {
     // the request would re-create the bug this exists to fix.
     expect(source).not.toContain("onSnapshotApplied?.(options.startLine)");
     expect(source).not.toContain("onSnapshotApplied?.(requestStartLines.snapshotStartLine)");
+  });
+
+  it("lets a failed retry leave the loading state", () => {
+    // The retry path sets the status to loading and arms no timer, so a
+    // rejected retry used to leave it pinned at "loading" until some later
+    // poll happened to succeed. That was survivable only while any error
+    // outranked the loader in the placeholder; once a transient error stops
+    // pre-empting it, the same state is a spinner that never resolves AND
+    // has no Retry button, because a loading placeholder offers none.
+    //
+    // Bounded to the catch branch: setting the status anywhere else in the
+    // function would satisfy a whole-file match while the failure path still
+    // hung.
+    const start = source.indexOf("if (options.surfaceError) {\n          setLastError(");
+    expect(start, "the surfaceError catch branch is still here").toBeGreaterThan(0);
+    const branch = source.slice(start, source.indexOf("throw error;", start));
+    expect(branch, "a failed retry must move the status out of loading").toContain(
+      "initialAgentOutputFeedTimedOutState(current, feedKey)",
+    );
   });
 });

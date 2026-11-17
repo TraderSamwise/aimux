@@ -19,12 +19,12 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 mod support;
 
-use support::scripted_http::read_http_request;
+use support::scripted_http::{MAX_STRAY_CONNECTIONS, ScriptedRequest, read_http_request};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -1035,7 +1035,13 @@ fn loop_done_returns_promptly_when_runtime_event_stalls_after_durable_state_writ
                 })),
             ),
         );
-        assert_eq!(added.status, 200, "body: {}", text_body(&added));
+        assert_eq!(
+            added.status,
+            200,
+            "body: {} (the scripted server had answered {} requests by this point)",
+            text_body(&added),
+            server.served(),
+        );
     }
 
     let started = Instant::now();
@@ -1459,6 +1465,22 @@ impl ProjectServiceHealthProbe for AlwaysReadyHealthProbe {
 struct ScriptedHttpServer {
     port: u16,
     handle: std::thread::JoinHandle<Vec<String>>,
+    /// How many complete requests the server has answered, readable WHILE it
+    /// runs.
+    ///
+    /// The thread already returns its requests, but only on `join`, and the
+    /// assertions that fail here fail before that -- which is why a
+    /// script/request mismatch surfaced as `502 Socket is not connected` with
+    /// nothing saying how many requests had actually arrived. A counter the
+    /// test can read lets the failure name the number instead of leaving it to
+    /// be inferred from how long the run took.
+    served: Arc<AtomicUsize>,
+}
+
+impl ScriptedHttpServer {
+    fn served(&self) -> usize {
+        self.served.load(Ordering::SeqCst)
+    }
 }
 
 enum ScriptedHttpResponse {
@@ -1489,11 +1511,30 @@ impl ScriptedHttpServer {
     fn spawn_scripted(responses: Vec<ScriptedHttpResponse>) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("test listener");
         let port = listener.local_addr().expect("listener addr").port();
+        let served = Arc::new(AtomicUsize::new(0));
+        let thread_served = Arc::clone(&served);
         let handle = std::thread::spawn(move || {
             let mut requests = Vec::new();
-            for response in responses {
+            // A stray connection -- one that closes without asking anything --
+            // must not consume a scripted response, or every later request is
+            // served the wrong one and the failure surfaces far from its cause.
+            let mut strays = 0_usize;
+            let mut pending = responses.into_iter();
+            let mut next = pending.next();
+            while let Some(response) = next.take() {
                 let (mut stream, _) = listener.accept().expect("accept");
-                let request = read_http_request(&mut stream);
+                let request = match read_http_request(&mut stream) {
+                    ScriptedRequest::Complete(request) => request,
+                    ScriptedRequest::PeerLeftWithoutAsking => {
+                        strays += 1;
+                        assert!(
+                            strays <= MAX_STRAY_CONNECTIONS,
+                            "scripted server saw {strays} connections close without sending a request; something is dialling it in a loop"
+                        );
+                        next = Some(response);
+                        continue;
+                    }
+                };
                 match response {
                     ScriptedHttpResponse::Json(response) => {
                         let body = response.to_string();
@@ -1511,10 +1552,16 @@ impl ScriptedHttpServer {
                     }
                 }
                 requests.push(request);
+                thread_served.fetch_add(1, Ordering::SeqCst);
+                next = pending.next();
             }
             requests
         });
-        Self { port, handle }
+        Self {
+            port,
+            handle,
+            served,
+        }
     }
 
     fn join(self) -> Vec<String> {

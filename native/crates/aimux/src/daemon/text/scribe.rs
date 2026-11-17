@@ -6,6 +6,7 @@ use crate::daemon::routing::{
 };
 use crate::daemon::text::params::{
     ProjectServiceJsonResult, required_project_service_string, resolve_lifecycle_worktree,
+    unwrap_project_result,
 };
 use crate::project_api_contract::routes as project_routes;
 use serde_json::{Map, Value, json};
@@ -135,13 +136,4 @@ pub fn scribe_clear_text_route(
         payload.clone(),
         &render_core_scribe_clear_lines(&payload),
     )
-}
-
-fn unwrap_project_result(
-    result: ProjectServiceJsonResult,
-) -> Result<(Value, String), DaemonRouteResponse> {
-    match result {
-        ProjectServiceJsonResult::Ok { project_root, json } => Ok((json, project_root)),
-        ProjectServiceJsonResult::Err { response } => Err(response),
-    }
 }

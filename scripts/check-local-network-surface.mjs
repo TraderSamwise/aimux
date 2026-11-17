@@ -305,10 +305,12 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   },
   {
     path: "native/crates/aimux/src/paths.rs",
-    marker: 'AsyncCommand::new("git")',
-    command: "git",
+    marker: "AsyncCommand::new(program.as_os_str())",
+    command:
+      "git, resolved once per process to an absolute path by git_program rather than spawned by name, so the OS no longer walks PATH on every repository-root lookup",
     argv: "literal rev-parse --git-common-dir",
-    input: "cwd-derived repository root resolution",
+    input:
+      "cwd-derived repository root resolution; the resolved answer is cached per directory in a cache shared across resolver clones, so the spawn happens once per in-repo directory rather than on every call. A directory that is NOT a repository is deliberately not cached, because it can become one later, and a lookup that could not run is not cached either because it says nothing about the directory",
   },
   {
     path: "native/crates/aimux/src/plugin_project_service_host.rs",
@@ -320,16 +322,27 @@ const AUDITED_PROCESS_SPAWN_SITES = [
   },
   {
     path: "native/crates/aimux/src/process_inspector.rs",
-    marker: 'AsyncCommand::new("ps")',
-    count: 6,
-    command: "ps",
+    marker: "AsyncCommand::new(ps_program()?.as_os_str())",
+    count: 3,
+    command:
+      "ps, resolved once per process to an absolute path by ps_program rather than spawned by name, so the OS no longer walks PATH on every call -- read_process_args alone has eleven callers and runs on every project-service liveness check",
     argv: "literal process inspection args",
     input: "runtime-selected pid/process filter",
   },
   {
     path: "native/crates/aimux/src/process_inspector.rs",
-    marker: 'AsyncCommand::new("lsof")',
-    command: "lsof",
+    marker: "AsyncCommand::new(ps_program_or_error()?.as_os_str())",
+    count: 3,
+    command:
+      "ps, same resolve-once memo; these are the Result-returning try_* variants, which name a failed resolve rather than folding it into \"no answer\"",
+    argv: "literal process inspection args",
+    input: "runtime-selected pid/process filter",
+  },
+  {
+    path: "native/crates/aimux/src/process_inspector.rs",
+    marker: "AsyncCommand::new(lsof_program()?.as_os_str())",
+    command:
+      "lsof, resolved once per process by lsof_program; reached from read_process_cwd, which the liveness filter calls on its second attempt when the args alone do not identify the project",
     argv: "literal port/process inspection args",
     input: "runtime-selected pid/port filter",
   },
@@ -401,10 +414,14 @@ const AUDITED_PROCESS_SPAWN_SITES = [
     input: "remote-control feature path; not part of local-only claim",
   },
   {
-    path: "native/crates/aimux/src/remote/remote_security_devices.rs",
+    // One spawn site for every relay request the CLI makes, which is why the
+    // security-devices entry that used to be here moved: the security module
+    // and the project-ownership module ask the relay the same way, and two
+    // copies of that would be two places for a header or a timeout to drift.
+    path: "native/crates/aimux/src/remote/relay_http.rs",
     marker: 'AsyncCommand::new("curl");',
     command: "curl",
-    argv: "remote security device HTTP args",
+    argv: "relay HTTP args: method, bearer header, JSON body",
     input: "remote-control feature path; not part of local-only claim",
   },
   {

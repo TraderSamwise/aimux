@@ -4,7 +4,8 @@ use aimux::backlog_metrics::BacklogMetricStatus;
 use aimux::machine_identity::MachineIdentity;
 use aimux::remote::relay_client::RelayStatus;
 use aimux::remote::relay_runner::{
-    DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem, RelayRunner,
+    DaemonRelayBridge, DaemonRouteResponse, PeerRequestError, ProjectEventStream,
+    ProjectEventStreamItem, RelayRunner,
 };
 use aimux::remote::websocket::{
     BoxFuture, WebSocketConnectionParts, WebSocketConnector, WebSocketError, WebSocketEvent,
@@ -146,6 +147,51 @@ impl WebSocketReader for FakeReader {
     }
 }
 
+/// A socket that takes the frames and then just sits there.
+///
+/// `FakeReader` closes as soon as its script runs out, which ends the
+/// connection -- so a request that leaves and is never answered came back as
+/// `ConnectionLost` and the "asked, and nobody answered" ending was never
+/// reachable in a test at all.
+struct SilentReader {
+    events: Vec<WebSocketEvent>,
+}
+
+impl WebSocketReader for SilentReader {
+    fn next_event<'a>(&'a mut self) -> BoxFuture<'a, Result<WebSocketEvent, WebSocketError>> {
+        if self.events.is_empty() {
+            return Box::pin(std::future::poll_fn(|_: &mut Context<'_>| Poll::Pending));
+        }
+        let event = self.events.remove(0);
+        Box::pin(async move { Ok(event) })
+    }
+}
+
+/// One connection, held open, whose writer records what went out.
+struct SilentConnector {
+    recorder: Arc<Recorder>,
+    opened: Arc<Mutex<usize>>,
+}
+
+impl WebSocketConnector for SilentConnector {
+    fn connect<'a>(
+        &'a mut self,
+        _url: &'a str,
+        _subprotocols: &'a [String],
+    ) -> BoxFuture<'a, Result<WebSocketConnectionParts, WebSocketError>> {
+        Box::pin(async move {
+            *self.opened.lock().unwrap() += 1;
+            Ok(WebSocketConnectionParts {
+                reader: Box::new(SilentReader { events: Vec::new() }),
+                writer: Box::new(FakeWriter {
+                    recorder: Arc::clone(&self.recorder),
+                    send_text_error: None,
+                }),
+            })
+        })
+    }
+}
+
 struct FakeWriter {
     recorder: Arc<Recorder>,
     send_text_error: Option<WebSocketError>,
@@ -186,6 +232,7 @@ struct Harness {
     attempts: Arc<Mutex<usize>>,
     connector: FakeConnector,
     slept: Vec<Duration>,
+    held_ms: u64,
 }
 
 fn harness(
@@ -219,10 +266,17 @@ fn harness_with_options(
         recorder,
         attempts,
         slept: Vec::new(),
+        held_ms: 0,
     }
 }
 
 impl Harness {
+    /// Treat every socket as having held this long before it closed.
+    fn holding_for(mut self, held_ms: u64) -> Self {
+        self.held_ms = held_ms;
+        self
+    }
+
     /// Runs the loop, ending it from inside the injected sleep after
     /// `max_sleeps` backoffs. Stopping the handle up front would exit before
     /// the first connect and prove nothing.
@@ -230,17 +284,26 @@ impl Harness {
         let runner = Arc::clone(&self.runner);
         let handle = runner.handle();
         let slept = &mut self.slept;
+        let held_ms = self.held_ms;
         aimux::async_runtime::init_process_runtime().expect("runtime initialized");
         // aimux-async-seam: test - relay runner test drives async subscription polling
         aimux::async_runtime::block_on_named("test:relay-runner", async {
             runner
-                .run_with_sleep(&mut self.connector, &mut |delay| {
-                    slept.push(delay);
-                    if slept.len() >= max_sleeps {
-                        handle.stop();
-                    }
-                    Box::pin(async {})
-                })
+                .run_with_sleep(
+                    &mut self.connector,
+                    &mut |delay| {
+                        slept.push(delay);
+                        if slept.len() >= max_sleeps {
+                            handle.stop();
+                        }
+                        Box::pin(async {})
+                    },
+                    // How long each socket is treated as having held. The
+                    // default is 0 -- every socket in this harness dies at
+                    // once -- and a case that wants a socket that HELD sets
+                    // it, which is the distinction the backoff now turns on.
+                    &mut |_: std::time::Instant| held_ms,
+                )
                 .await;
         });
     }
@@ -334,10 +397,45 @@ fn a_rejected_credential_stops_the_loop_and_tells_the_human_once() {
 }
 
 #[test]
-fn a_socket_that_connects_and_drops_resets_the_backoff() {
-    // Node reset retryMs on "open". A relay that accepts us and then drops is
-    // healthy-but-busy, not failing, so it must not be punished with a growing
-    // delay — otherwise one flaky hour leaves us waiting 30s to reconnect.
+fn a_socket_that_connects_and_holds_resets_the_backoff() {
+    // Node reset retryMs on "open", and the reason still stands: a relay that
+    // accepts us, serves, and then drops is healthy-but-busy, not failing, and
+    // must not be punished with a growing delay -- otherwise one flaky hour
+    // leaves us waiting 30s to reconnect.
+    //
+    // What changed is where the line sits. "Opened" is not evidence of health;
+    // "held" is. A socket that lasts two seconds still resets to 1s here, so
+    // the original concern is covered. The case below is the one this no
+    // longer protects, deliberately.
+    let mut harness = harness(
+        vec![
+            Ok(vec![closed(1011)]),
+            Ok(vec![closed(1011)]),
+            Ok(vec![closed(1011)]),
+        ],
+        None,
+    )
+    .holding_for(5_000);
+    harness.run_until(3);
+
+    assert_eq!(
+        harness.slept,
+        vec![
+            Duration::from_millis(1_000),
+            Duration::from_millis(1_000),
+            Duration::from_millis(1_000),
+        ],
+        "a connection that held must reset the backoff"
+    );
+}
+
+#[test]
+fn a_socket_that_dies_the_instant_it_opens_escalates_the_backoff() {
+    // The measured failure on sam-mini: every dial succeeded, every socket
+    // died about a second later, and because the ladder reset on "open" the
+    // daemon dialled the relay every few seconds for as long as it ran. A
+    // connection that did not outlive the threshold did no work and is a
+    // failed attempt, whatever the handshake said.
     let mut harness = harness(
         vec![
             Ok(vec![closed(1011)]),
@@ -352,10 +450,10 @@ fn a_socket_that_connects_and_drops_resets_the_backoff() {
         harness.slept,
         vec![
             Duration::from_millis(1_000),
-            Duration::from_millis(1_000),
-            Duration::from_millis(1_000),
+            Duration::from_millis(2_000),
+            Duration::from_millis(4_000),
         ],
-        "a successful connect must reset the backoff"
+        "instant deaths must back off instead of hammering the relay"
     );
 }
 
@@ -647,4 +745,255 @@ fn test_machine() -> MachineIdentity {
         id: "testmachine01".to_owned(),
         name: "test-host".to_owned(),
     }
+}
+
+/// Asking one of the owner's other machines something, and hearing back.
+///
+/// Both futures are joined rather than raced: the ask registers its waiter
+/// before the loop is first polled, so the answer cannot arrive before there
+/// is anybody to give it to. That ordering is the test, not a timing hope.
+#[test]
+fn a_peer_answer_reaches_whoever_asked_for_it() {
+    let recorder = Arc::new(Recorder::default());
+    let runner = RelayRunner::new(
+        "wss://relay.example/",
+        "tok",
+        test_machine(),
+        Arc::new(FakeBridge {
+            recorder: Arc::clone(&recorder),
+            subscribe_error: None,
+            subscribe_pending: false,
+        }),
+    );
+    let mut connector = FakeConnector {
+        // The id is the first one this runner mints, which is what lets the
+        // script answer it without guessing.
+        scripts: vec![Ok(vec![
+            text(
+                json!({ "type": "response", "id": "peer-0", "status": 200, "body": { "ok": true } }),
+            ),
+            closed(1000),
+        ])],
+        attempts: Arc::new(Mutex::new(0)),
+        recorder: Arc::clone(&recorder),
+        writer_failures: Vec::new(),
+    };
+
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    let asked = Arc::clone(&runner);
+    // The loop reconnects until it is stopped, and this test scripts one
+    // socket. Stopping from inside the backoff is how the existing harness
+    // ends it; a sleep that returns immediately and never stops starves the
+    // other half of the join instead of ending the test.
+    let backoff_handle = runner.handle();
+    // aimux-async-seam: test - a peer request and the loop that carries it
+    let (answer, ()) = aimux::async_runtime::block_on_named("test:relay-peer", async move {
+        tokio::join!(
+            async move {
+                asked
+                    .request_peer(
+                        "strix",
+                        "POST",
+                        "/tasks/assign",
+                        &json!({ "taskId": "t1" }),
+                        Duration::from_secs(5),
+                    )
+                    .await
+            },
+            async {
+                runner
+                    .run_with_sleep(
+                        &mut connector,
+                        &mut |_| {
+                            backoff_handle.stop();
+                            Box::pin(async {})
+                        },
+                        &mut |_| 0,
+                    )
+                    .await;
+            }
+        )
+    });
+
+    let answer = answer.expect("the peer answered");
+    assert_eq!(answer.status, 200);
+    assert_eq!(answer.body, json!({ "ok": true }));
+    // The relay signs its own refusals, which wear the same 502/503/504 a
+    // project service does. This one is the peer's.
+    assert!(!answer.from_relay);
+
+    let sent = recorder.sent.lock().unwrap().clone();
+    let request: Value = sent
+        .iter()
+        .map(|frame| serde_json::from_str::<Value>(frame).expect("a frame is json"))
+        .find(|frame| frame["type"] == "request")
+        .expect("the request left the machine");
+    assert_eq!(request["machineId"], "strix");
+    assert_eq!(request["path"], "/tasks/assign");
+}
+
+/// No answer is not an empty answer, and there are two of them.
+///
+/// With nothing draining the outbox the frame never left, so the peer was
+/// never asked and nothing happened there -- which is a different thing to
+/// report than a request that WAS written and went unanswered, where whether
+/// the work happened is genuinely unknown. The old version of this test could
+/// not tell either of those from a frame that was never queued at all.
+#[test]
+fn a_peer_that_was_never_asked_is_not_reported_as_silent() {
+    let runner = RelayRunner::new(
+        "wss://relay.example/",
+        "tok",
+        test_machine(),
+        Arc::new(FakeBridge {
+            recorder: Arc::new(Recorder::default()),
+            subscribe_error: None,
+            subscribe_pending: false,
+        }),
+    );
+
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    let asking = Arc::clone(&runner);
+    let body = json!({});
+    // aimux-async-seam: test - a peer request with nothing to carry it
+    let answer = aimux::async_runtime::block_on_named("test:relay-peer-timeout", async move {
+        asking
+            .request_peer(
+                "strix",
+                "POST",
+                "/tasks/assign",
+                &body,
+                Duration::from_millis(30),
+            )
+            .await
+    });
+
+    assert_eq!(answer, Err(PeerRequestError::TimedOut));
+    // The premise, and the whole difference: the frame was withdrawn, so
+    // nothing is left to land on a reconnect minutes later and do the work
+    // after its caller was told it had not happened.
+    assert_eq!(runner.outbox_backlog_snapshot().current_depth, Some(0));
+    assert_eq!(runner.peer_waiter_count(), 0);
+}
+
+/// A frame that was already written cannot be recalled, and the error says so
+/// rather than claiming the work did not happen.
+///
+/// The socket stays up for this, which is the whole point: with a connection
+/// that drops, `ConnectionLost` answers and the ending under test is never
+/// reached. Here the request leaves, nothing answers, and the deadline passes
+/// while the link is fine.
+#[test]
+fn a_request_that_left_is_reported_as_asked_and_unanswered() {
+    let recorder = Arc::new(Recorder::default());
+    let runner = RelayRunner::new(
+        "wss://relay.example/",
+        "tok",
+        test_machine(),
+        Arc::new(FakeBridge {
+            recorder: Arc::clone(&recorder),
+            subscribe_error: None,
+            subscribe_pending: false,
+        }),
+    );
+    let mut connector = SilentConnector {
+        recorder: Arc::clone(&recorder),
+        opened: Arc::new(Mutex::new(0)),
+    };
+
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    let asking = Arc::clone(&runner);
+    let stop_when_answered = runner.handle();
+    // aimux-async-seam: test - a peer request that leaves and is not answered
+    let (answer, ()) = aimux::async_runtime::block_on_named("test:relay-peer-silent", async move {
+        tokio::join!(
+            async move {
+                let answer = asking
+                    .request_peer(
+                        "strix",
+                        "POST",
+                        "/tasks/assign",
+                        &json!({}),
+                        Duration::from_millis(50),
+                    )
+                    .await;
+                stop_when_answered.stop();
+                answer
+            },
+            async {
+                runner
+                    .run_with_sleep(&mut connector, &mut |_| Box::pin(async {}), &mut |_| 0)
+                    .await;
+            }
+        )
+    });
+
+    // Not `TimedOut`, which says the peer was never asked. It was asked.
+    assert_eq!(answer, Err(PeerRequestError::AnsweredNothing));
+    assert!(
+        recorder
+            .sent
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame.contains("\"machineId\":\"strix\"")),
+        "the premise: the frame left"
+    );
+}
+
+/// Four endings, four sentences. A caller acts on which one it got, so the
+/// one that says "nothing happened" must never be used for the one that
+/// means "something might have".
+#[test]
+fn every_way_a_peer_request_can_fail_says_which_it_was() {
+    let sentences = [
+        PeerRequestError::NotSent("outbox full".to_owned()).message(),
+        PeerRequestError::TimedOut.message(),
+        PeerRequestError::AnsweredNothing.message(),
+        PeerRequestError::ConnectionLost.message(),
+    ];
+    assert_eq!(
+        sentences
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        4,
+        "{sentences:?}"
+    );
+    assert!(sentences[0].contains("outbox full"));
+    assert!(sentences[1].contains("never asked"));
+    assert!(sentences[2].contains("unknown"));
+}
+
+/// A caller that goes away takes its place in the queue with it.
+///
+/// A `select!` that loses the race drops the request future where none of its
+/// own code runs again, so without a guard on the registration the entry stays
+/// for ever and nothing later would collect it.
+#[test]
+fn a_caller_that_gives_up_leaves_nothing_behind() {
+    let runner = RelayRunner::new(
+        "wss://relay.example/",
+        "tok",
+        test_machine(),
+        Arc::new(FakeBridge {
+            recorder: Arc::new(Recorder::default()),
+            subscribe_error: None,
+            subscribe_pending: false,
+        }),
+    );
+
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    let asking = Arc::clone(&runner);
+    let body = json!({});
+    // aimux-async-seam: test - a peer request abandoned mid-await
+    aimux::async_runtime::block_on_named("test:relay-peer-cancel", async move {
+        tokio::select! {
+            _ = asking.request_peer("strix", "POST", "/tasks/assign", &body, Duration::from_secs(30)) =>
+                panic!("nothing can answer it"),
+            () = async {} => {}
+        }
+    });
+
+    assert_eq!(runner.peer_waiter_count(), 0);
 }

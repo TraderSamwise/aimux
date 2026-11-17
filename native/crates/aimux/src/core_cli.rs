@@ -497,12 +497,24 @@ where
                 CoreCliOperation::AgentInput,
                 CoreCliAction::TextRoute {
                     path: CORE_API_ROUTES.agent_input_text.to_owned(),
-                    body: Some(json!({
-                        "project": project_root,
-                        "sessionId": parsed.session_id,
-                        "text": parsed.text,
-                        "force": parsed.force,
-                    })),
+                    // Added only when given, so a send that names nobody is
+                    // byte-for-byte the request it has always been. A null
+                    // `from` would be a new field on every existing caller.
+                    body: Some({
+                        let mut body = json!({
+                            "project": project_root,
+                            "sessionId": parsed.session_id,
+                            "text": parsed.text,
+                            "force": parsed.force,
+                        });
+                        if let Some(from) = parsed.from {
+                            body["from"] = Value::String(from);
+                        }
+                        if let Some(task) = parsed.task {
+                            body["task"] = Value::String(task);
+                        }
+                        body
+                    }),
                 },
                 CoreCliFallback::None,
             )
@@ -1655,6 +1667,7 @@ where
                             &project_root,
                             parsed.session.as_deref(),
                             parsed.status.as_deref(),
+                            parsed.stream.as_deref(),
                             parsed.json,
                         ),
                         None,
@@ -1682,6 +1695,7 @@ where
                             "type": parsed.task_type,
                             "diff": parsed.diff,
                             "worktree": parsed.worktree,
+                            "stream": parsed.stream,
                         })),
                     ),
                     ("task", "accept") => (

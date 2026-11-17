@@ -129,6 +129,7 @@ fn actor_to_json(actor: Option<RemoteActor>) -> Value {
                 RemoteActorRole::Owner => "owner",
                 RemoteActorRole::Guest => "guest",
                 RemoteActorRole::Operator => "operator",
+                RemoteActorRole::Peer => "peer",
             }
             .into(),
         ),
@@ -138,6 +139,7 @@ fn actor_to_json(actor: Option<RemoteActor>) -> Value {
     insert_optional(&mut object, "email", actor.email);
     insert_optional(&mut object, "shareId", actor.share_id);
     insert_optional(&mut object, "shareSessionId", actor.share_session_id);
+    insert_optional(&mut object, "peerMachineId", actor.peer_machine_id);
     Value::Object(object)
 }
 
@@ -148,6 +150,7 @@ fn actor_from_json(value: &Value) -> Option<RemoteActor> {
     let role = match str_field(value, "role") {
         "owner" => RemoteActorRole::Owner,
         "operator" => RemoteActorRole::Operator,
+        "peer" => RemoteActorRole::Peer,
         _ => RemoteActorRole::Guest,
     };
     Some(RemoteActor {
@@ -158,6 +161,7 @@ fn actor_from_json(value: &Value) -> Option<RemoteActor> {
         email: string_field(value, "email"),
         share_id: string_field(value, "shareId"),
         share_session_id: string_field(value, "shareSessionId"),
+        peer_machine_id: string_field(value, "peerMachineId"),
         principal: value.get("principal").and_then(principal_from_json),
     })
 }

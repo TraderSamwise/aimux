@@ -6,7 +6,9 @@
 
 use serde_json::{Value, json};
 
-use crate::remote::websocket::WebSocketError;
+use crate::remote::websocket::{
+    FLAPPING_CONNECTION_STREAK, MIN_HELD_CONNECTION_MS, WebSocketError,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RelayStatus {
@@ -35,6 +37,25 @@ pub struct RelayStatusSnapshot {
     pub relay_url: String,
     pub last_connected_at: Option<String>,
     pub last_error: Option<String>,
+    /// When the last socket went away, and why it went away.
+    ///
+    /// Separate from `last_error`, which answers "why are we not connected
+    /// RIGHT NOW" and is therefore cleared by the next connect. These three
+    /// answer "what happened to the last socket", and nothing clears them.
+    /// A link that reconnects every second cleared `last_error` every second,
+    /// so `aimux daemon status` reported `connected` with no error while the
+    /// connection was collapsing continuously -- the one fact that would have
+    /// named the cause was erased a second after it was recorded.
+    pub last_disconnected_at: Option<String>,
+    pub last_close_code: Option<u16>,
+    pub last_close_reason: Option<String>,
+    /// Connections in a row that did not outlive `MIN_HELD_CONNECTION_MS`.
+    ///
+    /// `status` is a reading of one instant, and on a link that reconnects
+    /// every second the instant is true and useless -- it said "connected"
+    /// throughout. This is the shape of the failure rather than a sample of
+    /// it, so a caller can tell a live link from a collapsing one.
+    pub short_connection_streak: u32,
 }
 
 impl RelayStatusSnapshot {
@@ -44,6 +65,16 @@ impl RelayStatusSnapshot {
             "relayUrl": self.relay_url,
             "lastConnectedAt": self.last_connected_at,
             "lastError": self.last_error,
+            "lastDisconnectedAt": self.last_disconnected_at,
+            "lastCloseCode": self.last_close_code,
+            "lastCloseReason": self.last_close_reason,
+            "consecutiveShortConnections": self.short_connection_streak,
+            "flapping": self.short_connection_streak >= FLAPPING_CONNECTION_STREAK,
+            // Carried rather than re-stated by the renderer: `core_text` is
+            // built without the `remote-control` feature, so it cannot reach
+            // this constant, and a second copy of a threshold is how two
+            // surfaces come to disagree about the same number.
+            "shortConnectionThresholdMs": MIN_HELD_CONNECTION_MS,
         })
     }
 }
@@ -75,6 +106,29 @@ pub enum RelayAction {
         title: String,
         body: String,
     },
+    /// An answer to something this machine asked one of its peers.
+    ///
+    /// Without this arm the frame fell through to `Ignore`, which is not a
+    /// quiet no-op for a request/response pair: every peer answer, every
+    /// swept timeout and every "that machine is not connected" refusal was
+    /// dropped on the floor, leaving the caller waiting out its own deadline
+    /// with nothing to report but a timeout.
+    PeerResponse {
+        id: String,
+        status: u16,
+        body: Value,
+        /// Set when the relay answered on the peer's behalf rather than
+        /// carrying the peer's own answer.
+        from_relay: bool,
+    },
+    /// The relay said who owns which checkout.
+    ///
+    /// A full snapshot, so it replaces whatever was held rather than merging:
+    /// a row that has gone from the table has gone, and merging would keep a
+    /// checkout owned by a machine that released it.
+    ProjectOwners {
+        owners: Vec<crate::remote::remote_project_owners::ProjectOwner>,
+    },
 }
 
 /// Node answered a ping itself and never surfaced it.
@@ -89,6 +143,24 @@ pub fn handle_frame(data: &str) -> RelayAction {
     match kind {
         "ping" => RelayAction::Send(json!({ "type": "pong" }).to_string()),
         "connected" | "error" | "pong" | "daemon_status" => RelayAction::Ignore,
+        "project_owners" => {
+            // A frame with no `owners` array is still an answer -- "the table
+            // is empty" -- and it has to be told apart from no frame at all,
+            // which is what the runner's `None` means. So a missing or
+            // unreadable array becomes an EMPTY table rather than an ignore:
+            // ignoring it would leave the daemon believing it had never been
+            // told, and it has.
+            let owners = message
+                .get("owners")
+                .and_then(Value::as_array)
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(crate::remote::remote_project_owners::project_owner_from_row)
+                        .collect()
+                })
+                .unwrap_or_default();
+            RelayAction::ProjectOwners { owners }
+        }
         "security_event" => {
             let event = message.get("event");
             let event_kind = event
@@ -115,6 +187,25 @@ pub fn handle_frame(data: &str) -> RelayAction {
         "project_events_unsubscribe" => RelayAction::UnsubscribeProjectEvents {
             id: string_field(Some(&message), "id"),
         },
+        "response" => RelayAction::PeerResponse {
+            id: string_field(Some(&message), "id"),
+            // A frame with no usable status is still an answer, and 502 is
+            // what the relay itself uses for an answer it cannot make sense
+            // of. Defaulting to 200 would turn a malformed refusal into a
+            // success, which is the failure this crate keeps finding.
+            status: message
+                .get("status")
+                .and_then(Value::as_u64)
+                .and_then(|status| u16::try_from(status).ok())
+                .unwrap_or(502),
+            body: message.get("body").cloned().unwrap_or(Value::Null),
+            // The relay stamps its own refusals, which otherwise wear the
+            // same 502/503/504 a project service does.
+            from_relay: message
+                .get("source")
+                .and_then(Value::as_str)
+                .is_some_and(|source| source == "relay"),
+        },
         "request" => RelayAction::RouteRequest {
             id: string_field(Some(&message), "id"),
             method: string_field(Some(&message), "method"),
@@ -126,8 +217,63 @@ pub fn handle_frame(data: &str) -> RelayAction {
     }
 }
 
+/// Ask one of the owner's other machines something.
+///
+/// The machine is named, always: the relay gives a peer no "whoever is
+/// online" fallback, because a daemon is not a person who can be asked which
+/// one it meant.
+pub fn peer_request_frame(
+    id: &str,
+    machine_id: &str,
+    method: &str,
+    path: &str,
+    body: &Value,
+) -> String {
+    json!({
+        "id": id,
+        "type": "request",
+        "machineId": machine_id,
+        "method": method,
+        "path": path,
+        "body": body,
+    })
+    .to_string()
+}
+
 pub fn response_frame(id: &str, status: u16, body: Value) -> String {
     json!({ "id": id, "type": "response", "status": status, "body": body }).to_string()
+}
+
+pub use crate::daemon_projects::ProjectEndpoint;
+
+/// Tell the relay where this machine's project services are listening now.
+///
+/// A share stores the endpoint it was created with, and a project service
+/// binds a fresh port on every start -- so the first restart after a share was
+/// made left that share proxying to a port nothing was on, with the daemon
+/// connected and the agent working. The relay moves the share when this says
+/// the port changed.
+pub fn project_endpoints_frame(projects: &[ProjectEndpoint]) -> Option<String> {
+    // Nothing to report is not a frame. The relay fans a change out to every
+    // guest on the share, so an empty list would be a round trip to say
+    // nothing moved.
+    if projects.is_empty() {
+        return None;
+    }
+    Some(
+        json!({
+            "type": "project_endpoints",
+            "projects": projects
+                .iter()
+                .map(|project| json!({
+                    "projectRoot": project.project_root,
+                    "host": project.host,
+                    "port": project.port,
+                }))
+                .collect::<Vec<_>>(),
+        })
+        .to_string(),
+    )
 }
 
 pub fn notification_push_frame(notification: &Value) -> Option<String> {
@@ -137,6 +283,53 @@ pub fn notification_push_frame(notification: &Value) -> Option<String> {
         return None;
     }
     Some(json!({ "type": "notification_push", "notification": notification }).to_string())
+}
+
+#[cfg(test)]
+mod project_endpoint_frame_tests {
+    use super::*;
+
+    const CONTRACT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../testdata/contracts/v1/relay-project-endpoints.json"
+    ));
+
+    /// The relay parses this frame in TypeScript and answers nothing, so a
+    /// renamed field would leave both suites green and every share on the port
+    /// its invite was written with -- the bug the frame exists to fix. Both
+    /// sides assert this one file.
+    #[test]
+    fn the_report_frame_matches_the_contract_both_sides_read() {
+        let contract: Value = serde_json::from_str(CONTRACT).expect("contract json");
+        let projects = contract["example"]["projects"]
+            .as_array()
+            .expect("example projects")
+            .iter()
+            .map(|project| ProjectEndpoint {
+                project_root: project["projectRoot"]
+                    .as_str()
+                    .expect("projectRoot")
+                    .to_owned(),
+                host: project["host"].as_str().expect("host").to_owned(),
+                port: u16::try_from(project["port"].as_u64().expect("port")).expect("port range"),
+            })
+            .collect::<Vec<_>>();
+
+        let frame = project_endpoints_frame(&projects).expect("a non-empty report is a frame");
+
+        assert_eq!(
+            serde_json::from_str::<Value>(&frame).expect("frame json"),
+            contract["example"]["frame"]
+        );
+    }
+
+    /// Nothing to report is not a frame: the relay fans a change out to every
+    /// guest on the share, so an empty list would be a round trip to say
+    /// nothing moved.
+    #[test]
+    fn an_empty_report_is_not_a_frame() {
+        assert_eq!(project_endpoints_frame(&[]), None);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

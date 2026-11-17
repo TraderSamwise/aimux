@@ -649,6 +649,157 @@ fn agent_kill_moves_session_to_graveyard_and_preserves_previous_status() {
     );
     cleanup(project);
 }
+/// A graveyarded manager cannot run anyone's loop.
+///
+/// Killing one left every report still bound to it: the topology screen drew
+/// them underneath a dead agent, the demotion and cycle checks kept counting
+/// them, and once loop briefings follow this edge they would be briefed to
+/// nobody. The reports move up to the dead manager's own manager, the same way
+/// a deliberate demotion moves them.
+#[test]
+fn graveyarding_a_manager_moves_its_reports_up_to_its_own_manager() {
+    let project = temp_project("kill-manager-reports");
+    let state_dir = project.join("state");
+    write_three_level_topology(&state_dir);
+    write_watch_bindings(&state_dir, &json!({ "mid": "lead", "coder": "mid" }));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::KILL,
+        Some(&json!({ "sessionId": "mid", "reason": "done" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    assert!(
+        response.body.get("reportsReleaseError").is_none(),
+        "{:?}",
+        response.body
+    );
+    let bindings = read_watch_bindings(&state_dir);
+    assert_eq!(
+        bindings["coder"], "lead",
+        "the report stayed with a dead manager: {bindings:?}"
+    );
+    // The dead agent keeps its own incoming edge and its own record, because it
+    // can be restored. It comes back childless, which is honest.
+    assert_eq!(bindings["mid"], "lead", "{bindings:?}");
+    let registry = read_agent_role_registry(&state_dir);
+    assert!(
+        registry["sessions"].get("mid").is_some(),
+        "a graveyarded agent keeps its role record: {registry:?}"
+    );
+    assert_eq!(
+        registry["sessions"]["lead"]["watching"],
+        json!(["coder", "mid"]),
+        "`watching` has to say what the bindings say: {registry:?}"
+    );
+    cleanup(project);
+}
+
+/// With nobody above, the reports are released rather than left orphaned.
+#[test]
+fn graveyarding_a_top_manager_releases_its_reports() {
+    let project = temp_project("kill-top-manager");
+    let state_dir = project.join("state");
+    write_three_level_topology(&state_dir);
+    write_watch_bindings(&state_dir, &json!({ "mid": "lead", "coder": "mid" }));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::KILL,
+        Some(&json!({ "sessionId": "lead" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200, "{:?}", response.body);
+    let bindings = read_watch_bindings(&state_dir);
+    assert!(
+        bindings.get("mid").is_none(),
+        "nothing above could inherit it, so it is released, not left pointing at a corpse: {bindings:?}"
+    );
+    assert_eq!(
+        bindings["coder"], "mid",
+        "the rest of the tree is untouched"
+    );
+    cleanup(project);
+}
+
+/// Killing a leaf changes nothing about who manages whom.
+#[test]
+fn graveyarding_an_agent_with_no_reports_leaves_the_bindings_alone() {
+    let project = temp_project("kill-leaf");
+    let state_dir = project.join("state");
+    write_three_level_topology(&state_dir);
+    write_watch_bindings(&state_dir, &json!({ "mid": "lead", "coder": "mid" }));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    assert_eq!(
+        route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::KILL,
+            Some(&json!({ "sessionId": "coder" })),
+            &mut runtime,
+        )
+        .unwrap()
+        .status,
+        200
+    );
+
+    let bindings = read_watch_bindings(&state_dir);
+    assert_eq!(bindings["mid"], "lead", "{bindings:?}");
+    assert_eq!(
+        bindings["coder"], "mid",
+        "a leaf's own edge survives, because it can be restored: {bindings:?}"
+    );
+    cleanup(project);
+}
+
+/// A registry that cannot be written says so.
+///
+/// The tmux window is gone by the time this runs, so the kill cannot be
+/// failed -- but a silent success would claim a tree that is not there.
+#[test]
+fn a_graveyard_that_cannot_move_the_reports_reports_it() {
+    let project = temp_project("kill-registry-unwritable");
+    let state_dir = project.join("state");
+    write_three_level_topology(&state_dir);
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::write(state_dir.join("agent-role-registry.json"), "{ not json").unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::KILL,
+        Some(&json!({ "sessionId": "mid" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200, "the agent is dead either way");
+    assert_eq!(response.body["status"], "graveyard");
+    assert!(
+        response.body["reportsReleaseError"]
+            .as_str()
+            .is_some_and(|error| error.contains("agent-role-registry.json")),
+        "the failure has to name what could not be written: {:?}",
+        response.body
+    );
+    cleanup(project);
+}
+
 #[test]
 fn agent_kill_reports_tmux_kill_failure_instead_of_graveyard_success() {
     let project = temp_project("agent-kill-failing-tmux");
@@ -6835,6 +6986,89 @@ fn write_graveyard_worktree_with_dependents_topology(state_dir: &PathBuf, worktr
     }))
     .unwrap();
     write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
+fn write_three_level_topology(state_dir: &PathBuf) {
+    // A real org: the lead watches the mid, the mid watches the coder. Three
+    // sessions with tmux bindings, because the kill route verifies them.
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+        "nodes": [
+            { "id": "node-lead", "rigId": "rig-1", "logicalId": "lead", "toolConfigKey": "claude", "createdAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "node-mid", "rigId": "rig-1", "logicalId": "mid", "toolConfigKey": "claude", "createdAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "node-coder", "rigId": "rig-1", "logicalId": "coder", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "tmux:lead", "nodeId": "node-lead", "tmuxSession": "aimux", "tmuxWindowId": "@lead", "tmuxWindowIndex": 1, "tmuxWindowName": "claude", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "tmux:mid", "nodeId": "node-mid", "tmuxSession": "aimux", "tmuxWindowId": "@mid", "tmuxWindowIndex": 2, "tmuxWindowName": "claude", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "tmux:coder", "nodeId": "node-coder", "tmuxSession": "aimux", "tmuxWindowId": "@coder", "tmuxWindowIndex": 3, "tmuxWindowName": "codex", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "sessions": [
+            { "id": "lead", "nodeId": "node-lead", "tool": "claude", "command": "claude", "args": [], "status": "running", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "mid", "nodeId": "node-mid", "tool": "claude", "command": "claude", "args": [], "status": "running", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "coder", "nodeId": "node-coder", "tool": "codex", "command": "codex", "args": [], "status": "running", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [{ "id": "main", "rigId": "rig-1", "path": "/repo", "name": "Main Checkout", "status": "active", "branch": "master", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": []
+    }))
+    .expect("the three-level topology fixture is valid");
+    fs::create_dir_all(state_dir).unwrap();
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
+/// The registry in the shape the project service writes it.
+fn write_watch_bindings(state_dir: &PathBuf, bindings: &Value) {
+    fs::create_dir_all(state_dir).unwrap();
+    let watching: BTreeMap<String, Vec<String>> = bindings
+        .as_object()
+        .expect("bindings object")
+        .iter()
+        .fold(BTreeMap::new(), |mut acc, (watched, overseer)| {
+            acc.entry(overseer.as_str().expect("overseer id").to_owned())
+                .or_default()
+                .push(watched.clone());
+            acc
+        });
+    let sessions = watching
+        .iter()
+        .map(|(overseer, watched)| {
+            (
+                overseer.clone(),
+                json!({ "role": "overseer", "watching": watched }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    fs::write(
+        state_dir.join("agent-role-registry.json"),
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "sessions": sessions,
+            "watchBindings": bindings,
+            "roleSlots": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+/// Read the way production reads it.
+///
+/// `watching` mirrors `watchBindings` and the loader re-derives it, so the
+/// bytes on disk lag a write by one load and no reader ever sees them. A test
+/// that read the file directly would be asserting a shape nothing observes.
+fn read_agent_role_registry(state_dir: &Path) -> Value {
+    aimux::project_service::agent_roles::load_agent_role_registry(state_dir).expect("role registry")
+}
+
+fn read_watch_bindings(state_dir: &Path) -> Value {
+    read_agent_role_registry(state_dir)["watchBindings"].clone()
 }
 
 fn write_lifecycle_topology(state_dir: &PathBuf) {

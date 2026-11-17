@@ -219,8 +219,15 @@ pub fn render_core_task_list_lines(payload: &Value) -> Vec<String> {
         } else {
             "".into()
         };
+        // Shown, because a workstream nobody can see is a workstream nobody
+        // uses -- which is how it ended up as a `[deaws]` prefix in free text.
+        let stream = if truthy(task.get("stream")) {
+            format!(" stream={}", js_string(task.get("stream")))
+        } else {
+            String::new()
+        };
         lines.push(format!(
-            "{}  {}  {}  target={target}{thread}",
+            "{}  {}  {}  target={target}{stream}{thread}",
             js_string(task.get("id")),
             coalesce_string(task.get("type"), "task"),
             js_string(task.get("status"))

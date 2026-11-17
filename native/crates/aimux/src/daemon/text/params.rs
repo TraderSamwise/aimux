@@ -44,6 +44,24 @@ pub fn required_project_service_string(
     }
 }
 
+/// Split a project-service result into its payload and resolved root, or the
+/// refusal to return instead.
+///
+/// ONE definition. There were seven byte-identical copies of this, one per
+/// text module, and the carve-out made that a real risk rather than
+/// untidiness: ten routes' renders now go through these semantics, and the
+/// parity gates compare the locked and carved-out paths of the SAME route, so
+/// a copy that drifted in one module would change that route's refusal
+/// behaviour with every gate still green.
+pub fn unwrap_project_result(
+    result: ProjectServiceJsonResult,
+) -> Result<(Value, String), DaemonRouteResponse> {
+    match result {
+        ProjectServiceJsonResult::Ok { project_root, json } => Ok((json, project_root)),
+        ProjectServiceJsonResult::Err { response } => Err(response),
+    }
+}
+
 pub fn required_project_service_array(
     json: &ProjectServiceJson,
     action: &str,

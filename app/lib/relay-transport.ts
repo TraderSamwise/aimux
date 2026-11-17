@@ -15,7 +15,30 @@ type PendingRequest = {
   resolve: (value: { status: number; body: unknown }) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  /// The frame to send again if the connection drops under this request.
+  /// Present only for reads; a write is never replayed.
+  resend?: Record<string, unknown>;
+  attempts: number;
 };
+
+/// How many times a read may be sent again before the caller is told.
+///
+/// Two, because the drops are short and isolated: the relay's edge resets the
+/// socket and the daemon is back inside a couple of seconds. A read that has
+/// lost its connection twice is not meeting a blip, and the caller is better
+/// off hearing so than waiting out another timeout.
+const MAX_RESEND_ATTEMPTS = 2;
+
+/// Whether sending this again could do anything the first one already did.
+///
+/// Only GET and HEAD. Everything else can change state on the daemon -- agent
+/// input, answering a prompt, killing a session -- and the relay cannot tell
+/// us whether the first copy arrived before the socket went, so replaying one
+/// risks doing it twice.
+function isIdempotentRead(method: string): boolean {
+  const normalized = method.trim().toUpperCase();
+  return normalized === "GET" || normalized === "HEAD";
+}
 
 type ProjectEventSubscription = {
   path: string;
@@ -115,6 +138,8 @@ export interface RelayTransportOptions {
 export class RelayTransport {
   private ws: WebSocket | null = null;
   private pending = new Map<string, PendingRequest>();
+  /// Reads whose connection dropped, waiting for the next one.
+  private heldReads = new Map<string, PendingRequest>();
   private retryMs = INITIAL_RETRY_MS;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
@@ -257,6 +282,15 @@ export class RelayTransport {
 
     this.ws.onclose = (event) => {
       this.ws = null;
+      // The relay's edge resets this socket tens of times a day -- Cloudflare
+      // rotates its WebSocket proxy, and one close says so in as many words --
+      // and each reset lasts about a second before the daemon is back. Failing
+      // every in-flight read at that moment is what the user sees: the daemon
+      // is up, the agent is working, and the GUI says it could not load the
+      // projects. So a read is held across the gap and sent again once the
+      // socket returns. A write is still failed immediately, because it may
+      // already have been delivered.
+      this.holdIdempotentReadsForResend();
       this.rejectAllPending("Connection lost");
       this.rejectAllProjectEventSubscriptions("Connection lost");
       // The fleet is now unknown, which is not the same as unchanged. Holding
@@ -292,6 +326,10 @@ export class RelayTransport {
   disconnect(): void {
     this.stopped = true;
     if (this.retryTimer) clearTimeout(this.retryTimer);
+    // Nothing is coming back for these, so say so rather than leaving the
+    // caller's promise pending for ever.
+    for (const [, entry] of this.heldReads) entry.reject(new Error("Disconnected"));
+    this.heldReads.clear();
     this.rejectAllPending("Disconnected");
     this.rejectAllProjectEventSubscriptions("Disconnected");
     this.setMachines([]);
@@ -325,18 +363,26 @@ export class RelayTransport {
         reject(new Error("Relay request timed out"));
       }, REQUEST_TIMEOUT_MS);
 
-      this.pending.set(id, { resolve, reject, timer });
+      const frame = {
+        id,
+        type: "request" as const,
+        method,
+        path,
+        body,
+        ...(machineId ? { machineId } : {}),
+      };
+      // A read is kept with its frame so a dropped connection can send it
+      // again. A write is not: re-sending one could deliver input twice or
+      // answer a prompt the user never saw a second time.
+      this.pending.set(id, {
+        resolve,
+        reject,
+        timer,
+        resend: isIdempotentRead(method) ? frame : undefined,
+        attempts: 0,
+      });
       try {
-        this.ws!.send(
-          JSON.stringify({
-            id,
-            type: "request",
-            method,
-            path,
-            body,
-            ...(machineId ? { machineId } : {}),
-          }),
-        );
+        this.ws!.send(JSON.stringify(frame));
       } catch (err) {
         // The socket can close between the readyState check above and the
         // send call (race with onclose / network drop). Clean up the entry
@@ -346,6 +392,45 @@ export class RelayTransport {
         reject(err instanceof Error ? err : new Error("Relay send failed"));
       }
     });
+  }
+
+  /// Moves in-flight reads out of `pending` so the rejection below leaves
+  /// them alone, keeping only those whose caller is still waiting.
+  private holdIdempotentReadsForResend(): void {
+    for (const [id, entry] of [...this.pending]) {
+      if (!entry.resend || entry.attempts >= MAX_RESEND_ATTEMPTS) continue;
+      this.pending.delete(id);
+      clearTimeout(entry.timer);
+      this.heldReads.set(id, entry);
+    }
+  }
+
+  /// Sends the held reads again. Their original promise is still pending, so
+  /// the caller never learns the connection went away.
+  private resendHeldReads(): void {
+    if (this.heldReads.size === 0) return;
+    const held = [...this.heldReads];
+    this.heldReads.clear();
+    for (const [id, entry] of held) {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        // Dropped again before we got to it. Hold it rather than fail it;
+        // the next open will try, and the attempt cap ends it eventually.
+        this.heldReads.set(id, entry);
+        continue;
+      }
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        entry.reject(new Error("Relay request timed out"));
+      }, REQUEST_TIMEOUT_MS);
+      this.pending.set(id, { ...entry, timer, attempts: entry.attempts + 1 });
+      try {
+        this.ws.send(JSON.stringify(entry.resend));
+      } catch (err) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        entry.reject(err instanceof Error ? err : new Error("Relay send failed"));
+      }
+    }
   }
 
   get isConnected(): boolean {
@@ -423,6 +508,9 @@ export class RelayTransport {
       if (msg.machines !== undefined) this.setMachines(normalizeRelayMachines(msg.machines));
       if (this._status === "device_pending") return;
       this.setStatus(this.daemonOnline ? "connected" : "daemon_offline");
+      // Only once the daemon is reachable again -- a socket to the relay with
+      // no daemon behind it would just fail them a second time.
+      if (this.daemonOnline) this.resendHeldReads();
       return;
     }
 

@@ -51,7 +51,9 @@ pub use workflow::{
 pub use worktrees::{parse_core_graveyard_args, parse_core_worktree_args};
 
 use agents::stop_has_session_or_invalid_agent_shape;
-use common::{has_help, has_only_allowed_flags, parse_restart_flags, required_value};
+use common::{
+    has_help, has_only_allowed_flags, is_projects_claim_args, parse_restart_flags, required_value,
+};
 
 pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArgs> {
     if args.first().map(AsRef::as_ref) != Some("doctor") {
@@ -895,6 +897,8 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("logs"), _) => parse_core_logs_args(args).is_some(),
         (Some("projects"), None) => true,
         (Some("projects"), Some("list")) => has_only_allowed_flags(&args[2..], &["--json"]),
+        (Some("projects"), Some("claim")) => is_projects_claim_args(&args[2..]),
+        (Some("projects"), Some("owners")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (Some("projects"), Some("remove" | "unregister")) => {
             parse_core_projects_remove_args(args).is_some()
         }
@@ -915,12 +919,33 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
     }
 }
 
+/// The shape of `aimux security device approve [<id>] [--code <code>]`.
+///
+/// `--code` belongs here. The pairing dialog shows an approval code and no
+/// device id, so the code is the one argument an operator actually has, and
+/// this grammar used to reject it before the planner ever saw the command --
+/// so it came back as "unsupported core command" rather than anything about
+/// codes. This is a second copy of the parser in `remote/cli.rs`, and the two
+/// have to accept the same words or the gate refuses what the parser handles.
 fn security_device_approve_live_shape<S: AsRef<str>>(args: &[S]) -> bool {
     let mut device_seen = false;
     let mut index = 3;
     while index < args.len() {
         let arg = args[index].as_ref();
         if arg == "--json" {
+            index += 1;
+        } else if arg == "--code" {
+            let Some(value) = args.get(index + 1).map(AsRef::as_ref) else {
+                return false;
+            };
+            if value.starts_with('-') {
+                return false;
+            }
+            index += 2;
+        } else if let Some(value) = arg.strip_prefix("--code=") {
+            if value.is_empty() {
+                return false;
+            }
             index += 1;
         } else if !device_seen && !arg.starts_with('-') {
             device_seen = true;

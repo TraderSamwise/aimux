@@ -1,3 +1,8 @@
+use crate::agent_pane_selection::{
+    CommitOutcome, RestoreOutcome, SelectionCommit, SelectionLanding, commit_outcome,
+    plan_selection_answer, restore_outcome, selection_commit_decision, selection_cursor_keys,
+    selection_landing,
+};
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{
     DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS,
@@ -41,8 +46,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use super::agent_input::{
-    format_agent_input_with_attachments, shared_chat_body_actor_prompt,
-    shared_chat_remote_actor_prompt,
+    agent_input_sender_label, agent_sender_prompt, format_agent_input_with_attachments,
+    looks_like_agent_command, shared_chat_body_actor_prompt, shared_chat_remote_actor_prompt,
+    shared_chat_trim, spans_more_than_one_line,
 };
 use super::agent_input_delivery::{
     AGENT_INPUT_DELIVERY_TASK_NAME, AgentInputDeliveryDecision, AgentInputWindowActivity,
@@ -52,6 +58,9 @@ use super::agent_input_delivery::{
 };
 use super::agent_output_projection::insert_projection_fields;
 use super::attachments::{get_attachment, get_attachment_record};
+use super::coordination_mutations::{
+    TaskInputTargetCheck, record_task_input, task_input_target_exists,
+};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{
     parse_integer_value, parse_optional_integer, parse_positive_integer_value, query_params,
@@ -80,6 +89,7 @@ const AGENT_OUTPUT_READ_PURPOSES: &[&str] = &[
     "attach",
     "preview",
     "interrupt",
+    "select",
 ];
 const TMUX_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 const AGENT_INPUT_ROUTE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -144,6 +154,15 @@ pub trait AgentOutputCaptureRuntime {
 
     fn send_key(&mut self, _window_id: &str, _key: &str) -> Result<(), String> {
         Err("agent input not supported by this service".into())
+    }
+
+    /// Wait for the pane to redraw between looks.
+    ///
+    /// Overridden to nothing by test doubles, whose next capture already
+    /// reflects the keys that were sent; the real runtimes have to wait for
+    /// the tool to draw.
+    fn settle(&mut self, millis: u64) {
+        std::thread::sleep(Duration::from_millis(millis));
     }
 
     fn send_carriage_return(&mut self, _window_id: &str) -> Result<(), String> {
@@ -627,6 +646,7 @@ pub fn route_agent_output_request_with_runtime(
         routes::agents::INTERRUPT | routes::live_pane::INTERRUPT => {
             Some(interrupt_live_pane_route(context, body, runtime))
         }
+        routes::live_pane::SELECT => Some(select_live_pane_route(context, body, runtime)),
         routes::agents::INPUT | routes::live_pane::INPUT => {
             Some(input_live_pane_route(context, pathname, body, runtime))
         }
@@ -655,6 +675,9 @@ pub async fn route_agent_output_request_async(
         routes::live_pane::RESIZE => Some(resize_live_pane_route_async(context, body).await),
         routes::agents::INTERRUPT | routes::live_pane::INTERRUPT => {
             Some(interrupt_live_pane_route_async(context, body).await)
+        }
+        routes::live_pane::SELECT => {
+            Some(select_live_pane_route_async(context, body, irreversible_input).await)
         }
         routes::agents::INPUT | routes::live_pane::INPUT => {
             Some(input_live_pane_route_async(context, pathname, body, irreversible_input).await)
@@ -1192,12 +1215,18 @@ pub(super) async fn read_agent_output_payload_async(
 ) -> Result<AgentOutputPayloadRead, Box<ProjectServiceDispatchResponse>> {
     let capture_window = agent_output_capture_window(start_line);
     let project_state_dir = context.project_state_dir();
-    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+    // On the blocking pool: this handler runs per request, so a sync read here
+    // parks one of the project service's two async workers.
+    let topology = match crate::project_service::scheduler::read_topology_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await
+    {
         Ok(topology) => topology,
         Err(error) => {
             return Err(Box::new(json_error(
                 500,
-                format!("runtime topology could not be read: {error}"),
+                format!("runtime topology could not be read: {}", error.detail()),
             )));
         }
     };
@@ -1245,7 +1274,16 @@ pub(super) async fn read_agent_output_payload_async(
         return Err(Box::new(json_error(500, error)));
     }
     let output = strip_sgr(output_ansi);
-    let metadata = load_metadata_state(&project_state_dir);
+    // On the blocking pool, like the topology above. `load_metadata_state` is
+    // infallible, so the only error is a pool task that never ran.
+    let metadata = match crate::project_service::scheduler::read_metadata_state_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await
+    {
+        Ok(state) => state,
+        Err(error) => return Err(Box::new(json_error(500, error))),
+    };
     let mut result = Map::new();
     insert_string(&mut result, "sessionId", session_id);
     insert_string(&mut result, "output", &output);
@@ -1604,6 +1642,433 @@ fn interrupt_live_pane_route(
     )
 }
 
+/// How much of the pane the chooser is read back from.
+///
+/// The reader only ever looks at the tail, and a chooser is at most a couple
+/// of dozen rows, so this is the window with room to spare rather than a
+/// capture of the whole scrollback on every answered option.
+const SELECTION_CAPTURE_START_LINE: i64 = -60;
+
+const SELECTION_CAPTURE: CapturePaneOptions = CapturePaneOptions {
+    start_line: Some(SELECTION_CAPTURE_START_LINE),
+    end_line: None,
+    include_escapes: true,
+};
+
+/// How long to wait between looks while the cursor move redraws, and how many
+/// looks to take. Short, because this is one TUI redraw and nothing else.
+const SELECTION_SETTLE_MS: u64 = 60;
+const SELECTION_SETTLE_ATTEMPTS: u32 = 8;
+
+/// What the client asked for, as the client read it off its own screen.
+struct SelectionAnswerRequest {
+    session_id: String,
+    label: String,
+    number: Option<u32>,
+    /// The question the client was answering, which is what says WHICH chooser
+    /// it read. An option label alone does not: `Yes` / `No` is the shape of
+    /// nearly every prompt the tool asks.
+    question: Option<String>,
+    /// What the question was ABOUT, echoed back opaquely. The question alone
+    /// is not enough: the Bash permission asks "Do you want to proceed?" over
+    /// the same three labels whether the command is `rm -rf build` or `rm -rf
+    /// /`, and the command itself sits above the question.
+    subject: Option<String>,
+}
+
+fn parse_selection_answer_request(
+    body: Option<&Value>,
+) -> Result<SelectionAnswerRequest, Box<ProjectServiceDispatchResponse>> {
+    let body = body.unwrap_or(&Value::Null);
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return Err(Box::new(json_error(400, "sessionId is required")));
+    };
+    let Some(label) = body_trimmed_string(body, "label").filter(|value| !value.is_empty()) else {
+        return Err(Box::new(json_error(400, "label is required")));
+    };
+    let number = match body.get("number") {
+        None | Some(Value::Null) => None,
+        Some(value) => match value.as_u64().and_then(|number| u32::try_from(number).ok()) {
+            Some(number) => Some(number),
+            None => {
+                return Err(Box::new(json_error(
+                    400,
+                    "number must be a positive integer",
+                )));
+            }
+        },
+    };
+    let question = match body.get("question") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(question)) => Some(question.trim().to_owned()),
+        Some(_) => return Err(Box::new(json_error(400, "question must be a string"))),
+    };
+    let subject = match body.get("subject") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(subject)) => Some(subject.trim().to_owned()),
+        Some(_) => return Err(Box::new(json_error(400, "subject must be a string"))),
+    };
+    Ok(SelectionAnswerRequest {
+        session_id,
+        label,
+        number,
+        question,
+        subject,
+    })
+}
+
+/// A shared guest answering a chooser in the session that was shared with it.
+///
+/// Full trust over that one agent includes answering the questions it asks:
+/// refusing this is how a guest ends up watching a permission prompt it is
+/// allowed to type `2` into but not allowed to press. The scope is the share's
+/// own session and nothing else.
+fn refuse_foreign_selection_guest(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+) -> Option<ProjectServiceDispatchResponse> {
+    let actor = remote_actor_from_headers(&context.request_headers)?;
+    if actor.role != RemoteActorRole::Guest {
+        return None;
+    }
+    if actor.share_session_id.as_deref() == Some(session_id) {
+        return None;
+    }
+    Some(json_error(
+        403,
+        "shared guest cannot access another session",
+    ))
+}
+
+/// Whether the session is still on the window the answer was planned against.
+///
+/// `window_id` is resolved once, before the walk, and the keys go to that id
+/// for the rest of the answer. tmux does not reuse `@N` within a server
+/// lifetime, so a session respawned mid-answer normally fails closed -- but
+/// ids restart at `@0` after a tmux server restart, and then a stale id can
+/// name a different window entirely. Two requests across a rebind would also
+/// claim two different windows for one session, which is what the claim
+/// exists to prevent.
+fn session_window_changed(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    window_id: &str,
+) -> Option<String> {
+    match resolve_live_session_target(context, session_id) {
+        Ok(Some(target)) if target.window_id == window_id => None,
+        Ok(Some(target)) => Some(format!(
+            "the session moved from window {window_id} to {} while the answer was being sent",
+            target.window_id
+        )),
+        // `None` is not only "the session went away": the resolver filters on
+        // starting/running/idle, so a status that transiently leaves that set
+        // refuses a legitimate answer. Naming the status is what makes such a
+        // refusal diagnosable instead of mysterious.
+        Ok(None) => Some(match session_status(context, session_id) {
+            Some(status) => {
+                format!("the session is {status}, so the answer was not sent to window {window_id}")
+            }
+            None => format!(
+                "the session is no longer listed, so the answer was not sent to window {window_id}"
+            ),
+        }),
+        // Errors are not absence: a topology we could not read is not a
+        // session that went away, and neither is grounds for pressing Enter.
+        Err(error) => Some(format!(
+            "the session's window could not be rechecked before committing: {error}"
+        )),
+    }
+}
+
+/// The status the topology records for a session, whatever it is.
+///
+/// Deliberately unfiltered: the point is to report a status the active-session
+/// filter rejected, so filtering here would answer `None` for exactly the case
+/// this exists to explain.
+fn session_status(context: &ProjectServiceRequestContext, session_id: &str) -> Option<String> {
+    let topology =
+        read_runtime_topology(runtime_topology_path(context.project_state_dir())).ok()?;
+    topology
+        .get("sessions")?
+        .as_array()?
+        .iter()
+        .find(|session| string_field(session, "id") == Some(session_id))
+        .and_then(|session| string_field(session, "status"))
+        .map(str::to_owned)
+}
+
+/// What the refusal says about where the cursor was left.
+fn describe_restore(error: String, outcome: Option<RestoreOutcome>) -> String {
+    match outcome {
+        None => format!("{error}; the pane could not be read back to confirm the cursor"),
+        Some(RestoreOutcome::Restored) => format!("{error}; the cursor was put back"),
+        Some(RestoreOutcome::LeftOn { label }) => {
+            format!("{error}; the cursor is left on {label:?}")
+        }
+        Some(RestoreOutcome::PaneChanged) => {
+            format!("{error}; the pane changed before the cursor could be put back")
+        }
+    }
+}
+
+/// The answer's result, with what the pane showed afterwards.
+///
+/// `requestedLabel`, not `label`: the route knows what it asked for and cannot
+/// always know what was taken. A person's own keypress can move the cursor
+/// between the confirming read and the Enter, and no amount of reading closes
+/// that window -- so the honest report is the option requested plus whether
+/// the commit could be confirmed, never a claim about which option landed.
+fn selection_answer_result(
+    session_id: &str,
+    label: &str,
+    outcome: Option<CommitOutcome>,
+    read_failed: bool,
+) -> ProjectServiceDispatchResponse {
+    if let Some(CommitOutcome::StillShowing) = outcome {
+        return ProjectServiceDispatchResponse::json(
+            409,
+            json!({
+                "ok": true,
+                "accepted": false,
+                "requestedLabel": label,
+                "error": "the prompt is still up, so the answer did not land",
+            }),
+        );
+    }
+    let now = now_iso();
+    let committed = match &outcome {
+        Some(CommitOutcome::Confirmed { .. }) => "confirmed",
+        Some(CommitOutcome::StillShowing) | Some(CommitOutcome::Unverified) | None => "unverified",
+    };
+    let mut body = json!({
+        "ok": true,
+        "accepted": true,
+        "requestedLabel": label,
+        "committed": committed,
+        "transition": {
+            "operationId": operation_id("agent.select", session_id),
+            "operation": "agent.select",
+            "targetKind": "agent",
+            "targetId": session_id,
+            "phase": "succeeded",
+            "startedAt": now,
+            "updatedAt": now,
+        }
+    });
+    if let Some(CommitOutcome::Confirmed { taken }) = outcome {
+        body["recorded"] = Value::String(taken);
+    }
+    // "Could not read the pane back" and "read it and the prompt was gone" are
+    // different outcomes, and both used to report the same thing. The Enter
+    // did go out, so the answer is still accepted; what is not known is said.
+    if read_failed {
+        body["readBack"] = Value::String("the pane could not be read back after committing".into());
+    }
+    ProjectServiceDispatchResponse::json(200, body)
+}
+
+/// Answer the chooser a pane is showing, by moving its cursor and committing.
+///
+/// Three reads, not one: plan against the pane as it is now, move, then read
+/// again to confirm the cursor landed before pressing Enter. The commit is the
+/// irreversible half and the options are not interchangeable -- one of the real
+/// ones switches the session to bypassing permissions -- so a cursor that did
+/// not land where it was sent returns the mismatch instead of guessing.
+fn select_live_pane_route(
+    context: &ProjectServiceRequestContext,
+    body: Option<&Value>,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> ProjectServiceDispatchResponse {
+    let request = match parse_selection_answer_request(body) {
+        Ok(request) => request,
+        Err(response) => return *response,
+    };
+    if let Some(refusal) = refuse_foreign_selection_guest(context, &request.session_id) {
+        return refusal;
+    }
+    let target = match resolve_live_session_target(context, &request.session_id) {
+        Ok(Some(target)) => target,
+        Ok(None) => {
+            return json_error(
+                500,
+                format!("Session \"{}\" is not running", request.session_id),
+            );
+        }
+        Err(error) => return json_error(500, error),
+    };
+    let Some(_claim) = ChooserAnswerClaim::acquire(&target.window_id) else {
+        return json_error(
+            409,
+            format!(
+                "another answer is already being sent to pane {}",
+                target.window_id
+            ),
+        );
+    };
+    let pane = match runtime.capture_pane(&target.window_id, SELECTION_CAPTURE) {
+        Ok(pane) => strip_sgr(&pane),
+        Err(error) => return json_error(500, error),
+    };
+    let plan = match plan_selection_answer(
+        &pane,
+        &request.label,
+        request.number,
+        request.question.as_deref(),
+        request.subject.as_deref(),
+    ) {
+        Ok(plan) => plan,
+        Err(error) => return json_error(409, error),
+    };
+    for key in &plan.keys {
+        if let Err(error) = runtime.send_key(&target.window_id, key) {
+            return json_error(500, error);
+        }
+    }
+    // Polled rather than slept once: a cursor move is a local redraw, so the
+    // first look usually has it, and a fixed wait would be both slower in the
+    // common case and still too short on a loaded machine.
+    let mut landing = SelectionLanding::Changed {
+        message: "the pane was never read back after moving the cursor".to_owned(),
+    };
+    let mut moved_pane = String::new();
+    for attempt in 0..SELECTION_SETTLE_ATTEMPTS {
+        if attempt > 0 {
+            runtime.settle(SELECTION_SETTLE_MS);
+        }
+        let moved = match runtime.capture_pane(&target.window_id, SELECTION_CAPTURE) {
+            Ok(pane) => strip_sgr(&pane),
+            Err(error) => return json_error(500, error),
+        };
+        landing = selection_landing(&moved, &plan, &request.label, request.number);
+        moved_pane = moved;
+        if matches!(landing, SelectionLanding::Landed) {
+            break;
+        }
+    }
+    let landed_at = plan
+        .chooser
+        .option_index(&request.label, request.number)
+        .unwrap_or(plan.from);
+    match selection_commit_decision(landing, &plan) {
+        SelectionCommit::Commit => {}
+        SelectionCommit::Refuse {
+            restore,
+            left_at,
+            error,
+        } => {
+            let restoring = !restore.is_empty();
+            let mut error = error;
+            for key in restore {
+                if let Err(failure) = runtime.send_key(&target.window_id, key) {
+                    error = format!("{error}; the cursor could not be put back: {failure}");
+                    break;
+                }
+            }
+            // A key that returns Ok without moving the cursor reads as a
+            // successful restore, and the pane that swallowed the walk is
+            // exactly the pane that swallows this. Polled rather than read
+            // once: an immediate read catches the frame before the redraw and
+            // reports the cursor sitting on a row it has already left, which
+            // sends the user to fix something that is already fine.
+            if restoring {
+                let mut seen = None;
+                let mut repeats = 0u8;
+                for _ in 0..SELECTION_SETTLE_ATTEMPTS {
+                    runtime.settle(SELECTION_SETTLE_MS);
+                    let Ok(pane) = runtime
+                        .capture_pane(&target.window_id, SELECTION_CAPTURE)
+                        .map(|pane| strip_sgr(&pane))
+                    else {
+                        break;
+                    };
+                    let outcome = restore_outcome(&pane, &plan, left_at);
+                    // Two agreeing reads is settled here as well, so a cursor
+                    // that genuinely will not move costs two reads rather than
+                    // the whole budget.
+                    repeats = match (&seen, &outcome) {
+                        (
+                            Some(RestoreOutcome::LeftOn { label }),
+                            RestoreOutcome::LeftOn { label: again },
+                        ) if label == again => repeats + 1,
+                        (Some(RestoreOutcome::PaneChanged), RestoreOutcome::PaneChanged) => {
+                            repeats + 1
+                        }
+                        _ => 0,
+                    };
+                    let settled = matches!(outcome, RestoreOutcome::Restored) || repeats >= 1;
+                    seen = Some(outcome);
+                    if settled {
+                        break;
+                    }
+                }
+                error = describe_restore(error, seen);
+            }
+            return json_error(409, error);
+        }
+    }
+    // Stand down any input submit still waiting to fire its own carriage
+    // return into this window. That waiter's fallback Enter is explicitly
+    // documented as something that "can answer a permission dialog", and the
+    // dialog it would answer is the one being answered deliberately here.
+    let _ = claim_submit_generation(&target.window_id);
+    if let Some(moved) = session_window_changed(context, &request.session_id, &target.window_id) {
+        // Through a restore as well. This was the one refusal that left the
+        // cursor parked on the row it had been walked to and said nothing.
+        let mut error = moved;
+        for key in selection_cursor_keys(landed_at, plan.from) {
+            if let Err(failure) = runtime.send_key(&target.window_id, key) {
+                error = format!("{error}; the cursor could not be put back: {failure}");
+                break;
+            }
+        }
+        return json_error(409, error);
+    }
+    if let Err(error) = runtime.send_carriage_return(&target.window_id) {
+        return json_error(500, error);
+    }
+    // Settled BEFORE the first look, and retried only while the chooser is
+    // still up. `send-keys` returns when the bytes reach the pty and
+    // `capture-pane` is a separate round trip, so the agent's redraw is
+    // routinely slower -- reading immediately reported a good answer as "the
+    // prompt is still up", which the app shows as an error the user answers by
+    // tapping again, into whatever the pane holds by then.
+    // `Unverified` needs two agreeing reads; `Confirmed` is terminal on the
+    // first. A capture that catches the repaint mid-write, or any transient
+    // parse failure, gives a frame with no chooser in it -- and taking that as
+    // "the prompt is gone" accepted an answer that never landed, on a pane
+    // that showed the prompt whole again a frame later. Two agreeing reads is
+    // what settled means here, as it already does for the submit wait.
+    let mut outcome = None;
+    let mut read_failed = false;
+    let mut unverified_runs = 0u8;
+    for _ in 0..SELECTION_SETTLE_ATTEMPTS {
+        runtime.settle(SELECTION_SETTLE_MS);
+        let Ok(pane) = runtime
+            .capture_pane(&target.window_id, SELECTION_CAPTURE)
+            .map(|pane| strip_sgr(&pane))
+        else {
+            read_failed = true;
+            break;
+        };
+        let seen = commit_outcome(&pane, &plan, &moved_pane);
+        unverified_runs = match seen {
+            CommitOutcome::Unverified => unverified_runs + 1,
+            _ => 0,
+        };
+        let settled = match seen {
+            CommitOutcome::Confirmed { .. } => true,
+            CommitOutcome::Unverified => unverified_runs >= 2,
+            CommitOutcome::StillShowing => false,
+        };
+        outcome = Some(seen);
+        if settled {
+            break;
+        }
+    }
+    selection_answer_result(&request.session_id, &request.label, outcome, read_failed)
+}
+
 fn input_live_pane_route(
     context: &ProjectServiceRequestContext,
     pathname: &str,
@@ -1642,11 +2107,72 @@ fn input_live_pane_route(
         {
             return json_error(403, "shared guest cannot access another session");
         }
-        if text.trim().is_empty() && attachment_ids.is_empty() {
+        if shared_chat_trim(&text).is_empty() && attachment_ids.is_empty() {
             return json_error(403, "shared guest input requires text or attachments");
         }
-    } else if text.trim().is_empty() && attachment_ids.is_empty() {
+    } else if shared_chat_trim(&text).is_empty() && attachment_ids.is_empty() {
+        // One definition of an empty message, shared with the attribution
+        // gate below and with the composer. On Rust's own `trim` this route
+        // refused a `"\u{85}"`-only line that the app had accepted, so the
+        // user saw a hard 400 for something the composer let them send.
         return json_error(400, "text is required");
+    }
+    // A peer this service cannot identify is refused, not delivered anonymously.
+    //
+    // The daemon already refuses a stamp that is not a machine id, and the
+    // first version of this let such a peer through here and delivered its
+    // text unattributed, on the reasoning that unattributed is honest. It is
+    // not the honest answer: for input from an unidentifiable peer the honest
+    // answer is the one the daemon gives. Delivering it meant the two layers
+    // disagreed with the INNER one more permissive -- and it left the composer
+    // a peer with no label to compose, which is how body `from` came to be the
+    // fallback for "I could not tell who this is".
+    //
+    // WHY IDENTITY IS MIRRORED HERE AND POLICY IS NOT. The daemon also refuses
+    // a peer's `force`, `attachmentIds` and `sharedChatActor`, and those are
+    // deliberately NOT repeated here, so this layer is still the more
+    // permissive one for them. The difference is that this layer composes the
+    // label, so it cannot attribute a peer it cannot identify -- identity is
+    // its own business, and it had to agree. The three fields are policy about
+    // what a peer may ask for, and a second copy of policy is a second thing
+    // to drift. Nothing is lost by it: reaching this service directly means
+    // being on the machine already, and a local caller that simply omits the
+    // peer role is granted MORE than any of those fields would give it.
+    if let Some(peer) = remote_actor
+        .as_ref()
+        .filter(|actor| actor.role == RemoteActorRole::Peer)
+        && !peer
+            .peer_machine_id
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(crate::machine_identity::is_valid_machine_id)
+    {
+        return json_error(403, "peer request did not say which machine it came from");
+    }
+    // A peer's input must be attributed in the pane, and a command cannot be.
+    //
+    // `looks_like_agent_command` text is delivered WITHOUT the sender prefix,
+    // because `[mbp/claude-x] /clear` is read as prose and the command never
+    // runs. For a local sender that is the right trade. For a peer it is the
+    // whole hazard back: `!rm -rf ~/work` from another machine would reach the
+    // pane byte-identical to Sam typing it, and the task row is no backstop
+    // because it is only written when the caller itself names a `task`.
+    //
+    // So the class that cannot carry its attribution is refused rather than
+    // delivered anonymously, which makes "a peer's input is named" true of
+    // every peer input instead of most of them. Decided HERE, next to the
+    // prefix, so the refusal and the prefix cannot disagree about what a
+    // command is -- the same `looks_like_agent_command`, not a second copy in
+    // the daemon's allowlist.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && looks_like_agent_command(&text)
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send a command, because a command carries no sender",
+        );
     }
     let mut attachments = Vec::new();
     for attachment_id in &attachment_ids {
@@ -1673,6 +2199,64 @@ fn input_live_pane_route(
         session_id: &session_id,
         text,
     });
+    // A peer may not send a SECOND line to a receiver whose lines we cannot
+    // vouch for -- measured on the COMPOSED PROMPT, which is the string that
+    // is actually typed.
+    //
+    // The attribution prefix shields position zero of line one, and that is
+    // all it shields. Where later lines are executed, each one arrives at a
+    // fresh prompt as its own command: `"thanks\nrm -rf ~/work"` is not a
+    // command to `looks_like_agent_command` -- which gives up the moment it
+    // finds a break -- so it was delivered, and line two ran unprefixed.
+    //
+    // Two things were wrong with the first version of this rule, and both were
+    // about asking the question in the wrong place.
+    //
+    // It measured the request's `text` while delivery sends `prompt`, and
+    // `format_agent_input_with_attachments` turns one line plus an attachment
+    // into several. So "one line to a shell is safe" was false for a one-line
+    // peer message carrying `attachmentIds`.
+    //
+    // And it keyed on the literal tool name `shell`, which is one spelling of
+    // a receiver that executes lines. A session whose command is `zsh`, or a
+    // user-defined tool, or anything with no recognized `toolConfigKey`,
+    // resolves to its own command name and was treated as an agent composer.
+    // The question is answered POSITIVELY instead, by the same
+    // `prompt_paste_mode` that delivery itself uses: `claude` and `codex` take
+    // a framed whole body, so their later lines are prose inside one
+    // attributed message, and every other receiver is one whose lines we
+    // cannot vouch for. One list, in the module that owns the distinction.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && spans_more_than_one_line(&prompt)
+        && crate::agent_prompt_delivery::prompt_paste_mode(&prompt, target.tool.as_deref())
+            != crate::agent_prompt_delivery::PromptPasteMode::Framed
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send more than one line to this receiver, because only the first line carries its sender",
+        );
+    }
+    // Rejected here, before the activity probe below, because that probe is a
+    // tmux subprocess and a task id that does not exist should not cost one.
+    // The STAMP still happens after every refusal -- this is the read half of
+    // the same question.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+    {
+        match task_input_target_exists(&project_state_dir, task_id) {
+            TaskInputTargetCheck::Present => {}
+            // The caller's id is wrong.
+            TaskInputTargetCheck::Missing(error) => return json_error(400, error),
+            // This machine's ledger is unreadable, which is not the caller's
+            // fault and not a thing they can fix by correcting anything.
+            TaskInputTargetCheck::Unreadable(error) => return json_error(500, error),
+        }
+    }
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();
     let activity = if force {
@@ -1681,6 +2265,62 @@ fn input_live_pane_route(
         runtime.agent_input_window_activity(&target.window_id)
     };
     let decision = decide_agent_input_delivery(force, activity, now_ms, now_ms);
+    // Never queued, for a peer with more than one line. The rule above asked
+    // about the tool resolved NOW, and a queued delivery re-resolves it at
+    // send time (`resolve_queued_delivery_target`) from a record that carries
+    // no role and no tool -- so a hold is a window in which an agent receiver
+    // can become one whose lines execute, with the multi-line prompt already
+    // approved. Refused rather than re-checked later, because the re-check
+    // would need the role threaded through the queue to be worth anything.
+    //
+    // Matched by REFERENCE so the decision survives for the branch below, and
+    // placed here rather than inside it so that this refusal, like every
+    // other, happens before the ledger write.
+    if let AgentInputDeliveryDecision::Hold { reason, .. } = &decision
+        && remote_actor
+            .as_ref()
+            .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && spans_more_than_one_line(&prompt)
+    {
+        return json_error(
+            409,
+            format!("a peer machine cannot hold more than one line for later delivery ({reason})"),
+        );
+    }
+    // Written only once the request is going to be delivered or held, and
+    // still before the send, so a task id that does not exist refuses the
+    // whole request rather than delivering and recording nothing.
+    //
+    // The ORDER here is the fix round five found. Moving the peer line rule
+    // after the composer (so that it could measure the prompt that is
+    // actually typed) moved it past this write, so a refused peer message
+    // stamped `lastInputBy` and un-paused the agent's loop alerts for input
+    // that never reached the pane -- a ledger row claiming a delegation that
+    // did not happen, and a way for a peer to keep un-silencing a looping
+    // agent with messages this service refuses. Every refusal now precedes
+    // every write.
+    // Still a 400 here, unlike the check above, and not by oversight:
+    // `record_task_input` returns one string for "no such row" and for "could
+    // not read", so this call cannot tell them apart. By this point the ledger
+    // was readable moments ago, which makes the row having been deleted in
+    // between the likelier of the two -- and that is the caller's 400.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+        && let Err(error) = record_task_input(
+            &project_state_dir,
+            task_id,
+            // The same derivation the prefix uses, so the ledger and the pane
+            // cannot name different senders -- and the only record of origin
+            // at all when the text is a bare command, which is delivered
+            // without a prefix because a prefixed command would not run.
+            agent_input_sender_label(body, remote_actor.as_ref()).as_deref(),
+        )
+    {
+        return json_error(400, error);
+    }
     if let Err(error) = clear_loop_alert_pause_for_work(&project_state_dir, &session_id) {
         return json_error(
             500,
@@ -1794,14 +2434,41 @@ struct PromptForDelivery<'a> {
 
 /// Compose context, attribution and attachments before the shared delivery boundary.
 fn compose_prompt_for_delivery(input: PromptForDelivery<'_>) -> String {
-    let input_text = match input
+    // A peer is composed from its stamp and from NOTHING in the body, which is
+    // why it is its own branch rather than the first link of the chain below.
+    //
+    // As a link it was still reachable. The chain ends at
+    // `shared_chat_body_actor_prompt` -- the `sharedChatActor` field, which is
+    // not alphabet-filtered the way a sender id is, so a name in it can close
+    // the bracket and keep writing -- and a peer that reached that arm would
+    // be choosing the name on its own line. The guard against that was an
+    // `or_else` AFTER the peer's own label, so it only ran when the label was
+    // absent; the label helper then fell back to body `from`, came back
+    // `Some("claude-utymep")`, and the guard never ran at all. A local-looking
+    // name on input from a machine whose identity could not be established is
+    // worse than no name.
+    //
+    // The route refuses a peer whose stamp is unusable, so a peer arriving
+    // here has one. If that ever stops being true this delivers the words
+    // unattributed, never under a borrowed name.
+    let input_text = if let Some(peer) = input
         .remote_actor
-        .filter(|actor| actor.role == RemoteActorRole::Guest)
-        .and_then(|actor| shared_chat_remote_actor_prompt(actor, &input.text))
-        .or_else(|| shared_chat_body_actor_prompt(input.body, &input.text))
+        .filter(|actor| actor.role == RemoteActorRole::Peer)
     {
-        Some(value) => value,
-        None => input.text,
+        agent_sender_prompt(input.body, Some(peer), &input.text)
+            .unwrap_or_else(|| shared_chat_trim(&input.text).to_owned())
+    } else {
+        input
+            .remote_actor
+            .filter(|actor| actor.role == RemoteActorRole::Guest)
+            .and_then(|actor| shared_chat_remote_actor_prompt(actor, &input.text))
+            .or_else(|| shared_chat_body_actor_prompt(input.body, &input.text))
+            // Last, because a shared-chat guest is the stronger claim about who
+            // is speaking. This one covers the local channel -- one agent
+            // sending to another through `aimux input`, which until this phase
+            // said nothing at all about where the words came from.
+            .or_else(|| agent_sender_prompt(input.body, None, &input.text))
+            .unwrap_or(input.text)
     };
     let formatted_text = format_agent_input_with_attachments(&input_text, input.attachments);
     let prompt_context = get_prompt_context_text(input.project_state_dir, input.session_id);
@@ -2005,6 +2672,213 @@ async fn interrupt_live_pane_route_async(
     )
 }
 
+async fn select_live_pane_route_async(
+    context: &ProjectServiceRequestContext,
+    body: Option<&Value>,
+    irreversible_input: Option<&AtomicBool>,
+) -> ProjectServiceDispatchResponse {
+    let request = match parse_selection_answer_request(body) {
+        Ok(request) => request,
+        Err(response) => return *response,
+    };
+    if let Some(refusal) = refuse_foreign_selection_guest(context, &request.session_id) {
+        return refusal;
+    }
+    let target = match resolve_live_session_target(context, &request.session_id) {
+        Ok(Some(target)) => target,
+        Ok(None) => {
+            return json_error(
+                500,
+                format!("Session \"{}\" is not running", request.session_id),
+            );
+        }
+        Err(error) => return json_error(500, error),
+    };
+    let Some(_claim) = ChooserAnswerClaim::acquire(&target.window_id) else {
+        return json_error(
+            409,
+            format!(
+                "another answer is already being sent to pane {}",
+                target.window_id
+            ),
+        );
+    };
+    let pane = match capture_pane_async(&target.window_id, SELECTION_CAPTURE, TMUX_COMMAND_TIMEOUT)
+        .await
+    {
+        Ok(pane) => strip_sgr(&pane),
+        Err(error) => return json_error(500, error),
+    };
+    let plan = match plan_selection_answer(
+        &pane,
+        &request.label,
+        request.number,
+        request.question.as_deref(),
+        request.subject.as_deref(),
+    ) {
+        Ok(plan) => plan,
+        Err(error) => return json_error(409, error),
+    };
+    // Before the FIRST key, not before the Enter: the walk is already a
+    // mutation. Without this a client disconnect -- a backgrounded app, a CLI
+    // Ctrl-C -- drops this future between the walk and the commit, leaving the
+    // cursor parked with no restore and no response; or during the Enter,
+    // where the carriage return may already have landed while the caller is
+    // told the request did not complete.
+    if let Some(flag) = irreversible_input {
+        flag.store(true, Ordering::SeqCst);
+    }
+    for key in &plan.keys {
+        if let Err(error) = send_selection_key_async(&target.window_id, key).await {
+            return json_error(500, error);
+        }
+    }
+    let mut landing = SelectionLanding::Changed {
+        message: "the pane was never read back after moving the cursor".to_owned(),
+    };
+    let mut moved_pane = String::new();
+    for attempt in 0..SELECTION_SETTLE_ATTEMPTS {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(SELECTION_SETTLE_MS)).await;
+        }
+        let moved =
+            match capture_pane_async(&target.window_id, SELECTION_CAPTURE, TMUX_COMMAND_TIMEOUT)
+                .await
+            {
+                Ok(pane) => strip_sgr(&pane),
+                Err(error) => return json_error(500, error),
+            };
+        landing = selection_landing(&moved, &plan, &request.label, request.number);
+        moved_pane = moved;
+        if matches!(landing, SelectionLanding::Landed) {
+            break;
+        }
+    }
+    let landed_at = plan
+        .chooser
+        .option_index(&request.label, request.number)
+        .unwrap_or(plan.from);
+    match selection_commit_decision(landing, &plan) {
+        SelectionCommit::Commit => {}
+        SelectionCommit::Refuse {
+            restore,
+            left_at,
+            error,
+        } => {
+            let restoring = !restore.is_empty();
+            let mut error = error;
+            for key in restore {
+                if let Err(failure) = send_selection_key_async(&target.window_id, key).await {
+                    error = format!("{error}; the cursor could not be put back: {failure}");
+                    break;
+                }
+            }
+            if restoring {
+                let mut seen = None;
+                let mut repeats = 0u8;
+                for _ in 0..SELECTION_SETTLE_ATTEMPTS {
+                    tokio::time::sleep(Duration::from_millis(SELECTION_SETTLE_MS)).await;
+                    let Ok(pane) = capture_pane_async(
+                        &target.window_id,
+                        SELECTION_CAPTURE,
+                        TMUX_COMMAND_TIMEOUT,
+                    )
+                    .await
+                    .map(|pane| strip_sgr(&pane)) else {
+                        break;
+                    };
+                    let outcome = restore_outcome(&pane, &plan, left_at);
+                    // Two agreeing reads is settled here as well, so a cursor
+                    // that genuinely will not move costs two reads rather than
+                    // the whole budget.
+                    repeats = match (&seen, &outcome) {
+                        (
+                            Some(RestoreOutcome::LeftOn { label }),
+                            RestoreOutcome::LeftOn { label: again },
+                        ) if label == again => repeats + 1,
+                        (Some(RestoreOutcome::PaneChanged), RestoreOutcome::PaneChanged) => {
+                            repeats + 1
+                        }
+                        _ => 0,
+                    };
+                    let settled = matches!(outcome, RestoreOutcome::Restored) || repeats >= 1;
+                    seen = Some(outcome);
+                    if settled {
+                        break;
+                    }
+                }
+                error = describe_restore(error, seen);
+            }
+            return json_error(409, error);
+        }
+    }
+    if let Some(moved) = session_window_changed(context, &request.session_id, &target.window_id) {
+        let mut error = moved;
+        for key in selection_cursor_keys(landed_at, plan.from) {
+            if let Err(failure) = send_selection_key_async(&target.window_id, key).await {
+                error = format!("{error}; the cursor could not be put back: {failure}");
+                break;
+            }
+        }
+        return json_error(409, error);
+    }
+    let _ = claim_submit_generation(&target.window_id);
+    if let Err(error) = run_tmux_argv_with_timeout_async(
+        send_carriage_return_argv(&target.window_id),
+        format!("tmux send carriage return failed for {}", target.window_id),
+        TMUX_COMMAND_TIMEOUT,
+    )
+    .await
+    {
+        return json_error(500, error);
+    }
+    // `Unverified` needs two agreeing reads; `Confirmed` is terminal on the
+    // first. A capture that catches the repaint mid-write, or any transient
+    // parse failure, gives a frame with no chooser in it -- and taking that as
+    // "the prompt is gone" accepted an answer that never landed, on a pane
+    // that showed the prompt whole again a frame later. Two agreeing reads is
+    // what settled means here, as it already does for the submit wait.
+    let mut outcome = None;
+    let mut read_failed = false;
+    let mut unverified_runs = 0u8;
+    for _ in 0..SELECTION_SETTLE_ATTEMPTS {
+        tokio::time::sleep(Duration::from_millis(SELECTION_SETTLE_MS)).await;
+        let Ok(pane) =
+            capture_pane_async(&target.window_id, SELECTION_CAPTURE, TMUX_COMMAND_TIMEOUT)
+                .await
+                .map(|pane| strip_sgr(&pane))
+        else {
+            read_failed = true;
+            break;
+        };
+        let seen = commit_outcome(&pane, &plan, &moved_pane);
+        unverified_runs = match seen {
+            CommitOutcome::Unverified => unverified_runs + 1,
+            _ => 0,
+        };
+        let settled = match seen {
+            CommitOutcome::Confirmed { .. } => true,
+            CommitOutcome::Unverified => unverified_runs >= 2,
+            CommitOutcome::StillShowing => false,
+        };
+        outcome = Some(seen);
+        if settled {
+            break;
+        }
+    }
+    selection_answer_result(&request.session_id, &request.label, outcome, read_failed)
+}
+
+async fn send_selection_key_async(window_id: &str, key: &str) -> Result<(), String> {
+    run_tmux_argv_with_timeout_async(
+        send_key_argv(window_id, key),
+        format!("tmux send-keys {key} failed for {window_id}"),
+        TMUX_COMMAND_TIMEOUT,
+    )
+    .await
+    .map(|_| ())
+}
+
 async fn input_live_pane_route_async(
     context: &ProjectServiceRequestContext,
     pathname: &str,
@@ -2043,23 +2917,109 @@ async fn input_live_pane_route_async(
         {
             return json_error(403, "shared guest cannot access another session");
         }
-        if text.trim().is_empty() && attachment_ids.is_empty() {
+        if shared_chat_trim(&text).is_empty() && attachment_ids.is_empty() {
             return json_error(403, "shared guest input requires text or attachments");
         }
-    } else if text.trim().is_empty() && attachment_ids.is_empty() {
+    } else if shared_chat_trim(&text).is_empty() && attachment_ids.is_empty() {
+        // One definition of an empty message, shared with the attribution
+        // gate below and with the composer. On Rust's own `trim` this route
+        // refused a `"\u{85}"`-only line that the app had accepted, so the
+        // user saw a hard 400 for something the composer let them send.
         return json_error(400, "text is required");
     }
-    let mut attachments = Vec::new();
-    for attachment_id in &attachment_ids {
-        let Some(record) = get_attachment_record(
-            context.project_root(),
-            attachment_id,
-            Some(session_id.as_str()),
-        ) else {
-            return json_error(400, format!("attachment not found: {attachment_id}"));
-        };
-        attachments.push(record);
+    // A peer this service cannot identify is refused, not delivered anonymously.
+    //
+    // The daemon already refuses a stamp that is not a machine id, and the
+    // first version of this let such a peer through here and delivered its
+    // text unattributed, on the reasoning that unattributed is honest. It is
+    // not the honest answer: for input from an unidentifiable peer the honest
+    // answer is the one the daemon gives. Delivering it meant the two layers
+    // disagreed with the INNER one more permissive -- and it left the composer
+    // a peer with no label to compose, which is how body `from` came to be the
+    // fallback for "I could not tell who this is".
+    //
+    // WHY IDENTITY IS MIRRORED HERE AND POLICY IS NOT. The daemon also refuses
+    // a peer's `force`, `attachmentIds` and `sharedChatActor`, and those are
+    // deliberately NOT repeated here, so this layer is still the more
+    // permissive one for them. The difference is that this layer composes the
+    // label, so it cannot attribute a peer it cannot identify -- identity is
+    // its own business, and it had to agree. The three fields are policy about
+    // what a peer may ask for, and a second copy of policy is a second thing
+    // to drift. Nothing is lost by it: reaching this service directly means
+    // being on the machine already, and a local caller that simply omits the
+    // peer role is granted MORE than any of those fields would give it.
+    if let Some(peer) = remote_actor
+        .as_ref()
+        .filter(|actor| actor.role == RemoteActorRole::Peer)
+        && !peer
+            .peer_machine_id
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(crate::machine_identity::is_valid_machine_id)
+    {
+        return json_error(403, "peer request did not say which machine it came from");
     }
+    // A peer's input must be attributed in the pane, and a command cannot be.
+    //
+    // `looks_like_agent_command` text is delivered WITHOUT the sender prefix,
+    // because `[mbp/claude-x] /clear` is read as prose and the command never
+    // runs. For a local sender that is the right trade. For a peer it is the
+    // whole hazard back: `!rm -rf ~/work` from another machine would reach the
+    // pane byte-identical to Sam typing it, and the task row is no backstop
+    // because it is only written when the caller itself names a `task`.
+    //
+    // So the class that cannot carry its attribution is refused rather than
+    // delivered anonymously, which makes "a peer's input is named" true of
+    // every peer input instead of most of them. Decided HERE, next to the
+    // prefix, so the refusal and the prefix cannot disagree about what a
+    // command is -- the same `looks_like_agent_command`, not a second copy in
+    // the daemon's allowlist.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && looks_like_agent_command(&text)
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send a command, because a command carries no sender",
+        );
+    }
+    // One hop for the whole loop, not one per attachment. Each
+    // `get_attachment_record` reads from disk, and this handler runs per
+    // request, so N attachments were N sync reads on the async worker serving
+    // it.
+    let attachments = {
+        let project_root = context.project_root().to_path_buf();
+        // Owned: `attachment_ids` borrows the request body, which does not
+        // outlive the pool task.
+        let ids: Vec<String> = attachment_ids.iter().map(|id| (*id).to_owned()).collect();
+        let owner = session_id.clone();
+        match crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::task_name("project-service", "attachment-records"),
+            move || -> Result<Vec<Value>, String> {
+                let mut records = Vec::new();
+                for attachment_id in &ids {
+                    let Some(record) =
+                        get_attachment_record(&project_root, attachment_id, Some(owner.as_str()))
+                    else {
+                        return Err(format!("attachment not found: {attachment_id}"));
+                    };
+                    records.push(record);
+                }
+                Ok(records)
+            },
+        )
+        .await
+        {
+            Ok(Ok(records)) => records,
+            // A missing attachment is still a 400, exactly as before.
+            Ok(Err(error)) => return json_error(400, error),
+            // A pool task that never ran is not a missing attachment.
+            Err(error) => {
+                return json_error(500, format!("attachment records were not read: {error}"));
+            }
+        }
+    };
     let target = match resolve_live_session_target(context, &session_id) {
         Ok(Some(target)) => target,
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
@@ -2074,6 +3034,64 @@ async fn input_live_pane_route_async(
         session_id: &session_id,
         text,
     });
+    // A peer may not send a SECOND line to a receiver whose lines we cannot
+    // vouch for -- measured on the COMPOSED PROMPT, which is the string that
+    // is actually typed.
+    //
+    // The attribution prefix shields position zero of line one, and that is
+    // all it shields. Where later lines are executed, each one arrives at a
+    // fresh prompt as its own command: `"thanks\nrm -rf ~/work"` is not a
+    // command to `looks_like_agent_command` -- which gives up the moment it
+    // finds a break -- so it was delivered, and line two ran unprefixed.
+    //
+    // Two things were wrong with the first version of this rule, and both were
+    // about asking the question in the wrong place.
+    //
+    // It measured the request's `text` while delivery sends `prompt`, and
+    // `format_agent_input_with_attachments` turns one line plus an attachment
+    // into several. So "one line to a shell is safe" was false for a one-line
+    // peer message carrying `attachmentIds`.
+    //
+    // And it keyed on the literal tool name `shell`, which is one spelling of
+    // a receiver that executes lines. A session whose command is `zsh`, or a
+    // user-defined tool, or anything with no recognized `toolConfigKey`,
+    // resolves to its own command name and was treated as an agent composer.
+    // The question is answered POSITIVELY instead, by the same
+    // `prompt_paste_mode` that delivery itself uses: `claude` and `codex` take
+    // a framed whole body, so their later lines are prose inside one
+    // attributed message, and every other receiver is one whose lines we
+    // cannot vouch for. One list, in the module that owns the distinction.
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && spans_more_than_one_line(&prompt)
+        && crate::agent_prompt_delivery::prompt_paste_mode(&prompt, target.tool.as_deref())
+            != crate::agent_prompt_delivery::PromptPasteMode::Framed
+    {
+        return json_error(
+            403,
+            "a peer machine cannot send more than one line to this receiver, because only the first line carries its sender",
+        );
+    }
+    // Rejected here, before the activity probe below, because that probe is a
+    // tmux subprocess and a task id that does not exist should not cost one.
+    // The STAMP still happens after every refusal -- this is the read half of
+    // the same question.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+    {
+        match task_input_target_exists(&project_state_dir, task_id) {
+            TaskInputTargetCheck::Present => {}
+            // The caller's id is wrong.
+            TaskInputTargetCheck::Missing(error) => return json_error(400, error),
+            // This machine's ledger is unreadable, which is not the caller's
+            // fault and not a thing they can fix by correcting anything.
+            TaskInputTargetCheck::Unreadable(error) => return json_error(500, error),
+        }
+    }
     let force = body.get("force").and_then(Value::as_bool) == Some(true);
     let now_ms = super::scheduler::scheduler_now_ms();
     let activity = if force {
@@ -2082,6 +3100,62 @@ async fn input_live_pane_route_async(
         tmux_agent_input_window_activity_async(&target.window_id, TMUX_COMMAND_TIMEOUT).await
     };
     let decision = decide_agent_input_delivery(force, activity, now_ms, now_ms);
+    // Never queued, for a peer with more than one line. The rule above asked
+    // about the tool resolved NOW, and a queued delivery re-resolves it at
+    // send time (`resolve_queued_delivery_target`) from a record that carries
+    // no role and no tool -- so a hold is a window in which an agent receiver
+    // can become one whose lines execute, with the multi-line prompt already
+    // approved. Refused rather than re-checked later, because the re-check
+    // would need the role threaded through the queue to be worth anything.
+    //
+    // Matched by REFERENCE so the decision survives for the branch below, and
+    // placed here rather than inside it so that this refusal, like every
+    // other, happens before the ledger write.
+    if let AgentInputDeliveryDecision::Hold { reason, .. } = &decision
+        && remote_actor
+            .as_ref()
+            .is_some_and(|actor| actor.role == RemoteActorRole::Peer)
+        && spans_more_than_one_line(&prompt)
+    {
+        return json_error(
+            409,
+            format!("a peer machine cannot hold more than one line for later delivery ({reason})"),
+        );
+    }
+    // Written only once the request is going to be delivered or held, and
+    // still before the send, so a task id that does not exist refuses the
+    // whole request rather than delivering and recording nothing.
+    //
+    // The ORDER here is the fix round five found. Moving the peer line rule
+    // after the composer (so that it could measure the prompt that is
+    // actually typed) moved it past this write, so a refused peer message
+    // stamped `lastInputBy` and un-paused the agent's loop alerts for input
+    // that never reached the pane -- a ledger row claiming a delegation that
+    // did not happen, and a way for a peer to keep un-silencing a looping
+    // agent with messages this service refuses. Every refusal now precedes
+    // every write.
+    // Still a 400 here, unlike the check above, and not by oversight:
+    // `record_task_input` returns one string for "no such row" and for "could
+    // not read", so this call cannot tell them apart. By this point the ledger
+    // was readable moments ago, which makes the row having been deleted in
+    // between the likelier of the two -- and that is the caller's 400.
+    if let Some(task_id) = body
+        .get("task")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|task_id| !task_id.is_empty())
+        && let Err(error) = record_task_input(
+            &project_state_dir,
+            task_id,
+            // The same derivation the prefix uses, so the ledger and the pane
+            // cannot name different senders -- and the only record of origin
+            // at all when the text is a bare command, which is delivered
+            // without a prefix because a prefixed command would not run.
+            agent_input_sender_label(body, remote_actor.as_ref()).as_deref(),
+        )
+    {
+        return json_error(400, error);
+    }
     if let Err(error) = clear_loop_alert_pause_for_work(&project_state_dir, &session_id) {
         return json_error(
             500,
@@ -3052,6 +4126,55 @@ fn remaining_until(deadline: Instant) -> Result<Duration, String> {
         Err("agent output request timed out".to_owned())
     } else {
         Ok(deadline.saturating_duration_since(now))
+    }
+}
+
+/// Windows with a chooser answer in flight.
+///
+/// The answer is a cursor walk, a read-back and then an Enter, and two of them
+/// at once interleave into a commit nobody asked for: A walks to "No", A reads
+/// back and sees "No", B's walk moves the cursor on, A sends Enter. A reports
+/// `200 accepted: label "No"` and what committed was B's row -- which in the
+/// real prompts can be "Yes, and switch to BYPASS PERMISSIONS (no further
+/// prompts) for this session". Two clients answering one prompt is an ordinary
+/// path here, not an exotic one: sharing is full trust over the session and
+/// answering is on the guest allowlist, so an owner and a guest both tapping
+/// is exactly the case.
+///
+/// This cannot close the window against a person pressing Down in the TUI at
+/// the same moment; nothing in a pane can. It closes it against ourselves,
+/// which is the part we own.
+static ANSWERING_WINDOWS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::BTreeSet<String>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
+
+struct ChooserAnswerClaim {
+    window_id: String,
+}
+
+impl ChooserAnswerClaim {
+    /// `None` when another answer already holds this window.
+    fn acquire(window_id: &str) -> Option<Self> {
+        let mut answering = match ANSWERING_WINDOWS.lock() {
+            Ok(answering) => answering,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if !answering.insert(window_id.to_owned()) {
+            return None;
+        }
+        Some(Self {
+            window_id: window_id.to_owned(),
+        })
+    }
+}
+
+impl Drop for ChooserAnswerClaim {
+    fn drop(&mut self) {
+        let mut answering = match ANSWERING_WINDOWS.lock() {
+            Ok(answering) => answering,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        answering.remove(&self.window_id);
     }
 }
 
@@ -4602,6 +5725,44 @@ mod tests {
         .expect("large output command should complete");
 
         assert_eq!(result.stdout.len(), 200_000);
+    }
+
+    #[test]
+    fn one_window_takes_one_chooser_answer_at_a_time() {
+        let held = ChooserAnswerClaim::acquire("@selection-claim")
+            .expect("the first answer takes the window");
+        assert!(
+            ChooserAnswerClaim::acquire("@selection-claim").is_none(),
+            "a second answer must not interleave its walk with the first"
+        );
+        // A different window is a different prompt.
+        assert!(ChooserAnswerClaim::acquire("@selection-claim-other").is_some());
+
+        drop(held);
+        assert!(
+            ChooserAnswerClaim::acquire("@selection-claim").is_some(),
+            "the window must be released when the answer finishes"
+        );
+    }
+
+    #[test]
+    fn answering_a_chooser_stands_down_a_pending_input_submit() {
+        // The input waiter's fallback carriage return is documented as
+        // something that "can answer a permission dialog". Bumping the
+        // generation makes it give up, so the only Enter that reaches the pane
+        // is the one for the option the person chose.
+        let generation = claim_submit_generation("@selection-generation");
+        assert!(submit_generation_is_current(
+            "@selection-generation",
+            generation
+        ));
+
+        let _ = claim_submit_generation("@selection-generation");
+
+        assert!(
+            !submit_generation_is_current("@selection-generation", generation),
+            "the older waiter must no longer think it is current"
+        );
     }
 
     #[test]

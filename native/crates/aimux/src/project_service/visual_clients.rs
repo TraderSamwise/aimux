@@ -303,11 +303,12 @@ impl PeriodicTask for ProjectExposeHotSnapshotRefreshTask {
     }
 
     fn interval_ms(&self) -> i64 {
-        i64::try_from(EXPOSE_HOT_SNAPSHOT_REFRESH_MS).unwrap_or(i64::MAX)
-    }
-
-    fn tick_multiple(&self) -> u64 {
-        12
+        // From the coordinator, not from the constant, which is what the
+        // daemon-side expose task already does. The constant is still the
+        // DEFAULT -- it is where `refresh_delay_ms` starts -- so this changes
+        // no cadence; it makes the field the single source instead of a second
+        // one that nothing read.
+        i64::try_from(self.coordinator.refresh_delay_ms).unwrap_or(i64::MAX)
     }
 
     fn timeout(&self) -> Duration {
@@ -384,6 +385,53 @@ fn sanitize_remote_address(remote_address: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The expose refresh cadence has one source, and it is the coordinator.
+    ///
+    /// Two things were wrong and neither changed any cadence, which is why
+    /// they survived. `tick_multiple` was overridden with a literal `12` while
+    /// `interval_ms` read the constant; the scheduler schedules from
+    /// `tick_multiple`, so the literal was what actually ran, and at 3_000ms
+    /// the two happen to agree. And the coordinator's own `refresh_delay_ms`
+    /// -- with a public `with_refresh_delay_ms` builder -- was read by nothing
+    /// but the `Debug` impl, while the daemon-side expose task has always read
+    /// exactly that field. So one surface honoured the field and the other
+    /// ignored it.
+    ///
+    /// The second assertion FAILS on the shipped code: configuring a delay did
+    /// nothing. The first pins the default, so making the field live did not
+    /// quietly change how often the refresh runs.
+    #[test]
+    fn the_expose_refresh_cadence_comes_from_the_coordinator() {
+        let default_task =
+            ProjectExposeHotSnapshotRefreshTask::new(ProjectHotSnapshotCoordinator::new(true));
+        let expected_default =
+            i64::try_from(EXPOSE_HOT_SNAPSHOT_REFRESH_MS).expect("a representable interval");
+        assert_eq!(
+            default_task.interval_ms(),
+            expected_default,
+            "the default cadence no longer comes from EXPOSE_HOT_SNAPSHOT_REFRESH_MS, so this change moved the schedule instead of just its source"
+        );
+        assert_eq!(
+            default_task.tick_multiple(),
+            crate::periodic_scheduler::interval_ms_to_ticks(expected_default),
+            "the scheduled cadence and the reported interval disagree; the scheduler uses tick_multiple, so whatever that returns is what actually runs"
+        );
+
+        let configured = ProjectExposeHotSnapshotRefreshTask::new(
+            ProjectHotSnapshotCoordinator::new(true).with_refresh_delay_ms(5_000),
+        );
+        assert_eq!(
+            configured.interval_ms(),
+            5_000,
+            "with_refresh_delay_ms did not reach the task; the builder is public and a caller setting it would get the default cadence with no indication it was ignored"
+        );
+        assert_eq!(
+            configured.tick_multiple(),
+            crate::periodic_scheduler::interval_ms_to_ticks(5_000),
+            "a configured delay reached interval_ms but not the schedule the scheduler derives"
+        );
+    }
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;

@@ -120,6 +120,27 @@ pub fn plan_remote_core_cli(
                 },
             ))
         }
+        ("projects", "claim") => {
+            let json = args[2..].iter().any(|arg| arg == "--json");
+            let take = args[2..].iter().any(|arg| arg == "--take");
+            let project = args[2..].iter().find(|arg| !arg.starts_with("--")).cloned();
+            Ok(remote_plan(
+                RemoteCliOperation::ProjectsClaim,
+                RemoteCliAction::ProjectsClaim {
+                    project,
+                    take,
+                    json,
+                },
+                None,
+            ))
+        }
+        ("projects", "owners") => Ok(remote_plan(
+            RemoteCliOperation::ProjectsOwners,
+            RemoteCliAction::ProjectsOwners {
+                json: args[2..].iter().any(|arg| arg == "--json"),
+            },
+            None,
+        )),
         ("security", "devices") if args[2..].iter().all(|arg| arg == "--json") => Ok(remote_plan(
             RemoteCliOperation::SecurityDevices,
             RemoteCliAction::SecurityDevices {
@@ -138,6 +159,7 @@ pub fn plan_remote_core_cli(
                 RemoteCliOperation::SecurityDeviceApprove,
                 RemoteCliAction::SecurityDeviceApproveLive {
                     device_id: parsed.device_id,
+                    approval_code: parsed.approval_code,
                     json: parsed.json,
                 },
                 None,
@@ -254,12 +276,14 @@ pub fn run_remote_cli_action(
                     .request_core_command(&request)
                     .map(|response| response.result["relay"].clone())
                     .unwrap_or_else(|error| {
-                        json!({
-                            "status": "disconnected",
-                            "relayUrl": "",
-                            "lastConnectedAt": Value::Null,
-                            "lastError": error,
-                        })
+                        // One spelling of the snapshot, so a renderer never
+                        // has to cope with two shapes of the same object.
+                        crate::remote::relay_client::RelayStatusSnapshot {
+                            status: Some(crate::remote::relay_client::RelayStatus::Disconnected),
+                            last_error: Some(error.to_string()),
+                            ..Default::default()
+                        }
+                        .to_json()
                     }),
                 None => json!({ "status": "off" }),
             };
@@ -272,12 +296,26 @@ pub fn run_remote_cli_action(
             }
             Ok(CoreCliExecution::ok(lines))
         }
+        RemoteCliAction::ProjectsClaim {
+            project,
+            take,
+            json,
+        } => run_projects_claim(project.as_deref(), take, json, output_mode),
+        RemoteCliAction::ProjectsOwners { json } => run_projects_owners(json, output_mode),
         RemoteCliAction::SecurityDevices { json } => {
             run_security_devices(json, false, output_mode, runtime)
         }
-        RemoteCliAction::SecurityDeviceApproveLive { device_id, json } => {
-            run_security_device_approve_live(device_id.as_deref(), json, output_mode, runtime)
-        }
+        RemoteCliAction::SecurityDeviceApproveLive {
+            device_id,
+            approval_code,
+            json,
+        } => run_security_device_approve_live(
+            device_id.as_deref(),
+            approval_code.as_deref(),
+            json,
+            output_mode,
+            runtime,
+        ),
         RemoteCliAction::SecurityDeviceUpdate {
             device_id,
             action,
@@ -327,6 +365,7 @@ fn existing_daemon_call(command: &'static str) -> CoreCommandCall {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SecurityDeviceApproveLiveArgs {
     device_id: Option<String>,
+    approval_code: Option<String>,
     json: bool,
 }
 
@@ -342,12 +381,26 @@ fn parse_security_device_approve_live_args(
     args: &[String],
 ) -> Option<SecurityDeviceApproveLiveArgs> {
     let mut device_id = None;
+    let mut approval_code = None;
     let mut json = false;
     let mut index = 3;
     while index < args.len() {
         let arg = args[index].as_str();
         if arg == "--json" {
             json = true;
+            index += 1;
+        } else if arg == "--code" {
+            let value = args.get(index + 1)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            approval_code = Some(value.clone());
+            index += 2;
+        } else if let Some(value) = arg.strip_prefix("--code=") {
+            if value.is_empty() {
+                return None;
+            }
+            approval_code = Some(value.to_owned());
             index += 1;
         } else if device_id.is_none() && !arg.starts_with('-') {
             device_id = Some(arg.to_owned());
@@ -356,7 +409,11 @@ fn parse_security_device_approve_live_args(
             return None;
         }
     }
-    Some(SecurityDeviceApproveLiveArgs { device_id, json })
+    Some(SecurityDeviceApproveLiveArgs {
+        device_id,
+        approval_code,
+        json,
+    })
 }
 
 fn parse_security_device_update_args(args: &[String]) -> Option<SecurityDeviceUpdateArgs> {
@@ -406,6 +463,150 @@ fn parse_security_device_update_args(args: &[String]) -> Option<SecurityDeviceUp
     })
 }
 
+/// Claim this checkout for this machine.
+///
+/// The machine identity comes from this machine, never from an argument: the
+/// relay records what a machine says about itself, and a claim naming another
+/// machine's id would be this machine speaking for one it is not.
+fn run_projects_claim(
+    project: Option<&str>,
+    take: bool,
+    json_flag: bool,
+    output_mode: CoreCliOutputMode,
+) -> Result<CoreCliExecution, String> {
+    let mut roots = crate::paths::PathResolver::from_env();
+    let resolved = roots.resolve_repo_root(project.unwrap_or("."));
+    // Checked before anything is written. Outside a checkout the resolver
+    // falls through to the working directory, so the claim used to go out for
+    // a path that is not a repository and come back "this machine has not
+    // reported that checkout" -- an answer to the wrong question, and one
+    // that sends somebody looking at the relay.
+    //
+    // And checked FIRST, because establishing this machine's identity is a
+    // write: a claim that was going to be refused anyway should not leave a
+    // file behind on its way out.
+    //
+    // "Could not look" is not "is not a checkout". An unmounted volume or a
+    // path with no permission is a different sentence, and the registry
+    // already keeps those apart.
+    match crate::paths::project_root_status(&resolved) {
+        crate::paths::ProjectRootStatus::GitCheckout => {}
+        crate::paths::ProjectRootStatus::NotCheckout => {
+            return Err(format!(
+                "{} is not a git checkout, so there is nothing to own",
+                resolved.to_string_lossy()
+            ));
+        }
+        crate::paths::ProjectRootStatus::Unreachable => {
+            return Err(format!(
+                "{} could not be read, so whether it is a checkout is unknown",
+                resolved.to_string_lossy()
+            ));
+        }
+    }
+    let resolver = crate::paths::PathResolver::from_env();
+    // Written if it is missing, so a machine that has never had an identity
+    // claims under a real id rather than as `unidentified` -- which the relay
+    // refuses, correctly, because that id is shared by every such daemon.
+    let machine = crate::machine_identity::load_or_create(&resolver)
+        .map_err(|error| format!("Could not read this machine's identity: {error}"))?;
+    let project_root = resolved.to_string_lossy().into_owned();
+    let (owner, already) =
+        crate::remote::remote_project_owners::claim_project_owner(&project_root, &machine, take)?;
+    if json_flag || output_mode == CoreCliOutputMode::Json {
+        return Ok(CoreCliExecution::ok(vec![
+            serde_json::to_string_pretty(&json!({
+                "projectRoot": owner.project_root,
+                "machineId": owner.machine_id,
+                "claimedAt": owner.claimed_at,
+                "alreadyOwned": already,
+            }))
+            .map_err(|error| error.to_string())?,
+        ]));
+    }
+    Ok(CoreCliExecution::ok(vec![if already {
+        format!("This machine already owns {}", owner.project_root)
+    } else {
+        format!("This machine now owns {}", owner.project_root)
+    }]))
+}
+
+/// Who owns what, including the checkouts this machine does not own.
+///
+/// That half is the point: a record that only ever said "yes, you" would tell
+/// nobody anything, and an owner that is away is the case a person has to be
+/// able to see before deciding to take it.
+fn run_projects_owners(
+    json_flag: bool,
+    output_mode: CoreCliOutputMode,
+) -> Result<CoreCliExecution, String> {
+    // Read, never created. `read_stored` exists for exactly this and says so:
+    // `load_or_create` is the first thing that can establish an identity, and
+    // on a full or read-only home it caches an ephemeral one for the rest of
+    // the process -- so a listing would decide what this machine connects as.
+    //
+    // Three outcomes, not two. An identity, no identity yet, and could-not-
+    // read: swallowing the last into the second made an unreadable home print
+    // every row as somebody else's machine, which is the one answer here that
+    // is actively misleading. The rows still print, because they are true and
+    // they came from the relay; what is withheld is the claim about which one
+    // is this machine.
+    let resolver = crate::paths::PathResolver::from_env();
+    let identity = crate::machine_identity::read_stored(&resolver);
+    let unreadable = identity.as_ref().err().map(ToString::to_string);
+    let machine_id = identity.ok().flatten().map(|machine| machine.id);
+    let owners = crate::remote::remote_project_owners::list_project_owners()?;
+    if json_flag || output_mode == CoreCliOutputMode::Json {
+        return Ok(CoreCliExecution::ok(vec![
+            serde_json::to_string_pretty(&json!({
+                "thisMachineId": machine_id,
+                // Said out loud rather than inferred from a null id, which
+                // would read as "this machine owns nothing here".
+                "thisMachineIdError": unreadable,
+                "owners": owners
+                    .iter()
+                    .map(|owner| json!({
+                        "projectRoot": owner.project_root,
+                        "machineId": owner.machine_id,
+                        "claimedAt": owner.claimed_at,
+                        "online": owner.online,
+                        "thisMachine": Some(&owner.machine_id) == machine_id.as_ref(),
+                    }))
+                    .collect::<Vec<_>>(),
+            }))
+            .map_err(|error| error.to_string())?,
+        ]));
+    }
+    if owners.is_empty() {
+        return Ok(CoreCliExecution::ok(vec![
+            "No checkout has an owner yet.".to_owned(),
+        ]));
+    }
+    let mut lines = Vec::new();
+    if let Some(error) = unreadable.as_deref() {
+        lines.push(format!(
+            "Could not read this machine's identity ({error}), so none of these rows can be called this machine's."
+        ));
+    }
+    lines.extend(
+        owners
+            .iter()
+            .map(|owner| {
+                let who = if unreadable.is_none() && Some(&owner.machine_id) == machine_id.as_ref()
+                {
+                    "this machine".to_owned()
+                } else if owner.online {
+                    format!("{} (connected)", owner.machine_id)
+                } else {
+                    format!("{} (away)", owner.machine_id)
+                };
+                format!("{}  {}", owner.project_root, who)
+            })
+            .collect::<Vec<_>>(),
+    );
+    Ok(CoreCliExecution::ok(lines))
+}
+
 fn run_security_devices(
     json_flag: bool,
     pending: bool,
@@ -424,28 +625,48 @@ fn run_security_devices(
     ))
 }
 
+/// The id of a waiting device, as the list reports it.
+fn security_device_id(device: &Value) -> Option<&str> {
+    [device.get("deviceId"), device.get("id")]
+        .into_iter()
+        .flatten()
+        .find_map(Value::as_str)
+}
+
+/// Approve the device that is waiting.
+///
+/// This used to list the waiting devices and then refuse every time with
+/// "Interactive approval requires a TTY", which was wrong twice over: no
+/// terminal was ever consulted -- there is no `isatty` anywhere on this path
+/// -- and the terminal it sent you to failed identically. The prompt it
+/// stood in for was never written, so the pairing dialog's own
+/// copy-to-clipboard command could not succeed on any machine.
+///
+/// Approving needs an id and a code, and the dialog only shows the code, so
+/// the common case is a bare `approve --code <code>`: with exactly one
+/// device waiting there is nothing to disambiguate and that one is approved.
+/// More than one, and the ids are printed rather than a guess being made.
 fn run_security_device_approve_live(
     device_id: Option<&str>,
+    approval_code: Option<&str>,
     json_flag: bool,
     output_mode: CoreCliOutputMode,
     runtime: &impl RemoteCliRuntime,
 ) -> Result<CoreCliExecution, String> {
+    let as_json = json_flag || output_mode == CoreCliOutputMode::Json;
     let devices = runtime.list_remote_security_devices(true)?;
     let candidates = if let Some(device_id) = device_id {
         devices
-            .into_iter()
-            .filter(|device| {
-                [device.get("id"), device.get("deviceId")]
-                    .into_iter()
-                    .flatten()
-                    .any(|value| value.as_str() == Some(device_id))
-            })
+            .iter()
+            .filter(|device| security_device_id(device) == Some(device_id))
+            .cloned()
             .collect::<Vec<_>>()
     } else {
-        devices
+        devices.clone()
     };
+
     if candidates.is_empty() {
-        if json_flag || output_mode == CoreCliOutputMode::Json {
+        if as_json {
             return Ok(CoreCliExecution::ok(vec![
                 serde_json::to_string_pretty(
                     &json!({ "ok": false, "devices": [], "error": "No live remote clients are waiting for approval" }),
@@ -453,14 +674,64 @@ fn run_security_device_approve_live(
                 .map_err(|error| error.to_string())?,
             ]));
         }
-        let message = device_id
-            .map(|device_id| {
+        // The dialog shows a code and no id, so a code in the id's place is
+        // the likeliest mistake by far, and "nothing is waiting" reads as a
+        // connection problem instead of a wrong argument.
+        let message = match device_id {
+            Some(device_id) if looks_like_an_approval_code(device_id) => format!(
+                "{device_id} looks like an approval code, not a device id. Run `aimux security device approve --code {device_id}`, or pass the id from `aimux security devices`."
+            ),
+            Some(device_id) => {
                 format!("No live remote client is waiting for approval as {device_id}.")
-            })
-            .unwrap_or_else(|| "No live remote clients are waiting for approval.".into());
+            }
+            None => "No live remote clients are waiting for approval.".into(),
+        };
         return Ok(CoreCliExecution::ok(vec![message]));
     }
-    Err("Interactive approval requires a TTY. Run `aimux security device approve` in a terminal and type the code shown on the waiting device.".into())
+
+    if candidates.len() > 1 {
+        let ids = candidates
+            .iter()
+            .filter_map(security_device_id)
+            .collect::<Vec<_>>();
+        if as_json {
+            return Ok(CoreCliExecution::ok(vec![
+                serde_json::to_string_pretty(
+                    &json!({ "ok": false, "devices": candidates, "error": "More than one device is waiting for approval" }),
+                )
+                .map_err(|error| error.to_string())?,
+            ]));
+        }
+        let mut lines =
+            vec!["More than one device is waiting for approval. Approve one by id:".to_owned()];
+        lines.extend(
+            ids.iter()
+                .map(|id| format!("  aimux security device approve {id} --code <code>")),
+        );
+        return Ok(CoreCliExecution::ok(lines));
+    }
+
+    let target = security_device_id(&candidates[0])
+        .ok_or_else(|| "A waiting device was listed without an id".to_owned())?
+        .to_owned();
+    run_security_device_update(
+        &target,
+        "approve",
+        approval_code,
+        json_flag,
+        output_mode,
+        runtime,
+    )
+}
+
+/// The codes the pairing dialog shows are short and have no `client_` prefix,
+/// which is the whole difference a reader needs.
+fn looks_like_an_approval_code(value: &str) -> bool {
+    !value.starts_with("client_")
+        && value.len() <= 16
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 fn run_security_device_update(
