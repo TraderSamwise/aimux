@@ -6,6 +6,34 @@ const repoRoot = resolve(new URL("..", import.meta.url).pathname);
 const roots = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
 const scanRoots = roots.length > 0 ? roots.map((root) => resolve(repoRoot, root)) : [resolve(repoRoot, "native/crates/aimux")];
 
+const NET_TYPES = ["TcpListener", "TcpStream", "UdpSocket", "UnixListener", "UnixStream"];
+
+/// The net type names a file binds BARE from `<module>::net`.
+///
+/// An aliased import does not bind the bare name, so `TcpStream as
+/// StdTcpStream` is not in the result. A glob binds all of them.
+function bareNetImports(fileText, module) {
+  const names = new Set();
+  if (new RegExp(`\\buse\\s+${module}\\s*::\\s*net\\s*::\\s*\\*`).test(fileText)) {
+    for (const type of NET_TYPES) names.add(type);
+    return names;
+  }
+  const regex = new RegExp(
+    `\\buse\\s+${module}\\s*::\\s*net\\s*::\\s*(\\{[^}]*\\}|[A-Za-z_][A-Za-z0-9_]*(?:\\s+as\\s+[A-Za-z_][A-Za-z0-9_]*)?)`,
+    "g",
+  );
+  for (const match of fileText.matchAll(regex)) {
+    const spec = match[1];
+    const items = spec.startsWith("{") ? spec.slice(1, -1).split(",") : [spec];
+    for (const item of items) {
+      const trimmed = item.trim();
+      if (trimmed.length === 0 || /\bas\b/.test(trimmed)) continue;
+      if (NET_TYPES.includes(trimmed)) names.add(trimmed);
+    }
+  }
+  return names;
+}
+
 const HAZARDS = [
   {
     id: "std-process",
@@ -16,12 +44,36 @@ const HAZARDS = [
       (/\buse\s+std\s*::\s*process\s*::\s*Command\b/.test(fileText) && /\bCommand\s*::\s*new\s*\(/.test(fnSource)),
   },
   {
+    // A bare `TcpListener::` means whichever module imported that name bare,
+    // and one file cannot import two types of the same name bare. So the
+    // imports decide, and asking only whether `use std::net::` appears
+    // SOMEWHERE in the file does not: `local_ui_server.rs` imports std's
+    // `TcpStream` under an alias, tokio's `TcpListener` and `TcpStream` bare,
+    // calls `std::net::TcpListener::bind` fully qualified outside the async
+    // work and tokio's `TcpListener::from_std` bare inside it. Every bare name
+    // in that file is tokio's, and the old test called the correct one a
+    // violation.
+    //
+    // A fully qualified `std::net::` path is unambiguous and still fires
+    // whatever the imports say.
+    //
+    // KNOWN GAP, deliberately not closed here: std's type reached through an
+    // ALIAS (`StdTcpStream::connect`) is not detected, because the alias is
+    // not one of the names below. Closing that means following the alias, and
+    // it is a different change from fixing a false positive.
     id: "std-net",
     message: "std::net used inside async fn; use tokio::net or spawn_blocking",
-    matches: (fnSource, fileText) =>
-      /\bstd\s*::\s*net\b/.test(fnSource) ||
-      (/\buse\s+std\s*::\s*net\s*::/.test(fileText) &&
-        /\b(TcpListener|TcpStream|UdpSocket|UnixListener|UnixStream)\s*::/.test(fnSource)),
+    matches: (fnSource, fileText) => {
+      if (/\bstd\s*::\s*net\b/.test(fnSource)) return true;
+      const fromStd = bareNetImports(fileText, "std");
+      const fromTokio = bareNetImports(fileText, "tokio");
+      return NET_TYPES.some(
+        (type) =>
+          new RegExp(`\\b${type}\\s*::`).test(fnSource) &&
+          !fromTokio.has(type) &&
+          fromStd.has(type),
+      );
+    },
   },
   {
     id: "thread-sleep",
