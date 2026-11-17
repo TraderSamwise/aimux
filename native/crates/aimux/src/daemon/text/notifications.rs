@@ -70,15 +70,24 @@ pub fn route_notification_text_request(
     None
 }
 
-pub fn notification_list_text_route(
-    runtime: &mut impl DaemonNotificationTextRuntime,
+/// Phase one of `aimux notification list`: everything decidable without the
+/// project service, so the carve-out can resolve under the lock and release it
+/// before the upstream hop.
+///
+/// Query-bearing: `unread` and `sessionId` become part of the upstream route
+/// path, which is why `CoreReadTarget::route_path` is an owned `String`.
+pub fn resolve_notification_list_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
-) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: notification_list_route_path(route_url, body),
+    })
+}
+
+fn notification_list_route_path(route_url: &DaemonRouteUrl, body: Option<&Value>) -> String {
     let mut query = Vec::new();
     if boolean_param(route_url, body, "unread", false) {
         query.push("unread=1".to_owned());
@@ -86,7 +95,7 @@ pub fn notification_list_text_route(
     if let Some(session_id) = trimmed_string(route_url, body, "sessionId") {
         query.push(format!("sessionId={}", url_encode(&session_id)));
     }
-    let route_path = if query.is_empty() {
+    if query.is_empty() {
         project_routes::notifications::LIST.to_owned()
     } else {
         format!(
@@ -94,12 +103,37 @@ pub fn notification_list_text_route(
             project_routes::notifications::LIST,
             query.join("&")
         )
+    }
+}
+
+pub fn notification_list_text_route(
+    runtime: &mut impl DaemonNotificationTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_notification_list_request(route_url, body) {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
     };
-    let (json, _) =
-        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
-            Ok(result) => result,
-            Err(response) => return response,
-        };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_notification_list_result(route_url, result)
+}
+
+/// Phase three of `aimux notification list`, from a raw project-service result.
+pub fn render_notification_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
     let notifications =
         match required_project_service_array(&json, "notifications list", "notifications") {
             Ok(notifications) => notifications,

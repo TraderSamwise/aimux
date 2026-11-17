@@ -748,18 +748,45 @@ pub fn task_list_text_route(
     render_task_list_payload(route_url, &json)
 }
 
+/// Phase one of `aimux review list`: everything decidable without the project
+/// service, so the carve-out can resolve under the lock and release it before
+/// the upstream hop.
+pub fn resolve_review_list_request(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: project_routes::tasks::LIST.to_owned(),
+    })
+}
+
 pub fn review_list_text_route(
     runtime: &mut impl DaemonCollaborationTextRuntime,
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
 ) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_review_list_request(route_url, body) {
+        Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let (json, _) = match unwrap_project_result(
-        runtime.get_project_service_json(&project, project_routes::tasks::LIST),
-    ) {
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_review_list_result(route_url, result)
+}
+
+/// Phase three of `aimux review list`, from a raw project-service result.
+pub fn render_review_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
         Ok(result) => result,
         Err(response) => return response,
     };
