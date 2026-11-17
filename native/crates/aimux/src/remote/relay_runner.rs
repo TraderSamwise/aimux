@@ -109,10 +109,7 @@ pub struct RelayHandle {
 
 impl RelayHandle {
     pub fn status(&self) -> RelayStatusSnapshot {
-        self.status
-            .lock()
-            .map(|status| status.clone())
-            .unwrap_or_default()
+        read_relay_status(&self.status)
     }
 
     pub fn stop(&self) {
@@ -290,7 +287,7 @@ impl RelayRunner {
     }
 
     fn set_status(&self, status: RelayStatus, last_error: Option<String>) {
-        if let Ok(mut snapshot) = self.handle.status.lock() {
+        update_relay_status(&self.handle.status, |snapshot| {
             snapshot.status = Some(status);
             if status == RelayStatus::Connected {
                 snapshot.last_connected_at = Some(now_iso());
@@ -303,19 +300,19 @@ impl RelayRunner {
             } else if last_error.is_some() {
                 snapshot.last_error = last_error;
             }
-        }
+        });
     }
 
     fn note_short_connection(&self) {
-        if let Ok(mut snapshot) = self.handle.status.lock() {
+        update_relay_status(&self.handle.status, |snapshot| {
             snapshot.short_connection_streak = snapshot.short_connection_streak.saturating_add(1);
-        }
+        });
     }
 
     fn note_connection_held(&self) {
-        if let Ok(mut snapshot) = self.handle.status.lock() {
+        update_relay_status(&self.handle.status, |snapshot| {
             snapshot.short_connection_streak = 0;
-        }
+        });
     }
 
     /// Stamp what happened to the socket that just went away.
@@ -324,11 +321,11 @@ impl RelayRunner {
     /// retry, because a retry is exactly when the reason used to be lost.
     fn record_close(&self, code: Option<u16>, reason: Option<String>) {
         let disconnected_at = now_iso();
-        if let Ok(mut snapshot) = self.handle.status.lock() {
+        update_relay_status(&self.handle.status, |snapshot| {
             snapshot.last_disconnected_at = Some(disconnected_at.clone());
             snapshot.last_close_code = code;
             snapshot.last_close_reason = reason.clone();
-        }
+        });
         // A hundred reconnects left nothing at all in daemon.jsonl, so the
         // only record of a link collapsing all afternoon was that someone was
         // watching it. Warn, because a relay that closes us is not routine.
@@ -1047,11 +1044,8 @@ impl RelayRunner {
     }
 
     fn remove_outbox_front_if_matches(&self, frame: &str) {
-        if let Ok(mut outbox) = self.outbox.lock()
-            && outbox.front().is_some_and(|queued| queued == frame)
-        {
-            outbox.pop_front();
-            self.record_outbox_depth(outbox.len());
+        if let Some(depth) = remove_outbox_front_if_matches(&self.outbox, frame) {
+            self.record_outbox_depth(depth);
         }
     }
 
@@ -1226,6 +1220,57 @@ struct SubscriptionDelivery {
 /// invariant `writing_frame`'s own comment states: a request giving up during
 /// a slow write would take the frame out from under the writer and then report
 /// that the peer was never asked. The mark is intact behind a poisoned mutex,
+/// Change the relay's status snapshot, recovering a poisoned lock.
+///
+/// Every writer below used `if let Ok(..)`, so a poisoned status lock did not
+/// fail the relay -- it silently stopped the relay from ever reporting
+/// anything again. The snapshot kept whatever it last held, which for
+/// `set_status` means a relay that disconnected goes on reporting
+/// `Connected`: the exact answer a status exists to prevent anyone from
+/// believing.
+///
+/// A function over the mutex rather than only a method, for the same reason as
+/// the three below: the invariant can then be gated without constructing a
+/// `RelayRunner`, which needs a bridge, a relay URL and a token.
+fn update_relay_status(
+    status: &Mutex<RelayStatusSnapshot>,
+    update: impl FnOnce(&mut RelayStatusSnapshot),
+) {
+    let mut snapshot = status.lock().unwrap_or_else(|error| error.into_inner());
+    update(&mut snapshot);
+}
+
+/// Read the relay's status snapshot, recovering a poisoned lock.
+///
+/// `unwrap_or_default()` here was the other half of the same bug, and the
+/// worse half: recovering only the writers would still answer every consumer
+/// with a DEFAULT snapshot, which reads as a relay that has never connected
+/// and never failed. The stored status is the one thing this must not
+/// discard.
+fn read_relay_status(status: &Mutex<RelayStatusSnapshot>) -> RelayStatusSnapshot {
+    status
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
+}
+
+/// Drop the front frame when it is the one just written.
+///
+/// Poison here is not a withdrawal and not a no-op: the frame has ALREADY gone
+/// out on the wire, so failing to dequeue it means the pump sends it again,
+/// and again, for as long as the lock stays poisoned. `withdraw_outbox_frame`
+/// returning `false` on poison is a true answer -- it did not withdraw
+/// anything -- but there is no true answer available here except removing the
+/// frame.
+fn remove_outbox_front_if_matches(outbox: &Mutex<VecDeque<String>>, frame: &str) -> Option<usize> {
+    let mut queued = outbox.lock().unwrap_or_else(|error| error.into_inner());
+    if queued.front().is_none_or(|front| front != frame) {
+        return None;
+    }
+    queued.pop_front();
+    Some(queued.len())
+}
+
 /// so recover the guard, as this crate does at 29 other sites.
 ///
 /// These are functions over the mutex rather than only methods so the
@@ -1361,6 +1406,7 @@ mod tests {
         ProjectEventStream, ProjectEventStreamItem, RelayRunner, RelayStatus, RelayStatusSnapshot,
         RelaySubscriptions, daemon_connect_url, frame_being_written_has_id, frame_id_is,
         front_outbox_frame, mark_frame_being_written, push_front_outbox_frame, push_outbox_frame,
+        read_relay_status, remove_outbox_front_if_matches, update_relay_status,
     };
     use crate::machine_identity::MachineIdentity;
     use crate::remote::websocket::INITIAL_RETRY_MS;
@@ -1542,6 +1588,146 @@ mod tests {
         assert!(
             frame_id_is(&front.expect("a front frame"), "f1"),
             "the recovered read returned a different frame than the one queued"
+        );
+    }
+
+    /// Poisons a mutex the way the sibling gates do, and insists it took.
+    fn poison_lock<T: Send + 'static>(lock: &Arc<Mutex<T>>) {
+        let poisoning = Arc::clone(lock);
+        let panicked = std::thread::spawn(move || {
+            let _guard = poisoning.lock().expect("a clean lock to poison");
+            panic!("poisoning a relay lock on purpose");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(
+            lock.is_poisoned(),
+            "the mutex must actually be poisoned for this test to mean anything"
+        );
+    }
+
+    /// A poisoned status lock still records that the relay went away.
+    ///
+    /// `set_status` used `if let Ok(..)`, so poison did not fail the relay --
+    /// it froze the status. The snapshot kept reporting `Connected` for a
+    /// socket that had gone, which is the one answer a status exists to stop
+    /// anyone believing.
+    #[test]
+    fn a_poisoned_status_lock_still_records_the_disconnect() {
+        let status = Arc::new(Mutex::new(RelayStatusSnapshot::default()));
+        update_relay_status(&status, |snapshot| {
+            snapshot.status = Some(RelayStatus::Connected);
+        });
+        poison_lock(&status);
+
+        update_relay_status(&status, |snapshot| {
+            snapshot.status = Some(RelayStatus::Reconnecting);
+            snapshot.last_error = Some("socket closed".to_owned());
+        });
+
+        let snapshot = read_relay_status(&status);
+        assert_eq!(
+            snapshot.status,
+            Some(RelayStatus::Reconnecting),
+            "a poisoned status lock went on reporting the old status, so a relay that disconnected still looks connected"
+        );
+        assert_eq!(
+            snapshot.last_error.as_deref(),
+            Some("socket closed"),
+            "the reason the relay is not connected was dropped on the floor"
+        );
+    }
+
+    /// And the READ recovers too, which is the half that matters more.
+    ///
+    /// `RelayHandle::status` used `unwrap_or_default()`. Recovering only the
+    /// writers would still answer every consumer with a default snapshot --
+    /// a relay that has never connected and never failed -- while the real
+    /// status sat in the mutex.
+    #[test]
+    fn a_poisoned_status_lock_is_not_a_relay_that_never_connected() {
+        let status = Arc::new(Mutex::new(RelayStatusSnapshot::default()));
+        update_relay_status(&status, |snapshot| {
+            snapshot.status = Some(RelayStatus::Connected);
+            snapshot.last_connected_at = Some("2026-11-17T00:00:00Z".to_owned());
+            snapshot.short_connection_streak = 3;
+        });
+        poison_lock(&status);
+
+        let snapshot = read_relay_status(&status);
+        assert_eq!(
+            snapshot.status,
+            Some(RelayStatus::Connected),
+            "a poisoned read answered with a default snapshot instead of the stored status"
+        );
+        assert_eq!(
+            snapshot.last_connected_at.as_deref(),
+            Some("2026-11-17T00:00:00Z"),
+            "the stored connect time was replaced by a default"
+        );
+        assert_eq!(
+            snapshot.short_connection_streak, 3,
+            "the flap streak was reset by a poisoned read, which is how flap detection silently turns itself off"
+        );
+    }
+
+    /// A poisoned outbox still dequeues the frame that was just written.
+    ///
+    /// This one is not a lost diagnostic. The frame has ALREADY gone out on
+    /// the wire; failing to pop it means the pump writes it again, and again,
+    /// for as long as the lock stays poisoned. Note the direction differs from
+    /// `withdraw_outbox_frame`, which returns `false` on poison because "I did
+    /// not withdraw anything" is a true answer -- here there is no true answer
+    /// except removing it.
+    #[test]
+    fn a_poisoned_outbox_still_dequeues_the_frame_it_sent() {
+        let outbox = Arc::new(Mutex::new(VecDeque::new()));
+        let sent = json!({ "type": "peer_request", "id": "f1" }).to_string();
+        let next = json!({ "type": "peer_request", "id": "f2" }).to_string();
+        {
+            let mut queued = outbox.lock().expect("a clean lock to seed");
+            queued.push_back(sent.clone());
+            queued.push_back(next.clone());
+        }
+        poison_lock(&outbox);
+
+        let depth = remove_outbox_front_if_matches(&outbox, &sent);
+        assert_eq!(
+            depth,
+            Some(1),
+            "a poisoned outbox did not dequeue the frame it had just sent, so the pump will send it again for as long as the lock stays poisoned"
+        );
+        assert_eq!(
+            front_outbox_frame(&outbox).as_deref(),
+            Some(next.as_str()),
+            "the wrong frame is now at the front"
+        );
+    }
+
+    /// The control: a frame that is NOT at the front is left alone, poisoned
+    /// or not. Without this, a helper that popped unconditionally would pass
+    /// the gate above while dropping frames nobody had sent.
+    #[test]
+    fn a_frame_that_is_not_at_the_front_is_not_dequeued() {
+        let outbox = Arc::new(Mutex::new(VecDeque::new()));
+        let front = json!({ "type": "peer_request", "id": "f1" }).to_string();
+        let other = json!({ "type": "peer_request", "id": "f2" }).to_string();
+        {
+            let mut queued = outbox.lock().expect("a clean lock to seed");
+            queued.push_back(front.clone());
+            queued.push_back(other.clone());
+        }
+        poison_lock(&outbox);
+
+        assert_eq!(
+            remove_outbox_front_if_matches(&outbox, &other),
+            None,
+            "a frame that was not at the front was dequeued anyway"
+        );
+        assert_eq!(
+            front_outbox_frame(&outbox).as_deref(),
+            Some(front.as_str()),
+            "the front frame was dropped by a non-matching removal"
         );
     }
 
