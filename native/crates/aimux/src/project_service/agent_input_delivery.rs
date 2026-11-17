@@ -68,10 +68,20 @@ impl AgentInputDeliveryQueue {
     /// in this module and holds it across a bounded file operation; a caller
     /// outside the module holding it across anything longer is the bug this
     /// accessor makes testable, not one it introduces.
+    /// Recovered, not panicked on.
+    ///
+    /// This is a `Mutex<()>`: a mutual-exclusion TOKEN with no protected data.
+    /// Poison exists to say the data behind a lock may be inconsistent, and
+    /// here there is none to be inconsistent, so recovery is unambiguously
+    /// safe -- which is why the crate recovers at its other lock sites.
+    ///
+    /// `expect` turned a panic somewhere else into a PERMANENT one here. The
+    /// delivery tick takes this every run, so a single poisoning panic made
+    /// every later tick panic too, and agent input delivery stopped for the
+    /// life of the project service while the scheduler recorded a fresh panic
+    /// each time. The queue file was fine; nothing could get at it.
     pub fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.lock
-            .lock()
-            .expect("agent input delivery lock poisoned")
+        self.lock.lock().unwrap_or_else(|error| error.into_inner())
     }
 }
 
