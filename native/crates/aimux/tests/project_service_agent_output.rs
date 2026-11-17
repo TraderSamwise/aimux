@@ -3409,6 +3409,71 @@ fn agent_input_delivers_immediately_when_active_client_already_quiet() {
     cleanup(project);
 }
 
+/// A poisoned delivery token does not stop delivery.
+///
+/// `AgentInputDeliveryQueue::lock` used `expect`, so a panic ANYWHERE while
+/// that token was held made every later `lock()` panic too. The delivery tick
+/// takes it on every run, so one poisoning panic stopped agent input delivery
+/// for the life of the project service, with the scheduler recording a fresh
+/// panic each tick and the queue file sitting there intact.
+///
+/// It is a `Mutex<()>`: a mutual-exclusion token with no protected data, so
+/// there is nothing poison could be warning about and recovery is the only
+/// sensible reading. The crate recovers at its other lock sites for the same
+/// reason.
+///
+/// Asserted through the TICK rather than through `lock()` alone, because what
+/// matters is that queued input still reaches the agent.
+#[test]
+fn a_poisoned_delivery_token_still_delivers_queued_input() {
+    let project = temp_project("poisoned-delivery-token");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    write_delivery_queue(
+        &state_dir,
+        json!([
+            {
+                "id": "agent-input-after-poison",
+                "sessionId": "codex-1",
+                "windowId": "@1",
+                "prompt": "deliver after poison",
+                "createdAtMs": now_ms - 10_000,
+                "maxDeliverAtMs": now_ms + MAX_AGENT_INPUT_HOLD_MS,
+                "holdReason": "active-client-recent-input"
+            }
+        ]),
+    );
+
+    // Poison the token the way production would: a panic while holding it.
+    let poisoning = std::thread::spawn({
+        let queue = context.agent_input_delivery_queue.clone();
+        move || {
+            let _guard = queue.lock();
+            panic!("poisoning the agent input delivery token on purpose");
+        }
+    })
+    .join();
+    assert!(
+        poisoning.is_err(),
+        "the poisoning thread must have panicked, or this test proves nothing"
+    );
+
+    let mut runtime = FakeActivityRuntime::default();
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, now_ms);
+
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "deliver after poison".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ],
+        "a poisoned delivery token stopped the tick from delivering queued input; with `expect` this panicked instead, on this tick and every later one"
+    );
+    cleanup(project);
+}
+
 #[test]
 fn queued_duplicate_loop_checks_are_delivered_once() {
     let project = temp_project("duplicate-loop-check-queue");
