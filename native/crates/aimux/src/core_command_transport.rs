@@ -825,12 +825,30 @@ impl LoopbackRetry {
     }
 }
 
+/// Which loopback failures are worth another attempt inside the deadline.
+///
+/// `WouldBlock`, `Interrupted` and the two raw spellings are what a
+/// non-blocking socket says when it is not ready -- which is a narrower set
+/// than "transient on loopback", and the gap showed up as a flake rather than
+/// as a bug report. `ENOTCONN` is the one that bit: a loopback write can
+/// answer "Socket is not connected" while the connection is still settling,
+/// and because that kind was not listed, the single attempt surfaced straight
+/// through `send_project_service_json` as `502 Error: Socket is not
+/// connected`. A daemon-side test caught it roughly once in twenty runs; the
+/// user-visible version is a core command failing for no reason it can
+/// explain.
+///
+/// Retrying it is bounded by the same deadline as everything else here, so a
+/// socket that genuinely never connects still fails -- as
+/// `TransientIoExhausted`, which names the operation and the attempt count,
+/// rather than as a bare io error with no history.
 fn is_transient_loopback_error(error: &io::Error) -> bool {
     matches!(
         error.kind(),
-        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted | io::ErrorKind::NotConnected
     ) || error.raw_os_error() == Some(libc::EAGAIN)
         || error.raw_os_error() == Some(libc::EWOULDBLOCK)
+        || error.raw_os_error() == Some(libc::ENOTCONN)
 }
 
 fn parse_json_response(bytes: &[u8]) -> Result<DaemonJsonResponse, CoreCommandTransportError> {
@@ -1097,6 +1115,84 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A loopback `ENOTCONN` is retried, not reported.
+    ///
+    /// This is the error behind a flake that took three wrong hypotheses to
+    /// locate -- a bind race, a stray-connection panic, and script exhaustion,
+    /// none of which were it. The daemon's own request to a project service
+    /// occasionally answered "Socket is not connected" and
+    /// `send_project_service_json` turned that into a 502 on the first
+    /// attempt, because `NotConnected` was not in the transient set while
+    /// `WouldBlock` was.
+    ///
+    /// Driven through the closure rather than through a socket, so it is
+    /// deterministic: no timing, no listener, no race to provoke.
+    #[test]
+    fn a_loopback_not_connected_error_is_retried_within_the_deadline() {
+        let attempts = std::cell::Cell::new(0_usize);
+        let outcome = LoopbackRetry::new("write", Some(1_000)).run(|| {
+            attempts.set(attempts.get() + 1);
+            if attempts.get() == 1 {
+                return Err(io::Error::from_raw_os_error(libc::ENOTCONN));
+            }
+            Ok(())
+        });
+        assert!(
+            matches!(outcome, Ok(Ok(()))),
+            "an ENOTCONN that clears on the next attempt must succeed, not surface as a 502"
+        );
+        assert_eq!(
+            attempts.get(),
+            2,
+            "the first attempt should have been retried once"
+        );
+    }
+
+    /// And one that never clears still fails, with its history.
+    #[test]
+    fn a_loopback_not_connected_error_that_never_clears_is_exhausted_not_hidden() {
+        let outcome = LoopbackRetry::new("write", Some(30))
+            .run(|| Err::<(), _>(io::Error::from_raw_os_error(libc::ENOTCONN)));
+        match outcome {
+            Err(CoreCommandTransportError::TransientIoExhausted {
+                operation,
+                attempts,
+                ..
+            }) => {
+                assert_eq!(operation, "write");
+                assert!(
+                    attempts >= 1,
+                    "the exhausted error must carry how many attempts were made"
+                );
+            }
+            other => panic!(
+                "a permanently unconnected socket must exhaust and say so, not retry forever or vanish: {other:?}"
+            ),
+        }
+    }
+
+    /// The control: an error OUTSIDE the transient set is returned at once.
+    ///
+    /// Without this, widening the set to everything would satisfy both tests
+    /// above while turning every permanent failure into a one-second stall.
+    #[test]
+    fn a_permanent_loopback_error_is_not_retried() {
+        let attempts = std::cell::Cell::new(0_usize);
+        let outcome = LoopbackRetry::new("write", Some(1_000)).run(|| {
+            attempts.set(attempts.get() + 1);
+            Err::<(), _>(io::Error::from(io::ErrorKind::PermissionDenied))
+        });
+        assert!(
+            matches!(outcome, Ok(Err(_))),
+            "a permission error is not transient and must come back on the first attempt"
+        );
+        assert_eq!(
+            attempts.get(),
+            1,
+            "a permanent error must not be retried at all"
+        );
+    }
 
     /// A daemon that closes without answering must say so, not blame framing.
     ///
