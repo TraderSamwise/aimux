@@ -53,11 +53,25 @@ pub trait DaemonStatusRuntime {
 ///
 /// The shape follows the scheduler's own diagnostics, which answer a poisoned
 /// health lock with `ok: false` and an error rather than inventing a status.
-/// The HTTP status stays 200 on purpose: nothing in this crate branches on
-/// `ok` for the daemon -- `is_aimux_daemon_health` checks `kind` and `pid` --
-/// so changing the status would alter a contract no in-tree consumer needs
-/// altered, and a caller that only reads the status learns nothing new either
-/// way. Making the field true is the part that is unambiguously right.
+/// The HTTP status stays 200 on purpose, and WHO READS THIS is the reason.
+///
+/// No Rust caller branches on the daemon's `ok` -- `is_aimux_daemon_health`
+/// checks `kind` and `pid` -- which is why flipping it cannot disturb the
+/// supervisor's adopt path. I first wrote that as "nothing in this crate
+/// branches on `ok`", which is true and reads as "nothing consumes it", which
+/// is not: the TypeScript client does, and correctly. `app/lib/api.ts` throws
+/// an `ApiError` for any 200 response carrying `ok: false`, and
+/// `apiErrorMessageFromBody` takes `record.error` as the message -- so the
+/// string below is what the app shows, without anything further being wired.
+///
+/// That is the argument FOR 200 rather than against it: the client's contract
+/// is built on `ok`, not on the status code, so a status change would alter a
+/// contract no consumer needs altered while a caller reading only the status
+/// learns nothing new either way.
+///
+/// The CLI reads it too, since `request_restarted_daemon_health_until_ready`
+/// refuses a daemon that answers with `ok: false` instead of verifying the
+/// restart.
 pub fn daemon_health_payload(
     pid: i32,
     port: u16,
