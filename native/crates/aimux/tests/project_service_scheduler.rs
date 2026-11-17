@@ -1525,6 +1525,10 @@ impl PeriodicTask for MeasuredHotTask {
         250
     }
     fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        // aimux-async-blocking: test - the sleep IS the fixture; this task exists to
+        // occupy a worker past its interval so the scheduler's overrun handling
+        // has something to handle. tokio::time::sleep would yield instead and
+        // measure nothing.
         Box::pin(async move {
             self.runs.fetch_add(1, Ordering::SeqCst);
             std::thread::sleep(Duration::from_millis(225));
@@ -1548,6 +1552,10 @@ impl PeriodicTask for SpawnedHotTask {
         true
     }
     fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        // aimux-async-blocking: test - the sleep IS the fixture; this task exists to
+        // occupy a worker past its interval so the scheduler's overrun handling
+        // has something to handle. tokio::time::sleep would yield instead and
+        // measure nothing.
         Box::pin(async move {
             self.runs.fetch_add(1, Ordering::SeqCst);
             std::thread::sleep(Duration::from_millis(225));

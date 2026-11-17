@@ -1019,6 +1019,8 @@ mod tests {
     #[test]
     fn relay_daemon_request_connect_failure_is_not_reported_as_committed() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - binds a std listener only to claim a port and
+        // drops it at once, so the relay has a closed port to fail a connect against
         // aimux-async-seam: test - daemon relay unit test drives async loopback bridge
         crate::async_runtime::block_on_named("daemon-relay:test-connect-failure", async {
             let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind free port");
