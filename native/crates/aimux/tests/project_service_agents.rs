@@ -59,6 +59,8 @@ fn agent_and_desktop_routes_distinguish_metadata_errors_from_absence() {
 fn async_agent_and_desktop_routes_distinguish_metadata_errors_from_absence() {
     let isolation = support::TestIsolation::new("async-agent-metadata-errors");
     aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    // aimux-async-blocking: test - the fixture writes each metadata variant on disk before driving
+    // the route; absent, corrupt and unreadable are the cases under test
     // aimux-async-seam: test - route test drives both native async read handlers
     aimux::async_runtime::block_on_named("test:async-metadata-read-errors", async {
         for kind in ["absent", "corrupt", "unreadable"] {
@@ -576,6 +578,8 @@ fn route_agents_reconciles_live_dead_and_unavailable_tmux_liveness() {
 #[test]
 fn async_route_agents_reconciles_tmux_liveness_on_native_service_path() {
     aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    // aimux-async-blocking: test - the fixture writes topology on disk before driving the route; the
+    // reads under test are the route's own
     // aimux-async-seam: test - sync test drives async handler
     aimux::async_runtime::block_on_named("test:async-route-agents-liveness", async {
         let project = temp_project("async-route-tmux-liveness");
@@ -772,6 +776,8 @@ fn route_teammates_reads_runtime_topology() {
 #[test]
 fn async_route_teammates_rejects_unverified_tmux_liveness() {
     aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    // aimux-async-blocking: test - the fixture writes topology and metadata on disk before driving
+    // the route; the reads under test are the route's own
     // aimux-async-seam: test - agent read route test drives async handler
     aimux::async_runtime::block_on_named(
         "test:async-route-teammates-preserves-live-sessions",
