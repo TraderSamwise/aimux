@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::load_config_for_project;
 use crate::daemon_state::mutate_metadata_state;
+use crate::debug_logging::log_lifecycle_always;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::project_service::desktop_state::{worktree_checkout_is_present, worktree_path_identity};
@@ -1153,11 +1154,22 @@ pub(super) fn route_graveyard_cleanup(
                 continue;
             }
             match delete_graveyard_agent(context, &session_id) {
-                Ok(removed_assets) => results.push(json!({
+                // "removed" only when everything went. A removal that left
+                // assets behind used to report "removed" with those assets
+                // simply missing from the list, which reads as "they were not
+                // there".
+                Ok(assets) if assets.failed.is_empty() => results.push(json!({
                     "kind": "agent",
                     "id": session_id,
                     "status": "removed",
-                    "removedAssets": removed_assets,
+                    "removedAssets": assets.removed,
+                })),
+                Ok(assets) => results.push(json!({
+                    "kind": "agent",
+                    "id": session_id,
+                    "status": "partial",
+                    "removedAssets": assets.removed,
+                    "failedAssets": assets.failed,
                 })),
                 Err(error) => results.push(json!({
                     "kind": "agent",
@@ -1575,13 +1587,35 @@ fn topology_item_worktree_path(item: &Value, node_by_id: &Map<String, Value>) ->
     })
 }
 
+/// What happened to an agent's assets: what went, and what would not go.
+///
+/// Two lists rather than one, because "not in the removed list" used to mean
+/// both "was not there" and "could not be deleted".
+#[derive(Debug, Default)]
+pub(super) struct AgentAssetRemoval {
+    pub(super) removed: Vec<String>,
+    pub(super) failed: Vec<String>,
+}
+
+impl AgentAssetRemoval {
+    fn record_failure(&mut self, path: &Path, error: &std::io::Error) {
+        let path = path.to_string_lossy().into_owned();
+        log_lifecycle_always(
+            "graveyard asset removal failed",
+            "lifecycle",
+            Some(json!({ "path": path.clone(), "error": error.to_string() })),
+        );
+        self.failed.push(format!("{path}: {error}"));
+    }
+}
+
 pub(super) fn delete_agent_assets(
     project_root: &Path,
     project_state_dir: &Path,
     session_id: &str,
-) -> Vec<String> {
+) -> AgentAssetRemoval {
     let aimux_dir = project_root.join(".aimux");
-    let mut removed_assets = Vec::new();
+    let mut removed_assets = AgentAssetRemoval::default();
     remove_file_if_exists(
         project_state_dir
             .join("recordings")
@@ -1636,24 +1670,43 @@ pub(super) fn delete_agent_assets(
     removed_assets
 }
 
-fn remove_file_if_exists(path: impl AsRef<Path>, removed_assets: &mut Vec<String>) {
+/// Remove one asset, recording whether it went.
+///
+/// `path.exists() && remove_X(path).is_ok()` used to make a removal that
+/// FAILED indistinguishable from a file that was never there: the asset was
+/// simply absent from `removed_assets`, the caller reported status "removed",
+/// and the leftover file accumulated with nothing anywhere saying so.
+///
+/// It is logged as well as returned because TWO of the three callers of
+/// `delete_agent_assets` discard its result entirely -- worktree removal at
+/// both sites calls it as a statement -- so a returned failure alone would
+/// still be invisible on those paths.
+fn remove_file_if_exists(path: impl AsRef<Path>, assets: &mut AgentAssetRemoval) {
     let path = path.as_ref();
-    if path.exists() && std::fs::remove_file(path).is_ok() {
-        removed_assets.push(path.to_string_lossy().into_owned());
+    if !path.exists() {
+        return;
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => assets.removed.push(path.to_string_lossy().into_owned()),
+        Err(error) => assets.record_failure(path, &error),
     }
 }
 
-fn remove_dir_if_exists(path: impl AsRef<Path>, removed_assets: &mut Vec<String>) {
+fn remove_dir_if_exists(path: impl AsRef<Path>, assets: &mut AgentAssetRemoval) {
     let path = path.as_ref();
-    if path.exists() && std::fs::remove_dir_all(path).is_ok() {
-        removed_assets.push(path.to_string_lossy().into_owned());
+    if !path.exists() {
+        return;
+    }
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => assets.removed.push(path.to_string_lossy().into_owned()),
+        Err(error) => assets.record_failure(path, &error),
     }
 }
 
 pub(super) fn delete_graveyard_agent(
     context: &ProjectServiceRequestContext,
     session_id: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<AgentAssetRemoval, String> {
     let project_state_dir = context.project_state_dir();
     let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
     let Some(existing) = array_field(&topology, "sessions")
@@ -1725,4 +1778,80 @@ fn remove_session_topology(topology: &mut Value, session_id: &str, node_id: &str
             && string_field(reference, "nodeId") != node_id
     });
     object_insert_mut(topology, "exchangeRefs", Value::Array(exchange_refs));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A removal that fails is reported, not silently absent.
+    ///
+    /// `path.exists() && remove_X(path).is_ok()` left a failed removal looking
+    /// exactly like a file that was never there, so the caller reported status
+    /// "removed" and the leftover accumulated with nothing saying so.
+    ///
+    /// THE FAILURE IS FORCED WITH A DIRECTORY WHERE A FILE IS EXPECTED, so
+    /// `fs::remove_file` fails with EISDIR. A permissions-based denial would
+    /// not do: CI containers often run as root, where chmod cannot stop an
+    /// unlink, and the gate would pass by proving nothing.
+    ///
+    /// A real file sits beside it as the control. Without that, a
+    /// `delete_agent_assets` that removed NOTHING would pass a test which only
+    /// checked the failure list.
+    #[test]
+    fn an_asset_that_cannot_be_removed_is_reported_as_failed() {
+        let root = std::env::temp_dir().join(format!(
+            "aimux-asset-removal-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let project_root = root.join("repo");
+        let project_state_dir = root.join("state");
+        let recordings = project_state_dir.join("recordings");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&recordings).expect("recordings dir");
+        std::fs::create_dir_all(&project_root).expect("project root");
+
+        let session_id = "s1";
+        // Undeletable by `remove_file` whatever the privileges: it is a
+        // directory, and a non-empty one.
+        let blocked = recordings.join(format!("{session_id}.log"));
+        std::fs::create_dir_all(blocked.join("inner")).expect("blocked asset as a directory");
+        // The control: an ordinary file at another asset path.
+        let removable = recordings.join(format!("{session_id}.txt"));
+        std::fs::write(&removable, b"transcript").expect("removable asset");
+
+        let assets = delete_agent_assets(&project_root, &project_state_dir, session_id);
+
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(
+            assets
+                .removed
+                .iter()
+                .any(|path| path == &removable.to_string_lossy()),
+            "the ordinary asset was not removed, so this test is not exercising removal at all: removed={:?}",
+            assets.removed
+        );
+        assert_eq!(
+            assets.failed.len(),
+            1,
+            "a removal that could not be performed produced {} failures; an empty failure list is indistinguishable from an asset that was never there, which is what let the caller report \"removed\": failed={:?}",
+            assets.failed.len(),
+            assets.failed
+        );
+        assert!(
+            assets.failed[0].contains(&*blocked.to_string_lossy()),
+            "the failure did not name the asset it could not remove: {:?}",
+            assets.failed
+        );
+        assert!(
+            !assets
+                .removed
+                .iter()
+                .any(|path| path == &blocked.to_string_lossy()),
+            "an asset that could not be removed was listed as removed: {:?}",
+            assets.removed
+        );
+    }
 }
