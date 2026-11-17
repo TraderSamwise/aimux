@@ -6093,3 +6093,96 @@ fn the_carved_out_usage_starts_a_project_service_that_is_down() {
         json!({ "displayLines": ["a line"] }),
     );
 }
+
+// --------------------------------------------------------------------------
+// notification list and review list, off the global runtime mutex.
+//
+// review list is the spelling trap in this tranche: it is dispatched from
+// `native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE`, not a `CORE_API_ROUTES`
+// name. The obvious wrong spelling does NOT compile -- there is no
+// `CORE_API_ROUTES.review_list_text` -- so the hazard is not the one it looks
+// like. What compiles, and silently never matches, is a neighbouring field
+// such as `review_approve_text`, and the lock gate below is what catches it.
+// --------------------------------------------------------------------------
+
+#[test]
+fn the_notification_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "notification-list-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.notification_list_text,
+    );
+}
+
+#[test]
+fn the_carved_out_notification_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a notification",
+        "notification-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.notification_list_text,
+        json!({
+            "notifications": [{ "title": "from-the-upstream", "sessionId": "s1" }],
+            "unreadCount": 1
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a payload with no notifications key",
+        "notification-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.notification_list_text,
+        json!({ "other": [] }),
+        502,
+        "notifications is required",
+    );
+}
+
+#[test]
+fn the_carved_out_notification_list_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "notification-list-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.notification_list_text,
+        json!({ "notifications": [], "unreadCount": 0 }),
+    );
+}
+
+#[test]
+fn the_review_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "review-list-lock",
+        aimux::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE,
+    );
+}
+
+#[test]
+fn the_carved_out_review_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a review task",
+        "review-list-parity",
+        aimux::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE,
+        // `type: review` is what makes the row survive the render's filter; a
+        // plain task would be filtered out and the case would compare two
+        // empty renderings.
+        json!({
+            "tasks": [{ "id": "from-the-upstream", "type": "review", "title": "a review" }]
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a payload with no tasks key",
+        "review-list-parity",
+        aimux::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE,
+        json!({ "other": [] }),
+        502,
+        "tasks is required",
+    );
+}
+
+#[test]
+fn the_carved_out_review_list_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "review-list-cold",
+        aimux::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE,
+        json!({ "tasks": [] }),
+    );
+}

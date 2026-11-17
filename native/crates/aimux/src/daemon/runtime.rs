@@ -3054,7 +3054,16 @@ pub fn handle_daemon_runtime_request_with_mutex(
             || pathname == crate::core_command_contract::CORE_API_ROUTES.worktree_list_text
             || pathname == crate::core_command_contract::CORE_API_ROUTES.graveyard_list_text
             || pathname == crate::core_command_contract::CORE_API_ROUTES.team_show_text
-            || pathname == crate::core_command_contract::CORE_API_ROUTES.usage_text)
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.usage_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.notification_list_text
+            // NOT a CORE_API_ROUTES name: review list is dispatched from the
+            // bare `native_cli_dispatch` constant. `CORE_API_ROUTES` has no
+            // `review_list_text` at all, so that spelling does not compile --
+            // the compiler catches the obvious mistake. The silent one is
+            // reaching for a NEIGHBOURING field that does exist, such as
+            // `review_approve_text`, which compiles and never matches
+            // `/core/review/list-text`; the lock gate is what catches that.
+            || pathname == crate::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE)
         && parse_remote_actor(&request.headers).is_none()
         && !crate::daemon::router::has_origin_header(&request.headers)
     {
@@ -3122,6 +3131,22 @@ pub fn handle_daemon_runtime_request_with_mutex(
                 request,
                 crate::daemon::text::project_content::resolve_usage_request,
                 crate::daemon::text::project_content::render_usage_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.notification_list_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::notifications::resolve_notification_list_request,
+                crate::daemon::text::notifications::render_notification_list_result,
+            );
+        }
+        if pathname == crate::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::collaboration::resolve_review_list_request,
+                crate::daemon::text::collaboration::render_review_list_result,
             );
         }
     }
