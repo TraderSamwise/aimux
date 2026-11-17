@@ -292,8 +292,23 @@ pub fn load_daemon_info(path: impl AsRef<Path>) -> Option<AimuxDaemonInfo> {
 }
 
 pub async fn load_daemon_info_async(path: impl AsRef<Path>) -> Option<AimuxDaemonInfo> {
-    let info: AimuxDaemonInfo =
-        read_json(path).and_then(|value| serde_json::from_value(value).ok())?;
+    // On the blocking pool. `read_json` here is this module's own, which goes
+    // through `read_json_result` to `fs::read` -- a sync read on whichever
+    // async worker is polling this.
+    //
+    // A pool task that never ran is indistinguishable from an absent daemon
+    // file at this signature, since both are `None`. That is a real limit of
+    // returning Option, and it is the existing contract: every caller already
+    // treats None as "no daemon recorded".
+    let owned = path.as_ref().to_path_buf();
+    let value = crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("daemon-state", "load-daemon-info"),
+        move || read_json(owned),
+    )
+    .await
+    .ok()
+    .flatten()?;
+    let info: AimuxDaemonInfo = serde_json::from_value(value).ok()?;
     match try_is_pid_alive_async(info.pid).await {
         Ok(true) => Some(info),
         Ok(false) => None,

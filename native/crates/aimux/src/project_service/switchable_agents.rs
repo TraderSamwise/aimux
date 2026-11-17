@@ -359,7 +359,27 @@ pub async fn route_switchable_agent_request_async(
     };
     let projection =
         topology_switchable_entries_for_context_async(context, &topology, &metadata.sessions).await;
-    let last_used = load_last_used_state(&project_state_dir);
+    // On the blocking pool: `load_last_used_state` reads through
+    // `fs::read_to_string` and answers any failure with an empty state, so the
+    // only error is a pool task that never ran -- which is not the same thing
+    // and says so.
+    let last_used = {
+        let dir = project_state_dir.to_path_buf();
+        match crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::task_name("project-service", "last-used-state"),
+            move || load_last_used_state(&dir),
+        )
+        .await
+        {
+            Ok(state) => state,
+            Err(error) => {
+                return Some(ProjectServiceDispatchResponse::json(
+                    500,
+                    json!({ "ok": false, "error": format!("last-used state was not read: {error}") }),
+                ));
+            }
+        }
+    };
     let mut items = list_switchable_agent_items(
         &projection.entries,
         &metadata.sessions,
