@@ -22,6 +22,27 @@ pub struct PromptContextEntry {
 
 static PROMPT_CONTEXTS: OnceLock<Mutex<HashMap<String, PromptContextEntry>>> = OnceLock::new();
 
+/// The prompt-context store, recovering from a poisoned lock.
+///
+/// `expect` here was permanent: a single panic while any thread held this
+/// guard poisons the mutex for the life of the process, so every later call --
+/// the route, the delivery path that composes a prompt, the clear on teardown
+/// -- panics too. Prompt context would be dead until the project service
+/// restarted, and each call would take its caller's route down with it.
+///
+/// RECOVERY IS SAFE HERE, and that is a claim about this data rather than a
+/// habit. The map holds independent per-session entries, and the mutations are
+/// single `insert`/`remove` calls. The only state a panic can leave behind is
+/// an expired entry that `prune_expired_locked` did not reach, and every read
+/// re-checks `expires_at` before returning, so a stale entry cannot be served.
+/// Nothing in here spans two keys, so there is no half-applied change to see.
+fn lock_prompt_context_store() -> std::sync::MutexGuard<'static, HashMap<String, PromptContextEntry>>
+{
+    prompt_context_store()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
 pub fn route_prompt_context_request(
     context: &ProjectServiceRequestContext,
     method: &str,
@@ -75,7 +96,7 @@ pub fn set_prompt_context(
     let session_id = session_id.trim();
     let key = store_key(project_state_dir, session_id);
     let normalized = normalize_prompt_context(text);
-    let mut store = prompt_context_store().lock().expect("prompt context store");
+    let mut store = lock_prompt_context_store();
     prune_expired_locked(&mut store);
     if normalized.is_empty() {
         store.remove(&key);
@@ -96,7 +117,7 @@ pub fn get_prompt_context_text(
     session_id: &str,
 ) -> Option<String> {
     let key = store_key(project_state_dir, session_id.trim());
-    let mut store = prompt_context_store().lock().expect("prompt context store");
+    let mut store = lock_prompt_context_store();
     let entry = store.get(&key).cloned()?;
     if now_ms() >= entry.expires_at {
         store.remove(&key);
@@ -107,7 +128,7 @@ pub fn get_prompt_context_text(
 
 pub fn clear_prompt_context(project_state_dir: impl AsRef<Path>, session_id: &str) {
     let key = store_key(project_state_dir, session_id.trim());
-    let mut store = prompt_context_store().lock().expect("prompt context store");
+    let mut store = lock_prompt_context_store();
     store.remove(&key);
 }
 
@@ -255,4 +276,60 @@ fn now_ms() -> i64 {
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
     ProjectServiceDispatchResponse::json(status, body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Poisons the store the only way it can really happen: a panic while a
+    /// guard is held.
+    ///
+    /// The store is process-wide, so this poisons it for every later test in
+    /// this binary. That is the point rather than a problem -- after the fix
+    /// the later calls recover, and before it they would panic, which is
+    /// exactly the permanence being fixed.
+    fn poison_the_store() {
+        let panicked = std::thread::spawn(|| {
+            let _guard = prompt_context_store()
+                .lock()
+                .expect("a clean lock to poison");
+            panic!("poisoning the prompt context store on purpose");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(
+            prompt_context_store().is_poisoned(),
+            "the mutex must actually be poisoned for this test to mean anything"
+        );
+    }
+
+    /// All three entry points, because all three took the lock and all three
+    /// would have panicked.
+    #[test]
+    fn a_poisoned_prompt_context_store_still_sets_reads_and_clears() {
+        let state_dir = std::path::Path::new("/tmp/aimux-prompt-context-poison");
+        let session = "session-poisoned";
+
+        poison_the_store();
+
+        let entry = set_prompt_context(state_dir, session, "still answering");
+        assert_eq!(
+            entry.map(|entry| entry.text),
+            Some("still answering".to_owned()),
+            "set must survive a poisoned store"
+        );
+        assert_eq!(
+            get_prompt_context_text(state_dir, session),
+            Some("still answering".to_owned()),
+            "get must survive a poisoned store"
+        );
+
+        clear_prompt_context(state_dir, session);
+        assert_eq!(
+            get_prompt_context_text(state_dir, session),
+            None,
+            "clear must survive a poisoned store, and must actually clear"
+        );
+    }
 }
