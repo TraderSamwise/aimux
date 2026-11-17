@@ -211,16 +211,10 @@ impl PeriodicTask for LoopWatcherTask {
                 }
             };
             let delivery_context = Arc::clone(&self.context);
-            let topology_path = runtime_topology_path(&project_state_dir);
-            let topology = read_runtime_topology(&topology_path).map_err(|error| {
-                format!("read runtime topology {}: {error}", topology_path.display())
-            })?;
-            let metadata =
-                serde_json::to_value(load_metadata_state_for_loop_watcher(&project_state_dir)?)
-                    .map_err(|error| {
-                        format!("serialize metadata state for loop watcher: {error}")
-                    })?;
-            let exchange = try_read_runtime_exchange(runtime_exchange_path(&project_state_dir))?;
+            // All three reads on the blocking pool; see
+            // `read_loop_scan_inputs_off_the_worker`.
+            let (topology, metadata, exchange) =
+                read_loop_scan_inputs_off_the_worker(project_state_dir.clone()).await?;
             let sessions =
                 list_topology_session_states(&topology, Some(LOOP_WATCH_SESSION_STATUSES));
             let threads = build_coordination_thread_entries(&exchange, "user");
@@ -502,6 +496,42 @@ pub fn build_scan_input(
         "runtimeExchange": runtime_exchange,
         "coordinationWorklist": coordination_worklist,
     })
+}
+
+/// The three files a loop scan starts from, read off the async workers.
+///
+/// The last of the seven inline reads. Its own helper rather than one of
+/// `scheduler`'s three, for two reasons: the metadata comes from
+/// `load_metadata_state_for_loop_watcher`, a loader private to this file that
+/// answers a missing file with `MetadataState::empty()` instead of an error,
+/// and there is a third read here that the others do not have -- the runtime
+/// exchange.
+///
+/// One hop for all three, because none is conditional: the scan needs every
+/// one. Each `map_err` runs INSIDE the closure, so all three messages survive
+/// exactly as they were rather than being flattened into one.
+pub async fn read_loop_scan_inputs_off_the_worker(
+    project_state_dir: PathBuf,
+) -> Result<(Value, Value, Value), String> {
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("project-service", "loop-scan-inputs"),
+        move || {
+            let topology_path = runtime_topology_path(&project_state_dir);
+            let topology = read_runtime_topology(&topology_path).map_err(|error| {
+                format!("read runtime topology {}: {error}", topology_path.display())
+            })?;
+            let metadata =
+                serde_json::to_value(load_metadata_state_for_loop_watcher(&project_state_dir)?)
+                    .map_err(|error| {
+                        format!("serialize metadata state for loop watcher: {error}")
+                    })?;
+            let exchange = try_read_runtime_exchange(runtime_exchange_path(&project_state_dir))?;
+            Ok((topology, metadata, exchange))
+        },
+    )
+    .await
+    // A pool task that never ran is not an empty scan.
+    .map_err(|error| format!("loop scan inputs were not read: {error}"))?
 }
 
 fn load_metadata_state_for_loop_watcher(

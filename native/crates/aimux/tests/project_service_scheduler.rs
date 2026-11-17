@@ -3063,9 +3063,11 @@ fn assert_scan_read_does_not_consume_a_worker(read: ScanRead) {
     // and the gate would pass having proved nothing -- which is how the
     // delivery gates above went wrong the first time.
     let topology = match read {
-        ScanRead::Both | ScanRead::TopologyOnly => {
-            aimux::runtime_topology::runtime_topology_path(&state_dir)
-        }
+        ScanRead::Both
+        | ScanRead::TopologyOnly
+        | ScanRead::TopologyAndState
+        // The loop scan reads the topology first, so that is where it parks.
+        | ScanRead::LoopScanInputs => aimux::runtime_topology::runtime_topology_path(&state_dir),
         ScanRead::MetadataOnly => aimux::daemon_state::metadata_state_path(&state_dir),
     };
     let made = std::process::Command::new("mkfifo")
@@ -3102,6 +3104,16 @@ fn assert_scan_read_does_not_consume_a_worker(read: ScanRead) {
                 ScanRead::MetadataOnly => {
                     let _ =
                         aimux::project_service::scheduler::read_metadata_off_the_worker(dir).await;
+                }
+                ScanRead::TopologyAndState => {
+                    let _ = aimux::project_service::scheduler::
+                        read_topology_and_metadata_state_off_the_worker(dir)
+                        .await;
+                }
+                ScanRead::LoopScanInputs => {
+                    let _ = aimux::project_service::loop_watcher_task::
+                        read_loop_scan_inputs_off_the_worker(dir)
+                        .await;
                 }
             }
         });
@@ -3163,6 +3175,8 @@ enum ScanRead {
     Both,
     TopologyOnly,
     MetadataOnly,
+    TopologyAndState,
+    LoopScanInputs,
 }
 
 #[cfg(unix)]
@@ -3181,4 +3195,16 @@ fn a_scan_tasks_topology_read_does_not_consume_an_async_worker() {
 #[test]
 fn a_scan_tasks_metadata_read_does_not_consume_an_async_worker() {
     assert_scan_read_does_not_consume_a_worker(ScanRead::MetadataOnly);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_scan_tasks_topology_and_state_read_does_not_consume_an_async_worker() {
+    assert_scan_read_does_not_consume_a_worker(ScanRead::TopologyAndState);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_loop_scan_read_does_not_consume_an_async_worker() {
+    assert_scan_read_does_not_consume_a_worker(ScanRead::LoopScanInputs);
 }
