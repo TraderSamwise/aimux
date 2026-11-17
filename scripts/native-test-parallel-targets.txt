@@ -34,6 +34,7 @@ daemon_auth
 daemon_coherence_doctor
 daemon_collaboration
 daemon_disk_doctor
+daemon_health_pool
 daemon_host_agent
 daemon_http
 daemon_jobs
