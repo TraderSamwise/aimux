@@ -200,10 +200,12 @@ all?"
 
 ## Blocking Work Inside Async Bodies
 
-The project service runs **two** async worker threads
-(`ASYNC_RUNTIME_WORKER_THREADS`). Two concurrent synchronous reads therefore
-park the entire runtime, which is how a stuck project service used to take the
-daemon with it. So blocking work reached from an async body — a filesystem
+The shared async runtime has **two** worker threads
+(`ASYNC_RUNTIME_WORKER_THREADS`), and both long-lived processes run on it: the
+project service builds it in `project_service/process.rs`, and the daemon's
+serve loop is a `process_runtime().block_on(..)` on the same one. So two
+concurrent synchronous reads park the entire runtime of whichever process ran
+them, which is how a stuck project service used to take the daemon with it. So blocking work reached from an async body — a filesystem
 read or write, a lock held across either, a subprocess, a blocking channel
 recv — goes through `crate::async_runtime::spawn_blocking_named`.
 
