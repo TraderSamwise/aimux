@@ -5954,3 +5954,142 @@ fn the_carved_out_threads_list_alias_answers_what_the_locked_path_answers() {
         "from-the-upstream",
     );
 }
+
+// --------------------------------------------------------------------------
+// graveyard list, team show and usage: the second tranche of core read routes
+// served without the global runtime mutex held across the upstream hop.
+//
+// Each gets all THREE gates the earlier routes have. The lock gate is the only
+// one that proves the carve-out is WIRED -- parity passes with the dispatch arm
+// removed, because then both paths are the locked path and agree trivially.
+// --------------------------------------------------------------------------
+
+#[test]
+fn the_graveyard_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "graveyard-list-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.graveyard_list_text,
+    );
+}
+
+#[test]
+fn the_carved_out_graveyard_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a graveyard entry",
+        "graveyard-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.graveyard_list_text,
+        // The renderer reads `id`, `tool` and `backendSessionId` from each
+        // entry; a `name`/`path` entry renders as "?  ?  (none)" and this case
+        // would have compared two of those and passed without the
+        // body-fragment assertion. Same trap thread_list documents.
+        json!({
+            "entries": [{
+                "id": "from-the-upstream",
+                "tool": "claude",
+                "backendSessionId": "s1"
+            }],
+            "worktrees": []
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a payload with no entries key",
+        "graveyard-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.graveyard_list_text,
+        json!({ "other": [] }),
+        502,
+        // The precise phrase, not "graveyard list": a fragment that coarse
+        // matches every error in the family and would pass for an unrelated
+        // failure.
+        "entries is required",
+    );
+}
+
+#[test]
+fn the_carved_out_graveyard_list_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "graveyard-list-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.graveyard_list_text,
+        json!({ "entries": [], "worktrees": [] }),
+    );
+}
+
+#[test]
+fn the_team_show_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "team-show-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.team_show_text,
+    );
+}
+
+#[test]
+fn the_carved_out_team_show_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a team config",
+        "team-show-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.team_show_text,
+        json!({
+            "config": {
+                "roles": { "from-the-upstream": { "description": "a role" } },
+                "defaultRole": "from-the-upstream"
+            }
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a config with no defaultRole",
+        "team-show-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.team_show_text,
+        json!({ "config": { "roles": {} } }),
+        502,
+        "config.defaultRole is required",
+    );
+}
+
+#[test]
+fn the_carved_out_team_show_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "team-show-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.team_show_text,
+        json!({ "config": { "roles": {}, "defaultRole": "lead" } }),
+    );
+}
+
+#[test]
+fn the_usage_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "usage-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.usage_text,
+    );
+}
+
+#[test]
+fn the_carved_out_usage_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a usage display line",
+        "usage-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.usage_text,
+        json!({ "displayLines": ["from-the-upstream"] }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a payload with no displayLines key",
+        "usage-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.usage_text,
+        json!({ "other": [] }),
+        502,
+        "displayLines is required",
+    );
+}
+
+#[test]
+fn the_carved_out_usage_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "usage-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.usage_text,
+        json!({ "displayLines": ["a line"] }),
+    );
+}
