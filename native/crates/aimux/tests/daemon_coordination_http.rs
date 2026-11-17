@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 mod support;
 
-use support::scripted_http::read_http_request;
+use support::scripted_http::{MAX_STRAY_CONNECTIONS, ScriptedRequest, read_http_request};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -1491,9 +1491,26 @@ impl ScriptedHttpServer {
         let port = listener.local_addr().expect("listener addr").port();
         let handle = std::thread::spawn(move || {
             let mut requests = Vec::new();
-            for response in responses {
+            // A stray connection -- one that closes without asking anything --
+            // must not consume a scripted response, or every later request is
+            // served the wrong one and the failure surfaces far from its cause.
+            let mut strays = 0_usize;
+            let mut pending = responses.into_iter();
+            let mut next = pending.next();
+            while let Some(response) = next.take() {
                 let (mut stream, _) = listener.accept().expect("accept");
-                let request = read_http_request(&mut stream);
+                let request = match read_http_request(&mut stream) {
+                    ScriptedRequest::Complete(request) => request,
+                    ScriptedRequest::PeerLeftWithoutAsking => {
+                        strays += 1;
+                        assert!(
+                            strays <= MAX_STRAY_CONNECTIONS,
+                            "scripted server saw {strays} connections close without sending a request; something is dialling it in a loop"
+                        );
+                        next = Some(response);
+                        continue;
+                    }
+                };
                 match response {
                     ScriptedHttpResponse::Json(response) => {
                         let body = response.to_string();
@@ -1511,6 +1528,7 @@ impl ScriptedHttpServer {
                     }
                 }
                 requests.push(request);
+                next = pending.next();
             }
             requests
         });
