@@ -403,13 +403,17 @@ fn pid_signal_zero(pid: i32) -> bool {
         .is_ok_and(|status| status.success())
 }
 
+/// Unknown folds to `false` here, which is what this already did. The
+/// supervisor callers want their own triage -- see
+/// `is_current_native_aimux_project_service_process`, where the same fold was
+/// a bug -- and changing them blind would be the mistake that one was.
 pub fn is_aimux_project_service_process(
     pid: i32,
     expected: &ProjectServiceProcessIdentity,
 ) -> bool {
     process_args_match_with_optional_cwd(pid, read_process_args, read_process_cwd, |args, cwd| {
         is_aimux_project_service_process_args(args, cwd, expected)
-    })
+    }) == ProcessIdentityMatch::Matches
 }
 
 pub fn is_aimux_daemon_process(pid: i32) -> bool {
@@ -478,17 +482,36 @@ pub fn is_native_aimux_project_service_process(
 ) -> bool {
     process_args_match_with_optional_cwd(pid, read_process_args, read_process_cwd, |args, cwd| {
         is_native_aimux_project_service_process_args(args, cwd, expected)
-    })
+    }) == ProcessIdentityMatch::Matches
 }
 
-pub fn is_current_native_aimux_project_service_process(
+/// Whether this pid is OUR current native project service, or that `ps` could
+/// not tell us.
+///
+/// The third outcome is the point. Its one caller decides whether to TERMINATE
+/// the service, and folding `CouldNotRead` into "not ours" made a failed `ps`
+/// kill a healthy one.
+pub fn current_native_aimux_project_service_process(
     pid: i32,
     expected: &ProjectServiceProcessIdentity,
     expected_binary: &Path,
-) -> bool {
+) -> ProcessIdentityMatch {
     process_args_match_with_optional_cwd(pid, read_process_args, read_process_cwd, |args, cwd| {
         is_current_native_aimux_project_service_process_args(args, cwd, expected, expected_binary)
     })
+}
+
+/// Whether a process matches an identity, or that we could not find out.
+///
+/// Three outcomes, not two, for the same reason `RepoRootLookup` has three:
+/// the answer feeds a decision to TERMINATE, and "ps could not be run" is not
+/// "this is not our process".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessIdentityMatch {
+    Matches,
+    DoesNotMatch,
+    /// The process args could not be read, so the question is unanswered.
+    CouldNotRead,
 }
 
 fn process_args_match_with_optional_cwd(
@@ -496,14 +519,21 @@ fn process_args_match_with_optional_cwd(
     read_args: impl FnOnce(i32) -> Option<String>,
     read_cwd: impl FnOnce(i32) -> Option<String>,
     matches: impl Fn(&str, Option<&str>) -> bool,
-) -> bool {
+) -> ProcessIdentityMatch {
+    // `read_args` returns `None` when the `ps` spawn fails or exits non-zero,
+    // which is indistinguishable here from a process that does not match --
+    // and it used to be reported as exactly that.
     let Some(args) = read_args(pid) else {
-        return false;
+        return ProcessIdentityMatch::CouldNotRead;
     };
     if matches(&args, None) {
-        return true;
+        return ProcessIdentityMatch::Matches;
     }
-    matches(&args, read_cwd(pid).as_deref())
+    if matches(&args, read_cwd(pid).as_deref()) {
+        ProcessIdentityMatch::Matches
+    } else {
+        ProcessIdentityMatch::DoesNotMatch
+    }
 }
 
 pub fn is_aimux_project_service_process_args(
@@ -583,6 +613,55 @@ fn normalize_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failed args read is its own outcome, not "does not match".
+    ///
+    /// The helper takes its readers as closures, so this drives the real
+    /// three-way logic with a `read_args` that fails the way a broken `ps`
+    /// does. Both other outcomes are asserted alongside it, because an enum
+    /// that always answered `CouldNotRead` would pass a test that only checked
+    /// the failure case.
+    #[test]
+    fn a_failed_args_read_is_could_not_read_not_a_mismatch() {
+        let matched = process_args_match_with_optional_cwd(
+            4242,
+            |_| Some("aimux __project-service-internal /repo".to_owned()),
+            |_| None,
+            |args, _| args.contains("__project-service-internal"),
+        );
+        assert_eq!(
+            matched,
+            ProcessIdentityMatch::Matches,
+            "a readable process whose args match must report Matches, or the other two cases prove nothing"
+        );
+
+        let mismatched = process_args_match_with_optional_cwd(
+            4242,
+            |_| Some("some other process".to_owned()),
+            |_| None,
+            |args, _| args.contains("__project-service-internal"),
+        );
+        assert_eq!(
+            mismatched,
+            ProcessIdentityMatch::DoesNotMatch,
+            "a readable process whose args do not match must report DoesNotMatch"
+        );
+
+        let unreadable = process_args_match_with_optional_cwd(
+            4242,
+            // Exactly what `read_process_args` returns when the `ps` spawn
+            // fails or exits non-zero.
+            |_| None,
+            |_| None,
+            |args, _| args.contains("__project-service-internal"),
+        );
+        assert_eq!(
+            unreadable,
+            ProcessIdentityMatch::CouldNotRead,
+            "a failed args read reported as DoesNotMatch is what made a broken ps terminate a healthy project service"
+        );
+    }
+
     use std::cell::Cell;
     use std::path::Path;
 
@@ -613,7 +692,7 @@ mod tests {
             },
         );
 
-        assert!(matched);
+        assert_eq!(matched, ProcessIdentityMatch::Matches);
         assert_eq!(cwd_calls.get(), 0);
     }
 
@@ -636,7 +715,7 @@ mod tests {
             |args, cwd| is_native_aimux_project_service_process_args(args, cwd, &expected),
         );
 
-        assert!(matched);
+        assert_eq!(matched, ProcessIdentityMatch::Matches);
         assert_eq!(cwd_calls.get(), 1);
     }
 
