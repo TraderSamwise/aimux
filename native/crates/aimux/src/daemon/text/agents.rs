@@ -972,13 +972,40 @@ fn agent_filtered_text_route(
     body: Option<&Value>,
     kind: AgentFilterKind,
 ) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
+    // Phase one is `resolve_agent_list_request`, SHARED with `aimux agents`
+    // rather than copied: both routes want the same project param and the same
+    // upstream path, and two copies of that would be two things to keep in
+    // step for no gain.
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_agent_list_request(route_url, body) {
+        Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let (json, _) = match unwrap_project_result(
-        runtime.get_project_service_json(&project, project_routes::agents::LIST),
-    ) {
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_agent_filtered_result(route_url, result, kind)
+}
+
+/// Phase three of the three filtered agent reads, from a raw project-service
+/// result.
+///
+/// The filter kind comes from the DISPATCHER, not the URL -- three pathnames
+/// reach one route function -- so the carve-out cannot pass it through a render
+/// signature that takes only the url and the result. Hence the three thin
+/// wrappers below: one shared resolve, one shared body, three kinds captured
+/// by name.
+/// Private because the kind is an internal detail: the carve-out reaches the
+/// three named wrappers, never this.
+fn render_agent_filtered_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+    kind: AgentFilterKind,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
         Ok(result) => result,
         Err(response) => return response,
     };
@@ -1052,6 +1079,30 @@ fn agent_filtered_text_route(
         AgentFilterKind::Scribe => render_core_scribe_status_lines(&payload),
     };
     text_or_json_lines(route_url, payload.clone(), &lines)
+}
+
+/// Phase three for `/core/loop/list-text`.
+pub fn render_loop_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    render_agent_filtered_result(route_url, result, AgentFilterKind::Loop)
+}
+
+/// Phase three for `/core/overseer/status-text`.
+pub fn render_overseer_status_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    render_agent_filtered_result(route_url, result, AgentFilterKind::Overseer)
+}
+
+/// Phase three for `/core/scribe/status-text`.
+pub fn render_scribe_status_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    render_agent_filtered_result(route_url, result, AgentFilterKind::Scribe)
 }
 
 /// Phase one of `aimux agents`: which project, and which upstream path.
