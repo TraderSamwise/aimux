@@ -407,21 +407,68 @@ fn pid_signal_zero(pid: i32) -> bool {
 /// supervisor callers want their own triage -- see
 /// `is_current_native_aimux_project_service_process`, where the same fold was
 /// a bug -- and changing them blind would be the mistake that one was.
+/// Whether this pid is a project service for `expected`, or that `ps` could
+/// not say.
+pub fn aimux_project_service_process(
+    pid: i32,
+    expected: &ProjectServiceProcessIdentity,
+) -> ProcessIdentityMatch {
+    process_args_match_with_optional_cwd(pid, read_process_args, read_process_cwd, |args, cwd| {
+        is_aimux_project_service_process_args(args, cwd, expected)
+    })
+}
+
 pub fn is_aimux_project_service_process(
     pid: i32,
     expected: &ProjectServiceProcessIdentity,
 ) -> bool {
-    process_args_match_with_optional_cwd(pid, read_process_args, read_process_cwd, |args, cwd| {
-        is_aimux_project_service_process_args(args, cwd, expected)
-    }) == ProcessIdentityMatch::Matches
+    aimux_project_service_process(pid, expected) == ProcessIdentityMatch::Matches
 }
 
+/// Match a process against an identity, keeping "could not read" apart from
+/// "does not match".
+///
+/// The readers are parameters so the three outcomes can be gated without a
+/// real `ps`.
+fn process_args_identity(
+    pid: i32,
+    read_args: impl FnOnce(i32) -> Option<String>,
+    matches: impl FnOnce(&str) -> bool,
+) -> ProcessIdentityMatch {
+    match read_args(pid) {
+        // `read_process_args` returns `None` when the `ps` spawn fails or exits
+        // non-zero, which is not evidence about the process.
+        None => ProcessIdentityMatch::CouldNotRead,
+        Some(args) if matches(&args) => ProcessIdentityMatch::Matches,
+        Some(_) => ProcessIdentityMatch::DoesNotMatch,
+    }
+}
+
+/// Whether this pid is an aimux daemon, or that `ps` could not say.
+pub fn aimux_daemon_process(pid: i32) -> ProcessIdentityMatch {
+    process_args_identity(pid, read_process_args, is_aimux_daemon_process_args)
+}
+
+/// Whether this pid is a NATIVE aimux daemon, or that `ps` could not say.
+pub fn native_aimux_daemon_process(pid: i32) -> ProcessIdentityMatch {
+    process_args_identity(pid, read_process_args, is_native_aimux_daemon_process_args)
+}
+
+/// `CouldNotRead` folds to `false` here, which is what this already did.
+///
+/// That fold is correct for the callers that keep it, and only for them: they
+/// REFUSE TO ACT on `false`. `stop_daemon_process_info_with` answers "refusing
+/// to signal unverified aimux daemon", and the project-service preflight skips
+/// the entry. A caller that DESTROYS on `false` must use
+/// `aimux_daemon_process` and decide for itself -- folding there is what made a
+/// failed `ps` terminate a live daemon.
 pub fn is_aimux_daemon_process(pid: i32) -> bool {
-    read_process_args(pid).is_some_and(|args| is_aimux_daemon_process_args(&args))
+    aimux_daemon_process(pid) == ProcessIdentityMatch::Matches
 }
 
+/// See `is_aimux_daemon_process` for why this fold is safe where it is kept.
 pub fn is_native_aimux_daemon_process(pid: i32) -> bool {
-    read_process_args(pid).is_some_and(|args| is_native_aimux_daemon_process_args(&args))
+    native_aimux_daemon_process(pid) == ProcessIdentityMatch::Matches
 }
 
 /// The `AIMUX_HOME` a running process was started with, which is the only thing
@@ -613,6 +660,39 @@ fn normalize_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `process_args_identity` keeps a failed read apart from a mismatch.
+    ///
+    /// All three outcomes are asserted: an enum that always answered
+    /// `CouldNotRead` would satisfy a test that only checked the failure, and
+    /// would make every daemon look unverifiable forever.
+    #[test]
+    fn a_failed_daemon_args_read_is_could_not_read_not_a_mismatch() {
+        assert_eq!(
+            process_args_identity(
+                42,
+                |_| Some("aimux daemon".to_owned()),
+                |args| args.contains("daemon")
+            ),
+            ProcessIdentityMatch::Matches,
+            "a readable matching process must report Matches, or the other cases prove nothing"
+        );
+        assert_eq!(
+            process_args_identity(
+                42,
+                |_| Some("something else".to_owned()),
+                |args| args.contains("daemon")
+            ),
+            ProcessIdentityMatch::DoesNotMatch,
+            "a readable non-matching process must report DoesNotMatch"
+        );
+        assert_eq!(
+            // Exactly what `read_process_args` returns when `ps` fails.
+            process_args_identity(42, |_| None, |args| args.contains("daemon")),
+            ProcessIdentityMatch::CouldNotRead,
+            "a failed args read reported as DoesNotMatch is what let a broken ps terminate a live daemon and report a running service as stopped"
+        );
+    }
 
     /// A failed args read is its own outcome, not "does not match".
     ///
