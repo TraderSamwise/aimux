@@ -291,14 +291,36 @@ async fn query_live_window_ids_for_session_projection_async(
     result
 }
 
+/// The live-window cache, recovering from a poisoned lock.
+///
+/// This cache is the tmux subprocess-churn mitigation: without it every read
+/// surface re-runs the live-window query, which is the shape that once had this
+/// machine spawning tmux thousands of times a second. The old spellings --
+/// `lock().ok()?` on the read and `if let Ok(..)` on the store -- turned a
+/// poisoned lock into a PERMANENT total miss: never a hit, never a store, so
+/// the mitigation silently stops existing for the life of the process and the
+/// only symptom is load.
+///
+/// RECOVERY IS SAFE HERE, and that is a claim about this data. The mutex guards
+/// one self-contained `Option<entry>`, the only mutation is replacing it whole,
+/// and every read re-checks `captured_at` against the TTL before using it -- so
+/// the worst a panic can leave behind is an entry the next read discards for
+/// being too old. There are no cross-key invariants to leave half-applied.
+fn lock_live_window_ids_query_cache()
+-> std::sync::MutexGuard<'static, Option<LiveWindowIdsQueryCacheEntry>> {
+    LIVE_WINDOW_IDS_QUERY_CACHE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
 fn cached_live_window_ids_query(
     policy: LiveWindowIdsQueryCachePolicy,
 ) -> Option<Result<LiveWindowIndex, String>> {
     if matches!(policy, LiveWindowIdsQueryCachePolicy::RequireFresh) {
         return None;
     }
-    let cache = LIVE_WINDOW_IDS_QUERY_CACHE.get_or_init(|| Mutex::new(None));
-    let mut cache = cache.lock().ok()?;
+    let mut cache = lock_live_window_ids_query_cache();
     let entry = cache.as_ref()?;
     if entry.captured_at.elapsed() <= LIVE_WINDOW_IDS_QUERY_CACHE_TTL {
         return Some(entry.result.clone());
@@ -308,13 +330,10 @@ fn cached_live_window_ids_query(
 }
 
 fn store_live_window_ids_query(result: Result<LiveWindowIndex, String>) {
-    let cache = LIVE_WINDOW_IDS_QUERY_CACHE.get_or_init(|| Mutex::new(None));
-    if let Ok(mut cache) = cache.lock() {
-        *cache = Some(LiveWindowIdsQueryCacheEntry {
-            result,
-            captured_at: Instant::now(),
-        });
-    }
+    *lock_live_window_ids_query_cache() = Some(LiveWindowIdsQueryCacheEntry {
+        result,
+        captured_at: Instant::now(),
+    });
 }
 
 fn log_live_window_query_failure(surface: &str, error: &str) {
@@ -331,8 +350,8 @@ fn log_live_window_query_failure(surface: &str, error: &str) {
 
 #[cfg(test)]
 fn clear_live_window_ids_query_cache_for_tests() {
-    let cache = LIVE_WINDOW_IDS_QUERY_CACHE.get_or_init(|| Mutex::new(None));
-    if let Ok(mut cache) = cache.lock() {
+    {
+        let mut cache = lock_live_window_ids_query_cache();
         *cache = None;
     }
 }
@@ -1141,6 +1160,52 @@ fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
 
 #[cfg(test)]
 mod tests {
+    /// A poisoned cache lock must not silently retire the churn mitigation.
+    ///
+    /// This cache is what stops every read surface re-running the tmux
+    /// live-window query. The old spellings answered a poisoned lock with a
+    /// permanent total miss -- never a hit, never a store -- so the mitigation
+    /// stopped existing for the life of the process and the only symptom was
+    /// load.
+    ///
+    /// The poisoning is real: a panic while a guard is held, asserted with
+    /// `is_poisoned` so a test that stopped poisoning could not quietly pass.
+    #[test]
+    fn a_poisoned_live_window_cache_still_caches() {
+        super::clear_live_window_ids_query_cache_for_tests();
+
+        let cache = super::LIVE_WINDOW_IDS_QUERY_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+        let panicked = std::thread::spawn(|| {
+            let _guard = super::LIVE_WINDOW_IDS_QUERY_CACHE
+                .get_or_init(|| std::sync::Mutex::new(None))
+                .lock()
+                .expect("a clean lock to poison");
+            panic!("poisoning the live-window cache on purpose");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(
+            cache.is_poisoned(),
+            "the mutex must actually be poisoned for this test to mean anything"
+        );
+
+        super::store_live_window_ids_query(Err("tmux socket busy".to_owned()));
+        let hit =
+            super::cached_live_window_ids_query(super::LiveWindowIdsQueryCachePolicy::AllowCached);
+
+        assert!(
+            hit.is_some(),
+            "a store then a read must hit, or the query runs again on every surface"
+        );
+        assert_eq!(
+            hit.and_then(|result| result.err()),
+            Some("tmux socket busy".to_owned()),
+            "the cached value must survive intact, Err included -- a failed query is a result worth not repeating"
+        );
+
+        super::clear_live_window_ids_query_cache_for_tests();
+    }
+
     use super::*;
     // The strix overseer: no recorded backend session id, and its conversation
     // alive in a session Claude still had running. Calling that "blocked" is

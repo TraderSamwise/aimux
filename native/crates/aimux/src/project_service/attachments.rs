@@ -484,7 +484,7 @@ fn create_path_attachment(
 fn assert_publishable_source(
     source_path: &Path,
     project_root: &Path,
-    roots: &[PathBuf],
+    publishable: &PublishableRoots,
 ) -> Result<PathBuf, String> {
     let requested_path = if source_path.is_absolute() {
         source_path.to_path_buf()
@@ -515,7 +515,13 @@ fn assert_publishable_source(
                 .unwrap_or("attachment")
         ));
     }
-    if !is_path_under_any_root(&source_real_path, roots) {
+    if !is_path_under_any_root(&source_real_path, &publishable.roots) {
+        if let Some(error) = &publishable.worktrees_unreadable {
+            return Err(format!(
+                "attachment source is not inside the project or a temporary directory, and the worktree list could not be read, so a source inside a worktree cannot be recognised: {} ({error})",
+                source_real_path.display()
+            ));
+        }
         return Err(format!(
             "attachment source must be inside the project, one of its worktrees, or a temporary directory: {}",
             source_real_path.display()
@@ -524,11 +530,29 @@ fn assert_publishable_source(
     Ok(source_real_path)
 }
 
-fn publishable_roots(context: &ProjectServiceRequestContext) -> Vec<PathBuf> {
+/// Where an attachment may be published from, and why the list might be short.
+///
+/// Named fields rather than a pair, because the two are consumed together by
+/// the refusal and a positional swap would read as plausible.
+struct PublishableRoots {
+    roots: Vec<PathBuf>,
+    /// Set when the worktree list could not be read at all.
+    ///
+    /// `read_runtime_topology` already answers a MISSING file with an empty
+    /// topology, so an `Err` here never means "there are no worktrees" -- it
+    /// means the question could not be asked. Dropping it made the refusal
+    /// below claim the source was not inside a worktree, when the truth was
+    /// that we could not tell. The refusal stays (failing closed is right),
+    /// but it now says which of the two happened.
+    worktrees_unreadable: Option<String>,
+}
+
+fn publishable_roots(context: &ProjectServiceRequestContext) -> PublishableRoots {
     let mut roots = vec![context.project_root().to_path_buf()];
     let project_state_dir = context.project_state_dir();
-    if let Ok(topology) = read_runtime_topology(runtime_topology_path(project_state_dir)) {
-        roots.extend(
+    let mut worktrees_unreadable = None;
+    match read_runtime_topology(runtime_topology_path(project_state_dir)) {
+        Ok(topology) => roots.extend(
             topology
                 .get("worktrees")
                 .and_then(Value::as_array)
@@ -536,11 +560,15 @@ fn publishable_roots(context: &ProjectServiceRequestContext) -> Vec<PathBuf> {
                 .flatten()
                 .filter_map(|worktree| string_field(worktree, "path"))
                 .map(PathBuf::from),
-        );
+        ),
+        Err(error) => worktrees_unreadable = Some(error),
     }
     roots.push(std::env::temp_dir());
     roots.push(PathBuf::from("/tmp"));
-    roots
+    PublishableRoots {
+        roots,
+        worktrees_unreadable,
+    }
 }
 
 pub fn attachments_dir(project_root: impl AsRef<Path>) -> PathBuf {
@@ -1374,4 +1402,92 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
     ProjectServiceDispatchResponse::json(status, body)
+}
+
+#[cfg(test)]
+mod publishable_roots_tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_state_dir(label: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("aimux-attach-roots-{label}-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create state dir");
+        dir
+    }
+
+    /// An unreadable worktree list is not the same answer as a path that is
+    /// genuinely outside every root.
+    ///
+    /// `read_runtime_topology` answers a MISSING file with an empty topology,
+    /// so an `Err` only ever means the question could not be asked. Swallowing
+    /// it made this refusal assert the source was not inside a worktree when
+    /// the truth was that it could not be determined.
+    #[test]
+    fn a_refusal_says_when_the_worktree_list_could_not_be_read() {
+        let project_root = temp_state_dir("project");
+        let outside = temp_state_dir("outside").join("file.txt");
+        fs::write(&outside, b"x").expect("write source");
+        let source = fs::canonicalize(&outside).expect("canonicalize source");
+
+        // The honest case keeps the original wording: no cause to report.
+        let readable = PublishableRoots {
+            roots: vec![project_root.clone()],
+            worktrees_unreadable: None,
+        };
+        let refused = assert_publishable_source(&source, &project_root, &readable)
+            .expect_err("a source outside every root must be refused");
+        assert!(
+            refused.contains("must be inside the project"),
+            "the plain refusal must keep its wording: {refused}"
+        );
+        assert!(
+            !refused.contains("could not be read"),
+            "a readable worktree list must not add a cause that does not apply: {refused}"
+        );
+
+        // The same path, refused for a reason we cannot rule out.
+        let unreadable = PublishableRoots {
+            roots: vec![project_root.clone()],
+            worktrees_unreadable: Some("runtime-topology.yaml: invalid YAML".to_owned()),
+        };
+        let refused = assert_publishable_source(&source, &project_root, &unreadable)
+            .expect_err("a source outside the known roots must still be refused");
+        assert!(
+            refused.contains("worktree list could not be read"),
+            "the refusal must name what it could not check: {refused}"
+        );
+        assert!(
+            refused.contains("invalid YAML"),
+            "the underlying error must survive into the message: {refused}"
+        );
+
+        let _ = fs::remove_dir_all(project_root);
+        let _ = fs::remove_file(outside);
+    }
+
+    /// And the reason is actually collected from a real corrupt file, not just
+    /// accepted as a parameter.
+    #[test]
+    fn publishable_roots_reports_a_corrupt_topology() {
+        let state_dir = temp_state_dir("corrupt");
+        fs::write(
+            runtime_topology_path(&state_dir),
+            b": not: valid: yaml:\n  - [\n",
+        )
+        .expect("write corrupt topology");
+        let project_root = temp_state_dir("corrupt-project");
+        let context =
+            ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir);
+
+        let publishable = publishable_roots(&context);
+
+        assert!(
+            publishable.worktrees_unreadable.is_some(),
+            "a corrupt topology must be reported rather than read as having no worktrees"
+        );
+
+        let _ = fs::remove_dir_all(state_dir);
+        let _ = fs::remove_dir_all(project_root);
+    }
 }
