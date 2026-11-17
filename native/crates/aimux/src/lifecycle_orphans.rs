@@ -1,8 +1,8 @@
 use crate::dashboard_processes::{DashboardProcess, is_dashboard_process_args};
 use crate::debug_logging::{LogLevel, log_at};
 use crate::process_inspector::{
-    ProcessArgsEntry, is_aimux_project_service_process_args, is_pid_alive, list_process_parents,
-    process_env_value, read_process_args, read_process_args_with_env, try_list_process_args,
+    ProcessArgsEntry, is_aimux_project_service_process_args, is_pid_alive, process_env_value,
+    read_process_args, read_process_args_with_env, try_list_process_args, try_list_process_parents,
 };
 use crate::tmux::{
     TMUX_RUNTIME_OWNER_OPTION, TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo,
@@ -79,7 +79,18 @@ pub trait LifecycleOrphanRuntime {
     /// daemons and project services keep paying their spawn cost for days
     /// while cleanup says there is nothing to do.
     fn list_processes(&mut self) -> Result<Vec<ProcessArgsEntry>, String>;
-    fn list_process_parents(&mut self) -> BTreeMap<i32, i32>;
+    /// The pid-to-parent map, or why it could not be taken.
+    ///
+    /// A `Result` for the same reason `list_processes` is one: this comes from
+    /// its own `ps` invocation, so it can fail on its own, and an empty map
+    /// means "nothing has a parent". `is_orphaned_dashboard` reads a missing
+    /// entry as NOT orphaned, so a failed inventory quietly finds no orphans
+    /// and reports no errors.
+    ///
+    /// Note the distinction this preserves: a missing entry for ONE pid is
+    /// normal -- a process that just exited -- and must keep meaning "not
+    /// orphaned". It is the inventory FAILING that is not an empty map.
+    fn list_process_parents(&mut self) -> Result<BTreeMap<i32, i32>, String>;
     fn read_process_args(&mut self, pid: i32) -> Option<String>;
     fn read_process_args_with_env(&mut self, pid: i32) -> Option<String> {
         self.read_process_args(pid)
@@ -122,8 +133,8 @@ impl LifecycleOrphanRuntime for SystemLifecycleOrphanRuntime {
         try_list_process_args()
     }
 
-    fn list_process_parents(&mut self) -> BTreeMap<i32, i32> {
-        list_process_parents().into_iter().collect()
+    fn list_process_parents(&mut self) -> Result<BTreeMap<i32, i32>, String> {
+        try_list_process_parents()
     }
 
     fn read_process_args(&mut self, pid: i32) -> Option<String> {
@@ -248,7 +259,17 @@ pub fn plan_lifecycle_validation_orphans_with_scope(
             };
         }
     };
-    let parents = runtime.list_process_parents();
+    let parents = match runtime.list_process_parents() {
+        Ok(parents) => parents,
+        Err(error) => {
+            return LifecycleOrphanPlan {
+                process_pids: Vec::new(),
+                tmux_sessions,
+                tmux_windows,
+                errors: vec![error],
+            };
+        }
+    };
     let process_pids = candidate_process_pids(
         runtime,
         &processes,
@@ -335,7 +356,13 @@ pub fn cleanup_lifecycle_validation_orphans(
             return result;
         }
     };
-    let parents = runtime.list_process_parents();
+    let parents = match runtime.list_process_parents() {
+        Ok(parents) => parents,
+        Err(error) => {
+            result.errors.push(error);
+            return result;
+        }
+    };
     let candidate_pids = candidate_process_pids(
         runtime,
         &processes,
@@ -926,6 +953,7 @@ mod tests {
         live_pane_pids: BTreeSet<i32>,
         live_pane_pids_error: Option<String>,
         processes_error: Option<String>,
+        parents_error: Option<String>,
         killed_pids: Vec<(i32, String)>,
         killed_sessions: Vec<String>,
         killed_windows: Vec<String>,
@@ -990,8 +1018,11 @@ mod tests {
             Ok(self.processes.clone())
         }
 
-        fn list_process_parents(&mut self) -> BTreeMap<i32, i32> {
-            self.parents.clone()
+        fn list_process_parents(&mut self) -> Result<BTreeMap<i32, i32>, String> {
+            if let Some(error) = self.parents_error.clone() {
+                return Err(error);
+            }
+            Ok(self.parents.clone())
         }
 
         fn read_process_args(&mut self, pid: i32) -> Option<String> {
@@ -1073,6 +1104,53 @@ mod tests {
             }
             Ok(self.live_pane_pids.clone())
         }
+    }
+
+    /// A failed PARENT inventory is not an empty map.
+    ///
+    /// Its own `ps` invocation, so it fails on its own, and
+    /// `is_orphaned_dashboard` reads a missing entry as NOT orphaned -- so a
+    /// failed parent inventory quietly finds no orphans and reports no errors,
+    /// the same confident wrong answer the process inventory used to give one
+    /// line above.
+    ///
+    /// The per-pid case is deliberately NOT changed and this asserts it stays:
+    /// a pid absent from a HEALTHY map is a process that just exited, and it
+    /// must keep meaning "not orphaned" rather than becoming an error.
+    #[test]
+    fn a_failed_parent_inventory_is_not_an_empty_map() {
+        let dashboard = ProcessArgsEntry {
+            pid: 4242,
+            args: "aimux dashboard --project /repo".to_owned(),
+        };
+        let mut healthy = FakeLifecycleRuntime {
+            processes: vec![dashboard.clone()],
+            ..Default::default()
+        };
+        let control = plan_lifecycle_validation_orphans(&mut healthy, 1);
+        assert!(
+            control.errors.is_empty(),
+            "a pid missing from a healthy parent map must not be an error; that is a process which just exited: {:?}",
+            control.errors
+        );
+
+        let mut failing = FakeLifecycleRuntime {
+            processes: vec![dashboard],
+            parents_error: Some("failed to run ps: No such file".to_owned()),
+            ..Default::default()
+        };
+        let plan = plan_lifecycle_validation_orphans(&mut failing, 1);
+        assert_eq!(
+            plan.errors.len(),
+            1,
+            "a failed parent inventory produced {} errors; finding no orphans because ps failed is indistinguishable from finding none because there are none",
+            plan.errors.len()
+        );
+        assert!(
+            plan.process_pids.is_empty(),
+            "a plan built on a failed parent inventory named pids to kill: {:?}",
+            plan.process_pids
+        );
     }
 
     /// A failed process inventory is not an empty one, when PLANNING.
