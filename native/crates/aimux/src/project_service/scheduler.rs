@@ -384,6 +384,51 @@ impl ScanInputError {
     }
 }
 
+/// The topology alone, read off the async workers.
+///
+/// Separate from `read_scan_inputs_off_the_worker` because four tasks decide
+/// whether they need the metadata AFTER looking at the topology --
+/// `transcript_reconciler` and `retired_worktree_reaper` return early when
+/// there is nothing to act on, and `window_reconciliation`, `agent_restore`
+/// and `loop_watcher` never read metadata at all. Handing them the combined
+/// helper would add a metadata read to every idle tick, which is more I/O than
+/// the inline version it replaces.
+pub async fn read_topology_off_the_worker(
+    project_state_dir: PathBuf,
+) -> Result<Value, ScanInputError> {
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("project-service", "scan-topology"),
+        move || {
+            read_runtime_topology(runtime_topology_path(&project_state_dir))
+                .map_err(ScanInputError::Topology)
+        },
+    )
+    .await
+    .map_err(|error| ScanInputError::NotRead(error.to_string()))?
+}
+
+/// The metadata alone, read off the async workers.
+///
+/// The other half of the split above, for a task that has already decided it
+/// needs it.
+pub async fn read_metadata_off_the_worker(
+    project_state_dir: PathBuf,
+) -> Result<Value, ScanInputError> {
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("project-service", "scan-metadata"),
+        move || {
+            try_load_metadata_state(&project_state_dir)
+                .map_err(ScanInputError::Metadata)
+                .and_then(|state| {
+                    serde_json::to_value(state)
+                        .map_err(|error| ScanInputError::Metadata(error.to_string()))
+                })
+        },
+    )
+    .await
+    .map_err(|error| ScanInputError::NotRead(error.to_string()))?
+}
+
 pub async fn read_scan_inputs_off_the_worker(
     project_state_dir: PathBuf,
 ) -> Result<(Value, Value), ScanInputError> {

@@ -3036,18 +3036,30 @@ fn release_fifo_readers(path: &Path) {
 /// must still run afterwards. The first half alone passes when the work starts
 /// after an await rather than inside the pool.
 #[cfg(unix)]
-#[test]
-fn a_scan_tasks_topology_read_does_not_consume_an_async_worker() {
+fn assert_scan_read_does_not_consume_a_worker(read: ScanRead) {
     const WORKERS: usize = aimux::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
     let attempts = WORKERS + 2;
     let quiet_window = Duration::from_secs(20);
 
-    let root = std::env::temp_dir().join(format!("aimux-scan-read-hop-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!(
+        "aimux-scan-read-hop-{:?}-{}",
+        read,
+        std::process::id()
+    ));
     let state_dir = root.join("state");
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&state_dir).expect("state dir");
 
-    let topology = aimux::runtime_topology::runtime_topology_path(&state_dir);
+    // The barrier sits on whichever file the helper under test opens. Pointing
+    // it at the topology while testing the metadata helper would park nothing,
+    // and the gate would pass having proved nothing -- which is how the
+    // delivery gates above went wrong the first time.
+    let topology = match read {
+        ScanRead::Both | ScanRead::TopologyOnly => {
+            aimux::runtime_topology::runtime_topology_path(&state_dir)
+        }
+        ScanRead::MetadataOnly => aimux::daemon_state::metadata_state_path(&state_dir),
+    };
     let made = std::process::Command::new("mkfifo")
         .arg(&topology)
         .status()
@@ -3070,7 +3082,20 @@ fn a_scan_tasks_topology_read_does_not_consume_an_async_worker() {
         let polled_tx = polled_tx.clone();
         async_runtime.spawn(async move {
             polled_tx.send(index).expect("the test is still listening");
-            let _ = aimux::project_service::scheduler::read_scan_inputs_off_the_worker(dir).await;
+            match read {
+                ScanRead::Both => {
+                    let _ = aimux::project_service::scheduler::read_scan_inputs_off_the_worker(dir)
+                        .await;
+                }
+                ScanRead::TopologyOnly => {
+                    let _ =
+                        aimux::project_service::scheduler::read_topology_off_the_worker(dir).await;
+                }
+                ScanRead::MetadataOnly => {
+                    let _ =
+                        aimux::project_service::scheduler::read_metadata_off_the_worker(dir).await;
+                }
+            }
         });
     }
     drop(polled_tx);
@@ -3115,10 +3140,37 @@ fn a_scan_tasks_topology_read_does_not_consume_an_async_worker() {
 
     assert_eq!(
         reported, attempts,
-        "{reported} of {attempts} topology readers were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}. Progress stopped rather than slowed, which is what a read holding a worker looks like"
+        "{read:?}: {reported} of {attempts} readers were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}. Progress stopped rather than slowed, which is what a read holding a worker looks like"
     );
     assert!(
         still_polling,
-        "every reader was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied even though each reader got its first poll"
+        "{read:?}: every reader was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied even though each reader got its first poll"
     );
+}
+
+/// Which helper is under test. Each is proved on its own, so no hop rides on
+/// another being safe -- the same rule the delivery hops above follow.
+#[derive(Debug, Clone, Copy)]
+enum ScanRead {
+    Both,
+    TopologyOnly,
+    MetadataOnly,
+}
+
+#[cfg(unix)]
+#[test]
+fn a_scan_tasks_combined_read_does_not_consume_an_async_worker() {
+    assert_scan_read_does_not_consume_a_worker(ScanRead::Both);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_scan_tasks_topology_read_does_not_consume_an_async_worker() {
+    assert_scan_read_does_not_consume_a_worker(ScanRead::TopologyOnly);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_scan_tasks_metadata_read_does_not_consume_an_async_worker() {
+    assert_scan_read_does_not_consume_a_worker(ScanRead::MetadataOnly);
 }
