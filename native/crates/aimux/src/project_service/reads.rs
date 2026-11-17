@@ -8,6 +8,36 @@ use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{inspect_runtime_exchange_store, runtime_exchange_path};
 
+/// The `/health` payload.
+///
+/// Extracted so the one route that is answered WITHOUT a blocking thread and
+/// the general read router cannot drift apart. The read router below serves
+/// routes that do real I/O, so the in-place caller must reach this and nothing
+/// else.
+///
+/// Everything here is in memory by the time a request can arrive:
+/// `get_project_service_manifest` goes through the `OnceLock` build stamp that
+/// startup warms, and `diagnostics_json` takes a scheduler lock no holder ever
+/// keeps across slow work.
+pub fn project_service_health_response(
+    context: &ProjectServiceRequestContext,
+) -> ProjectServiceDispatchResponse {
+    let service_info = match get_project_service_manifest() {
+        Ok(manifest) => serde_json::to_value(manifest).unwrap_or_else(|_| json!({})),
+        Err(error) => json!({ "error": error.to_string() }),
+    };
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({
+            "ok": true,
+            "projectStateDir": context.project_state_dir_string(),
+            "pid": std::process::id(),
+            "serviceInfo": service_info,
+            "scheduler": context.scheduler.diagnostics_json(),
+        }),
+    )
+}
+
 pub fn route_read_request(
     context: &ProjectServiceRequestContext,
     method: &str,
@@ -19,20 +49,7 @@ pub fn route_read_request(
     }
 
     if pathname == routes::HEALTH {
-        let service_info = match get_project_service_manifest() {
-            Ok(manifest) => serde_json::to_value(manifest).unwrap_or_else(|_| json!({})),
-            Err(error) => json!({ "error": error.to_string() }),
-        };
-        return Some(ProjectServiceDispatchResponse::json(
-            200,
-            json!({
-                "ok": true,
-                "projectStateDir": context.project_state_dir_string(),
-                "pid": std::process::id(),
-                "serviceInfo": service_info,
-                "scheduler": context.scheduler.diagnostics_json(),
-            }),
-        ));
+        return Some(project_service_health_response(context));
     }
 
     if pathname == routes::STATE {
