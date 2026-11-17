@@ -1092,3 +1092,71 @@ fn only_the_declared_peer_role_is_a_peer() {
     .expect("unrecognized actor");
     assert_eq!(impostor.role, RemoteActorRole::Guest);
 }
+
+/// A relay-stamped request is never mistaken for a local caller, whatever the
+/// stamp says.
+///
+/// `parse_remote_actor` returning `None` means "local caller", which is the
+/// MORE trusted answer: the daemon's local-CLI routes and the core read
+/// carve-out both key on `parse_remote_actor(..).is_none()`. So the fallback
+/// when an actor cannot be read has to be a Guest, not an absence -- and it
+/// is, because `has_relay_actor_headers` accepts ANY `x-aimux-*` header or the
+/// relay-forwarded header.
+///
+/// WHAT THIS PINS THAT THE SIBLING TEST ABOVE DOES NOT: that breadth.
+/// `parse_remote_actor_matches_header_rules_and_never_mints_operator` uses
+/// `x-aimux-share-id` and `x-aimux-actor`, both of which any plausible
+/// narrowing of `has_relay_actor_headers` would still list. Narrow it to a
+/// known-header allowlist and those cases keep passing while a request
+/// carrying only an UNRECOGNISED `x-aimux-*` header falls through to `None`
+/// and is served as local. That is a privilege escalation reachable by a
+/// one-line "tidy up", so the unrecognised-header case and the
+/// relay-forwarded case are asserted here by name.
+#[test]
+fn an_unreadable_relay_stamp_is_a_guest_and_never_a_local_caller() {
+    // Syntactically broken JSON, not merely a bad role: this takes the
+    // `serde_json::from_str(..).ok()?` path rather than the role filter.
+    let unparseable = parse_remote_actor(&BTreeMap::from([(
+        "x-aimux-actor".into(),
+        "{not json at all".into(),
+    )]))
+    .expect("an unparseable actor stamp must still be an actor, not a local caller");
+    assert_eq!(unparseable.role, RemoteActorRole::Guest);
+    assert_eq!(unparseable.principal, None);
+
+    // The breadth of `has_relay_actor_headers`: a header nothing names
+    // explicitly still marks the request as relayed.
+    let unrecognised = parse_remote_actor(&BTreeMap::from([(
+        "x-aimux-some-future-header".into(),
+        "whatever".into(),
+    )]))
+    .expect("an unrecognised x-aimux-* header must still mark the request as relayed");
+    assert_eq!(unrecognised.role, RemoteActorRole::Guest);
+
+    // Mixed case, because the check lowercases before comparing.
+    let mixed_case = parse_remote_actor(&BTreeMap::from([(
+        "X-Aimux-Some-Future-Header".into(),
+        "whatever".into(),
+    )]))
+    .expect("header matching must be case-insensitive");
+    assert_eq!(mixed_case.role, RemoteActorRole::Guest);
+
+    let forwarded = parse_remote_actor(&BTreeMap::from([(
+        aimux::request_actor::RELAY_FORWARDED_HEADER.into(),
+        "1".into(),
+    )]))
+    .expect("the relay-forwarded header alone must mark the request as relayed");
+    assert_eq!(forwarded.role, RemoteActorRole::Guest);
+
+    // The control: a genuinely local request must still read as local, or the
+    // assertions above would pass for a function that called everything a
+    // guest and the carve-out would never serve a local CLI again.
+    assert_eq!(
+        parse_remote_actor(&BTreeMap::from([(
+            "content-type".into(),
+            "application/json".into()
+        )])),
+        None,
+        "a request with no aimux stamp at all is a local caller"
+    );
+}
