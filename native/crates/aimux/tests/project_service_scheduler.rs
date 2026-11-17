@@ -360,7 +360,13 @@ fn scheduler_health_records_success_and_failure_counters() {
     assert_eq!(bad.consecutive_failures, 2);
     assert_eq!(bad.consecutive_timeouts, 0);
     assert_eq!(bad.total_timeouts, 0);
-    assert_eq!(bad.last_error.as_deref(), Some("task panicked"));
+    // The recorded error now carries the panic's own words as well as naming
+    // the outcome. The doubling reads oddly only because this fixture's panic
+    // message is itself "task panicked on purpose".
+    assert_eq!(
+        bad.last_error.as_deref(),
+        Some("task panicked: task panicked on purpose")
+    );
 }
 
 #[test]
