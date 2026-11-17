@@ -144,9 +144,16 @@ pub(super) async fn route_agent_stop_async(
         return json_error(400, "sessionId is required");
     };
     let project_state_dir = context.project_state_dir();
-    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+    // On the blocking pool. A route handler runs per REQUEST, so a sync read
+    // here parks one of the project service's two async workers for as long as
+    // the read takes, and two concurrent requests park both.
+    let topology = match crate::project_service::scheduler::read_topology_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await
+    {
         Ok(topology) => topology,
-        Err(error) => return json_error(500, error),
+        Err(error) => return json_error(500, error.detail().to_owned()),
     };
     let Some(session) = find_by_id(&topology, "sessions", &session_id) else {
         return json_error(404, format!("Unknown session \"{session_id}\""));
@@ -449,9 +456,16 @@ pub(super) async fn route_agent_kill_async(
     };
     let reason = trimmed_string(body.get("reason"));
     let project_state_dir = context.project_state_dir();
-    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+    // On the blocking pool. A route handler runs per REQUEST, so a sync read
+    // here parks one of the project service's two async workers for as long as
+    // the read takes, and two concurrent requests park both.
+    let topology = match crate::project_service::scheduler::read_topology_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await
+    {
         Ok(topology) => topology,
-        Err(error) => return json_error(500, error),
+        Err(error) => return json_error(500, error.detail().to_owned()),
     };
     let Some(session) = find_by_id(&topology, "sessions", &session_id) else {
         return json_error(404, format!("Unknown session \"{session_id}\""));
