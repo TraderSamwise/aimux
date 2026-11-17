@@ -2364,6 +2364,9 @@ mod tests {
     #[test]
     fn async_read_control_routes_bypass_blocking_dispatcher() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-read-control");
@@ -2780,6 +2783,9 @@ mod tests {
     #[test]
     fn async_connection_routes_http_to_rust_project_router() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-connection");
@@ -2817,6 +2823,9 @@ mod tests {
     #[test]
     fn async_listener_serves_complete_request_while_slowloris_waits() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-slowloris");
@@ -2960,6 +2969,9 @@ mod tests {
     #[test]
     fn async_lifecycle_success_publishes_dashboard_refresh_event() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-lifecycle-publishes-refresh");
@@ -3014,6 +3026,9 @@ mod tests {
     #[test]
     fn async_lifecycle_failure_does_not_publish_dashboard_refresh_event() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-lifecycle-no-false-refresh");
@@ -3092,6 +3107,9 @@ mod tests {
     #[test]
     fn async_agent_output_disconnect_before_irreversible_write_cancels_route() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-output-disconnect");
@@ -3150,6 +3168,9 @@ mod tests {
     #[test]
     fn async_agent_input_disconnect_after_irreversible_write_waits_for_route() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-input-irreversible");
@@ -3204,6 +3225,9 @@ mod tests {
     #[test]
     fn async_agent_input_disconnect_after_first_write_finishes_remaining_writes() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-input-no-half-delivery");
@@ -3272,6 +3296,9 @@ mod tests {
     #[test]
     fn async_lifecycle_stop_reports_tmux_kill_failure_without_taking_session_offline() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-stop-kill-failure");
@@ -3325,6 +3352,9 @@ mod tests {
     #[test]
     fn async_lifecycle_kill_reports_tmux_kill_failure_without_graveyarding_session() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-kill-kill-failure");
@@ -3384,6 +3414,9 @@ mod tests {
     #[test]
     fn async_lifecycle_stop_disconnect_after_tmux_kill_started_records_abandoned_response() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-lifecycle-stop-abandoned");
@@ -3546,6 +3579,9 @@ mod tests {
     #[test]
     fn async_lifecycle_spawn_disconnect_after_create_started_records_abandoned_response() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-lifecycle-spawn-abandoned");
@@ -3615,6 +3651,9 @@ mod tests {
     #[test]
     fn async_lifecycle_write_failure_after_irreversible_step_records_abandoned_response() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-lifecycle-abandoned-response");
@@ -3665,6 +3704,9 @@ mod tests {
     #[test]
     fn async_project_event_stream_wakes_on_publish_before_poll_interval() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-event-stream");

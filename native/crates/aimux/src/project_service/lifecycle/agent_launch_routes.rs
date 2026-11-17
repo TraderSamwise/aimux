@@ -2140,6 +2140,9 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    // aimux-async-blocking: test - seeds a temp state dir and topology on disk,
+    // then drives the spawn/restore path; the fixture write is the setup, not
+    // the behaviour under test
     async fn async_claude_restore_distinguishes_history_absence_and_failure() {
         let uuid = "0cfac0d9-6e3f-424f-9027-3ddefd750729";
         for (name, ids) in [
@@ -2220,6 +2223,9 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    // aimux-async-blocking: test - seeds a temp state dir and topology on disk,
+    // then drives the spawn/restore path; the fixture write is the setup, not
+    // the behaviour under test
     async fn async_spawn_uses_known_project_root_without_git_reprobe() {
         let root = unique_test_dir("aimux-async-spawn-root");
         let state_dir = unique_test_dir("aimux-async-spawn-state");
@@ -2254,6 +2260,9 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    // aimux-async-blocking: test - seeds a temp state dir and topology on disk,
+    // then drives the spawn/restore path; the fixture write is the setup, not
+    // the behaviour under test
     async fn async_overseer_spawn_reuses_stopped_project_control_session_identity() {
         let root = unique_test_dir("aimux-async-overseer-spawn-root");
         let state_dir = unique_test_dir("aimux-async-overseer-spawn-state");
