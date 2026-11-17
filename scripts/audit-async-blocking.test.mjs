@@ -246,6 +246,71 @@ fn run() -> Pin<Box<dyn Future<Output = ()>>> {
     expect(result.stderr.match(/thread-sleep/g)).toHaveLength(1);
   });
 
+  // The hazard the whole blocking-read cleanup was about.
+  it("rejects a direct synchronous read inside an async fn", () => {
+    const result = runAudit(
+      writeFixture('async fn f() { let _ = fs::read_to_string("/tmp/x"); }'),
+    );
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("sync-fs");
+  });
+
+  // The half that matters more, and the half a direct-call pattern misses:
+  // every one of the twelve production sites went through a wrapper like this,
+  // so a hazard without the named list would have caught none of them.
+  it("rejects a state-file wrapper inside an async fn", () => {
+    const result = runAudit(
+      writeFixture("async fn f() { let _ = read_runtime_topology(path); }"),
+    );
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("sync-fs");
+  });
+
+  // And inside Box::pin, which is where every PeriodicTask::run lives.
+  it("rejects a state-file wrapper inside Box::pin(async move)", () => {
+    const result = runAudit(
+      writeFixture(`
+fn run() -> Pin<Box<dyn Future<Output = ()>>> {
+    Box::pin(async move {
+        let _ = try_load_metadata_state(dir);
+    })
+}
+`),
+    );
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("sync-fs");
+  });
+
+  // Work already on the pool is the FIX, not the hazard. Without this the
+  // audit flags the very helpers that exist to hop these reads.
+  it("allows a state-file read inside spawn_blocking_named", () => {
+    const result = runAudit(
+      writeFixture(`
+async fn f() {
+    let _ = spawn_blocking_named(
+        task_name("project-service", "scan"),
+        move || read_runtime_topology(path),
+    )
+    .await;
+}
+`),
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  // A sync fn reading synchronously is not the hazard at all.
+  it("allows a state-file read in a plain fn", () => {
+    const result = runAudit(
+      writeFixture("fn f() { let _ = read_runtime_topology(path); }"),
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("allows the same blocking spellings outside async fn", () => {
     const result = runAudit(
       writeFixture(`
