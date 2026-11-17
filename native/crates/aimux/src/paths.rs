@@ -914,6 +914,55 @@ mod resolver_cache_tests {
         );
     }
 
+    /// Resolving a repo root again returns the same root.
+    ///
+    /// Already load-bearing, which is why this is pinned rather than left to
+    /// the next person to assume. Three routes in `daemon/text/operations.rs`
+    /// -- doctor_tasks at :456, doctor_exchange at :689 and doctor_lifecycle
+    /// at :715 -- resolve the project root themselves and then pass the
+    /// RESOLVED root into `get_project_service_json`, which resolves it again
+    /// inside the shared request resolution. So those routes are correct today
+    /// only because a second resolve is a no-op.
+    ///
+    /// It also decides whether those routes can move to the shared carve-out:
+    /// under the carve-out the two resolutions collapse into one, so the move
+    /// is behaviour-preserving exactly to the extent this holds.
+    ///
+    /// HONEST LIMIT: only the FIRST assertion is mutation-proved. I tried to
+    /// break idempotency alone -- walking the resolution one level further up
+    /// -- and it tripped the first assertion instead, because idempotency
+    /// follows structurally from the implementation: the answer depends only
+    /// on which repository contains the path, and a repo root is contained by
+    /// its own repository. So the second assertion documents an invariant and
+    /// stands as a tripwire if resolution ever becomes path-dependent; it is
+    /// not catching a reachable regression today, and should not be counted as
+    /// if it were.
+    #[test]
+    fn resolving_a_repo_root_again_returns_the_same_root() {
+        let Some(repo) = TempRepo::create("idempotent") else {
+            eprintln!("skipping: could not create a temp repository");
+            return;
+        };
+        let nested = repo.root.join("nested").join("deeper");
+        std::fs::create_dir_all(&nested).expect("nested dirs");
+
+        let mut resolver = PathResolver::new(&repo.root, &repo.root, None);
+
+        // A subdirectory resolves up to the root, so the first resolve really
+        // does something -- otherwise this test would pass on a no-op.
+        let once = resolver.resolve_repo_root(&nested);
+        assert_eq!(
+            once, repo.root,
+            "a subdirectory did not resolve to its repository root, so this test is not exercising resolution at all"
+        );
+
+        let twice = resolver.resolve_repo_root(&once);
+        assert_eq!(
+            twice, once,
+            "resolving an already-resolved repo root changed it, which would make doctor_exchange and doctor_lifecycle wrong today: they resolve the root and then hand it to get_project_service_json, which resolves it again"
+        );
+    }
+
     /// A resolver's repo-root cache survives being cloned.
     ///
     /// `PathResolver` derives `Clone`, and the daemon clones it at 105 sites
