@@ -1043,10 +1043,7 @@ impl RelayRunner {
     }
 
     fn peek_outbox_frame(&self) -> Option<String> {
-        self.outbox
-            .lock()
-            .ok()
-            .and_then(|outbox| outbox.front().cloned())
+        front_outbox_frame(&self.outbox)
     }
 
     fn remove_outbox_front_if_matches(&self, frame: &str) {
@@ -1241,6 +1238,28 @@ fn mark_frame_being_written(writing_frame: &Mutex<Option<String>>, frame: Option
     *writing = frame;
 }
 
+/// The frame at the front of the outbox, if there is one.
+///
+/// `None` means the outbox is EMPTY, which is why this cannot read a poisoned
+/// lock as `None`: its one caller, `send_next_outbox_frame`, turns that into
+/// `Ok(false)` -- "nothing to send" -- so a poisoned mutex silently stopped the
+/// pump while frames sat queued behind it. The relay went on looking healthy
+/// and sent nothing.
+///
+/// Note which way the other two outbox readers point, because they are NOT
+/// this bug and should not be "fixed": `withdraw_outbox_frame` returns `false`
+/// on a poisoned lock, which is the safe answer -- it did not withdraw, and it
+/// says so, leaving the frame to send. `project_owner_for` returns
+/// `ProjectOwnerLookup::Unknown`, a could-not-ask outcome that is already
+/// distinct from a definite answer.
+fn front_outbox_frame(outbox: &Mutex<VecDeque<String>>) -> Option<String> {
+    outbox
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .front()
+        .cloned()
+}
+
 /// Whether the frame being written right now has this id.
 fn frame_being_written_has_id(writing_frame: &Mutex<Option<String>>, id: &str) -> bool {
     writing_frame
@@ -1340,8 +1359,8 @@ mod tests {
     use super::{
         DaemonRelayBridge, DaemonRouteResponse, MAX_RELAY_OUTBOX_FRAMES, MIN_HELD_CONNECTION_MS,
         ProjectEventStream, ProjectEventStreamItem, RelayRunner, RelayStatus, RelayStatusSnapshot,
-        RelaySubscriptions, daemon_connect_url, frame_being_written_has_id,
-        mark_frame_being_written, push_front_outbox_frame, push_outbox_frame,
+        RelaySubscriptions, daemon_connect_url, frame_being_written_has_id, frame_id_is,
+        front_outbox_frame, mark_frame_being_written, push_front_outbox_frame, push_outbox_frame,
     };
     use crate::machine_identity::MachineIdentity;
     use crate::remote::websocket::INITIAL_RETRY_MS;
@@ -1483,6 +1502,46 @@ mod tests {
         assert!(
             has_project_event_seq(&outbox, 1),
             "newer project events should remain after one front requeue eviction"
+        );
+    }
+
+    /// A poisoned outbox is not an empty outbox.
+    ///
+    /// `front_outbox_frame` returning `None` means "nothing queued", and
+    /// `send_next_outbox_frame` turns that into `Ok(false)` -- nothing to
+    /// send. Reading a poisoned lock as `None` therefore stopped the pump
+    /// silently while frames sat queued behind it, with the relay still
+    /// looking healthy. That is the worst shape this class takes in the file:
+    /// the dropped writing-frame mark lets one request lie about one frame,
+    /// this one stops delivery altogether.
+    #[test]
+    fn a_poisoned_outbox_still_hands_the_pump_its_next_frame() {
+        let outbox = Arc::new(Mutex::new(VecDeque::new()));
+        outbox
+            .lock()
+            .expect("a clean lock to seed")
+            .push_back(json!({ "type": "peer_request", "id": "f1" }).to_string());
+
+        let poisoning = Arc::clone(&outbox);
+        let panicked = std::thread::spawn(move || {
+            let _guard = poisoning.lock().expect("a clean lock to poison");
+            panic!("poisoning the outbox lock on purpose");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(
+            outbox.is_poisoned(),
+            "the mutex must actually be poisoned for this test to mean anything"
+        );
+
+        let front = front_outbox_frame(&outbox);
+        assert!(
+            front.is_some(),
+            "a poisoned outbox reported NO queued frame; send_next_outbox_frame reads that as 'nothing to send', so the pump stops while the frame stays queued"
+        );
+        assert!(
+            frame_id_is(&front.expect("a front frame"), "f1"),
+            "the recovered read returned a different frame than the one queued"
         );
     }
 
