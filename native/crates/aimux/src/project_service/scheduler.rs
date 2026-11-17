@@ -411,6 +411,29 @@ pub async fn read_topology_off_the_worker(
 ///
 /// The other half of the split above, for a task that has already decided it
 /// needs it.
+/// The topology and the metadata STATE, read off the async workers.
+///
+/// A third shape rather than a reuse of `read_scan_inputs_off_the_worker`,
+/// which serializes the metadata to a `Value`. `agent_restore` wants the
+/// struct: it looks sessions up with `metadata.sessions.get(..)`, so handing
+/// it a `Value` would mean serializing and then re-parsing on every tick.
+pub async fn read_topology_and_metadata_state_off_the_worker(
+    project_state_dir: PathBuf,
+) -> Result<(Value, crate::daemon_state::MetadataState), ScanInputError> {
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("project-service", "scan-topology-and-state"),
+        move || {
+            let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))
+                .map_err(ScanInputError::Topology)?;
+            let metadata =
+                try_load_metadata_state(&project_state_dir).map_err(ScanInputError::Metadata)?;
+            Ok((topology, metadata))
+        },
+    )
+    .await
+    .map_err(|error| ScanInputError::NotRead(error.to_string()))?
+}
+
 pub async fn read_metadata_off_the_worker(
     project_state_dir: PathBuf,
 ) -> Result<Value, ScanInputError> {

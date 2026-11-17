@@ -19,9 +19,7 @@ use serde_json::{Map, Value, json};
 
 use crate::daemon_state::try_load_metadata_state;
 use crate::debug_logging::log_lifecycle_always;
-use crate::runtime_topology::{
-    list_topology_session_states, read_runtime_topology, runtime_topology_path,
-};
+use crate::runtime_topology::list_topology_session_states;
 use crate::team_contract::{
     compare_agent_canonical_order, is_project_control_session, session_with_stored_control_flags,
 };
@@ -159,35 +157,53 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
         Box::pin(async move {
             self.refresh_config_if_changed();
             let project_state_dir = context.project_state_dir();
-            let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
-                Ok(topology) => topology,
-                // An unreadable topology is not an empty one. Recording it as empty
-                // would be harmless, but deriving from it would offer to restore
-                // every agent that is in fact running.
-                Err(error) => {
-                    log_lifecycle_always(
-                        "agent restore snapshot skipped",
-                        "agent-restore",
-                        Some(json!({ "reason": "topology unreadable", "error": error })),
-                    );
-                    return Err(format!(
-                        "agent restore snapshot topology unavailable: {error}"
-                    ));
-                }
-            };
-            let metadata = match try_load_metadata_state(&project_state_dir) {
-                Ok(metadata) => metadata,
-                Err(error) => {
-                    log_lifecycle_always(
-                        "agent restore snapshot skipped",
-                        "agent-restore",
-                        Some(json!({ "reason": "metadata unreadable", "error": error })),
-                    );
-                    return Err(format!(
-                        "agent restore snapshot metadata unavailable: {error}"
-                    ));
-                }
-            };
+            // Both reads on the blocking pool. One hop rather than two,
+            // because neither is conditional: the snapshot needs both.
+            let (topology, metadata) =
+                match super::scheduler::read_topology_and_metadata_state_off_the_worker(
+                    project_state_dir.clone(),
+                )
+                .await
+                {
+                    Ok(inputs) => inputs,
+                    // An unreadable topology is not an empty one. Recording it as
+                    // empty would be harmless, but deriving from it would offer to
+                    // restore every agent that is in fact running. The same goes
+                    // for the metadata, and the two are logged apart because the
+                    // reason is the useful part of the line.
+                    Err(error) => {
+                        // Two strings, not one: the LOG says what was
+                        // unreadable and the returned error says what is
+                        // unavailable, and both wordings are pinned --
+                        // corrupt_restore_topology_records_scheduler_visible_failure
+                        // and its metadata sibling assert the error text. A
+                        // first version of this reused the log's wording for
+                        // both and they caught it.
+                        let (logged, unavailable, detail) = match &error {
+                            super::scheduler::ScanInputError::Topology(detail) => (
+                                "topology unreadable",
+                                "topology unavailable",
+                                detail.clone(),
+                            ),
+                            super::scheduler::ScanInputError::Metadata(detail) => (
+                                "metadata unreadable",
+                                "metadata unavailable",
+                                detail.clone(),
+                            ),
+                            super::scheduler::ScanInputError::NotRead(detail) => (
+                                "scan inputs were not read",
+                                "scan inputs were not read",
+                                detail.clone(),
+                            ),
+                        };
+                        log_lifecycle_always(
+                            "agent restore snapshot skipped",
+                            "agent-restore",
+                            Some(json!({ "reason": logged, "error": detail })),
+                        );
+                        return Err(format!("agent restore snapshot {unavailable}: {detail}"));
+                    }
+                };
             let candidate_sessions =
                 list_topology_session_states(&topology, Some(ONLINE_SESSION_STATUSES));
             // The restore replays this array in order, creating one window per
@@ -496,7 +512,7 @@ pub fn agent_restore_snapshot_task(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime_topology::write_runtime_topology;
+    use crate::runtime_topology::{runtime_topology_path, write_runtime_topology};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
