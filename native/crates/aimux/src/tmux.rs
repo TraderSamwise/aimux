@@ -3520,6 +3520,8 @@ where
     // change because `Drop` cannot be async. Hopping only this call would
     // leave the destructor's `remove_file` on the worker anyway. What is left
     // there is a single unlink of a small file, not the creation above.
+    // aimux-async-blocking: permanent - Drop cannot be async, so the unlink
+    // cannot leave the worker
     staged.discard_file();
     // Same order as the sync executor, including cleanup after a failed load.
     let outcome = match loaded {
