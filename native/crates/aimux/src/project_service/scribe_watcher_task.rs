@@ -9,10 +9,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::daemon_state::try_load_metadata_state;
-use crate::runtime_topology::{
-    list_topology_session_states, read_runtime_topology, runtime_topology_path,
-};
+use crate::runtime_topology::list_topology_session_states;
 use crate::scribe_watcher::{
     ScribeBriefing, ScribeWatcher, find_scribe_candidates_with_scribe, find_scribe_session_id,
 };
@@ -69,15 +66,24 @@ impl PeriodicTask for ScribeWatcherTask {
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             let project_state_dir = context.project_state_dir();
-            let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
-                Ok(topology) => topology,
-                Err(error) => return Err(format!("scribe watcher topology unavailable: {error}")),
-            };
-            let metadata = serde_json::to_value(
-                try_load_metadata_state(&project_state_dir)
-                    .map_err(|error| format!("scribe watcher metadata unavailable: {error}"))?,
-            )
-            .unwrap_or_else(|_| json!({ "sessions": {} }));
+            // Both reads on the blocking pool: `fs::read_to_string` on an async
+            // worker is one of two that park the whole project service.
+            let (topology, metadata) =
+                super::scheduler::read_scan_inputs_off_the_worker(project_state_dir.clone())
+                    .await
+                    .map_err(|error| match &error {
+                        // The two messages the scheduler-visible failure must
+                        // keep apart, each pinned by its own test.
+                        super::scheduler::ScanInputError::Topology(detail) => {
+                            format!("scribe watcher topology unavailable: {detail}")
+                        }
+                        super::scheduler::ScanInputError::Metadata(detail) => {
+                            format!("scribe watcher metadata unavailable: {detail}")
+                        }
+                        super::scheduler::ScanInputError::NotRead(detail) => {
+                            format!("scribe watcher scan inputs were not read: {detail}")
+                        }
+                    })?;
             let sessions = list_topology_session_states(&topology, Some(READABLE_SESSION_STATUSES));
             let input = json!({
                 "sessions": sessions,
