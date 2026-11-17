@@ -32,6 +32,21 @@ const RELAY = "relay/src/sharing.ts";
 //     `attachment_content_route` on the daemon side.
 const SHAPE_MATCHED = ["/plans/", "/attachments/"];
 
+// Numbers the relay and the daemon must agree on, each named in both
+// languages. `proxy_project_binding.rs` says what the drift costs in its own
+// words: "Changing one without the other does not fail anything loudly -- it
+// makes long checkout paths unmatchable between the owner record and this
+// lookup, which surfaces as 'this machine is not serving' a project it is
+// serving."
+const SHARED_CONSTANTS = [
+  {
+    name: "MAX_PROJECT_ROOT_CHARS",
+    rustFile: "native/crates/aimux/src/proxy_project_binding.rs",
+    tsFile: RELAY,
+    why: "the cap both sides truncate a stored project root to, so the owner record and the daemon's lookup fold to the same key",
+  },
+];
+
 function read(relativePath) {
   return readFileSync(resolve(repoRoot, relativePath), "utf8");
 }
@@ -137,6 +152,31 @@ function relayRoutes(source, method) {
   return paths;
 }
 
+/// A `const NAME: <type> = <number>;` in Rust, or `const NAME = <number>;` in
+/// TypeScript. Absent is an error rather than a skip: a renamed constant must
+/// fail here, not quietly drop out of the comparison.
+function numericConstant(source, name, file) {
+  const rust = source.match(new RegExp(`const ${name}\\s*:\\s*[A-Za-z0-9_]+\\s*=\\s*(\\d+)`));
+  const ts = source.match(new RegExp(`const ${name}\\s*=\\s*(\\d+)`));
+  const match = rust ?? ts;
+  if (!match) {
+    throw new Error(`${file}: ${name} is not declared as a numeric constant; this audit names it directly`);
+  }
+  return Number(match[1]);
+}
+
+function compareConstants(problems) {
+  for (const entry of SHARED_CONSTANTS) {
+    const rustValue = numericConstant(read(entry.rustFile), entry.name, entry.rustFile);
+    const tsValue = numericConstant(read(entry.tsFile), entry.name, entry.tsFile);
+    if (rustValue !== tsValue) {
+      problems.push(
+        `${entry.name}: ${entry.rustFile} says ${rustValue} and ${entry.tsFile} says ${tsValue} -- ${entry.why}`,
+      );
+    }
+  }
+}
+
 function shapeMatched(path) {
   return SHAPE_MATCHED.some((prefix) => path.startsWith(prefix));
 }
@@ -173,9 +213,10 @@ compare(
   relayRoutes(relaySource, "POST"),
   problems,
 );
+compareConstants(problems);
 
 if (problems.length > 0) {
-  console.error("shared-guest route allowlists disagree:\n");
+  console.error("the relay and the daemon disagree:\n");
   for (const problem of problems) console.error(`  - ${problem}`);
   console.error(
     "\nWidening what a guest may do means widening BOTH lists. See AGENTS.md, Shared Chats.",
@@ -183,4 +224,6 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-console.log("shared-guest route allowlists agree across the relay and the daemon");
+console.log(
+  "shared-guest route allowlists and shared caps agree across the relay and the daemon",
+);
