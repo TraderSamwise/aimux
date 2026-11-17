@@ -829,7 +829,24 @@ async fn load_control_model_async(
     .await?;
     let entries_projection =
         topology_switchable_entries_for_context_async(context, &topology, &metadata.sessions).await;
-    let last_used = load_last_used_state(&project_state_dir);
+    // A DERIVED scan found this one, and only a derived scan could: the name
+    // `load_last_used_state` was never in the audit's list, so the audit called
+    // this function clean. It is the third reader in here, and the second time
+    // this same function was reported fixed while a reader was still inline --
+    // `load_topology` was the first.
+    //
+    // `load_last_used_state` answers any read failure with an empty state, so
+    // the only error is a pool task that never ran, which is not the same thing
+    // as nothing having been used yet.
+    let last_used = {
+        let dir = project_state_dir.to_path_buf();
+        crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::task_name("project-service", "control-last-used"),
+            move || load_last_used_state(&dir),
+        )
+        .await
+        .map_err(|error| format!("last-used state was not read: {error}"))?
+    };
     let switch_context = SwitchableContext {
         project_root: context.project_root().to_string_lossy().into_owned(),
         ..SwitchableContext::default()

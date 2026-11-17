@@ -343,33 +343,62 @@ fn async_focus_window_cancellation_before_focus_completes_writes_no_seen_metadat
         focus_started: Arc::clone(&focus_started),
     };
 
-    let timed_out =
+    // PHASE ONE WAITS FOR THE EVENT, NOT FOR A DURATION.
+    //
+    // This was `timeout(10ms, route)`, which assumed the route reaches focus
+    // within 10ms. That is a latency assumption, and every pool hop added
+    // ahead of focus spends part of its budget -- the route-read work put two
+    // hops into this very path. It failed on a CI macOS runner for exactly
+    // that reason: the 10ms elapsed before the route got as far as focus, so
+    // the assertion that focus had started failed, in a test whose subject is
+    // what happens AFTER focus starts.
+    //
+    // `focus_target` sets the flag and then parks forever, so the flag is an
+    // observable edge. Driving the route in short slices until the flag flips
+    // cancels at the same point the old test meant to, with no budget to
+    // exceed. The generous deadline is a deadlock stop, not a measurement.
+    let (reached_focus, route_completed) =
         // aimux-async-seam: test - control cancellation test drives async handler
         aimux::async_runtime::block_on_named("test:control-focus-window-cancel", async {
-            tokio::time::timeout(
-                Duration::from_millis(10),
-                route_control_request_async_with_runtime(
-                    &context,
-                    "POST",
-                    routes::controls::FOCUS_WINDOW,
-                    Some(&json!({
-                        "windowId": "@1",
-                        "currentClientSession": "client-1",
-                        "focus": true
-                    })),
-                    &mut runtime,
-                ),
-            )
-            .await
+            // Bound to a local: the pinned future outlives the expression
+            // that builds it, so the body cannot be a temporary.
+            let body = json!({
+                "windowId": "@1",
+                "currentClientSession": "client-1",
+                "focus": true
+            });
+            let route = route_control_request_async_with_runtime(
+                &context,
+                "POST",
+                routes::controls::FOCUS_WINDOW,
+                Some(&body),
+                &mut runtime,
+            );
+            tokio::pin!(route);
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                if focus_started.load(Ordering::SeqCst) {
+                    break (true, false);
+                }
+                if std::time::Instant::now() >= deadline {
+                    break (false, false);
+                }
+                if tokio::time::timeout(Duration::from_millis(5), &mut route)
+                    .await
+                    .is_ok()
+                {
+                    break (focus_started.load(Ordering::SeqCst), true);
+                }
+            }
         });
 
     assert!(
-        timed_out.is_err(),
-        "test must cancel while async focus is pending"
+        reached_focus,
+        "cancellation must happen after focus starts, not before the route reaches it"
     );
     assert!(
-        focus_started.load(Ordering::SeqCst),
-        "cancellation must happen after focus starts, not before the route reaches it"
+        !route_completed,
+        "test must cancel while async focus is pending, not after the route returned"
     );
     let state = load_metadata_state(&state_dir);
     assert_eq!(

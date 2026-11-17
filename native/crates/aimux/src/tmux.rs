@@ -3494,13 +3494,34 @@ where
     if text.is_empty() {
         return Ok(());
     }
-    let staged = StagedPrompt::write(window_id, text)?;
+    // The WRITE comes off the worker. `StagedPrompt::write` creates a private
+    // file, with a retry when the name is already taken, so it is a real
+    // blocking file creation on whichever async worker is delivering.
+    let staged = {
+        let window_id = window_id.to_owned();
+        let text = text.to_owned();
+        crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::task_name("tmux", "stage-prompt"),
+            move || StagedPrompt::write(&window_id, &text),
+        )
+        .await
+        .map_err(|error| format!("staged prompt was not written: {error}"))??
+    };
     let loaded = run(
         StagedPromptStep::Load,
         staged.load_argv(),
         format!("tmux load-buffer failed for {window_id}"),
     )
     .await;
+    // THE REMOVAL STAYS SYNC, and this is a bound rather than an oversight.
+    // `staged` is still needed below for its paste and delete argv, so it
+    // cannot move into a closure; and `Drop for StagedPrompt` calls
+    // `discard_file` as the backstop for an early return, which no hop can
+    // change because `Drop` cannot be async. Hopping only this call would
+    // leave the destructor's `remove_file` on the worker anyway. What is left
+    // there is a single unlink of a small file, not the creation above.
+    // aimux-async-blocking: permanent - Drop cannot be async, so the unlink
+    // cannot leave the worker
     staged.discard_file();
     // Same order as the sync executor, including cleanup after a failed load.
     let outcome = match loaded {
