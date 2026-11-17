@@ -161,8 +161,8 @@ describe("the shell runs it", () => {
     // been commented out, which is one keystroke from a dead feature.
     const source = readFileSync(path, "utf8").replace(/^\s*\/\/.*$/gm, "");
 
-    expect(source, "the shell must run the hook").toContain(
-      "useSidebarKeyboard(sidebarOpen, sidebarPresentation)",
+    expect(source, "the shell must run the hook with the rendered sidebar state").toContain(
+      "useSidebarKeyboard(effectiveSidebarOpen, sidebarPresentation)",
     );
     // Without a registered composer the restore has nobody to reach, so the
     // keyboard never comes back -- which is the whole second half of the rule.

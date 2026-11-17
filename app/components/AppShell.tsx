@@ -36,7 +36,7 @@ import { useRouteShare } from "@/lib/use-route-share";
 import { useSidebarKeyboard } from "@/lib/sidebar-keyboard";
 import { relayConfiguredAtom, relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
 import { desktopAppZoomAtom, desktopAppZoomScale, stepDesktopAppZoom } from "@/stores/settings";
-import { chatChromeVisibleAtom, sidebarOpenAtom } from "@/stores/ui";
+import { chatChromeVisibleAtom, chatFocusModeAtom, sidebarOpenAtom } from "@/stores/ui";
 
 const DRAWER_WIDTH = 320;
 const SIDEBAR_SURFACE_MOTION_MS = 110;
@@ -56,6 +56,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const setDesktopAppZoom = useSetAtom(desktopAppZoomAtom);
   const pathname = usePathname();
   const chatChromeVisible = useAtomValue(chatChromeVisibleAtom);
+  const chatFocusMode = useAtomValue(chatFocusModeAtom);
   const activeShare = useRouteShare();
   const isSharedRoute = pathname === "/shares" || pathname.startsWith("/shares/");
   const isMonitorRoute = pathname === "/monitor";
@@ -66,10 +67,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [pairingDialogOpen, setPairingDialogOpen] = useState(false);
   const lastPromptedDeviceRef = useRef<string | null>(null);
   const [translateX] = useState(() => new RNAnimated.Value(-DRAWER_WIDTH));
-  const persistentSidebarProgress = useSharedValue(usesPersistentSidebar && sidebarOpen ? 1 : 0);
   const Sidebar = isMonitorRoute ? MonitorSidebar : isSharedShell ? SharedSidebar : ProjectSidebar;
   const showPairingBanner = relayConfigured && relayStatus === "device_pending" && !isSharedShell;
   const overlayTopChrome = isChatRoute(pathname);
+  const chatFocused = overlayTopChrome && chatFocusMode;
+  const effectiveSidebarOpen = sidebarOpen && !chatFocused;
+  const persistentSidebarProgress = useSharedValue(
+    usesPersistentSidebar && effectiveSidebarOpen ? 1 : 0,
+  );
   const resolvedTopInset = resolveChromeTopInset(insets.top, {
     reserveTopSafeArea: !usesPersistentSidebar,
   });
@@ -82,9 +87,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!usesPersistentSidebar) setSidebarOpen(false);
   }, [setSidebarOpen, usesPersistentSidebar]);
 
-  // Keyed on the atom rather than the one button that writes it, so a second
-  // opener cannot be added without this.
-  useSidebarKeyboard(sidebarOpen, sidebarPresentation);
+  // Keyed on the rendered sidebar state, so focus mode hides the drawer from
+  // the keyboard restore logic without changing the stored sidebar preference.
+  useSidebarKeyboard(effectiveSidebarOpen, sidebarPresentation);
 
   // Nothing loads until this device is approved, so the prompt opens itself
   // rather than waiting for a click on a banner above an empty app.
@@ -105,18 +110,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!usesDrawerSidebar) return;
     RNAnimated.timing(translateX, {
-      toValue: sidebarOpen ? 0 : -DRAWER_WIDTH,
+      toValue: effectiveSidebarOpen ? 0 : -DRAWER_WIDTH,
       duration: 250,
       useNativeDriver: true,
     }).start();
-  }, [sidebarOpen, translateX, usesDrawerSidebar]);
+  }, [effectiveSidebarOpen, translateX, usesDrawerSidebar]);
 
   useEffect(() => {
-    persistentSidebarProgress.value = withTiming(usesPersistentSidebar && sidebarOpen ? 1 : 0, {
-      duration: SIDEBAR_SURFACE_MOTION_MS,
-      reduceMotion: ReduceMotion.System,
-    });
-  }, [persistentSidebarProgress, sidebarOpen, usesPersistentSidebar]);
+    persistentSidebarProgress.value = withTiming(
+      usesPersistentSidebar && effectiveSidebarOpen ? 1 : 0,
+      {
+        duration: SIDEBAR_SURFACE_MOTION_MS,
+        reduceMotion: ReduceMotion.System,
+      },
+    );
+  }, [effectiveSidebarOpen, persistentSidebarProgress, usesPersistentSidebar]);
 
   useEffect(() => {
     if (!isDesktopNative) return undefined;
@@ -207,7 +215,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <ChatChromeMotion
               direction="top"
               distance={topChromeHideDistance}
-              visible={!overlayTopChrome || chatChromeVisible}
+              visible={!chatFocused && (!overlayTopChrome || chatChromeVisible)}
             >
               <TopBar left={hamburger} />
               <NotificationStartupBanner />
@@ -236,19 +244,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </ChatChromeMotion>
           </View>
           {overlayTopChrome ? (
-            <ChatTopEdgeFade topInset={resolvedTopInset} visible={!chatChromeVisible} />
+            <ChatTopEdgeFade
+              topInset={resolvedTopInset}
+              visible={!chatFocused && !chatChromeVisible}
+            />
           ) : null}
           <View className="flex-1 flex-row">
             {usesPersistentSidebar ? (
               <Reanimated.View
-                pointerEvents={sidebarOpen ? "auto" : "none"}
+                pointerEvents={effectiveSidebarOpen ? "auto" : "none"}
                 style={[
                   {
                     backgroundColor: "#161719",
                     flexShrink: 0,
                     height: "100%",
                     overflow: "hidden",
-                    width: sidebarOpen ? DRAWER_WIDTH : 0,
+                    width: effectiveSidebarOpen ? DRAWER_WIDTH : 0,
                   },
                 ]}
               >
@@ -261,7 +272,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             ) : null}
             <View className="flex-1">{children}</View>
 
-            {usesDrawerSidebar && sidebarOpen ? (
+            {usesDrawerSidebar && effectiveSidebarOpen ? (
               <Pressable
                 onPress={() => setSidebarOpen(false)}
                 style={[
@@ -272,7 +283,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             ) : null}
             {usesDrawerSidebar ? (
               <RNAnimated.View
-                pointerEvents={sidebarOpen ? "auto" : "none"}
+                pointerEvents={effectiveSidebarOpen ? "auto" : "none"}
                 style={{
                   position: "absolute",
                   top: 0,
