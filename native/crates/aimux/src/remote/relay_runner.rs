@@ -1034,18 +1034,12 @@ impl RelayRunner {
     }
 
     fn mark_writing(&self, frame: Option<String>) {
-        if let Ok(mut writing) = self.writing_frame.lock() {
-            *writing = frame;
-        }
+        mark_frame_being_written(&self.writing_frame, frame);
     }
 
     /// Whether a frame with this id is being written right now.
     fn is_writing_frame_id(&self, id: &str) -> bool {
-        self.writing_frame
-            .lock()
-            .ok()
-            .and_then(|writing| writing.clone())
-            .is_some_and(|frame| frame_id_is(&frame, id))
+        frame_being_written_has_id(&self.writing_frame, id)
     }
 
     fn peek_outbox_frame(&self) -> Option<String> {
@@ -1227,6 +1221,35 @@ struct SubscriptionDelivery {
 
 /// Whether a queued frame carries this id. A frame that will not parse is
 /// nobody's: saying it is would withdraw somebody else's work.
+/// Record the frame whose bytes are going out, or clear it.
+///
+/// A poisoned lock is NOT "nothing is being written". Both of these used to
+/// read it that way -- `if let Ok(..)` silently dropped the mark, and the
+/// query below read `.lock().ok()` as "no frame" -- which breaks the exact
+/// invariant `writing_frame`'s own comment states: a request giving up during
+/// a slow write would take the frame out from under the writer and then report
+/// that the peer was never asked. The mark is intact behind a poisoned mutex,
+/// so recover the guard, as this crate does at 29 other sites.
+///
+/// These are functions over the mutex rather than only methods so the
+/// invariant can be gated without constructing a `RelayRunner`, which needs a
+/// bridge, a relay URL and a token.
+fn mark_frame_being_written(writing_frame: &Mutex<Option<String>>, frame: Option<String>) {
+    let mut writing = writing_frame
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    *writing = frame;
+}
+
+/// Whether the frame being written right now has this id.
+fn frame_being_written_has_id(writing_frame: &Mutex<Option<String>>, id: &str) -> bool {
+    writing_frame
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_deref()
+        .is_some_and(|frame| frame_id_is(frame, id))
+}
+
 fn frame_id_is(frame: &str, id: &str) -> bool {
     serde_json::from_str::<Value>(frame)
         .ok()
@@ -1317,7 +1340,8 @@ mod tests {
     use super::{
         DaemonRelayBridge, DaemonRouteResponse, MAX_RELAY_OUTBOX_FRAMES, MIN_HELD_CONNECTION_MS,
         ProjectEventStream, ProjectEventStreamItem, RelayRunner, RelayStatus, RelayStatusSnapshot,
-        RelaySubscriptions, daemon_connect_url, push_front_outbox_frame, push_outbox_frame,
+        RelaySubscriptions, daemon_connect_url, frame_being_written_has_id,
+        mark_frame_being_written, push_front_outbox_frame, push_outbox_frame,
     };
     use crate::machine_identity::MachineIdentity;
     use crate::remote::websocket::INITIAL_RETRY_MS;
@@ -1459,6 +1483,53 @@ mod tests {
         assert!(
             has_project_event_seq(&outbox, 1),
             "newer project events should remain after one front requeue eviction"
+        );
+    }
+
+    /// A poisoned writing-frame lock is not "nothing is being written".
+    ///
+    /// `writing_frame`'s own comment states the invariant: the frame stays
+    /// marked across the write so a request giving up during a slow write
+    /// cannot take it out from under the writer and then report that the peer
+    /// was never asked. Poison used to break exactly that -- the mark was
+    /// dropped by `if let Ok(..)` and the query read `.lock().ok()` as "no
+    /// frame" -- so the withdrawal path got the one answer the comment says it
+    /// must never get.
+    ///
+    /// Both directions are asserted, because recovering only the query would
+    /// still answer "not writing" when the mark itself was thrown away.
+    #[test]
+    fn a_poisoned_writing_frame_lock_still_reports_the_frame_on_the_wire() {
+        let writing_frame = Arc::new(Mutex::new(None));
+
+        let poisoning = Arc::clone(&writing_frame);
+        let panicked = std::thread::spawn(move || {
+            let _guard = poisoning.lock().expect("a clean lock to poison");
+            panic!("poisoning the writing-frame lock on purpose");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(
+            writing_frame.is_poisoned(),
+            "the mutex must actually be poisoned for this test to mean anything"
+        );
+
+        let frame = json!({ "type": "peer_request", "id": "f1" }).to_string();
+        mark_frame_being_written(&writing_frame, Some(frame));
+
+        assert!(
+            frame_being_written_has_id(&writing_frame, "f1"),
+            "a poisoned lock reported that frame f1 was NOT being written; that is the answer which lets a request withdraw a frame whose bytes are already on the wire and then report the peer was never asked"
+        );
+        assert!(
+            !frame_being_written_has_id(&writing_frame, "f2"),
+            "an unrelated id matched, so this gate would pass for any frame and prove nothing"
+        );
+
+        mark_frame_being_written(&writing_frame, None);
+        assert!(
+            !frame_being_written_has_id(&writing_frame, "f1"),
+            "clearing the mark on a poisoned lock did not take effect, so the write was dropped"
         );
     }
 
