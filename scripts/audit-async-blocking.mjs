@@ -6,6 +6,30 @@ const repoRoot = resolve(new URL("..", import.meta.url).pathname);
 const roots = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
 const scanRoots = roots.length > 0 ? roots.map((root) => resolve(repoRoot, root)) : [resolve(repoRoot, "native/crates/aimux")];
 
+/// Direct filesystem calls that block the thread they run on.
+const SYNC_FS_CALLS =
+  /\bfs\s*::\s*(read|read_to_string|write|read_dir|metadata|copy|rename|remove_file|remove_dir_all|create_dir_all)\s*\(/;
+
+/// Project-level wrappers that read a state file synchronously.
+///
+/// Each of these is a thin function over `fs::read_to_string`, which is why
+/// the direct-call pattern above cannot see them.
+///
+/// THIS LIST IS NOT DERIVED AND IS KNOWN INCOMPLETE. A scan of the crate
+/// found 218 sync functions that read a file directly, 14 of them reachable
+/// from an async body, and only three of those fourteen are named here. Some
+/// of the rest are artefacts of matching short generic names, but not all:
+/// `load_last_used_state` reads through `fs::read_to_string` and is called
+/// inside `route_switchable_agent_request_async`, which this audit reports as
+/// clean purely because the name is missing below.
+///
+/// So treat a pass as "none of the readers named here", not as "no
+/// synchronous state read". The honest fix is to derive this set from the
+/// crate rather than maintain it by hand, and until that exists, add a name
+/// whenever a new sync reader appears.
+const SYNC_STATE_READERS =
+  /\b(read_runtime_topology|try_load_metadata_state|load_metadata_state|try_read_runtime_exchange|read_agent_input_delivery_queue|load_delivery_state|load_agent_role_registry|load_topology)\s*\(/;
+
 const NET_TYPES = ["TcpListener", "TcpStream", "UdpSocket", "UnixListener", "UnixStream"];
 
 /// The net type names a file binds BARE from `<module>::net`.
@@ -35,6 +59,41 @@ function bareNetImports(fileText, module) {
 }
 
 const HAZARDS = [
+  {
+    // A synchronous read of a project state file on an async worker: the
+    // hazard this whole family of fixes was about.
+    //
+    // It catches the readers it NAMES, which is less than the whole class --
+    // see `SYNC_STATE_READERS`. A pass here is not a guarantee that no async
+    // body reads a file synchronously. The project service runs TWO
+    // workers, so two of these at once is the entire runtime -- the same shape
+    // as the interceptor that killed daemons, reached from a different
+    // direction.
+    //
+    // TWO PATTERNS, because one is not enough. Direct `fs::` calls are the
+    // obvious half, and on its own that half would have caught NONE of the
+    // twelve production sites this landed with: they all went through
+    // project-level wrappers like `read_runtime_topology`. So the wrappers are
+    // named too, the way `std-net` names its types.
+    //
+    // The named list is the maintenance cost and it is the honest cost: a
+    // wrapper nobody adds here is a site the audit calls clean. That happened
+    // during the cleanup -- `load_topology` was missing, so
+    // `load_control_model_async` read as fixed when only half of it was, and
+    // `route_open_dashboard_async` never appeared at all. Add the name when a
+    // new sync reader appears.
+    //
+    // Work already ON the pool is the fix rather than the hazard, so the
+    // `spawn_blocking_named` closures are stripped first -- without that this
+    // flags the very helpers that exist to hop these reads.
+    id: "sync-fs",
+    message:
+      "synchronous state-file read inside an async body; take it inside spawn_blocking_named",
+    matches: (fnSource, _fileText) => {
+      const body = fnSource.replace(/spawn_blocking_named\s*\([\s\S]*?\n\s{4,}\)/g, " ");
+      return SYNC_FS_CALLS.test(body) || SYNC_STATE_READERS.test(body);
+    },
+  },
   {
     id: "std-process",
     message: "std::process used inside async fn; use tokio::process or spawn_blocking",
