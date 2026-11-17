@@ -92,6 +92,7 @@ pub mod routes {
         pub const INPUT: &str = "/live-pane/input";
         pub const INTERRUPT: &str = "/live-pane/interrupt";
         pub const RESIZE: &str = "/live-pane/resize";
+        pub const SELECT: &str = "/live-pane/select";
     }
 
     pub mod services {

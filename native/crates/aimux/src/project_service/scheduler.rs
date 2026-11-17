@@ -13,8 +13,10 @@ use std::time::{Duration, UNIX_EPOCH};
 use serde_json::Value;
 
 use crate::config::{load_config_for_known_project_root, project_config_path_for_known_root};
+use crate::daemon_state::try_load_metadata_state;
 use crate::paths::PathResolver;
 use crate::periodic_scheduler as periodic;
+use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
 use super::notifications::{NotificationWriteInput, add_notification};
 use super::operation_failures::{
@@ -158,7 +160,7 @@ pub trait PeriodicTask: Send + 'static {
     /// tasks ride the default conversion; tasks with tick-native config can
     /// override this directly.
     fn tick_multiple(&self) -> u64 {
-        periodic_tick_multiple_from_interval_ms(self.interval_ms())
+        periodic::interval_ms_to_ticks(self.interval_ms())
     }
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a>;
     /// Whether the first run should happen at startup instead of one interval
@@ -340,9 +342,210 @@ fn adapt_tasks(
         .collect()
 }
 
-fn periodic_tick_multiple_from_interval_ms(interval_ms: i64) -> u64 {
-    let interval_ms = interval_ms.max(periodic::MIN_INTERVAL_MS);
-    let ticks =
-        interval_ms.saturating_add(periodic::TICK_INTERVAL_MS - 1) / periodic::TICK_INTERVAL_MS;
-    u64::try_from(ticks).unwrap_or(1).max(1)
+/// The topology and metadata a scan task starts from, read off the async
+/// workers.
+///
+/// Five periodic tasks open the same two files at the top of their `run`
+/// bodies -- `read_runtime_topology` and `try_load_metadata_state`, both
+/// `fs::read_to_string` underneath -- and they did it on the async worker that
+/// polls them. The project service has TWO workers, so two such tasks reading
+/// at once is the whole runtime, which is exactly the shape
+/// `audit-async-blocking`'s shared-mutex hazard describes for the interceptor
+/// that killed daemons: every other task accepted and never polled, `/health`
+/// among them, and the watchdog ends the process after three failed probes.
+///
+/// The audit cannot see this one. Its hazards are `std::process`, `std::net`,
+/// `thread::sleep`, a shared mutex and a blocking channel recv -- there is no
+/// filesystem hazard at all, so a sync read behind a project-level wrapper is
+/// invisible to it.
+/// Which of the two scan inputs could not be read.
+///
+/// Named rather than a single string, because the scheduler-visible failure
+/// has to say WHICH file was unreadable. Collapsing them is the mistake this
+/// enum exists to prevent: two tests pin the distinction
+/// (`corrupt_scribe_topology_records_scheduler_visible_failure` and
+/// `corrupt_scribe_metadata_records_scheduler_visible_failure`), and they
+/// caught it when a first version of this helper returned one message for
+/// both.
+#[derive(Debug)]
+pub enum ScanInputError {
+    Topology(String),
+    Metadata(String),
+    /// The pool task never ran. Not an empty topology, and not a corrupt file.
+    NotRead(String),
+}
+
+impl ScanInputError {
+    /// The underlying message, for a caller adding its own prefix.
+    pub fn detail(&self) -> &str {
+        match self {
+            Self::Topology(detail) | Self::Metadata(detail) | Self::NotRead(detail) => detail,
+        }
+    }
+}
+
+/// The topology alone, read off the async workers.
+///
+/// Separate from `read_scan_inputs_off_the_worker` because four tasks decide
+/// whether they need the metadata AFTER looking at the topology --
+/// `transcript_reconciler` and `retired_worktree_reaper` return early when
+/// there is nothing to act on, and `window_reconciliation`, `agent_restore`
+/// and `loop_watcher` never read metadata at all. Handing them the combined
+/// helper would add a metadata read to every idle tick, which is more I/O than
+/// the inline version it replaces.
+pub async fn read_topology_off_the_worker(
+    project_state_dir: PathBuf,
+) -> Result<Value, ScanInputError> {
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("project-service", "scan-topology"),
+        move || {
+            read_runtime_topology(runtime_topology_path(&project_state_dir))
+                .map_err(ScanInputError::Topology)
+        },
+    )
+    .await
+    .map_err(|error| ScanInputError::NotRead(error.to_string()))?
+}
+
+/// The metadata alone, read off the async workers.
+///
+/// The other half of the split above, for a task that has already decided it
+/// needs it.
+/// The topology and the metadata STATE, read off the async workers.
+///
+/// A third shape rather than a reuse of `read_scan_inputs_off_the_worker`,
+/// which serializes the metadata to a `Value`. `agent_restore` wants the
+/// struct: it looks sessions up with `metadata.sessions.get(..)`, so handing
+/// it a `Value` would mean serializing and then re-parsing on every tick.
+/// The three files a route handler scans, read off the async workers.
+///
+/// `agents` and `desktop_state` both read the same trio -- topology, metadata
+/// and the runtime exchange -- one after another with nothing conditional
+/// between them, so one hop serves both. `loop_watcher` reads the same three
+/// but through its own private metadata loader, which is why it keeps its own
+/// helper rather than sharing this one.
+/// Which of the three route-scan inputs could not be read.
+///
+/// Separate from `ScanInputError` on purpose. Adding an `Exchange` variant to
+/// that enum made three unrelated tasks -- scribe-watcher, sub-agent activity
+/// and agent-restore -- handle a case none of them can ever observe, and the
+/// alternative was a wildcard arm that would silently absorb the next variant
+/// too. Each enum now carries exactly the outcomes its own callers can see.
+#[derive(Debug)]
+pub enum RouteScanInputError {
+    Topology(String),
+    Metadata(String),
+    Exchange(String),
+    /// The pool task never ran.
+    NotRead(String),
+}
+
+impl RouteScanInputError {
+    /// The underlying message, for a caller adding its own prefix.
+    pub fn detail(&self) -> &str {
+        match self {
+            Self::Topology(detail)
+            | Self::Metadata(detail)
+            | Self::Exchange(detail)
+            | Self::NotRead(detail) => detail,
+        }
+    }
+}
+
+pub async fn read_route_scan_inputs_off_the_worker(
+    project_state_dir: PathBuf,
+) -> Result<(Value, crate::daemon_state::MetadataState, Value), RouteScanInputError> {
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("project-service", "route-scan-inputs"),
+        move || {
+            let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))
+                .map_err(RouteScanInputError::Topology)?;
+            // The STATE, not a serialized copy: both callers read
+            // `metadata.sessions`, so serializing here would only mean
+            // re-parsing there.
+            let metadata = try_load_metadata_state(&project_state_dir)
+                .map_err(RouteScanInputError::Metadata)?;
+            let exchange = super::runtime_exchange::try_read_runtime_exchange(
+                super::runtime_exchange::runtime_exchange_path(&project_state_dir),
+            )
+            .map_err(RouteScanInputError::Exchange)?;
+            Ok((topology, metadata, exchange))
+        },
+    )
+    .await
+    .map_err(|error| RouteScanInputError::NotRead(error.to_string()))?
+}
+
+/// The metadata STATE, read off the async workers, for the callers that use
+/// the infallible loader.
+///
+/// `load_metadata_state` answers a missing or unreadable file with an empty
+/// state, so there is no read error to carry. The `Err` here means only that
+/// the pool task never ran, which is a different thing from an empty state and
+/// must not be mistaken for one.
+pub async fn read_metadata_state_off_the_worker(
+    project_state_dir: PathBuf,
+) -> Result<crate::daemon_state::MetadataState, String> {
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("project-service", "metadata-state"),
+        move || crate::daemon_state::load_metadata_state(&project_state_dir),
+    )
+    .await
+    .map_err(|error| format!("metadata state was not read: {error}"))
+}
+
+pub async fn read_topology_and_metadata_state_off_the_worker(
+    project_state_dir: PathBuf,
+) -> Result<(Value, crate::daemon_state::MetadataState), ScanInputError> {
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("project-service", "scan-topology-and-state"),
+        move || {
+            let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))
+                .map_err(ScanInputError::Topology)?;
+            let metadata =
+                try_load_metadata_state(&project_state_dir).map_err(ScanInputError::Metadata)?;
+            Ok((topology, metadata))
+        },
+    )
+    .await
+    .map_err(|error| ScanInputError::NotRead(error.to_string()))?
+}
+
+pub async fn read_metadata_off_the_worker(
+    project_state_dir: PathBuf,
+) -> Result<Value, ScanInputError> {
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("project-service", "scan-metadata"),
+        move || {
+            try_load_metadata_state(&project_state_dir)
+                .map_err(ScanInputError::Metadata)
+                .and_then(|state| {
+                    serde_json::to_value(state)
+                        .map_err(|error| ScanInputError::Metadata(error.to_string()))
+                })
+        },
+    )
+    .await
+    .map_err(|error| ScanInputError::NotRead(error.to_string()))?
+}
+
+pub async fn read_scan_inputs_off_the_worker(
+    project_state_dir: PathBuf,
+) -> Result<(Value, Value), ScanInputError> {
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("project-service", "scan-inputs"),
+        move || {
+            let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))
+                .map_err(ScanInputError::Topology)?;
+            let metadata = try_load_metadata_state(&project_state_dir)
+                .map_err(ScanInputError::Metadata)
+                .and_then(|state| {
+                    serde_json::to_value(state)
+                        .map_err(|error| ScanInputError::Metadata(error.to_string()))
+                })?;
+            Ok((topology, metadata))
+        },
+    )
+    .await
+    .map_err(|error| ScanInputError::NotRead(error.to_string()))?
 }

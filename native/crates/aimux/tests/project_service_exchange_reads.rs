@@ -1,3 +1,6 @@
+use aimux::project_service::coordination_mutations::{
+    TaskInputTargetCheck, record_task_input, task_input_target_exists,
+};
 use aimux::project_service::exchange_reads::{
     list_tasks, list_thread_summaries, read_message_snapshot,
 };
@@ -28,13 +31,229 @@ fn thread_summaries_filter_participant_sort_by_updated_and_include_latest_messag
 }
 
 #[test]
+fn sending_input_for_a_task_stamps_the_row_it_is_acting_on() {
+    // The join between the two worlds. `aimux task assign` wrote a row and
+    // delivered nothing; `aimux input` delivered and wrote nothing. This is
+    // what lets the ledger say the delegation actually went out.
+    let project = temp_project("task-input-stamp");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let assigned = route_project_service_request(
+        &context,
+        "POST",
+        "/tasks/assign",
+        Some(
+            &json!({ "from": "claude-utymep", "to": "codex-1", "description": "move the proxies" }),
+        ),
+    );
+    assert_eq!(assigned.status, 200, "{:?}", assigned.body);
+    let task_id = assigned.body["task"]["id"]
+        .as_str()
+        .expect("task id")
+        .to_owned();
+
+    // A fresh task has never been sent anything.
+    assert!(assigned.body["task"].get("lastInputAt").is_none());
+
+    let recorded = record_task_input(&state_dir, &task_id, Some("claude-utymep"))
+        .expect("the task is stamped");
+    assert_eq!(recorded["lastInputBy"], "claude-utymep");
+    assert!(
+        recorded["lastInputAt"]
+            .as_str()
+            .is_some_and(|at| !at.is_empty()),
+        "stamped with a time: {recorded:?}"
+    );
+
+    // And it is on the stored row, not just the returned copy.
+    let listed = route_project_service_request(&context, "GET", "/tasks?limit=50", None);
+    let task = listed.body["tasks"]
+        .as_array()
+        .expect("tasks")
+        .iter()
+        .find(|task| task["id"] == json!(task_id.clone()))
+        .expect("the task");
+    assert_eq!(task["lastInputBy"], "claude-utymep");
+
+    // An unsigned send still records that something was sent.
+    let unsigned = record_task_input(&state_dir, &task_id, None).expect("stamped");
+    assert_eq!(unsigned["lastInputBy"], "user");
+
+    // A task that does not exist is an error, and writes nothing.
+    let before = read_runtime_exchange(runtime_exchange_path(&state_dir));
+    let missing = record_task_input(&state_dir, "task-nope", Some("claude-utymep"));
+    assert_eq!(missing.unwrap_err(), "task not found: task-nope");
+    let after = read_runtime_exchange(runtime_exchange_path(&state_dir));
+    assert_eq!(before["tasks"], after["tasks"], "a miss must not write");
+
+    cleanup(project);
+}
+
+/// Could-not-read and is-not-there are different answers.
+///
+/// The input route checks a task id before it probes tmux, because that probe
+/// is a subprocess and a typo should not cost one. The first version of that
+/// check used `read_runtime_exchange`, which folds a corrupt file, an
+/// unsupported version and an unreadable one into an EMPTY exchange -- so
+/// every task read as missing and a real row was reported as "task not
+/// found". The write path propagates the real cause, so the cheap check was
+/// the less honest of the two while its comment claimed they agreed.
+#[test]
+fn checking_a_task_id_tells_an_unreadable_ledger_apart_from_a_missing_row() {
+    let project = temp_project("task-check-unreadable");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+
+    // A real row, and a real miss, so the two honest answers are both here.
+    let assigned = route_project_service_request(
+        &ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir),
+        "POST",
+        "/tasks/assign",
+        Some(&json!({ "from": "claude-utymep", "to": "codex-1", "description": "move it" })),
+    );
+    assert_eq!(assigned.status, 200, "{:?}", assigned.body);
+    let task_id = assigned.body["task"]["id"]
+        .as_str()
+        .expect("task id")
+        .to_owned();
+    assert_eq!(
+        task_input_target_exists(&state_dir, &task_id),
+        TaskInputTargetCheck::Present
+    );
+    assert_eq!(
+        task_input_target_exists(&state_dir, "task-nope"),
+        TaskInputTargetCheck::Missing("task not found: task-nope".to_owned())
+    );
+    assert_eq!(
+        task_input_target_exists(&state_dir, "   "),
+        TaskInputTargetCheck::Missing("task id is required".to_owned())
+    );
+
+    // Now make the ledger unreadable. The SAME id that existed a line ago must
+    // not come back as missing.
+    write(
+        runtime_exchange_path(&state_dir),
+        b"{not valid exchange yaml",
+    )
+    .expect("write corrupt exchange");
+    let unreadable = task_input_target_exists(&state_dir, &task_id);
+    let TaskInputTargetCheck::Unreadable(error) = &unreadable else {
+        panic!("an unreadable ledger is its own outcome, got {unreadable:?}");
+    };
+    assert!(
+        !error.contains("task not found"),
+        "a ledger that cannot be read must not be reported as a missing row: {error}"
+    );
+    // Names the FILE. The first version of this allowed `contains("exchange")`
+    // as one of three alternatives, which every error satisfies by embedding a
+    // path ending in `runtime-exchange.yaml` -- so that half of the assertion
+    // could never fail. The path is the useful part of the sentence anyway:
+    // it says which file to go and look at.
+    assert!(
+        error.contains(runtime_exchange_path(&state_dir).to_string_lossy().as_ref()),
+        "the refusal must name the file it could not read: {error}"
+    );
+
+    // And the write path agrees -- it is where this answer came from.
+    let writing = record_task_input(&state_dir, &task_id, Some("claude-utymep"))
+        .expect_err("the write cannot read it either");
+    assert!(
+        !writing.contains("task not found"),
+        "the write path must not report a missing row either: {writing}"
+    );
+
+    cleanup(project);
+}
+
+#[test]
+fn the_task_routes_carry_a_workstream_end_to_end() {
+    // The ROUTES, not the helpers. Assign stores the field and list filters on
+    // the query string, and neither is visible to a test that calls
+    // `list_tasks` directly -- which is how a field reaches the model and
+    // never reaches the user.
+    let project = temp_project("task-workstream-routes");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    for (description, stream) in [
+        ("move the proxies", Some("deaws")),
+        ("port the parser", Some("tealscript")),
+        ("unfiled work", None),
+    ] {
+        let mut body = json!({
+            "from": "claude-utymep",
+            "to": "codex-1",
+            "description": description,
+        });
+        if let Some(stream) = stream {
+            body["stream"] = json!(stream);
+        }
+        let assigned =
+            route_project_service_request(&context, "POST", "/tasks/assign", Some(&body));
+        assert_eq!(assigned.status, 200, "{description}: {:?}", assigned.body);
+    }
+
+    let filtered =
+        route_project_service_request(&context, "GET", "/tasks?stream=deaws&limit=50", None);
+    assert_eq!(filtered.status, 200);
+    let tasks = filtered.body["tasks"].as_array().expect("tasks");
+    assert_eq!(tasks.len(), 1, "only the deaws task: {tasks:?}");
+    assert_eq!(tasks[0]["description"], "move the proxies");
+    // Stored, not merely accepted.
+    assert_eq!(tasks[0]["stream"], "deaws");
+
+    // No filter still means everything, including the task filed under
+    // nothing. A grouping that hides the ungrouped is worse than none.
+    let everything = route_project_service_request(&context, "GET", "/tasks?limit=50", None);
+    assert_eq!(everything.body["tasks"].as_array().expect("tasks").len(), 3);
+
+    cleanup(project);
+}
+
+#[test]
+fn tasks_can_be_listed_by_workstream() {
+    // The dimension that was missing. Without it, membership lives in the
+    // description -- the tealstreet-next queue carries items hand-prefixed
+    // `[deaws]` because there was nowhere else to put it.
+    let exchange = json!({
+        "tasks": [
+            { "id": "task-1", "assignedTo": "codex-1", "status": "pending", "stream": "deaws" },
+            { "id": "task-2", "assignedTo": "codex-2", "status": "pending", "stream": "tealscript" },
+            { "id": "task-3", "assignedTo": "codex-3", "status": "pending" },
+        ]
+    });
+
+    let only_deaws = list_tasks(&exchange, None, None, Some("deaws"), 50);
+    let ids: Vec<&str> = only_deaws["tasks"]
+        .as_array()
+        .expect("tasks")
+        .iter()
+        .filter_map(|task| task["id"].as_str())
+        .collect();
+    assert_eq!(ids, vec!["task-1"]);
+    assert_eq!(only_deaws["total"], json!(1));
+
+    // No stream asked for means every task, including the ones that belong to
+    // no workstream at all. A filter must not quietly hide the unfiled.
+    let everything = list_tasks(&exchange, None, None, None, 50);
+    assert_eq!(everything["tasks"].as_array().expect("tasks").len(), 3);
+
+    // A workstream nobody is in is empty, not everything.
+    let none = list_tasks(&exchange, None, None, Some("nope"), 50);
+    assert_eq!(none["tasks"].as_array().expect("tasks").len(), 0);
+}
+
+#[test]
 fn task_list_filters_session_status_and_reports_truncation() {
     let project = temp_project("tasks");
     let state_dir = project.join("state");
     seed_exchange(&state_dir);
     let exchange = read_runtime_exchange(runtime_exchange_path(&state_dir));
 
-    let body = list_tasks(&exchange, Some("codex-1"), Some("assigned"), 1);
+    let body = list_tasks(&exchange, Some("codex-1"), Some("assigned"), None, 1);
     assert_eq!(body["ok"], true);
     assert_eq!(body["total"], 2);
     assert_eq!(body["limit"], 1);

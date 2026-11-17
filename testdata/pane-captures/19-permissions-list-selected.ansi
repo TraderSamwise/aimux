@@ -1,0 +1,34 @@
+❯ /agents
+  ⎿  The /agents wizard has been removed.
+
+     Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that
+     ..."),
+     or edit the files directly:
+       • .claude/agents/       (this project)
+       • ~/.claude/agents/     (all projects)
+
+     Docs: https://code.claude.com/docs/en/sub-agents
+
+❯ /permissions
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Permissions  Recently denied   Allow   Ask   Deny   Auto mode   Workspace
+
+  Claude Code won't ask before using allowed tools.
+  ╭───────────────────────────────────────────────╮
+  │ ⌕ Search…                                     │
+  ╰───────────────────────────────────────────────╯
+
+  ❯ 1.  Add a new rule…
+    2.  Bash(git commit:*)
+    3.  mcp__computer-use__computer_batch
+    4.  mcp__computer-use__cursor_position
+    5.  mcp__computer-use__double_click
+    6.  mcp__computer-use__hold_key
+    7.  mcp__computer-use__key
+    8.  mcp__computer-use__left_click
+    9.  mcp__computer-use__left_click_drag
+  ↓ 10. mcp__computer-use__left_mouse_down
+
+  ↑/↓ to navigate · Enter to select · ←/→ to switch · Esc to cancel
+

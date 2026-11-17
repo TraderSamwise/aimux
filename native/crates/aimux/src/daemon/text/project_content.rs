@@ -10,7 +10,7 @@ use crate::daemon::routing::{
 };
 use crate::daemon::text::params::{
     ProjectServiceJsonResult, required_project_service_array, required_project_service_object,
-    required_project_service_string,
+    required_project_service_string, unwrap_project_result,
 };
 use crate::daemon::text::worktrees::CLI_PROJECT_MUTATION_TIMEOUT_MS;
 use crate::project_api_contract::routes as project_routes;
@@ -62,24 +62,38 @@ pub fn route_project_content_text_request(
     None
 }
 
-fn usage_text_route(
-    runtime: &mut impl DaemonProjectContentTextRuntime,
+/// Phase one of `aimux usage`: everything decidable without the project
+/// service, so the carve-out can resolve under the lock and release it before
+/// the upstream hop.
+///
+/// This is the query-bearing resolve shape -- the `refresh` flag becomes part
+/// of the upstream route path, not a separate field -- which is why
+/// `CoreReadTarget::route_path` is an owned `String` rather than a `&'static
+/// str`.
+pub fn resolve_usage_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
-) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
     let mut route_path = project_routes::USAGE.to_owned();
     if route_url.search_param("refresh") == Some("1") {
         route_path.push_str("?refresh=1");
     }
-    let (json, _) =
-        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
-            Ok(result) => result,
-            Err(response) => return response,
-        };
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    })
+}
+
+/// Phase three of `aimux usage`, from a raw project-service result.
+pub fn render_usage_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
     if json.get("ok").and_then(Value::as_bool) == Some(false) {
         let mut response = if route_url.search_param("json") == Some("1") {
             text_or_json_lines(route_url, json, &[])
@@ -112,15 +126,33 @@ fn usage_text_route(
     text_or_json_lines(route_url, json, &lines)
 }
 
-fn outline_list_text_route(
+fn usage_text_route(
     runtime: &mut impl DaemonProjectContentTextRuntime,
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
 ) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_usage_request(route_url, body) {
+        Ok(resolved) => resolved,
         Err(response) => return response,
     };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_usage_result(route_url, result)
+}
+
+/// Phase one of `aimux outline list`: everything decidable without the
+/// project service, so the carve-out can resolve under the lock and release it
+/// before the upstream hop.
+pub fn resolve_outline_list_request(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
     let mut route_path = project_routes::work_outline::LIST.to_owned();
     push_project_query(
         &mut route_path,
@@ -152,13 +184,49 @@ fn outline_list_text_route(
         "entryId",
         trimmed_string(route_url, body, "entryId"),
     );
-    let (json, project_root) =
-        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
-            Ok(result) => result,
-            Err(response) => return response,
-        };
-    if route_url.has_search_param("entryId") || body.and_then(|body| body.get("entryId")).is_some()
-    {
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    })
+}
+
+fn outline_list_text_route(
+    runtime: &mut impl DaemonProjectContentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_outline_list_request(route_url, body) {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls.
+    render_outline_list_result(route_url, result)
+}
+
+/// Phase three of `aimux outline list`, from a raw project-service result.
+///
+/// A single-entry request renders a different payload from a list request.
+///
+/// The `entryId` check reads the QUERY only, and the body half of the original
+/// condition is gone rather than carried over: `daemon/server.rs` parses a
+/// JSON body only for POST, and this route is GET-dispatched on both paths, so
+/// `body.and_then(|b| b.get("entryId"))` could never be `Some` here. Keeping
+/// it would have meant threading `Option<&Value>` through the shared render
+/// signature and ten other routes to carry a value that is always `None` --
+/// which I did first, and undid.
+pub fn render_outline_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, project_root) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    if route_url.has_search_param("entryId") {
         let entry = json.get("entry").cloned().unwrap_or(Value::Null);
         let entries = if entry.is_null() {
             Vec::new()
@@ -338,15 +406,6 @@ fn push_project_query(path: &mut String, name: &str, value: Option<String>) {
     path.push_str(name);
     path.push('=');
     path.push_str(&url_encode(&value));
-}
-
-fn unwrap_project_result(
-    result: ProjectServiceJsonResult,
-) -> Result<(Value, String), DaemonRouteResponse> {
-    match result {
-        ProjectServiceJsonResult::Ok { project_root, json } => Ok((json, project_root)),
-        ProjectServiceJsonResult::Err { response } => Err(response),
-    }
 }
 
 fn trimmed_string(route_url: &DaemonRouteUrl, body: Option<&Value>, name: &str) -> Option<String> {

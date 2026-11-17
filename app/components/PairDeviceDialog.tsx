@@ -5,7 +5,24 @@ import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { relayPendingApprovalAtom, relayStatusAtom } from "@/stores/relay";
 
-export const APPROVE_COMMAND = "aimux security device approve";
+/**
+ * The command that actually approves this device.
+ *
+ * It needs the device id, and the dialog used to show only the code, so the
+ * natural move was to paste the code where the id goes -- which the CLI
+ * answered with "No live remote client is waiting for approval as <code>",
+ * reading like a connection problem rather than a wrong argument.
+ *
+ * `security approve` rather than `security device approve`: the latter did
+ * not parse `--code` at all and routed to a stub that refused every time,
+ * and a host that has not updated its CLI yet still has that stub. This
+ * spelling works on both.
+ */
+export function approveCommand(deviceId?: string, code?: string): string {
+  const id = deviceId ?? "<device-id>";
+  const flag = code ? ` --code ${code}` : "";
+  return `aimux security approve ${id}${flag}`;
+}
 
 /**
  * Shown only once the operator asks for something the host has to answer, so a
@@ -20,11 +37,13 @@ export function PairDeviceDialog({ onDismiss }: { onDismiss?: () => void }) {
   if (status !== "device_pending") return null;
 
   const code = pendingApproval?.approvalCode;
+  const deviceId = pendingApproval?.deviceId;
+  const command = approveCommand(deviceId, code);
 
   async function copyCommand() {
     if (Platform.OS !== "web") return;
     try {
-      await navigator.clipboard.writeText(APPROVE_COMMAND);
+      await navigator.clipboard.writeText(command);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -61,7 +80,7 @@ export function PairDeviceDialog({ onDismiss }: { onDismiss?: () => void }) {
             className="mt-2 rounded-md border border-border bg-secondary px-3 py-2"
           >
             <Text className="font-mono text-[12px] text-foreground" selectable>
-              {APPROVE_COMMAND}
+              {command}
             </Text>
             {Platform.OS === "web" ? (
               <Text className="mt-1 text-[11px] text-muted-foreground">

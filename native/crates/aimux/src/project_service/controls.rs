@@ -350,7 +350,7 @@ async fn route_open_dashboard_async<R: AsyncProjectControlRuntime>(
     input: &ControlInput,
     runtime: &mut R,
 ) -> ProjectServiceDispatchResponse {
-    let topology = match load_topology(context) {
+    let topology = match load_topology_async(context).await {
         Ok(topology) => topology,
         Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
     };
@@ -818,12 +818,35 @@ fn load_control_model(context: &ProjectServiceRequestContext) -> Result<ControlM
 async fn load_control_model_async(
     context: &ProjectServiceRequestContext,
 ) -> Result<ControlModel, String> {
-    let topology = load_topology(context)?;
+    let topology = load_topology_async(context).await?;
     let project_state_dir = context.project_state_dir();
-    let metadata = load_metadata_state(&project_state_dir);
+    // On the blocking pool. `load_metadata_state` is infallible -- a missing or
+    // unreadable file becomes an empty state -- so the only error here is a
+    // pool task that never ran, which is not the same thing.
+    let metadata = crate::project_service::scheduler::read_metadata_state_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await?;
     let entries_projection =
         topology_switchable_entries_for_context_async(context, &topology, &metadata.sessions).await;
-    let last_used = load_last_used_state(&project_state_dir);
+    // A DERIVED scan found this one, and only a derived scan could: the name
+    // `load_last_used_state` was never in the audit's list, so the audit called
+    // this function clean. It is the third reader in here, and the second time
+    // this same function was reported fixed while a reader was still inline --
+    // `load_topology` was the first.
+    //
+    // `load_last_used_state` answers any read failure with an empty state, so
+    // the only error is a pool task that never ran, which is not the same thing
+    // as nothing having been used yet.
+    let last_used = {
+        let dir = project_state_dir.to_path_buf();
+        crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::task_name("project-service", "control-last-used"),
+            move || load_last_used_state(&dir),
+        )
+        .await
+        .map_err(|error| format!("last-used state was not read: {error}"))?
+    };
     let switch_context = SwitchableContext {
         project_root: context.project_root().to_string_lossy().into_owned(),
         ..SwitchableContext::default()
@@ -865,6 +888,19 @@ fn control_error_body(model: &ControlModel, error: &str) -> Value {
 fn load_topology(context: &ProjectServiceRequestContext) -> Result<Value, String> {
     let path = runtime_topology_path(context.project_state_dir());
     read_runtime_topology(path)
+}
+
+/// The same read, off the async workers.
+///
+/// An async sibling rather than a change to `load_topology`, because two sync
+/// callers use that one and a sync fn cannot await. The two async callers took
+/// the sync read on the worker that was serving their request.
+async fn load_topology_async(context: &ProjectServiceRequestContext) -> Result<Value, String> {
+    crate::project_service::scheduler::read_topology_off_the_worker(
+        context.project_state_dir().to_path_buf(),
+    )
+    .await
+    .map_err(|error| error.detail().to_owned())
 }
 
 fn open_control_item<R: ProjectControlRuntime>(

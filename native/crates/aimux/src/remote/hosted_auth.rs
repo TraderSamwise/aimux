@@ -154,6 +154,7 @@ fn hosted_operator_actor(principal: &HostedPrincipal) -> RemoteActor {
         email: None,
         share_id: None,
         share_session_id: None,
+        peer_machine_id: None,
         principal: Some(RemoteOperatorPrincipal {
             id: principal.id.clone(),
             label: principal.label.clone(),

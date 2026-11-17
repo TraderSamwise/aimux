@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Modal, Platform, Pressable, StyleSheet, View } from "react-native";
 import { usePathname } from "expo-router";
 import { useAtomValue } from "jotai";
-import { PairDeviceDialog, APPROVE_COMMAND } from "@/components/PairDeviceDialog";
+import { PairDeviceDialog, approveCommand } from "@/components/PairDeviceDialog";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
@@ -86,7 +86,7 @@ export function RelayIndicator() {
       <Pressable
         accessibilityHint={
           canOpenPairingHelp
-            ? `Run ${APPROVE_COMMAND} on your Mac to approve this device.`
+            ? `Run ${approveCommand(pendingApproval?.deviceId, pendingApproval?.approvalCode)} on your Mac to approve this device.`
             : undefined
         }
         accessibilityLabel={
@@ -133,7 +133,8 @@ export function RelayIndicator() {
         >
           <Text className="text-[12px] font-semibold text-foreground">Pair this browser</Text>
           <Text className="mt-1 text-[12px] text-muted-foreground">
-            Click for details, or run {APPROVE_COMMAND} on your Mac and match the code.
+            Click for details, or run{" "}
+            {approveCommand(pendingApproval?.deviceId, pendingApproval?.approvalCode)} on your Mac.
           </Text>
         </View>
       ) : null}

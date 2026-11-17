@@ -86,13 +86,19 @@
         ],
         "closedWrites": 0,
         "authLost": [
-          "Relay rejected credentials (code 1008) — run `aimux login` again"
+          "Relay rejected credentials (code 1008) \u2014 run `aimux login` again"
         ],
         "status": {
           "status": "auth_failed",
           "relayUrl": "wss://relay.aimux.app",
           "lastConnectedAt": "<timestamp>",
-          "lastError": "Relay rejected credentials (code 1008) — run `aimux login` again"
+          "lastError": "Relay rejected credentials (code 1008) \u2014 run `aimux login` again",
+          "lastDisconnectedAt": "<timestamp>",
+          "lastCloseCode": 1008,
+          "lastCloseReason": "",
+          "consecutiveShortConnections": 1,
+          "flapping": false,
+          "shortConnectionThresholdMs": 2000
         }
       }
     },

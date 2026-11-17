@@ -67,6 +67,7 @@ import { ChatNewMessagesBadge } from "@/components/ChatNewMessagesBadge";
 import { Button } from "@/components/ui/button";
 import { Input, NO_BROWSER_FOCUS_RING } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
+import { AgentPromptChooser } from "@/components/AgentPromptChooser";
 import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
 import { AttachmentDropZone } from "@/components/AttachmentDropZone";
 import {
@@ -90,6 +91,7 @@ import {
   shouldFocusComposerOnOpen,
 } from "@/lib/chat-keyboard-intent";
 import {
+  bindShareMachine,
   createShareInvite,
   getShare,
   leaveShare,
@@ -99,6 +101,7 @@ import {
   removeShareParticipant,
   revokeShareInvite,
   interruptLivePane,
+  selectLivePaneOption,
   sendLivePaneInput,
   uploadAttachment,
   type ShareInvite,
@@ -131,6 +134,7 @@ import {
 import {
   COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
   mergeAcceptedComposerEchoes,
+  sameAcceptedComposerEchoes,
   type AcceptedComposerEcho,
 } from "@/lib/composer-echo";
 import {
@@ -172,9 +176,21 @@ import {
 import {
   agentOutputModeForVisiblePane,
   chatTranscriptPlaceholderState,
+  terminalOutputPlaceholderState,
   type ChatTranscriptPlaceholderState,
 } from "@/lib/chat-loading";
+import { CHAT_PANE_PLACEHOLDER_SHELL } from "@/lib/chat-pane-placeholder";
+import type { InitialAgentOutputFeedStatus } from "@/lib/agent-output-feed-state";
+import { looksLikeAgentCommand } from "@/lib/agent-command";
+import {
+  reportCommandEchoExpired,
+  reportSendFailed,
+  reportSendNotAccepted,
+  reportSendTimeout,
+  reportTranscriptRefreshFailed,
+} from "@/lib/send-timeout-report";
 import { formatTerminalOutputForDisplay, terminalOutputTail } from "@/lib/terminal-output";
+import { TERMINAL_DIVIDER_FALLBACK, terminalDividerColumns } from "@/lib/terminal-columns";
 import {
   terminalScrollStateAfterUserScroll,
   terminalVisibleOutputForLiveChange,
@@ -223,7 +239,10 @@ import {
   outputAnsiFamily,
   outputAvailableFamily,
   outputBufferFamily,
+  answerRefusalFamily,
+  answeringOptionFamily,
   markOutputInterruptedAtom,
+  paneSelectionFamily,
   transcriptFamily,
   transcriptStartLineFamily,
 } from "@/stores/chat";
@@ -269,6 +288,7 @@ const COMPOSER_FOOTER_VERTICAL_PADDING = 12;
 const CHAT_COMPOSER_CONTROL_ROW_HEIGHT = 34;
 const CHAT_COMPOSER_RESERVE_GAP = 8;
 const CHAT_ATTACHMENT_STRIP_RESERVE = 88;
+
 const CHAT_NEW_MESSAGE_BADGE_DEBOUNCE_MS = 180;
 const CHAT_NEW_MESSAGE_BADGE_VISIBLE_MS = 3200;
 const FOOTER_LABEL_SHIMMER_DURATION_MS = 1700;
@@ -404,7 +424,13 @@ type JotaiStore = ReturnType<typeof useStore>;
 const EMPTY_COMPOSER_SELECTION: ComposerTextSelection = { start: 0, end: 0 };
 
 function hasComposerDraftContent(text: string): boolean {
-  return /\S/.test(text);
+  // The same answer the send itself gives. `/\S/` does not match U+0085, so
+  // a draft of only that left Send ENABLED while `normalizeComposerDraft`
+  // returned null -- the press reached the guard inside `handleSendMessage`
+  // and returned, with no request, no error and the draft still sitting
+  // there. Tapping Send and having nothing at all happen is worse than the
+  // refusal it replaced.
+  return normalizeComposerDraft(text) !== null;
 }
 
 function readComposerDraft(store: JotaiStore, key: string | null): string {
@@ -547,10 +573,29 @@ export default function ChatScreen() {
   const transcript = useAtomValue(transcriptFamily(agentKey));
   const transcriptLastError = useAtomValue(lastErrorFamily(agentKey));
   const activity = useAtomValue(activityFamily(agentKey));
+  const paneSelection = useAtomValue(paneSelectionFamily(agentKey));
+  // Per agent, not per mounted screen: this component instance is reused
+  // across route params, so a marker held in it followed the user to another
+  // agent's chooser, and a remount lost it entirely and re-enabled every row
+  // while the first answer was still walking the cursor.
+  const [answeringOption, setAnsweringOption] = useAtom(answeringOptionFamily(agentKey));
+  const [answerRefusal, setAnswerRefusal] = useAtom(answerRefusalFamily(agentKey));
+  const [chooserHeight, setChooserHeight] = useState<number | undefined>(undefined);
   const activityText = useAtomValue(activityTextFamily(agentKey));
   const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
+  // One place the delivery diagnostics read their context from, so every one
+  // of them describes the same connection in the same words.
+  const deliveryDiagnosticContext = useCallback(
+    () => ({
+      sessionId,
+      relayConfigured,
+      relayStatus,
+      shared: Boolean(routeShareId),
+    }),
+    [relayConfigured, relayStatus, routeShareId, sessionId],
+  );
   const activeShare = useRouteShare();
   const setLegacyActiveShare = useSetAtom(activeSharedSessionAtom);
   const setAcceptedShares = useSetAtom(acceptedSharedSessionsAtom);
@@ -575,6 +620,7 @@ export default function ChatScreen() {
   const [shareDetailsExpanded, setShareDetailsExpanded] = useState(false);
   const [managePanelOpen, setManagePanelOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
+  const [bindBusy, setBindBusy] = useState(false);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteStatus, setInviteStatus] = useState<string | null>(null);
   const [shareSummary, setShareSummary] = useState<SharedSessionSummary | null>(null);
@@ -587,6 +633,7 @@ export default function ChatScreen() {
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [composerWidth, setComposerWidth] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
+
   const [sendWarning, setSendWarning] = useState<string | null>(null);
   // An accepted send the project service queued rather than delivered. Kept
   // apart from `sendError`: the route returns it with `accepted: true`. The
@@ -677,6 +724,13 @@ export default function ChatScreen() {
   const canManageShare = Boolean(
     shareSummary?.ownerUserId && user?.id === shareSummary.ownerUserId,
   );
+  // What a repair would bind the share to, named rather than called "this
+  // machine": the endpoint is the project service actually serving this
+  // session, and the owner has to see which machine they are picking --
+  // opening the same checkout from another machine offers that one.
+  const bindTarget = serviceEndpoint?.machineId
+    ? (project?.machineName ?? serviceEndpoint.machineId)
+    : null;
   // The settings read is deliberately NOT part of this. `shareSummaryCheckedKey`
   // is the owner's SEND gate through `ownerShareStatusPending`, so a read that
   // never answers must not keep this effect from running: gating it here left
@@ -1049,6 +1103,13 @@ export default function ChatScreen() {
     (serviceDisconnected
       ? chatChromeRowHeight(reconnectingPanelHeight, CHAT_RECONNECTING_PANEL_RESERVE)
       : 0);
+  // Measured, not computed from a row count. A chooser's height is its
+  // content: the most common permission prompt has a 109-character option that
+  // wraps to three lines on a phone, so any per-row constant is short exactly
+  // where it matters, and the footer it under-reserves for grows upward over
+  // the diff being approved. Same treatment as the session header and the
+  // reconnecting panel beside it.
+  const chooserReserve = paneSelection ? (chooserHeight ?? 0) : 0;
   const chatTopContentReserve = chatTranscriptTopReserveHeight({
     pairingBannerVisible: showPairingBanner,
     panelReserveHeight: chatOverlayPanelReserve,
@@ -1061,12 +1122,17 @@ export default function ChatScreen() {
     CHAT_COMPOSER_RESERVE_GAP +
     CHAT_COMPOSER_CONTROL_ROW_HEIGHT +
     composerFooterBottomPadding +
-    (pendingAttachments.length > 0 ? CHAT_ATTACHMENT_STRIP_RESERVE : 0);
+    (pendingAttachments.length > 0 ? CHAT_ATTACHMENT_STRIP_RESERVE : 0) +
+    chooserReserve;
   const effectiveChatChromeVisible =
     chatChromeVisible ||
     keyboardVisible ||
     composerFocused ||
     pendingAttachments.length > 0 ||
+    // The agent is blocked on this control. Letting the chrome hide while it
+    // is up takes away the one thing that unblocks it, with nothing on screen
+    // saying anything is waiting.
+    chooserReserve > 0 ||
     sharePanelOpen ||
     managePanelOpen ||
     serviceDisconnected ||
@@ -1307,16 +1373,27 @@ export default function ChatScreen() {
     [allMessages.length, initialOutputStatus, transcriptLastError],
   );
 
+  const settleContext = {
+    parsedMessages,
+    relayConfigured,
+    relayStatus,
+    routeShareId,
+    sessionId,
+    setAcceptedComposerMessages,
+    setSendError,
+  };
+
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- parsed transcript updates settle local accepted composer echoes
-    setAcceptedComposerMessages((current) => {
-      const result = mergeAcceptedComposerEchoes(parsedMessages, current, {
-        nowMs: Date.now(),
-        timeoutMs: COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
-      });
-      return result.echoes === current ? current : result.echoes;
-    });
-  }, [parsedMessages]);
+    settleComposerEchoes(acceptedComposerMessages, settleContext);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- settleContext is rebuilt each render; its contents are the real dependencies
+  }, [
+    acceptedComposerMessages,
+    parsedMessages,
+    relayConfigured,
+    relayStatus,
+    routeShareId,
+    sessionId,
+  ]);
 
   useEffect(() => {
     parsedMessageCountRef.current = parsedMessageCount;
@@ -1333,22 +1410,23 @@ export default function ChatScreen() {
       ),
     );
     const timer = setTimeout(
-      () => {
-        setAcceptedComposerMessages((current) => {
-          const result = mergeAcceptedComposerEchoes(parsedMessages, current, {
-            nowMs: Date.now(),
-            timeoutMs: COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
-          });
-          if (result.droppedExpiredCount > 0) {
-            setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
-          }
-          return result.echoes;
-        });
-      },
+      () => settleComposerEchoes(acceptedComposerMessages, settleContext),
       Math.max(0, nextExpiryMs - now),
     );
     return () => clearTimeout(timer);
-  }, [acceptedComposerMessages, parsedMessages]);
+    // Re-running on a relay change is harmless: `nextExpiryMs` is an absolute
+    // deadline, so the rebuilt timer fires at the same moment, and the record
+    // then carries the relay state as it is when the send is given up on
+    // rather than when it was queued.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- settleContext is rebuilt each render; its contents are the real dependencies
+  }, [
+    acceptedComposerMessages,
+    parsedMessages,
+    relayConfigured,
+    relayStatus,
+    routeShareId,
+    sessionId,
+  ]);
 
   const userMessageCount = useMemo(
     () => allMessages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0),
@@ -1500,7 +1578,8 @@ export default function ChatScreen() {
   const handleSendMessage = useCallback(
     async (options?: { preserveFocus?: boolean }) => {
       const preserveFocus = options?.preserveFocus === true;
-      const text = normalizeComposerDraft(readComposerDraft(jotaiStore, composerDraftKey)) ?? "";
+      const rawDraft = readComposerDraft(jotaiStore, composerDraftKey);
+      const text = normalizeComposerDraft(rawDraft) ?? "";
       const attachments = [...pendingAttachments];
       if (
         !serviceEndpoint ||
@@ -1511,6 +1590,17 @@ export default function ChatScreen() {
         jotaiStore.get(composerSendOperationAtom) !== null ||
         (!text && attachments.length === 0)
       ) {
+        // A draft of only invisible characters -- a NEL or a BOM that came in
+        // on a paste -- is not a message, so pressing Enter does nothing, as
+        // it does on an empty composer. But leaving those characters in the
+        // box is a composer that LOOKS empty with Send greyed out and nothing
+        // to explain it. Drop them, and the state the user can see matches
+        // the state the send is in.
+        if (!text && attachments.length === 0 && rawDraft !== "") {
+          writeComposerDraft(jotaiStore, composerDraftKey, "");
+          composerDraftTextRef.current = "";
+          composerSelectionRef.current = EMPTY_COMPOSER_SELECTION;
+        }
         return;
       }
       // Checked over the whole set before anything is uploaded or the draft is
@@ -1604,6 +1694,7 @@ export default function ChatScreen() {
           } else if (deliveryState.kind === "warning") {
             setSendWarning(deliveryState.notice);
           } else {
+            reportSendNotAccepted(deliveryDiagnosticContext(), deliveryState.kind);
             setSendError(deliveryState.text);
           }
           composerSelectionRef.current = EMPTY_COMPOSER_SELECTION;
@@ -1613,6 +1704,15 @@ export default function ChatScreen() {
           void refreshOutputSnapshot().catch(() => {});
           return;
         }
+        // A command is consumed by the agent and need not come back as a
+        // user turn, so waiting for an echo of one guaranteed a "Send not
+        // confirmed yet" ten seconds later for a command that ran perfectly.
+        // The daemon decides what a command is with this same rule, from the
+        // same contract file.
+        //
+        // The echo is still queued. It is also what draws the bubble and, in
+        // terminal mode, the only confirmation the composer has -- skipping
+        // it outright traded a wrong warning for no feedback at all.
         setAcceptedComposerMessages((current) =>
           [
             ...current,
@@ -1621,6 +1721,7 @@ export default function ChatScreen() {
               baselineUserMessageCount: baselineParsedUserMessageCount,
               clientMessageId,
               createdAtMs: Date.now(),
+              expectsTranscriptEcho: !looksLikeAgentCommand(text),
               message: acceptedMessage,
             },
           ].slice(-20),
@@ -1632,6 +1733,7 @@ export default function ChatScreen() {
         setPendingComposerAck(null);
         if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
         void refreshOutputSnapshot().catch((error) => {
+          reportTranscriptRefreshFailed(deliveryDiagnosticContext(), "input", error);
           setSendError(formatPostActionTranscriptRefreshResult("Input sent", error));
         });
       } catch (err) {
@@ -1664,6 +1766,7 @@ export default function ChatScreen() {
         writeComposerDraft(jotaiStore, sendComposerDraftKey, text);
         composerDraftTextRef.current = text;
         setPendingAttachments(attachments);
+        reportSendFailed(deliveryDiagnosticContext(), err);
         setSendError(formatComposerSendFailure(err));
       } finally {
         if (jotaiStore.get(composerSendOperationAtom) === sendOperation) {
@@ -1684,6 +1787,7 @@ export default function ChatScreen() {
     [
       agentKey,
       clearLocalInterruptHold,
+      deliveryDiagnosticContext,
       composerDraftKey,
       composerSendOperationAtom,
       jotaiStore,
@@ -1824,6 +1928,7 @@ export default function ChatScreen() {
         { token },
       );
       void refreshOutputSnapshot("interrupt").catch((error) => {
+        reportTranscriptRefreshFailed(deliveryDiagnosticContext(), "interrupt", error);
         setSendError(formatPostActionTranscriptRefreshResult("Interrupt sent", error));
       });
     } catch (error) {
@@ -1832,6 +1937,7 @@ export default function ChatScreen() {
       interruptInFlightRef.current = false;
     }
   }, [
+    deliveryDiagnosticContext,
     endpointHost,
     endpointMachineId,
     endpointPort,
@@ -1842,6 +1948,69 @@ export default function ChatScreen() {
     setSendError,
     token,
   ]);
+
+  const handleChoosePromptOption = useCallback(
+    async (option: { label: string; number?: number; question?: string; subject?: string }) => {
+      if (!endpointHost || !endpointPort || !sessionId) return;
+      // Read through the store, not from the `answeringOption` value this
+      // callback closed over: two taps inside one commit see the same stale
+      // value, and the component's `disabled` cannot help until React has
+      // rendered. Two requests would be refused by the service's one-per-pane
+      // claim, and that refusal re-enables the rows with the answered question
+      // still on screen — reopening the hazard the hold exists to close.
+      if (jotaiStore.get(answeringOptionFamily(agentKey)) !== null) return;
+      setAnsweringOption(option.label);
+      setAnswerRefusal(null);
+      try {
+        const response = await selectLivePaneOption(
+          {
+            host: endpointHost,
+            port: endpointPort,
+            ...(endpointMachineId ? { machineId: endpointMachineId } : {}),
+          },
+          sessionId,
+          option,
+          { token },
+        );
+        // Kept beside the chooser rather than in the composer's error line.
+        // The refusal names what the pane is offering instead, and the shared
+        // error slot is cleared by the next keystroke — so the one message that
+        // explains why the buttons did not work disappeared as soon as the user
+        // reached for the composer.
+        if (response.accepted !== true) {
+          setAnswerRefusal(response.error ?? `Could not select ${option.label}.`);
+          setAnsweringOption(null);
+        }
+        void refreshOutputSnapshot("select").catch((error) => {
+          setAnswerRefusal(formatPostActionTranscriptRefreshResult("Option sent", error));
+          setAnsweringOption(null);
+        });
+      } catch (error) {
+        setAnswerRefusal(
+          error instanceof Error ? error.message : `Could not select ${option.label}.`,
+        );
+        setAnsweringOption(null);
+      }
+      // No `finally` that clears the marker: a resolved request is not a
+      // delivered answer. The chooser the person pressed is still on screen
+      // for another round trip, and every one of these prompts offers the same
+      // `Yes` / `No`, so re-enabling the rows here is what let a second press
+      // answer the NEXT question. The store clears it when a pane read shows
+      // the chooser has actually moved on.
+    },
+    [
+      agentKey,
+      endpointHost,
+      endpointMachineId,
+      endpointPort,
+      jotaiStore,
+      refreshOutputSnapshot,
+      sessionId,
+      setAnswerRefusal,
+      setAnsweringOption,
+      token,
+    ],
+  );
 
   const handleRetryTranscriptLoad = useCallback(
     (purpose: AgentOutputFeedPurpose = "poll") => {
@@ -2003,7 +2172,14 @@ export default function ChatScreen() {
     () =>
       Platform.OS === "web"
         ? ({
-            onKeyDown: handleComposerKeyboardEvent,
+            // `onKeyPress`, not `onKeyDown`. react-native-web's TextInput
+            // assigns its OWN `onKeyDown` over whatever you pass
+            // (exports/TextInput/index.js: `supportedProps.onKeyDown =
+            // handleKeyDown`), so the handler never reached the DOM and Enter
+            // could not send on web at all. Its handler forwards the real
+            // React keyboard event to `onKeyPress` first, modifiers and
+            // `code` included, which is everything the decision needs.
+            onKeyPress: handleComposerKeyboardEvent,
           } as unknown as Partial<React.ComponentProps<typeof TextInput>>)
         : {},
     [handleComposerKeyboardEvent],
@@ -2126,6 +2302,17 @@ export default function ChatScreen() {
       setInviteStatus("Sign in is required to send invites.");
       return;
     }
+    // A share has to name the machine that holds the session, or the relay is
+    // left guessing from the checkout path -- and two machines with the same
+    // path both claim it, so the route then refuses a share whose host is
+    // online. The endpoint is null while the host is down, which is exactly
+    // when an invite would be created with nothing to bind it to.
+    if (!serviceEndpoint?.machineId) {
+      setInviteStatus(
+        "This agent's host has to be reachable to share it: the invite records which machine holds the session.",
+      );
+      return;
+    }
     setInviteBusy(true);
     setInviteStatus(null);
     try {
@@ -2143,6 +2330,41 @@ export default function ChatScreen() {
       setInviteStatus(err instanceof Error ? err.message : String(err));
     } finally {
       setInviteBusy(false);
+    }
+  }
+
+  /// Bind this share to the machine that holds the session.
+  ///
+  /// A share made before a share recorded its host names no machine, so every
+  /// guest request is refused with a message about a disconnected host --
+  /// while the host is online. This repairs the record the guests already
+  /// hold, rather than issuing a second invite to someone who accepted the
+  /// first one.
+  async function handleBindShareMachine() {
+    const machineId = serviceEndpoint?.machineId;
+    // By id, because this panel is showing one share and knows which: asking
+    // the relay to find it from the session and the checkout meant the share
+    // displayed and the share moved could be different ones.
+    const shareId = shareSummary?.id;
+    if (!canManageShare || !token || !shareId || !machineId || !project?.path || bindBusy) return;
+    setBindBusy(true);
+    setInviteStatus(null);
+    try {
+      // The checkout this chat is open on travels too: a renamed or moved
+      // checkout leaves the stored root behind, and the machine reports the
+      // new one, so without it the repair is refused on exactly the share
+      // that needs it.
+      const result = await bindShareMachine(shareId, machineId, project.path, { token });
+      setShareSummary(result.share);
+      setInviteStatus(
+        result.alreadyBound
+          ? "This chat already points at this machine."
+          : "This chat now points at this machine.",
+      );
+    } catch (err) {
+      setInviteStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBindBusy(false);
     }
   }
 
@@ -2242,6 +2464,24 @@ export default function ChatScreen() {
           paddingBottom: composerFooterBottomPadding,
         }}
       >
+        {/*
+          Above the composer, not instead of it. Every one of these questions
+          can also be answered in words, and one of the real options is "Tell
+          Claude what to change", which exists to be followed by typing.
+        */}
+        {paneSelection ? (
+          <AgentPromptChooser
+            selection={paneSelection}
+            busyLabel={answeringOption}
+            refusal={answerRefusal}
+            onChoose={(option) => void handleChoosePromptOption(option)}
+            onGiveUpWaiting={() => setAnsweringOption(null)}
+            onLayout={(event: LayoutChangeEvent) => {
+              const next = event.nativeEvent.layout.height;
+              setChooserHeight((current) => (current === next ? current : next));
+            }}
+          />
+        ) : null}
         {pendingAttachments.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
             <View className="flex-row gap-2">
@@ -2367,9 +2607,15 @@ export default function ChatScreen() {
       </View>
     ),
     [
+      answerRefusal,
+      answeringOption,
       canSendMessageBase,
       composerFooterStateValue,
       composerDraftKey,
+      handleChoosePromptOption,
+      paneSelection,
+      setAnsweringOption,
+      setChooserHeight,
       composerFooterBottomPadding,
       selectionRestoreToken,
       composerKeyboardProps,
@@ -2828,6 +3074,45 @@ export default function ChatScreen() {
                       />
                     </View>
                   )}
+                  {canManageShare && shareSummary ? (
+                    <View className="mt-3 border-t border-border pt-3">
+                      {shareSummary.hostBound === false ? (
+                        <Text className="text-xs text-muted-foreground">
+                          This chat does not say which machine holds the session, so it is refused
+                          even while the host is online.
+                        </Text>
+                      ) : (
+                        // Offered whatever the share currently says, because
+                        // this machine is not necessarily the one the route
+                        // resolved: with the same checkout on two machines,
+                        // opening the chat can point at either. A press that
+                        // picked the wrong one has to be correctable from the
+                        // right one, and hiding the control once a share has
+                        // ANY host is what made a wrong bind permanent.
+                        <Text className="text-xs text-muted-foreground">
+                          Guests reach this chat through one machine. Point it at this one if it is
+                          the machine actually holding the session.
+                        </Text>
+                      )}
+                      {bindTarget ? (
+                        // Named rather than "this machine", because the owner
+                        // has to see which one they are picking, and because
+                        // the press is repeatable from the right one.
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-2 self-start"
+                          label={bindBusy ? "Pointing..." : `Point it at ${bindTarget}`}
+                          disabled={bindBusy || !token || !relayConfigured || !project?.path}
+                          onPress={handleBindShareMachine}
+                        />
+                      ) : (
+                        <Text className="mt-2 text-xs text-muted-foreground">
+                          Open this chat from the machine that holds it to point it there.
+                        </Text>
+                      )}
+                    </View>
+                  ) : null}
                   {shareSummary && (!activeShare || shareDetailsExpanded) ? (
                     <View className="mt-3 border-t border-border pt-3">
                       <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
@@ -3003,7 +3288,7 @@ export default function ChatScreen() {
                     <AgentTerminalOutputPane
                       ref={terminalViewportRef}
                       bottomContentInset={chatBottomContentReserve}
-                      dividerWidth={chatDividerWidth}
+                      initialStatus={initialOutputStatus}
                       keyboardVisible={keyboardVisible}
                       onChromeVisibleChange={handleChatChromeVisibleChange}
                       onRequestHistoryPage={requestChatHistoryPage}
@@ -3251,7 +3536,9 @@ const TERMINAL_OUTPUT_LINE_STYLE: TextStyle = {
 
 type AgentTerminalOutputPaneProps = {
   bottomContentInset: number;
-  dividerWidth: number;
+  /// The same feed status the chat pane renders from, so the two panes cannot
+  /// describe one connection as two different situations.
+  initialStatus: InitialAgentOutputFeedStatus;
   keyboardVisible: boolean;
   onChromeVisibleChange: (visible: boolean) => void;
   onRequestHistoryPage: (metrics: ChatScrollMetrics, reason?: "scroll" | "content") => void;
@@ -3264,7 +3551,7 @@ const AgentTerminalOutputPane = React.memo(
     function AgentTerminalOutputPane(
       {
         bottomContentInset,
-        dividerWidth,
+        initialStatus,
         keyboardVisible,
         onChromeVisibleChange,
         onRequestHistoryPage,
@@ -3273,28 +3560,39 @@ const AgentTerminalOutputPane = React.memo(
       },
       ref,
     ) {
+      const lastError = useAtomValue(lastErrorFamily(agentKey));
       const outputPlain = useAtomValue(outputBufferFamily(agentKey));
       const outputAnsi = useAtomValue(outputAnsiFamily(agentKey));
       const outputAvailable = useAtomValue(outputAvailableFamily(agentKey));
       const scrollRef = useRef<ChatScrollHandle | null>(null);
+      // THIS pane's columns, not the chat bubble's. The rules being truncated
+      // are drawn in this font at this size, so the count is this pane's
+      // arithmetic and nothing else's.
+      //
+      // Columns rather than pixels in state on purpose: one column is 7.2px,
+      // so a pixel guard commits state up to seven times per column during a
+      // resize, and each commit re-parses the whole output tail.
+      const [paneColumns, setPaneColumns] = useState<number | null>(null);
       const output = outputAnsi || outputPlain;
       const outputTail = useMemo(() => terminalOutputTail(output), [output]);
+      const terminalDividerWidth = paneColumns ?? TERMINAL_DIVIDER_FALLBACK;
       const liveLines = useMemo(
         () =>
           formatTerminalOutputForDisplay(outputTail, {
-            dividerWidth: Math.max(48, dividerWidth * 2),
+            dividerWidth: terminalDividerWidth,
           }),
-        [dividerWidth, outputTail],
+        [outputTail, terminalDividerWidth],
       );
       const liveOutput = useMemo(
         () =>
           terminalVisibleOutputForPinned({
+            columns: terminalDividerWidth,
             lines: liveLines,
             outputAvailable,
             outputText: outputTail,
             sessionKey: agentKey,
           }),
-        [liveLines, outputAvailable, outputTail, agentKey],
+        [liveLines, outputAvailable, outputTail, agentKey, terminalDividerWidth],
       );
       const [visibleOutput, setVisibleOutput] = useState(liveOutput);
       const terminalScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
@@ -3319,6 +3617,15 @@ const AgentTerminalOutputPane = React.memo(
       const visibleOutputAvailable =
         visibleOutput.sessionKey === agentKey ? visibleOutput.outputAvailable : outputAvailable;
       const hasOutput = visibleOutputText.trim().length > 0 || visibleOutputAvailable;
+      // The same decision the chat pane makes, from the same feed. Rendering
+      // an unconditional spinner here is what let one dead connection read as
+      // "Transcript unavailable, Retry" on the left and "Loading output" for
+      // ever on the right.
+      const terminalPlaceholder = terminalOutputPlaceholderState({
+        hasOutput,
+        initialStatus,
+        lastError,
+      });
 
       const cancelPendingTerminalScroll = useCallback(() => {
         if (terminalScrollFrameRef.current === null) return;
@@ -3410,6 +3717,15 @@ const AgentTerminalOutputPane = React.memo(
 
       const handleTerminalLayout = useCallback(
         (event: LayoutChangeEvent) => {
+          // Rules are truncated to THIS pane's columns, so its width is read
+          // where its height already is -- and converted to columns BEFORE it
+          // reaches state, so a drag that changes the width by a few pixels
+          // without changing the column count commits nothing.
+          const measuredColumns = terminalDividerColumns(
+            event.nativeEvent.layout.width,
+            TERMINAL_DIVIDER_FALLBACK,
+          );
+          setPaneColumns((current) => (current === measuredColumns ? current : measuredColumns));
           terminalGeometryRef.current = {
             ...terminalGeometryRef.current,
             viewportHeight: event.nativeEvent.layout.height,
@@ -3499,11 +3815,15 @@ const AgentTerminalOutputPane = React.memo(
       const content = hasOutput ? (
         <View className="rounded-lg border border-border bg-card/80 px-3 py-2">
           {visibleLines.map((line, lineIndex) => (
-            <RNText key={lineIndex} style={TERMINAL_OUTPUT_LINE_STYLE}>
+            // Terminal output is measured in columns, so it cannot follow the
+            // OS text scale: at Larger Text a 12px glyph draws near 9.4px, the
+            // computed column count is ~30% too many, and every rule wraps
+            // again. Column alignment is the point of a monospace pane.
+            <RNText key={lineIndex} allowFontScaling={false} style={TERMINAL_OUTPUT_LINE_STYLE}>
               {line.length === 0
                 ? "\u00a0"
                 : line.map((span, spanIndex) => (
-                    <RNText key={spanIndex} style={span.style}>
+                    <RNText key={spanIndex} allowFontScaling={false} style={span.style}>
                       {span.text}
                     </RNText>
                   ))}
@@ -3511,17 +3831,23 @@ const AgentTerminalOutputPane = React.memo(
           ))}
         </View>
       ) : (
-        <View className="items-center justify-center px-4 py-10">
+        <View className={CHAT_PANE_PLACEHOLDER_SHELL}>
           <View
             className="max-w-[90%] flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2"
             style={{ minWidth: 220 }}
           >
-            <ActivityIndicator size="small" color="#a1a1aa" />
+            {terminalPlaceholder.kind === "loading" ? (
+              <ActivityIndicator size="small" color="#a1a1aa" />
+            ) : null}
             <View className="min-w-0 shrink">
-              <Text className="text-sm text-muted-foreground">Loading output</Text>
-              <Text className="mt-1 text-xs text-muted-foreground">
-                Waiting for terminal output from the project service.
-              </Text>
+              {terminalPlaceholder.kind === "none" ? null : (
+                <>
+                  <Text className="text-sm text-muted-foreground">{terminalPlaceholder.title}</Text>
+                  <Text className="mt-1 text-xs text-muted-foreground">
+                    {terminalPlaceholder.message}
+                  </Text>
+                </>
+              )}
             </View>
           </View>
         </View>
@@ -3554,7 +3880,9 @@ const AgentTerminalOutputPane = React.memo(
           ref={scrollRef as React.Ref<ScrollView>}
           className="flex-1 bg-background"
           contentContainerStyle={contentContainerStyle}
-          keyboardDismissMode="on-drag"
+          // No `keyboardDismissMode` on web. See the transcript pane below:
+          // react-native-web dismisses on every scroll event, not on a drag,
+          // and dismissing on web is only `blurTextInput()`.
           keyboardShouldPersistTaps="handled"
           onContentSizeChange={handleTerminalContentSizeChange}
           onLayout={handleTerminalLayout}
@@ -4087,7 +4415,14 @@ const AgentChatTranscript = React.memo(
         ref={ref as React.Ref<ScrollView>}
         className="flex-1 bg-background"
         contentContainerStyle={contentContainerStyle}
-        keyboardDismissMode="on-drag"
+        // Deliberately absent on web, and this is the whole focus-theft bug.
+        // react-native-web's ScrollView calls `dismissKeyboard()` from
+        // `_handleScroll` on EVERY scroll event in the drag mode --
+        // there is no drag detection -- and on web `dismissKeyboard()` is
+        // only `blurTextInput()`. Every agent output tick scrolls this
+        // transcript to the end, so every tick blurred the composer out from
+        // under whoever was typing. Native keeps it, where a keyboard exists
+        // and a drag really should dismiss it.
         keyboardShouldPersistTaps="handled"
         onContentSizeChange={onContentSizeChange}
         onLayout={onLayout}
@@ -4102,6 +4437,82 @@ const AgentChatTranscript = React.memo(
 );
 AgentChatTranscript.displayName = "AgentChatTranscript";
 
+/**
+ * Settle the pending composer echoes, and record any that expired.
+ *
+ * Both places that can drop an expired echo come through here. The timer is
+ * not the only one: a transcript update settles echoes too, and when it was
+ * the one to drop an expired echo nothing was reported and nothing was shown
+ * -- which is exactly the late-transcript case the record exists to measure.
+ *
+ * Outside the component, and the merge runs OUTSIDE the state updater, on
+ * purpose. React may invoke a queued updater more than once, so reporting
+ * from inside it emitted two records for one timeout and double-counted the
+ * very thing being counted.
+ */
+function settleComposerEchoes(
+  accepted: AcceptedComposerMessage[],
+  {
+    parsedMessages,
+    relayConfigured,
+    relayStatus,
+    routeShareId,
+    sessionId,
+    setAcceptedComposerMessages,
+    setSendError,
+  }: {
+    parsedMessages: ChatMessage[];
+    relayConfigured: boolean;
+    relayStatus: string;
+    routeShareId: string | undefined;
+    sessionId: string | undefined;
+    setAcceptedComposerMessages: (echoes: AcceptedComposerMessage[]) => void;
+    setSendError: (message: string) => void;
+  },
+): void {
+  const result = mergeAcceptedComposerEchoes(parsedMessages, accepted, {
+    nowMs: Date.now(),
+    timeoutMs: COMPOSER_ECHO_CONFIRMATION_TIMEOUT_MS,
+  });
+  if (result.droppedExpiredCount > 0) {
+    // Recorded with the relay state, because a send is confirmed by the
+    // message reaching the PARSED transcript -- so a late or reset transcript
+    // raises this too, and without the relay state the two cannot be told
+    // apart.
+    reportSendTimeout({
+      droppedExpiredCount: result.droppedExpiredCount,
+      parsedMessageCount: parsedMessages.length,
+      relayConfigured,
+      relayStatus,
+      sessionId,
+      shared: Boolean(routeShareId),
+    });
+    setSendError(COMPOSER_SEND_TIMEOUT_MESSAGE);
+  }
+  if (result.droppedCommandEchoCount > 0) {
+    // No error: a command need not be echoed, so nothing here is known to
+    // have failed. Recorded anyway, because an unacknowledged command is what
+    // a wedged agent looks like and the error path can no longer see it.
+    reportCommandEchoExpired(
+      {
+        relayConfigured,
+        relayStatus,
+        sessionId,
+        shared: Boolean(routeShareId),
+      },
+      result.droppedCommandEchoCount,
+      parsedMessages.length,
+    );
+  }
+  // By VALUE, not reference. The merge always allocates a fresh array, so a
+  // reference check is always unequal -- and this effect depends on the state
+  // it writes, so that would set state, re-render, merge, and set state again
+  // for ever.
+  if (!sameAcceptedComposerEchoes(result.echoes, accepted)) {
+    setAcceptedComposerMessages(result.echoes);
+  }
+}
+
 function ChatTranscriptPlaceholder({
   onRetryTranscriptLoad,
   state,
@@ -4113,7 +4524,7 @@ function ChatTranscriptPlaceholder({
   const retryable = state.kind === "timed-out" || state.kind === "error";
   const loading = state.kind === "loading";
   return (
-    <View className="flex-1 items-center justify-center px-4 py-10">
+    <View className={CHAT_PANE_PLACEHOLDER_SHELL}>
       <View
         className="max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 shadow-sm"
         style={{ minWidth: 240 }}

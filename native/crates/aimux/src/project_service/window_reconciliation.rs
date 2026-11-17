@@ -21,9 +21,7 @@ use serde_json::{Value, json};
 use crate::async_runtime::{scoped_task_name, spawn_blocking_named};
 
 use crate::debug_logging::log_lifecycle_always;
-use crate::runtime_topology::{
-    read_runtime_topology, runtime_topology_path, update_runtime_topology,
-};
+use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
 use crate::tmux::{TmuxManagedWindow, TmuxRuntimeManager};
 
 use super::router::ProjectServiceRequestContext;
@@ -302,8 +300,17 @@ impl PeriodicTask for WindowReconciliationTask {
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             let topology_path = runtime_topology_path(context.project_state_dir());
-            let topology = read_runtime_topology(&topology_path)
-                .map_err(|error| format!("window reconciliation topology unavailable: {error}"))?;
+            // As with the reaper: the update below hopped, the read did not.
+            let topology = super::scheduler::read_topology_off_the_worker(
+                context.project_state_dir().to_path_buf(),
+            )
+            .await
+            .map_err(|error| {
+                format!(
+                    "window reconciliation topology unavailable: {}",
+                    error.detail()
+                )
+            })?;
             let owned_windows = self
                 .windows
                 .owned_windows(context.project_root())

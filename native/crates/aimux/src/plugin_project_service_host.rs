@@ -916,17 +916,43 @@ async fn refresh_github_pr_context_async(
     context: &ProjectServiceRequestContext,
     metadata_cache: PluginMetadataCache,
 ) -> Result<(), String> {
-    let mut host = ProjectServicePluginHost::new_with_metadata_cache(context, metadata_cache);
     let plugin_name = "gh-pr-context";
-    let statusline = host.execute(plugin_name, NativePluginApiRequest::ReadStatuslineSnapshot)?;
-    let state = host.execute(plugin_name, NativePluginApiRequest::ReadDaemonStateSnapshot)?;
-    let metadata = host.execute(plugin_name, NativePluginApiRequest::ReadMetadataState)?;
-    let topology = host.execute(
-        plugin_name,
-        NativePluginApiRequest::ReadRuntimeTopology {
-            statuses: Some(vec!["running".to_owned(), "idle".to_owned()]),
-        },
-    )?;
+    // FOUR synchronous state reads ran here on the async worker, every tick:
+    // the statusline snapshot, the daemon state, the metadata state and the
+    // runtime topology. A derived scan found them, and a name list never could
+    // -- these are `host.execute(...)` method calls, not a named wrapper.
+    //
+    // They share one hop. The host borrows the context, so it cannot cross
+    // into the closure; it is built inside instead, from a cloned context and
+    // a cloned cache. The cache is an `Arc`, so a cloned handle still fills
+    // the same cache, and the host's own per-call snapshot reuse is preserved
+    // because all four reads happen on the one host in there.
+    let (statusline, state, metadata, topology) = {
+        let context = context.clone();
+        let metadata_cache = metadata_cache.clone();
+        crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::task_name("project-service", "gh-pr-context-read"),
+            move || -> Result<(Value, Value, Value, Value), String> {
+                let mut host =
+                    ProjectServicePluginHost::new_with_metadata_cache(&context, metadata_cache);
+                let statusline =
+                    host.execute(plugin_name, NativePluginApiRequest::ReadStatuslineSnapshot)?;
+                let state =
+                    host.execute(plugin_name, NativePluginApiRequest::ReadDaemonStateSnapshot)?;
+                let metadata =
+                    host.execute(plugin_name, NativePluginApiRequest::ReadMetadataState)?;
+                let topology = host.execute(
+                    plugin_name,
+                    NativePluginApiRequest::ReadRuntimeTopology {
+                        statuses: Some(vec!["running".to_owned(), "idle".to_owned()]),
+                    },
+                )?;
+                Ok((statusline, state, metadata, topology))
+            },
+        )
+        .await
+        .map_err(|error| format!("gh-pr-context state was not read: {error}"))??
+    };
     let targets = crate::native_plugin_gh_pr_context::collect_targets_from_state(
         &statusline,
         &state,
@@ -941,13 +967,32 @@ async fn refresh_github_pr_context_async(
             continue;
         };
         if let Some(context_value) = pr_context_for_worktree_async(worktree_path).await? {
-            host.execute(
-                plugin_name,
-                NativePluginApiRequest::SetSessionContext {
-                    session_id: session_id.to_owned(),
-                    context: context_value,
+            // One hop per target rather than one batched hop at the end. The
+            // batch would be cheaper and would change behaviour: these writes
+            // currently land as each target's `gh` lookup returns, so batching
+            // would hold every session's context back behind the slowest
+            // lookup in the set. `SetSessionContext` writes straight through
+            // to `update_session_metadata` and never touches the host's
+            // `store`, so a host built in here is equivalent to the outer one.
+            let context = context.clone();
+            let metadata_cache = metadata_cache.clone();
+            let session_id = session_id.to_owned();
+            crate::async_runtime::spawn_blocking_named(
+                crate::async_runtime::task_name("project-service", "gh-pr-context-write"),
+                move || {
+                    let mut host =
+                        ProjectServicePluginHost::new_with_metadata_cache(&context, metadata_cache);
+                    host.execute(
+                        plugin_name,
+                        NativePluginApiRequest::SetSessionContext {
+                            session_id,
+                            context: context_value,
+                        },
+                    )
                 },
-            )?;
+            )
+            .await
+            .map_err(|error| format!("gh-pr-context was not written: {error}"))??;
         }
     }
     Ok(())

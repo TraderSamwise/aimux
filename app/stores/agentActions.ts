@@ -19,7 +19,15 @@ interface AgentActionInput {
   action: AgentRowAction;
   request: () => Promise<{ transition?: ProjectLifecycleTransition }>;
   onStarted?: () => void;
-  onSucceeded: (response: { transition?: ProjectLifecycleTransition }) => void;
+  /**
+   * Return a string to say something went wrong alongside a success.
+   *
+   * A kill can succeed and still fail to move the dead manager's reports up,
+   * and the response says so. Without somewhere to put that, the user saw a
+   * clean kill while the role registry still had the reports bound to an agent
+   * in the graveyard.
+   */
+  onSucceeded: (response: { transition?: ProjectLifecycleTransition }) => string | void;
   onFailed: () => void;
 }
 
@@ -34,7 +42,10 @@ export const agentActionsFamily = atomFamily(
         try {
           input.onStarted?.();
           const response = await input.request();
-          input.onSucceeded(response);
+          const note = input.onSucceeded(response);
+          if (note) {
+            set(state, { busyAction: input.action, error: note });
+          }
         } catch (error) {
           const reason =
             error instanceof Error ? error.message : error == null ? "" : String(error);

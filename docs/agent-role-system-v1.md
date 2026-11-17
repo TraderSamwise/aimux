@@ -44,7 +44,8 @@ compatibility rules.
 ## Non-Goals For v1
 
 - Multiple overseers watching the same coder.
-- Overseers watching non-coder roles.
+- Overseers watching the scribe, or any other project-control session
+  that is not itself an overseer.
 - Cross-project supervisor identities.
 - Moving a running process's current working directory as part of a metadata
   migration.
@@ -280,7 +281,10 @@ cannot change inside an already-running process.
 1. Caller asks project service to set `role: "overseer"` and lane
    `{ kind: "supervisor" }`.
 2. Service verifies the source session is currently a coder.
-3. Service removes incompatible coder-only bindings from the source session.
+3. Service leaves the source session's own incoming binding alone, so a
+   coder promoted to overseer keeps the manager it already had.
+   Promotion to scribe still removes it, because a scribe is not a
+   report.
 4. Service creates or attaches a supervisor role slot.
 5. Service writes the role registry under one mutation lock.
 6. Service updates metadata/topology projections.
@@ -329,6 +333,22 @@ If an overseer has active watch bindings, default demotion should fail with a
 409 and list the bindings. The caller can retry with `releaseBindings: true` or
 an explicit transfer plan.
 
+Promoting a session to scribe is refused while it still has reports, for the
+same reason: a scribe is a project function, not a manager, and leaving its
+outgoing bindings in place would have the registry hand it reports while
+metadata called it a scribe. Release them first, or demote it with
+`releaseBindings` so they move up to its own manager, and then promote.
+
+`releaseBindings` does not orphan the reports. They move up to the demoted
+agent's own manager, and the demoted agent keeps that manager too, so it ends
+up a coder alongside the agents that used to report to it. Where there is no
+manager above -- the demoted agent was the top of the tree -- the reports are
+released with nothing to inherit them. Promotion is the mirror of this and
+leaves an agent's own incoming binding alone, so building a tree by binding
+first and promoting second works in either order. The scribe is the exception
+at both ends: it is a project function rather than a report, and promoting a
+session to scribe cuts its incoming binding.
+
 If the demoted process keeps running, the same launch-time caveat applies in
 reverse: metadata can say `coder`, but a process launched with
 `AIMUX_OVERSEER=1` can still self-identify as an overseer until relaunched.
@@ -361,7 +381,12 @@ Invariant:
 
 - `watchedSessionId` is unique across the graph.
 - The watcher role must be `overseer`.
-- The watched role must be `coder` in v1.
+- The watched role may be `coder` or `overseer`: an overseer is the
+  manager class at every level above the leaf, so it is a legal report
+  of the overseer above it. The scribe is not a report and is refused.
+- A binding must not close a chain. The service walks upward from the
+  proposed manager before writing, inside the registry lock, so two
+  binds racing in opposite directions cannot each pass a stale read.
 - The service must prove both sessions exist in readable topology/metadata
   before creating or acting on a binding.
 - Could-not-read topology is not "unbound" and not "session absent".
@@ -388,6 +413,59 @@ When an overseer is removed or cleared as a supervisor:
 
 This preserves Sam's mental model: stopping is temporary, removal changes
 ownership.
+
+When an agent goes to the graveyard on its own -- a kill, an async kill, or the
+dead-agent reaper -- its reports move up to its own manager, and with nothing
+above them they are released. A move that would close a chain is skipped and
+the report is released instead: the deliberate release path refuses such input
+outright, but a departure cannot refuse.
+
+The departing agent keeps its own record and its own incoming edge, because it
+can be resurrected. It comes back childless, which is honest -- nothing was
+watching it while it was gone.
+
+A **worktree** graveyard is the exception and keeps its agents' bindings. It
+takes a checkout's agents together and a resurrect gives them all back
+together, so moving their bindings would be undone silently. Their reports
+therefore keep a binding to an agent that is not running, which is the one
+case where `watchedBy` names a manager nothing will brief.
+
+## What A Manager Is Told
+
+The loop watcher briefs a manager about its own reports, and only its own --
+direct ones. A lead that heard about every agent under its middle managers
+would put two managers on one agent, which is the thing a hierarchy exists to
+prevent.
+
+- An agent nobody manages is every top's business. Naming one owner for it was
+  tried twice and was wrong both times: the lowest-id root anywhere told a lead
+  in one checkout to staff an agent in another, and the lowest-id root in the
+  agent's own checkout needed a canonical checkout key the tick loop cannot
+  afford, mis-bucketed a root whose path comes from its lane, and still fell
+  back to a peer checkout's lead when a checkout had no root. The duplication
+  is not the defect the narrowing is for: an unclaimed agent is unclaimed, and
+  the narrowing exists so a *managed* agent has exactly one manager. Binding it
+  is what gives it one owner. This is still narrower than the behaviour it
+  replaced, which handed every live overseer the whole fleet.
+- A manager that cannot be briefed is walked straight past. A binding can name
+  an agent nothing will brief -- a worktree graveyard keeps its agents'
+  bindings on purpose, and an offline overseer gets no recipient engine at all
+  -- and a report left under one would be in nobody's scope with its loop gone
+  quiet, which is worse than being told twice.
+- An unmanaged overseer is in nobody's briefing. A peer at the top of its own
+  tree is not a report. A *managed* overseer is, which is why the briefing
+  candidate set is not the capacity one: that set drops every overseer, because
+  an idle overseer under a goal would read as spare capacity forever.
+- A binding graph with no root at all -- a cycle of live managers, which
+  `bind_watch` refuses and only a hand-edited file can produce -- tells every
+  overseer rather than nobody.
+- Spare capacity, loop exits and reconciliation are scoped the same way. Work
+  nobody owns follows capacity rather than position in the tree: routed to the
+  roots instead, it stalls, because a lead whose reports are all managers sees
+  the task with nobody spare while the manager holding the only idle agent
+  never hears about the task.
+- A project with no bindings behaves exactly as it did before any of this,
+  which is every project that has never run `/watch`.
 
 ## Contracts And API
 
@@ -481,6 +559,24 @@ During migration, supervisor sessions can remain in `sessions` for
 compatibility, but clients should prefer `supervisorLane.sessions` when present.
 
 ## Dashboard And GUI Rendering
+
+The `/topology` response carries both parent edges on every agent row, because
+they answer different questions and neither implies the other:
+
+- `parentSessionId` is who spawned the agent, read from `team.parentSessionId`.
+- `watchedBy` is who runs the agent's loop, read from the role registry's
+  `watchBindings` -- the same field name, for the same fact, that `/agents`
+  records carry. It is the edge a delegation tree is drawn from.
+
+Every `/watch` binding in a real project is on a session with no team parent at
+all, so a surface that filled one field from the other would be wrong in the
+only case the edge is used. Clients render the edge they are given; they do not
+recompute it from roles, ordering, or worktree membership.
+
+A `/topology` request refuses with 500 when the role registry cannot be read.
+A project that never bound a watch loads an empty registry successfully, so a
+read error means the file is corrupt -- and a tree drawn flat from a corrupt
+file is a confidently wrong org chart rather than a missing one.
 
 TUI dashboard:
 
@@ -580,7 +676,7 @@ Implementation should include mutation-proven tests for:
   supervisor relaunch;
 - launch-time env is present after effective promotion and absent after
   effective demotion;
-- demoting overseer with bindings fails unless release/transfer is explicit;
+- demoting overseer with bindings fails unless release/transfer is explicit, and a release reparents the reports to the demoted agent's own manager rather than orphaning them;
 - one watched coder cannot be bound to two overseers;
 - two concurrent bind attempts serialize through the lifecycle mutation queue;
 - stopped overseer preserves bindings and blocks competing overseer claims;

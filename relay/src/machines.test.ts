@@ -5,6 +5,7 @@ import {
   isValidMachineId,
   machineFromConnectUrl,
   machineFromTags,
+  resolvePeerDaemonTarget,
   resolveDaemonTarget,
   resolveSharedDaemonTarget,
   sanitizeMachineName,
@@ -133,7 +134,25 @@ describe("choosing which machine answers a shared guest", () => {
       status: 503,
       error: "The machine hosting this shared chat is not connected",
       machines: [],
+      refusal: "bound-machine-offline",
     });
+  });
+
+  // One wording, three causes. The guest is told the same thing however the
+  // route failed, and the `refusal` is what lets a report of it be told
+  // apart: an away host is a connectivity problem, a share that named no
+  // machine is not, and one investigation of the second spent its time on the
+  // first.
+  it("says which refusal it was without saying it to the guest", () => {
+    const cases: Array<[ReturnType<typeof resolveSharedDaemonTarget>, string]> = [
+      [resolveSharedDaemonTarget([], "strix"), "no-daemon-connected"],
+      [resolveSharedDaemonTarget([MBP], "strix"), "bound-machine-offline"],
+      [resolveSharedDaemonTarget([MBP, STRIX], undefined), "share-names-no-machine"],
+    ];
+    for (const [resolution, refusal] of cases) {
+      expect(resolution.ok).toBe(false);
+      expect(resolution.ok === false && resolution.refusal).toBe(refusal);
+    }
   });
 
   // The number of machines on the account is not a guest's business, so an
@@ -197,5 +216,74 @@ describe("what a guest's indicator says versus what its requests do", () => {
   it("agrees with routing for a bound share whose host is away", () => {
     expect(sharedHostOnline([MBP], STRIX.id)).toBe(false);
     expect(sharedHostOnline([MBP], MBP.id)).toBe(true);
+  });
+});
+
+// A person who names no machine can be asked which one they meant. A daemon
+// cannot, so the fallback a client gets is exactly what a peer must not have:
+// a request that silently went to whoever was online is the share-routing
+// defect one layer down, with nobody there to notice it.
+describe("which machine a daemon's request goes to", () => {
+  const fleet = [MBP, STRIX];
+
+  it("goes to the machine it named, while another is connected", () => {
+    expect(resolvePeerDaemonTarget(fleet, MBP.id, STRIX.id)).toEqual({ ok: true, machineId: STRIX.id });
+  });
+
+  it("refuses to pick one, even when only one could be meant", () => {
+    const refused = resolvePeerDaemonTarget([STRIX], MBP.id, undefined);
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal).toBe("peer-target-unnamed");
+    // Not the 503 an absent machine gets: nothing is missing, the request
+    // just did not say what it wanted.
+    expect(refused.status).toBe(400);
+  });
+
+  it("refuses a machine that is not connected, by name", () => {
+    const refused = resolvePeerDaemonTarget([MBP], MBP.id, STRIX.id);
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal).toBe("peer-target-offline");
+    expect(refused.status).toBe(503);
+  });
+
+  // Through the relay and back into the same process is a loop with a timeout
+  // on it. Refused now, rather than waiting out the pending TTL for its own
+  // answer.
+  it("refuses a machine naming itself", () => {
+    const refused = resolvePeerDaemonTarget(fleet, MBP.id, MBP.id);
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal).toBe("peer-target-is-self");
+  });
+
+  it("still calls it self when one side came with spaces around it", () => {
+    const refused = resolvePeerDaemonTarget(fleet, " mbp ", "mbp ");
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal).toBe("peer-target-is-self");
+  });
+});
+
+// `unidentified` is the one id every daemon without a persisted identity
+// shares, so naming it names whichever of them reached the socket map first.
+// A person's client may ask for it and see which machine it got; a daemon
+// cannot, so for a peer it is not a name at all.
+describe("naming the machine that has no name", () => {
+  it("refuses it as a peer target", () => {
+    const fleet = [{ id: UNIDENTIFIED_MACHINE_ID, name: "unidentified" }, MBP];
+    const refused = resolvePeerDaemonTarget(fleet, MBP.id, UNIDENTIFIED_MACHINE_ID);
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal).toBe("peer-target-unidentified");
+  });
+
+  it("still lets a person's client ask for it", () => {
+    const fleet = [{ id: UNIDENTIFIED_MACHINE_ID, name: "unidentified" }];
+    expect(resolveDaemonTarget(fleet, UNIDENTIFIED_MACHINE_ID)).toEqual({
+      ok: true,
+      machineId: UNIDENTIFIED_MACHINE_ID,
+    });
   });
 });

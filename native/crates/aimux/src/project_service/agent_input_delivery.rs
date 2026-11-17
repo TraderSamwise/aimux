@@ -59,10 +59,29 @@ pub struct AgentInputDeliveryQueue {
 }
 
 impl AgentInputDeliveryQueue {
-    fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.lock
-            .lock()
-            .expect("agent input delivery lock poisoned")
+    /// `pub` so a test can hold it.
+    ///
+    /// Not a test hook: production really does hold this from another thread --
+    /// the enqueue path takes it while the tick is running -- and the gate for
+    /// "the tick does not wait for this lock on an async worker" has no way to
+    /// create that state otherwise. Everything that takes it in production is
+    /// in this module and holds it across a bounded file operation; a caller
+    /// outside the module holding it across anything longer is the bug this
+    /// accessor makes testable, not one it introduces.
+    /// Recovered, not panicked on.
+    ///
+    /// This is a `Mutex<()>`: a mutual-exclusion TOKEN with no protected data.
+    /// Poison exists to say the data behind a lock may be inconsistent, and
+    /// here there is none to be inconsistent, so recovery is unambiguously
+    /// safe -- which is why the crate recovers at its other lock sites.
+    ///
+    /// `expect` turned a panic somewhere else into a PERMANENT one here. The
+    /// delivery tick takes this every run, so a single poisoning panic made
+    /// every later tick panic too, and agent input delivery stopped for the
+    /// life of the project service while the scheduler recorded a fresh panic
+    /// each time. The queue file was fine; nothing could get at it.
+    pub fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.lock.lock().unwrap_or_else(|error| error.into_inner())
     }
 }
 
@@ -105,7 +124,7 @@ pub struct PendingAgentInputDelivery {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct AgentInputDeliveryState {
+pub struct AgentInputDeliveryState {
     version: u64,
     pending: Vec<PendingAgentInputDelivery>,
 }
@@ -551,44 +570,27 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
 }
 
 pub async fn run_pending_agent_input_deliveries_async(
-    context: &ProjectServiceRequestContext,
+    context: &Arc<ProjectServiceRequestContext>,
     now_ms: i64,
 ) -> Result<(), String> {
     let task_deadline = Instant::now()
         .checked_add(DELIVERY_TASK_TIMEOUT.saturating_sub(DELIVERY_TASK_COMMIT_MARGIN))
         .unwrap_or_else(Instant::now);
     let path = agent_input_delivery_queue_path(context.project_state_dir());
-    let state = {
-        let _guard = context.agent_input_delivery_queue.lock();
-        match load_delivery_state(&path) {
-            Ok(state) => {
-                clear_agent_input_delivery_queue_failure(context, QUEUE_LOAD_OPERATION);
-                state
-            }
-            Err(_) => {
-                let error = load_error_for_path(&path);
-                record_backlog_error(
-                    AGENT_INPUT_DELIVERY_BACKLOG,
-                    Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
-                    error.clone(),
-                );
-                record_agent_input_delivery_queue_failure(
-                    context,
-                    QUEUE_LOAD_OPERATION,
-                    format!("Skipped queued agent input delivery because {error}"),
-                );
-                return Err(format!("agent input delivery queue unavailable: {error}"));
-            }
-        }
-    };
+    let state = load_delivery_queue_off_the_worker(context, &path).await?;
     if state.pending.is_empty() {
         backlog_metric(
             AGENT_INPUT_DELIVERY_BACKLOG,
             Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
         )
         .set_depth(0);
-        // Same as the sync runner: an empty queue clears the rows.
-        publish_queued_input_counts(context, &[]);
+        // Same as the sync runner: an empty queue clears the rows -- and off
+        // the worker, because `publish_queued_input_counts` acquires a state
+        // update lock whose retry loop sleeps up to ACQUIRE_TIMEOUT, then
+        // reads and rewrites session metadata. This is the STEADY STATE path,
+        // twice a second, so it was the worst of the three on this stack and
+        // the one my first gate could not see.
+        publish_queued_input_counts_off_the_worker(context, Vec::new()).await?;
         return Ok(());
     }
 
@@ -614,7 +616,19 @@ pub async fn run_pending_agent_input_deliveries_async(
             remaining.extend(ready);
             break;
         }
-        let target = match resolve_queued_delivery_target(context, &pending, now_ms) {
+        let resolved =
+            match resolve_queued_delivery_target_off_the_worker(context, &pending, now_ms).await {
+                Ok(resolved) => resolved,
+                // A hop that never ran is a failure of the tick, not a target that
+                // could not be resolved: collapsing it into Waiting or Blocked
+                // would report an agent problem for a pool problem.
+                Err(error) => {
+                    failures.push(error);
+                    remaining.push(pending);
+                    continue;
+                }
+            };
+        let target = match resolved {
             QueuedDeliveryTarget::Deliverable(target) => target,
             QueuedDeliveryTarget::Waiting(reason) => {
                 // No `failures.push` either: an agent that is not running is
@@ -635,12 +649,16 @@ pub async fn run_pending_agent_input_deliveries_async(
             }
             QueuedDeliveryTarget::Blocked(reason) => {
                 reported.insert(pending.session_id.clone());
-                record_agent_input_delivery_failure(
+                if let Err(error) = record_agent_input_delivery_failure_off_the_worker(
                     context,
                     Some(&pending.session_id),
                     "Agent input delivery blocked",
                     reason.clone(),
-                );
+                )
+                .await
+                {
+                    failures.push(error);
+                }
                 failures.push(reason);
                 remaining.push(pending);
                 continue;
@@ -657,36 +675,49 @@ pub async fn run_pending_agent_input_deliveries_async(
         match decision {
             AgentInputDeliveryDecision::Hold { reason, .. } => {
                 if reason.starts_with("tmux client activity probe failed") {
-                    record_agent_input_delivery_failure(
+                    if let Err(error) = record_agent_input_delivery_failure_off_the_worker(
                         context,
                         Some(&pending.session_id),
                         "Agent input delivery held",
                         reason.clone(),
-                    );
+                    )
+                    .await
+                    {
+                        failures.push(error);
+                    }
                     failures.push(reason);
                 }
                 remaining.push(pending);
             }
             AgentInputDeliveryDecision::DeliverNow { reason } => {
                 delivery_attempts += 1;
-                let attempt = match super::input_delivery_receipt::begin_input_delivery(
-                    context,
-                    &pending.session_id,
-                    &target.window_id,
-                ) {
-                    Ok(attempt) => attempt,
-                    Err(error) => {
-                        failures.push(error.clone());
-                        record_agent_input_delivery_failure(
-                            context,
-                            Some(&pending.session_id),
-                            "Agent input delivery receipt failed before send",
-                            error,
-                        );
-                        remaining.push(pending);
-                        continue;
-                    }
-                };
+                // Off the worker: this takes the metadata state-update lock
+                // and can sleep in its retry loop until ACQUIRE_TIMEOUT.
+                let attempt =
+                    match super::input_delivery_receipt::begin_input_delivery_off_the_worker(
+                        context,
+                        pending.session_id.clone(),
+                        target.window_id.clone(),
+                    )
+                    .await
+                    {
+                        Ok(attempt) => attempt,
+                        Err(error) => {
+                            failures.push(error.clone());
+                            if let Err(error) = record_agent_input_delivery_failure_off_the_worker(
+                                context,
+                                Some(&pending.session_id),
+                                "Agent input delivery receipt failed before send",
+                                error,
+                            )
+                            .await
+                            {
+                                failures.push(error);
+                            }
+                            remaining.push(pending);
+                            continue;
+                        }
+                    };
                 match deliver_prompt_to_tmux_async_for_tool(
                     &target.window_id,
                     &pending.prompt,
@@ -696,12 +727,42 @@ pub async fn run_pending_agent_input_deliveries_async(
                 .await
                 {
                     Ok(verification) => {
-                        let receipt = super::input_delivery_receipt::finish_input_delivery(
+                        // A join failure is reported, not logged as a null
+                        // receipt. My first version of this hop wrote
+                        // `.unwrap_or(Value::Null)` here, which would have put
+                        // `"delivery": null` in a line that says the input was
+                        // delivered, with nothing anywhere saying the receipt
+                        // write never finished.
+                        let receipt =
+                            match super::input_delivery_receipt::finish_input_delivery_off_the_worker(
+                                context,
+                                attempt,
+                                Ok(verification),
+                            )
+                            .await
+                            {
+                                Ok(receipt) => receipt,
+                                Err(error) => {
+                                    failures.push(error.clone());
+                                    if let Err(error) = record_agent_input_delivery_failure_off_the_worker(
+                                        context,
+                                        Some(&pending.session_id),
+                                        "Agent input delivery receipt did not finish",
+                                        error,
+                                    ).await {
+                                        failures.push(error);
+                                    }
+                                    continue;
+                                }
+                            };
+                        if let Err(error) = clear_agent_input_delivery_failure_off_the_worker(
                             context,
-                            &attempt,
-                            Ok(verification),
-                        );
-                        clear_agent_input_delivery_failure(context, &pending.session_id);
+                            &pending.session_id,
+                        )
+                        .await
+                        {
+                            failures.push(error);
+                        }
                         log_at(
                             LogLevel::Info,
                             "queued agent input delivered",
@@ -715,17 +776,30 @@ pub async fn run_pending_agent_input_deliveries_async(
                         );
                     }
                     Err(error) => {
-                        super::input_delivery_receipt::finish_input_delivery(
-                            context,
-                            &attempt,
-                            Err(error.as_str()),
-                        );
-                        record_agent_input_delivery_failure(
+                        // The receipt Value was discarded here before and still
+                        // is -- but a JOIN failure is not the same as a
+                        // discarded value, so it is collected rather than
+                        // swallowed by a bare `let _ =`.
+                        if let Err(join_error) =
+                            super::input_delivery_receipt::finish_input_delivery_off_the_worker(
+                                context,
+                                attempt,
+                                Err(error.clone()),
+                            )
+                            .await
+                        {
+                            failures.push(join_error);
+                        }
+                        if let Err(error) = record_agent_input_delivery_failure_off_the_worker(
                             context,
                             Some(&pending.session_id),
                             "Agent input delivery failed",
                             error.clone(),
-                        );
+                        )
+                        .await
+                        {
+                            failures.push(error);
+                        }
                         failures.push(error);
                         remaining.push(pending);
                     }
@@ -734,13 +808,282 @@ pub async fn run_pending_agent_input_deliveries_async(
         }
     }
 
-    for session_id in retiring.difference(&reported) {
-        clear_agent_input_delivery_failure(context, session_id);
+    if let Err(error) = clear_retiring_delivery_failures_off_the_worker(
+        context,
+        retiring.difference(&reported).cloned().collect(),
+    )
+    .await
+    {
+        failures.push(error);
     }
 
+    let merge_failures =
+        merge_and_save_delivery_queue_off_the_worker(context, path, remaining, loaded_ids).await?;
+    failures.extend(merge_failures);
+    finish_agent_input_delivery_task(failures)
+}
+
+/// Each of these is a named `async fn` rather than an inline `spawn_blocking`
+/// at the call site, and that is deliberate.
+///
+/// My first gate drove the whole tick with the queue lock held, and it proved
+/// only the FIRST of the three spans: every task parked in the load and never
+/// returned, and even with a free lock an empty queue returns before the merge.
+/// Put the merge back inline on the worker and that gate passed unchanged --
+/// a review caught it, and I reproduced it. A test that proves the half
+/// already safe is the shape I have hit five times on this branch.
+///
+/// Naming each hop gives each one a gate that drives the real production call,
+/// and each is mutation-proved on its own.
+pub async fn load_delivery_queue_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    path: &Path,
+) -> Result<AgentInputDeliveryState, String> {
+    let context = Arc::clone(context);
+    let path = path.to_path_buf();
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "queue-load",
+            "project-service",
+        ),
+        move || load_delivery_queue_under_lock(&context, &path),
+    )
+    .await
+    // A pool task that never ran is not an unreadable queue.
+    .map_err(|error| format!("agent input delivery queue load did not finish: {error}"))?
+}
+
+/// Record a delivery failure without holding an async worker.
+///
+/// `record_agent_input_delivery_failure` read-modify-writes
+/// `dashboard-operation-failures.json` and may mirror a notification.
+async fn record_agent_input_delivery_failure_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    session_id: Option<&str>,
+    title: &'static str,
+    message: String,
+) -> Result<(), String> {
+    let context = Arc::clone(context);
+    let session_id = session_id.map(str::to_owned);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "failure-record",
+            "project-service",
+        ),
+        move || {
+            record_agent_input_delivery_failure(&context, session_id.as_deref(), title, message);
+        },
+    )
+    .await
+    // Returned, not logged. The first version wrote a Warn line and carried
+    // on, which left `finish_agent_input_delivery_task` reporting Ok for a
+    // tick whose failure was never recorded. Every other hop in this file
+    // returns its join error and the caller pushes it into `failures`, which
+    // is in scope at each of these call sites.
+    .map_err(|error| format!("agent input delivery failure record did not finish: {error}"))
+}
+
+/// Clear every retiring session's delivery failure in ONE pool task.
+///
+/// The end-of-tick loop used to call the single-session clear per session,
+/// which was both N round trips and a cancellation hazard. `run_task_once`
+/// wraps a tick in `tokio::time::timeout`, and a timeout DROPS the future, so
+/// a loop with an await in its body can be cut between iterations and leave
+/// some banners retired and others not. Before this file had any awaits there
+/// the loop was uncancellable. Doing the whole set in one blocking task gives
+/// that atomicity back -- `spawn_blocking` work is not cancelled by the
+/// future being dropped, so either the batch runs or it was never started --
+/// and costs one hop instead of N.
+async fn clear_retiring_delivery_failures_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    session_ids: Vec<String>,
+) -> Result<(), String> {
+    if session_ids.is_empty() {
+        return Ok(());
+    }
+    let context = Arc::clone(context);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "failure-clear-batch",
+            "project-service",
+        ),
+        move || {
+            for session_id in &session_ids {
+                clear_agent_input_delivery_failure(&context, session_id);
+            }
+        },
+    )
+    .await
+    // A pool task that never ran is not a set of cleared banners.
+    .map_err(|error| format!("agent input delivery failure clear did not finish: {error}"))
+}
+
+/// Clear one session's delivery failure without holding an async worker.
+async fn clear_agent_input_delivery_failure_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    session_id: &str,
+) -> Result<(), String> {
+    let context = Arc::clone(context);
+    let session_id = session_id.to_owned();
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "failure-clear",
+            "project-service",
+        ),
+        move || clear_agent_input_delivery_failure(&context, &session_id),
+    )
+    .await
+    .map_err(|error| format!("agent input delivery failure clear did not finish: {error}"))
+}
+
+/// Resolve one queued entry's target without holding an async worker.
+///
+/// `resolve_queued_delivery_target` reads the runtime topology file through
+/// `resolve_live_session_target`, once per queued entry. Inline on the async
+/// path that is a file read on one of TWO workers, per entry, every tick.
+async fn resolve_queued_delivery_target_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    pending: &PendingAgentInputDelivery,
+    now_ms: i64,
+) -> Result<QueuedDeliveryTarget, String> {
+    let context = Arc::clone(context);
+    // Only the three fields the resolve actually reads, NOT a clone of the
+    // whole entry: `prompt` is the agent input itself and can be kilobytes,
+    // and copying it per entry per tick to a callee that never looks at it is
+    // pure cost at 2 Hz.
+    let probe = PendingAgentInputDelivery {
+        id: String::new(),
+        session_id: pending.session_id.clone(),
+        window_id: pending.window_id.clone(),
+        prompt: String::new(),
+        created_at_ms: pending.created_at_ms,
+        max_deliver_at_ms: pending.max_deliver_at_ms,
+        hold_reason: String::new(),
+    };
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "target-resolve",
+            "project-service",
+        ),
+        move || resolve_queued_delivery_target(&context, &probe, now_ms),
+    )
+    .await
+    // A pool task that never ran is not an unresolvable target.
+    .map_err(|error| format!("agent input delivery target resolve did not finish: {error}"))
+}
+
+/// Publishes the queued-input counts off the worker.
+///
+/// `publish_queued_input_counts` acquires a state update lock whose retry loop
+/// sleeps, then reads and rewrites session metadata. On the empty-queue path
+/// that runs twice a second in the steady state.
+pub async fn publish_queued_input_counts_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    pending: Vec<PendingAgentInputDelivery>,
+) -> Result<(), String> {
+    let context = Arc::clone(context);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "publish-counts",
+            "project-service",
+        ),
+        move || publish_queued_input_counts(&context, &pending),
+    )
+    .await
+    .map_err(|error| format!("agent input delivery count publish did not finish: {error}"))
+}
+
+/// Merges, saves and republishes off the worker.
+pub async fn merge_and_save_delivery_queue_off_the_worker(
+    context: &Arc<ProjectServiceRequestContext>,
+    path: PathBuf,
+    remaining: Vec<PendingAgentInputDelivery>,
+    loaded_ids: BTreeSet<String>,
+) -> Result<Vec<String>, String> {
+    let context = Arc::clone(context);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::scoped_task_name(
+            AGENT_INPUT_DELIVERY_TASK_NAME,
+            "merge-and-save",
+            "project-service",
+        ),
+        move || merge_and_save_delivery_queue(&context, &path, remaining, &loaded_ids),
+    )
+    .await
+    // A pool task that never ran is not an empty failure list.
+    .map_err(|error| format!("agent input delivery merge did not finish: {error}"))
+}
+
+/// Reads the queue under the shared lock.
+///
+/// Separate from its async caller for the same reason as
+/// `merge_and_save_delivery_queue`: a function that waits for this lock on an
+/// async worker parks it, and the project service runs two.
+///
+/// `Err` is the queue being unreadable, which is not the same as an empty
+/// queue and is reported rather than skipped.
+fn load_delivery_queue_under_lock(
+    context: &ProjectServiceRequestContext,
+    path: &Path,
+) -> Result<AgentInputDeliveryState, String> {
+    let _guard = context.agent_input_delivery_queue.lock();
+    match load_delivery_state(path) {
+        Ok(state) => {
+            clear_agent_input_delivery_queue_failure(context, QUEUE_LOAD_OPERATION);
+            Ok(state)
+        }
+        Err(_) => {
+            let error = load_error_for_path(path);
+            record_backlog_error(
+                AGENT_INPUT_DELIVERY_BACKLOG,
+                Some(AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY),
+                error.clone(),
+            );
+            record_agent_input_delivery_queue_failure(
+                context,
+                QUEUE_LOAD_OPERATION,
+                format!("Skipped queued agent input delivery because {error}"),
+            );
+            Err(format!("agent input delivery queue unavailable: {error}"))
+        }
+    }
+}
+
+/// Merges the queue back, saves it, and republishes the counts.
+///
+/// Separate from its async caller so the whole span can run on the blocking
+/// pool. It holds the shared delivery-queue lock from its first line to its
+/// last, and in that span it does a file read, a `write_json_atomic` -- a temp
+/// file plus a rename -- and `publish_queued_input_counts`, which on a changed
+/// fingerprint takes a lock directory and rewrites session metadata. That
+/// function's own comment says doing it twice a second eats the budget the tick
+/// has for actually delivering.
+///
+/// It used to run inline on the project service's async worker, because
+/// `AgentInputDeliveryTask::run` awaits its caller directly and
+/// `periodic_scheduler.rs` awaits task futures on its own async task -- the
+/// `spawn_blocking_named` in that file is for alert sinks, not task bodies. The
+/// daemon's ten `PeriodicTask` impls each offload their own body; this one did
+/// not, which is the same defect the two daemon stream interceptors had.
+///
+/// Returns the failures it collected rather than taking a `&mut Vec`, so the
+/// closure that runs it owns everything it touches.
+fn merge_and_save_delivery_queue(
+    context: &ProjectServiceRequestContext,
+    path: &Path,
+    remaining: Vec<PendingAgentInputDelivery>,
+    loaded_ids: &BTreeSet<String>,
+) -> Vec<String> {
+    let mut failures = Vec::new();
     let _guard = context.agent_input_delivery_queue.lock();
     let mut pending = remaining;
-    match load_delivery_state(&path) {
+    match load_delivery_state(path) {
         Ok(current) => {
             clear_agent_input_delivery_queue_failure(context, QUEUE_MERGE_OPERATION);
             pending.extend(
@@ -770,7 +1113,7 @@ pub async fn run_pending_agent_input_deliveries_async(
     };
     let depth = state.pending.len();
     let saved_pending = state.pending.clone();
-    match save_delivery_state(&path, state) {
+    match save_delivery_state(path, state) {
         Ok(()) => {
             clear_agent_input_delivery_queue_failure(context, QUEUE_SAVE_OPERATION);
             publish_queued_input_counts(context, &saved_pending);
@@ -794,7 +1137,7 @@ pub async fn run_pending_agent_input_deliveries_async(
             failures.push(error);
         }
     }
-    finish_agent_input_delivery_task(failures)
+    failures
 }
 
 pub fn agent_input_delivery_backlog_snapshot(
@@ -1433,6 +1776,284 @@ mod tests {
         assert!(
             has_budget_for_delivery_attempt(now, deadline),
             "a delivery with enough remaining tick budget must not be deferred"
+        );
+    }
+
+    /// The per-entry topology read does not hold an async worker.
+    ///
+    /// `run_pending_agent_input_deliveries_async` resolves a target for EVERY
+    /// queued entry, and `resolve_queued_delivery_target` reaches
+    /// `resolve_live_session_target`, which reads the runtime topology file.
+    /// That read happened inline on the async worker, once per entry, on a
+    /// pool of two.
+    ///
+    /// WHY THIS IS GATEABLE AT ALL, which is what kept it unproven: a progress
+    /// gate cannot see a bounded park, and a latency gate is what made these
+    /// checks flaky. Both true. The way out is not to watch a bounded park but
+    /// to CONTROL THE RESOURCE so the park is unbounded -- the same move that
+    /// proved the task-list route, where a listener that accepts and never
+    /// replies turned a timeout into a permanent hold. The filesystem
+    /// equivalent is a FIFO: `read_runtime_topology` calls
+    /// `fs::read_to_string`, and opening a named pipe with no writer blocks
+    /// forever. A read that normally takes microseconds becomes a permanent
+    /// occupation of whatever thread it is on, so "did the runtime stop making
+    /// progress" is answerable with no budget at all.
+    ///
+    /// This drives the HOP, not the whole tick, which is why it is stable. My
+    /// first version drove `run_pending_agent_input_deliveries_async` to
+    /// "prove the route" and it passed alone and FAILED inside the full suite:
+    /// past the resolve a tick does real work on the worker -- delivery
+    /// attempts, metrics, logging -- so the probe was competing with
+    /// legitimate worker use and the verdict moved with machine load. The call
+    /// site is covered by `the_delivery_tick_resolves_targets_off_the_worker`
+    /// in tests/project_service_scheduler.rs instead, which is the division of
+    /// labour #536 settled on.
+    ///
+    /// It lives in this module rather than beside its sibling gates because
+    /// `QueuedDeliveryTarget` names `pub(super) LiveSessionTarget`, and
+    /// widening the crate's public API to let a test reach a hop is the wrong
+    /// trade.
+    #[test]
+    fn the_per_entry_topology_read_does_not_consume_an_async_worker() {
+        const WORKERS: usize = crate::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
+        const PHASE_TWO_ROUNDS: usize = 20;
+        const PHASE_TWO_SETTLE: Duration = Duration::from_millis(10);
+        let attempts = WORKERS + 2;
+        let quiet_window = Duration::from_secs(30);
+
+        let root = std::env::temp_dir().join(format!("aimux-topology-read-{}", std::process::id()));
+        let state_dir = root.join("state");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&state_dir).expect("state dir");
+
+        // The topology as a FIFO with no writer. Every open blocks forever.
+        let topology = crate::runtime_topology::runtime_topology_path(&state_dir);
+        let made = std::process::Command::new("mkfifo")
+            .arg(&topology)
+            .status()
+            .expect("mkfifo runs");
+        assert!(
+            made.success(),
+            "could not create the FIFO this gate depends on; without it the read returns instantly and the gate proves nothing"
+        );
+
+        let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+            &root,
+            state_dir.clone(),
+        ));
+        let pending = PendingAgentInputDelivery {
+            id: "d1".to_owned(),
+            session_id: "s1".to_owned(),
+            window_id: "w1".to_owned(),
+            prompt: "hello".to_owned(),
+            created_at_ms: 0,
+            max_deliver_at_ms: 0,
+            hold_reason: String::new(),
+        };
+
+        let async_runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(WORKERS)
+            .enable_all()
+            .build()
+            .expect("a runtime with the project service's worker count");
+        let entered = async_runtime.enter();
+
+        let (polled_tx, polled) = std::sync::mpsc::channel();
+        for index in 0..attempts {
+            let hop_context = Arc::clone(&context);
+            let hop_pending = pending.clone();
+            let polled_tx = polled_tx.clone();
+            async_runtime.spawn(async move {
+                polled_tx.send(index).expect("the test is still listening");
+                let _ =
+                    resolve_queued_delivery_target_off_the_worker(&hop_context, &hop_pending, 0)
+                        .await;
+            });
+        }
+        drop(polled_tx);
+
+        let mut reported = 0;
+        while reported < attempts {
+            match polled.recv_timeout(quiet_window) {
+                Ok(_) => reported += 1,
+                Err(_) => break,
+            }
+        }
+
+        // Phase two probes REPEATEDLY, for the reason #535 established: each
+        // hop reports before it awaits, so the barrier clears while the hops
+        // are still short of the read, and a single probe runs on a worker
+        // that is not parked yet and passes.
+        let mut still_polling = true;
+        for _ in 0..PHASE_TWO_ROUNDS {
+            std::thread::sleep(PHASE_TWO_SETTLE);
+            let (yielded_tx, yielded) = std::sync::mpsc::channel();
+            async_runtime.spawn(async move {
+                tokio::task::yield_now().await;
+                let _ = yielded_tx.send(());
+            });
+            if yielded.recv_timeout(quiet_window).is_err() {
+                still_polling = false;
+                break;
+            }
+        }
+
+        // Tear the runtime down WITHOUT waiting for its blocking tasks.
+        // Dropping a multi-thread runtime waits for them, and a read parked on
+        // a writerless FIFO never returns, so the test hung at teardown
+        // instead of reporting -- which it did, twice, before I stopped trying
+        // to drain the pipe and started declining to wait.
+        drop(entered);
+        async_runtime.shutdown_background();
+        let _ = fs::remove_dir_all(&root);
+
+        assert_eq!(
+            reported, attempts,
+            "{reported} of {attempts} hops were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}: the per-entry topology read is holding a worker while it waits on the file"
+        );
+        assert!(
+            still_polling,
+            "every hop was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied, which is what happens when the per-entry topology read runs inline on the worker rather than on the blocking pool"
+        );
+    }
+
+    /// The delivery failure-store writes do not hold an async worker.
+    ///
+    /// `record_agent_input_delivery_failure` and
+    /// `clear_agent_input_delivery_failure` both read-modify-write
+    /// `dashboard-operation-failures.json`, and the async tick called them
+    /// inline on a pool of two workers. The clear is the one that matters: the
+    /// end-of-tick `retiring.difference(&reported)` loop runs it per session on
+    /// the WAITING path, which is the steady state whenever a queued agent is
+    /// offline, so it is a file read and write per offline session on every
+    /// tick with nothing ever delivered.
+    ///
+    /// Same technique as the topology read: a FIFO with no writer at the store
+    /// path makes `load_state` block forever, because it guards with
+    /// `path.exists()` -- which is TRUE for a FIFO -- and then calls
+    /// `fs::read_to_string`. Both entry points read before they write, so they
+    /// park in the read and never reach `save_state`.
+    ///
+    /// This drives the HOPS rather than the tick, for the reason #540 settled:
+    /// a gate driving the whole tick competes with the real work a tick does on
+    /// a worker and its verdict moves with machine load. The specific
+    /// steady-state call site is covered by
+    /// `the_delivery_tick_clears_failures_off_the_worker`.
+    #[test]
+    fn the_delivery_failure_store_writes_do_not_consume_an_async_worker() {
+        use std::os::unix::fs::FileTypeExt;
+
+        const WORKERS: usize = crate::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
+        const PHASE_TWO_ROUNDS: usize = 20;
+        const PHASE_TWO_SETTLE: Duration = Duration::from_millis(10);
+        let attempts = WORKERS + 2;
+        let quiet_window = Duration::from_secs(30);
+
+        let root = std::env::temp_dir().join(format!("aimux-failure-store-{}", std::process::id()));
+        let state_dir = root.join("state");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&state_dir).expect("state dir");
+
+        let store = crate::project_service::operation_failures::dashboard_operation_failures_path(
+            &state_dir,
+        );
+        let made = std::process::Command::new("mkfifo")
+            .arg(&store)
+            .status()
+            .expect("mkfifo runs");
+        assert!(
+            made.success(),
+            "could not create the FIFO this gate depends on; without it the read returns instantly and the gate proves nothing"
+        );
+
+        let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+            &root,
+            state_dir.clone(),
+        ));
+
+        let async_runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(WORKERS)
+            .enable_all()
+            .build()
+            .expect("a runtime with the project service's worker count");
+        let entered = async_runtime.enter();
+
+        let (polled_tx, polled) = std::sync::mpsc::channel();
+        for index in 0..attempts {
+            let hop_context = Arc::clone(&context);
+            let polled_tx = polled_tx.clone();
+            async_runtime.spawn(async move {
+                polled_tx.send(index).expect("the test is still listening");
+                // The clear, because that is the steady-state one.
+                // The result is irrelevant here: the gate measures whether
+                // the worker stayed free, and this call never returns because
+                // the store path is a writerless FIFO.
+                let _ = clear_agent_input_delivery_failure_off_the_worker(&hop_context, "s1").await;
+            });
+        }
+        drop(polled_tx);
+
+        let mut reported = 0;
+        while reported < attempts {
+            match polled.recv_timeout(quiet_window) {
+                Ok(_) => reported += 1,
+                Err(_) => break,
+            }
+        }
+
+        let mut still_polling = true;
+        for _ in 0..PHASE_TWO_ROUNDS {
+            std::thread::sleep(PHASE_TWO_SETTLE);
+            let (yielded_tx, yielded) = std::sync::mpsc::channel();
+            async_runtime.spawn(async move {
+                tokio::task::yield_now().await;
+                let _ = yielded_tx.send(());
+            });
+            if yielded.recv_timeout(quiet_window).is_err() {
+                still_polling = false;
+                break;
+            }
+        }
+
+        // Captured BEFORE teardown, because teardown unlinks the path and a
+        // stat placed with the assertions below would read a path that is
+        // already gone and fail for the wrong reason.
+        //
+        // The check itself guards a real hazard: `save_state` goes through
+        // `atomic_write_impl`, which writes a temp file and RENAMES over the
+        // target. A future write-before-read path would therefore replace this
+        // FIFO with an ordinary file mid-measurement, and the gate would pass
+        // having controlled nothing.
+        // Three outcomes, not two. `unwrap_or(false)` folded a stat ERROR into
+        // "something wrote over it", which is the repo's own flagged pattern:
+        // an ENOENT means something UNLINKED the path, which is a different
+        // fault from a rename having replaced it, and reporting the wrong one
+        // sends the next reader to the wrong place.
+        let store_kind = match fs::symlink_metadata(&store) {
+            Ok(metadata) if metadata.file_type().is_fifo() => Ok(()),
+            Ok(metadata) => Err(format!(
+                "the store path is no longer a FIFO but a {:?}; something wrote over it, which is what `atomic_write_impl`'s temp-file rename does, and this gate stopped controlling the resource it depends on",
+                metadata.file_type()
+            )),
+            Err(error) => Err(format!(
+                "could not stat the store path at the end of the measurement: {error}. That is not the same as it having been replaced -- something removed it, and this gate proved nothing either way"
+            )),
+        };
+
+        drop(entered);
+        async_runtime.shutdown_background();
+        let _ = fs::remove_dir_all(&root);
+
+        if let Err(reason) = store_kind {
+            panic!("{reason}");
+        }
+        assert_eq!(
+            reported, attempts,
+            "{reported} of {attempts} hops were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}: a failure-store write is holding a worker while it waits on the file"
+        );
+        assert!(
+            still_polling,
+            "every hop was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied, which is what happens when the failure-store read-modify-write runs inline on the worker rather than on the blocking pool"
         );
     }
 }

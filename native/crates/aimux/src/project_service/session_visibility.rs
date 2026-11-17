@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+use crate::team_contract::manager_session_id;
 use crate::team_contract::{agent_lane, agent_should_show_in_expose};
 
 pub const LIVE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
@@ -106,9 +107,9 @@ fn switchable_roles_allow(policy: &SwitchableRolePolicy, input: &AgentVisibility
         && !policy.scope_all_worktrees
     {
         return input.kind != Some("service")
-            && team_string_field(input.metadata, "parentSessionId") == Some(parent_session_id);
+            && manager_session_id(input.metadata) == Some(parent_session_id);
     }
-    if team_string_field(input.metadata, "parentSessionId").is_some_and(|id| !id.is_empty()) {
+    if manager_session_id(input.metadata).is_some() {
         return false;
     }
     policy.scope_all_worktrees || input_worktree_matches_scope(input, &policy.scoped_worktree_path)
@@ -160,16 +161,6 @@ fn input_worktree_matches_scope(
 
 fn is_dashboard_window_name(name: &str) -> bool {
     name == "dashboard" || name.starts_with("dashboard-")
-}
-
-fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value
-        .get("team")
-        .and_then(Value::as_object)
-        .and_then(|team| team.get(key))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
 }
 
 fn clean_path_string(path: &str) -> String {

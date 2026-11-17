@@ -757,6 +757,19 @@ pub struct SessionTeamMetadata {
     pub extra: BTreeMap<String, Value>,
 }
 
+impl SessionTeamMetadata {
+    /// Who manages this agent, from the typed row.
+    ///
+    /// The same rule as `team_contract::manager_session_id`, which reads the
+    /// JSON shape. The dashboard holds rows rather than records and was
+    /// testing `!parent_session_id.is_empty()` by hand, so a parent of `"  "`
+    /// was a manager on the typed path and absent on the JSON one. Two shapes
+    /// of the same record have to answer the same.
+    pub fn manager_session_id(&self) -> Option<&str> {
+        crate::team_contract::non_empty(Some(self.parent_session_id.as_str()))
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DashboardSessionEvent {
@@ -1552,11 +1565,7 @@ impl NullString for Option<&str> {
 }
 
 fn is_teammate_session_value(session: &Value) -> bool {
-    session
-        .get("team")
-        .and_then(|team| team.get("parentSessionId"))
-        .and_then(Value::as_str)
-        .is_some_and(|parent| !parent.is_empty())
+    crate::team_contract::manager_session_id(session).is_some()
 }
 
 fn merge_entry_patch(mut entry: Value, patches: &Map<String, Value>) -> Value {
@@ -2501,4 +2510,60 @@ fn repair_notice(phase: &str, message: &str, error: Option<&str>) -> Value {
         notice.insert("error".to_owned(), Value::String(error.to_owned()));
     }
     Value::Object(notice)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SessionTeamMetadata, is_teammate_session_value};
+    use serde_json::json;
+
+    /// The same record, read both ways, must name the same manager.
+    ///
+    /// The dashboard holds typed rows and the services hold JSON, and the two
+    /// spelled this rule separately: the typed side tested
+    /// `!parent_session_id.is_empty()` while the JSON side trimmed first. A
+    /// parent of `"  "` was therefore a manager on one surface and absent on
+    /// the other. One test over both shapes, rather than one test each,
+    /// because a per-shape test passes happily while the shapes disagree.
+    #[test]
+    fn the_typed_row_and_the_json_record_name_the_same_manager() {
+        for (stored, expected) in [
+            ("", None),
+            ("   ", None),
+            ("\t", None),
+            ("lead", Some("lead")),
+            ("  lead  ", Some("lead")),
+        ] {
+            let record = json!({
+                "id": "worker",
+                "team": { "teamId": "team-1", "role": "coder", "parentSessionId": stored }
+            });
+            let typed: SessionTeamMetadata =
+                serde_json::from_value(record["team"].clone()).expect("team row");
+
+            assert_eq!(
+                typed.manager_session_id(),
+                expected,
+                "typed row disagreed for {stored:?}"
+            );
+            assert_eq!(
+                crate::team_contract::manager_session_id(&record),
+                expected,
+                "json record disagreed for {stored:?}"
+            );
+            assert_eq!(
+                typed.manager_session_id().is_some(),
+                is_teammate_session_value(&record),
+                "the two teammate predicates disagreed for {stored:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_team_row_without_a_parent_field_has_no_manager() {
+        let typed: SessionTeamMetadata =
+            serde_json::from_value(json!({ "teamId": "coder", "role": "coder" }))
+                .expect("team row");
+        assert_eq!(typed.manager_session_id(), None);
+    }
 }

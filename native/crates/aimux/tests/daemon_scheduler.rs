@@ -28,6 +28,7 @@ use aimux::remote::hosted_server::{
     HOSTED_OUTBOX_DRAIN_TASK_NAME, HOSTED_PRUNE_TASK_NAME, HostedOutboxDrainTask, HostedPruneTask,
     HostedServerState,
 };
+use aimux::remote::relay_endpoints::RELAY_PROJECT_ENDPOINTS_TASK_NAME;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::ffi::CString;
@@ -54,6 +55,7 @@ fn daemon_periodic_task_list_registers_every_migrated_task() {
             GLOBAL_EXPOSE_HOT_SNAPSHOT_TASK_NAME,
             HOSTED_PRUNE_TASK_NAME,
             HOSTED_OUTBOX_DRAIN_TASK_NAME,
+            RELAY_PROJECT_ENDPOINTS_TASK_NAME,
             DAEMON_PROCESS_HEALTH_TASK_NAME,
             DASHBOARD_SESSIONS_ALIVE_TASK_NAME,
             DAEMON_JOBS_PRUNE_TASK_NAME,

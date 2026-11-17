@@ -3,11 +3,27 @@ import { describe, expect, it } from "vitest";
 import {
   COMPOSER_SEND_TIMEOUT_MESSAGE,
   formatComposerSendFailure,
-  getComposerSendText,
   normalizeComposerDraft,
   userMessageAcknowledgesComposerSend,
   shouldSubmitComposerKey,
 } from "@/lib/composer-protocol";
+
+describe("what the composer calls an empty draft", () => {
+  // The daemon refuses an empty message, and it trims Unicode White_Space --
+  // which JavaScript's `trim` does not, for U+0085. So a line that was only
+  // that passed this gate, was sent, and came back as a hard 400 "text is
+  // required" for something the composer had accepted. One definition now.
+  it("is empty for anything the daemon would also call empty", () => {
+    for (const blank of ["", "   ", "\u0085", "\ufeff", "\u00a0\u3000", "\u2028", "\t\n"]) {
+      expect(normalizeComposerDraft(blank), JSON.stringify(blank)).toBeNull();
+    }
+  });
+
+  it("keeps real text, trimmed the same way the daemon trims it", () => {
+    expect(normalizeComposerDraft("\ufeff/clear\u0085")).toBe("/clear");
+    expect(normalizeComposerDraft("  hello  ")).toBe("hello");
+  });
+});
 
 describe("composer protocol", () => {
   it("normalizes message drafts before submit", () => {
@@ -56,41 +72,6 @@ describe("composer protocol", () => {
     expect(shouldSubmitComposerKey({ key: "Enter", ctrlKey: true, metaKey: true }, false)).toBe(
       false,
     );
-  });
-
-  it("blocks sends without a target or while a send is in flight", () => {
-    expect(
-      getComposerSendText({
-        draft: "hello",
-        hasServiceEndpoint: true,
-        hasSessionId: true,
-        sendBusy: false,
-      }),
-    ).toBe("hello");
-    expect(
-      getComposerSendText({
-        draft: "hello",
-        hasServiceEndpoint: false,
-        hasSessionId: true,
-        sendBusy: false,
-      }),
-    ).toBeNull();
-    expect(
-      getComposerSendText({
-        draft: "hello",
-        hasServiceEndpoint: true,
-        hasSessionId: false,
-        sendBusy: false,
-      }),
-    ).toBeNull();
-    expect(
-      getComposerSendText({
-        draft: "hello",
-        hasServiceEndpoint: true,
-        hasSessionId: true,
-        sendBusy: true,
-      }),
-    ).toBeNull();
   });
 
   it("formats send failure states for the composer", () => {

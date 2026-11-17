@@ -249,6 +249,8 @@ fn spawned_connections_do_not_serialize_slow_streams() {
             let (stream, _) = listener.accept().expect("accept");
             streams.push(stream);
         }
+        // aimux-async-blocking: test - the streams are std on purpose, handed to tokio
+        // with from_std, which is what the listener does with an accepted socket
         // aimux-async-seam: test - listener test joins async client and server tasks
         aimux::async_runtime::block_on_named("daemon-listener-test:joins", async move {
             let mut joins = Vec::new();

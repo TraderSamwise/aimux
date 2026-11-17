@@ -4,6 +4,7 @@ use crate::cli_launcher::{
     AimuxCliLaunchOptions, get_aimux_current_cli_identity, is_cargo_test_aimux_binary,
 };
 use crate::dashboard_command_spec::get_dashboard_command_spec;
+use crate::team_contract::manager_session_id_in_team;
 use crate::tmux::{new_dashboard_window_argv, tmux_command_from_env};
 use anyhow::Result;
 use serde_json::{Map, Value};
@@ -1361,7 +1362,7 @@ impl TmuxControl {
                         item.window_id,
                         item.session_id,
                         item.kind,
-                        team_parent_id(&item.team).unwrap_or("-"),
+                        manager_session_id_in_team(&item.team).unwrap_or("-"),
                         if item.status_text.is_empty() {
                             "-"
                         } else {
@@ -1411,18 +1412,14 @@ impl TmuxControl {
         }
         if let Some(parent_id) = current
             .as_ref()
-            .and_then(|item| team_parent_id(&item.team))
-            .filter(|value| !value.is_empty())
+            .and_then(|item| manager_session_id_in_team(&item.team))
             .map(str::to_owned)
         {
-            items.retain(|item| team_parent_id(&item.team) == Some(parent_id.as_str()));
+            items.retain(|item| manager_session_id_in_team(&item.team) == Some(parent_id.as_str()));
             sort_teammates(&mut items);
         } else {
             items.retain(|item| {
-                !item.supervisor_plane
-                    && team_parent_id(&item.team)
-                        .map(str::is_empty)
-                        .unwrap_or(true)
+                !item.supervisor_plane && manager_session_id_in_team(&item.team).is_none()
             });
             sort_agents_before_services(&mut items);
         }
@@ -1496,20 +1493,18 @@ impl TmuxControl {
             ));
             return TargetResolution::Failed;
         };
-        let parent_id = team_parent_id(&current.team);
+        let parent_id = manager_session_id_in_team(&current.team);
         self.team_log(&format!(
             "current id={} parentId={} window={}",
             py_string_repr(&current.session_id),
             py_optional_string_repr(parent_id),
             py_string_repr(&current.window_id)
         ));
-        if let Some(parent_id) = parent_id.filter(|value| !value.is_empty()) {
+        if let Some(parent_id) = parent_id {
             let parent = items.iter().find(|item| {
                 item.alive
                     && item.session_id == parent_id
-                    && team_parent_id(&item.team)
-                        .map(str::is_empty)
-                        .unwrap_or(true)
+                    && manager_session_id_in_team(&item.team).is_none()
             });
             let Some(parent) = parent else {
                 self.team_log(&format!(
@@ -1531,7 +1526,8 @@ impl TmuxControl {
         let mut direct = items
             .into_iter()
             .filter(|item| {
-                item.alive && team_parent_id(&item.team) == Some(current.session_id.as_str())
+                item.alive
+                    && manager_session_id_in_team(&item.team) == Some(current.session_id.as_str())
             })
             .collect::<Vec<_>>();
         let rendered = direct
@@ -2417,10 +2413,6 @@ fn is_supervisor_plane_meta(meta: &Value, team: &Value) -> bool {
     crate::project_service::session_visibility::session_is_in_supervisor_plane(&Value::Object(
         probe,
     ))
-}
-
-fn team_parent_id(team: &Value) -> Option<&str> {
-    team.get("parentSessionId").and_then(Value::as_str)
 }
 
 /// Agents come before services -- a partition, not an order -- and inside each

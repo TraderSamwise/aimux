@@ -186,10 +186,12 @@ fn remote_enable_disable_and_logout_preserve_status_contracts() {
     let mut runtime = FakeAuthRuntime::default();
     let enabled = route_auth_text_request(&mut runtime, "POST", CORE_API_ROUTES.remote_enable_text)
         .expect("remote enable");
-    assert_eq!(
-        text_body(enabled),
-        "✓ Remote access enabled (connection: connected)\n"
-    );
+    // The fake runtime reports a live connection, so this says so. When the
+    // daemon has not dialled yet -- which is every real `aimux remote enable`,
+    // since the status is read before the connection it just asked for could
+    // exist -- it says it is connecting instead of printing "disconnected"
+    // and looking broken.
+    assert_eq!(text_body(enabled), "✓ Remote access enabled (connected)\n");
     assert_eq!(runtime.calls, ["enable"]);
 
     let disabled =

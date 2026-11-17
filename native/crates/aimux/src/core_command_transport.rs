@@ -434,17 +434,44 @@ impl WaitNotice {
     }
 }
 
+/// Tell the notice thread to stop, recovering a poisoned lock.
+///
+/// The thread recovers poison on BOTH its initial lock and its
+/// `wait_timeout`, and this did not -- an asymmetry with a sharp edge, because
+/// the thread's loop is `while !*finished`. If the flag is never set the
+/// thread never leaves that loop, and `Drop` blocks on `join` forever: a CLI
+/// that hangs instead of exiting.
+///
+/// That is NOT reachable today, and the reason is worth writing down rather
+/// than trusting. Poison needs a panic while the guard is held, and the only
+/// two holders are this function and the notice thread itself -- and the
+/// thread's own `eprintln!` can panic on a closed stderr while holding it. So
+/// poison implies the thread already unwound and is dead, which makes `join`
+/// return at once. The hang needs a THIRD holder of this lock, and nothing
+/// stops someone adding one.
+///
+/// So this is insurance against a latent hazard, not a fix for a live bug.
+fn signal_wait_finished(done: &(Mutex<bool>, Condvar)) {
+    let (lock, signal) = done;
+    *lock.lock().unwrap_or_else(|error| error.into_inner()) = true;
+    signal.notify_all();
+}
+
 impl Drop for WaitNotice {
     fn drop(&mut self) {
-        let (lock, signal) = &*self.done;
-        if let Ok(mut finished) = lock.lock() {
-            *finished = true;
-        }
-        signal.notify_all();
+        signal_wait_finished(&self.done);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
     }
+}
+
+/// What the "still waiting" line calls the thing it is waiting for.
+///
+/// Separate from the request path so the wording is provable without a socket
+/// and a stalled daemon.
+fn wait_notice_subject(method: &str, host: &str, port: u16, target: &str) -> String {
+    format!("aimux daemon at {host}:{port} ({method} {target})")
 }
 
 fn execute_loopback_http_request(
@@ -455,10 +482,18 @@ fn execute_loopback_http_request(
     let timeout = request_timeout(request.timeout_ms);
     // Only an unbounded wait needs this. A request with a timeout ends by
     // itself and says so; a long-lived stream is waiting by design.
+    //
+    // The method and route are named because the address alone was read as
+    // "the daemon has not started": a connected socket on a listening daemon
+    // produced "still waiting for aimux daemon at 127.0.0.1:43190 (40s)",
+    // which says nothing about which request is stuck. Whoever sees this next
+    // should be able to tell a cold start from one slow route.
     let _notice = timeout.is_none().then(|| {
-        WaitNotice::start(format!(
-            "aimux daemon at {}:{}",
-            endpoint.host, endpoint.port
+        WaitNotice::start(wait_notice_subject(
+            request.method.as_str(),
+            &endpoint.host,
+            endpoint.port,
+            &endpoint.target,
         ))
     });
     stream
@@ -809,12 +844,30 @@ impl LoopbackRetry {
     }
 }
 
+/// Which loopback failures are worth another attempt inside the deadline.
+///
+/// `WouldBlock`, `Interrupted` and the two raw spellings are what a
+/// non-blocking socket says when it is not ready -- which is a narrower set
+/// than "transient on loopback", and the gap showed up as a flake rather than
+/// as a bug report. `ENOTCONN` is the one that bit: a loopback write can
+/// answer "Socket is not connected" while the connection is still settling,
+/// and because that kind was not listed, the single attempt surfaced straight
+/// through `send_project_service_json` as `502 Error: Socket is not
+/// connected`. A daemon-side test caught it roughly once in twenty runs; the
+/// user-visible version is a core command failing for no reason it can
+/// explain.
+///
+/// Retrying it is bounded by the same deadline as everything else here, so a
+/// socket that genuinely never connects still fails -- as
+/// `TransientIoExhausted`, which names the operation and the attempt count,
+/// rather than as a bare io error with no history.
 fn is_transient_loopback_error(error: &io::Error) -> bool {
     matches!(
         error.kind(),
-        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted | io::ErrorKind::NotConnected
     ) || error.raw_os_error() == Some(libc::EAGAIN)
         || error.raw_os_error() == Some(libc::EWOULDBLOCK)
+        || error.raw_os_error() == Some(libc::ENOTCONN)
 }
 
 fn parse_json_response(bytes: &[u8]) -> Result<DaemonJsonResponse, CoreCommandTransportError> {
@@ -1082,6 +1135,115 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 mod tests {
     use super::*;
 
+    /// A poisoned wait lock does not strand the notice thread.
+    ///
+    /// The thread's loop is `while !*finished`, so a flag that never becomes
+    /// true is a thread that never exits and a `Drop` that blocks on `join`
+    /// forever. The thread already recovers poison on both its lock and its
+    /// `wait_timeout`; this asserts the other side does too.
+    #[test]
+    fn a_poisoned_wait_lock_is_still_told_the_request_finished() {
+        let done = Arc::new((Mutex::new(false), Condvar::new()));
+
+        let poisoning = Arc::clone(&done);
+        let panicked = std::thread::spawn(move || {
+            let _guard = poisoning.0.lock().expect("a clean lock to poison");
+            panic!("poisoning the wait-notice lock on purpose");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(
+            done.0.is_poisoned(),
+            "the mutex must actually be poisoned for this test to mean anything"
+        );
+
+        signal_wait_finished(&done);
+
+        let finished = done.0.lock().unwrap_or_else(|error| error.into_inner());
+        assert!(
+            *finished,
+            "a poisoned wait lock was never told the request finished, so the notice thread stays in its `while !*finished` loop and Drop blocks on join forever"
+        );
+    }
+
+    /// A loopback `ENOTCONN` is retried, not reported.
+    ///
+    /// This is the error behind a flake that took three wrong hypotheses to
+    /// locate -- a bind race, a stray-connection panic, and script exhaustion,
+    /// none of which were it. The daemon's own request to a project service
+    /// occasionally answered "Socket is not connected" and
+    /// `send_project_service_json` turned that into a 502 on the first
+    /// attempt, because `NotConnected` was not in the transient set while
+    /// `WouldBlock` was.
+    ///
+    /// Driven through the closure rather than through a socket, so it is
+    /// deterministic: no timing, no listener, no race to provoke.
+    #[test]
+    fn a_loopback_not_connected_error_is_retried_within_the_deadline() {
+        let attempts = std::cell::Cell::new(0_usize);
+        let outcome = LoopbackRetry::new("write", Some(1_000)).run(|| {
+            attempts.set(attempts.get() + 1);
+            if attempts.get() == 1 {
+                return Err(io::Error::from_raw_os_error(libc::ENOTCONN));
+            }
+            Ok(())
+        });
+        assert!(
+            matches!(outcome, Ok(Ok(()))),
+            "an ENOTCONN that clears on the next attempt must succeed, not surface as a 502"
+        );
+        assert_eq!(
+            attempts.get(),
+            2,
+            "the first attempt should have been retried once"
+        );
+    }
+
+    /// And one that never clears still fails, with its history.
+    #[test]
+    fn a_loopback_not_connected_error_that_never_clears_is_exhausted_not_hidden() {
+        let outcome = LoopbackRetry::new("write", Some(30))
+            .run(|| Err::<(), _>(io::Error::from_raw_os_error(libc::ENOTCONN)));
+        match outcome {
+            Err(CoreCommandTransportError::TransientIoExhausted {
+                operation,
+                attempts,
+                ..
+            }) => {
+                assert_eq!(operation, "write");
+                assert!(
+                    attempts >= 1,
+                    "the exhausted error must carry how many attempts were made"
+                );
+            }
+            other => panic!(
+                "a permanently unconnected socket must exhaust and say so, not retry forever or vanish: {other:?}"
+            ),
+        }
+    }
+
+    /// The control: an error OUTSIDE the transient set is returned at once.
+    ///
+    /// Without this, widening the set to everything would satisfy both tests
+    /// above while turning every permanent failure into a one-second stall.
+    #[test]
+    fn a_permanent_loopback_error_is_not_retried() {
+        let attempts = std::cell::Cell::new(0_usize);
+        let outcome = LoopbackRetry::new("write", Some(1_000)).run(|| {
+            attempts.set(attempts.get() + 1);
+            Err::<(), _>(io::Error::from(io::ErrorKind::PermissionDenied))
+        });
+        assert!(
+            matches!(outcome, Ok(Err(_))),
+            "a permission error is not transient and must come back on the first attempt"
+        );
+        assert_eq!(
+            attempts.get(),
+            1,
+            "a permanent error must not be retried at all"
+        );
+    }
+
     /// A daemon that closes without answering must say so, not blame framing.
     ///
     /// `aimux` in a project reported "invalid daemon HTTP response: missing
@@ -1247,6 +1409,25 @@ mod tests {
             started.elapsed() < Duration::from_millis(250),
             "dropping the notice must not wait on a poll interval: {:?}",
             started.elapsed()
+        );
+    }
+
+    /// The wait names the request, not just the address.
+    ///
+    /// "still waiting for aimux daemon at 127.0.0.1:43190 (40s)" was read as a
+    /// daemon that had not started, on a box where the daemon was listening
+    /// and one route was slow. The address cannot tell those apart; the method
+    /// and route can.
+    #[test]
+    fn wait_notice_names_the_request_it_is_waiting_on() {
+        let subject = wait_notice_subject("GET", "127.0.0.1", 43190, "/core/task/list-text?x=1");
+        assert!(
+            subject.contains("GET") && subject.contains("/core/task/list-text"),
+            "a wait nobody can attribute to a route is not a diagnosis: {subject}"
+        );
+        assert!(
+            subject.contains("127.0.0.1:43190"),
+            "the address still has to be there, for the two-daemon setup: {subject}"
         );
     }
 

@@ -97,6 +97,31 @@ const screenCallback = ts.transpileModule(
   },
 ).outputText;
 
+/**
+ * The composer's key handler has to arrive on a prop react-native-web
+ * actually forwards.
+ *
+ * RNW's TextInput assigns its own handler over any `onKeyDown` you pass
+ * (`exports/TextInput/index.js`: `supportedProps.onKeyDown = handleKeyDown`),
+ * so the screen's handler never reached the DOM and Enter could not send on
+ * web at all. Its `handleKeyDown` forwards the real React keyboard event to
+ * `onKeyPress` before doing anything else, so that is the prop that works.
+ *
+ * Every other case in this file pulls the handler off the screen by name,
+ * which is why none of them noticed: a handler on a prop nobody reads still
+ * behaves perfectly when you call it directly.
+ */
+it("hands the key handler to react-native-web on a prop it forwards", () => {
+  // The prop assignment, not the word: the screen's own comment explains why
+  // onKeyDown is wrong, and a gate that cannot tell an explanation from an
+  // assignment fails on the documentation.
+  expect(
+    screenCallback,
+    "react-native-web overwrites onKeyDown on its TextInput, so a handler there is never called",
+  ).not.toMatch(/onKeyDown\s*:/);
+  expect(screenCallback).toContain("onKeyPress: handleComposerKeyboardEvent");
+});
+
 function screenKeyboardHandler(hasHardwareKeyboard: boolean) {
   const send = vi.fn();
   const handler = new Function(
@@ -107,7 +132,7 @@ function screenKeyboardHandler(hasHardwareKeyboard: boolean) {
     "hasHardwareKeyboard",
     "handleInterrupt",
     "handleSendMessage",
-    `${screenCallback}\nreturn composerKeyboardProps.onKeyDown;`,
+    `${screenCallback}\nreturn composerKeyboardProps.onKeyPress;`,
   )(
     { OS: "web" },
     (callback: unknown) => callback,

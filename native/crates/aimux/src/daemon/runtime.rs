@@ -57,7 +57,7 @@ use crate::daemon::services_doctor::{
 use crate::daemon::stability_doctor::{
     StabilityDoctorReport, build_stability_doctor_report_with_live_scheduler,
 };
-use crate::daemon::status::{DAEMON_HEALTH_KIND, DaemonStatusRuntime};
+use crate::daemon::status::DaemonStatusRuntime;
 use crate::daemon::stream::{
     maybe_handle_host_agent_stream_request_with_runtime_mutex_async,
     maybe_handle_project_event_stream_request_async,
@@ -114,9 +114,9 @@ use crate::lifecycle_orphans::{
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, ProjectEntry, compute_project_id};
 use crate::process_inspector::{
-    ProcessArgsEntry, ProjectServiceProcessIdentity, is_aimux_project_service_process,
-    is_aimux_project_service_process_args, is_current_native_aimux_project_service_process,
-    list_process_args, try_list_process_args,
+    ProcessArgsEntry, ProcessIdentityMatch, ProjectServiceProcessIdentity,
+    current_native_aimux_project_service_process, is_aimux_project_service_process,
+    is_aimux_project_service_process_args, try_list_process_args,
 };
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, try_list_registered_desktop_projects};
@@ -148,7 +148,6 @@ use crate::runtime_topology::{
 };
 use crate::secure_permissions;
 use crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots;
-use crate::team_contract::is_project_control_session;
 use crate::tmux::{
     LiveWindowIndex, TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION,
     TMUX_RUNTIME_CONTRACT_OPTION, TMUX_RUNTIME_OWNER_OPTION, TmuxRuntimeManager, TmuxTarget,
@@ -825,6 +824,97 @@ impl SystemProjectServiceHealthProbe {
 #[derive(Debug, Default)]
 pub struct SystemProjectServiceProcessVerifier;
 
+/// Whether a stored service is still OUR live native project service.
+///
+/// Split out from the verifier so the disposition can be gated on its own: the
+/// caller of `is_live_native_project_service` TERMINATES the service when this
+/// is false, logging "project service ensure terminating invalid service".
+///
+/// `CouldNotRead` means `ps` could not be run, which is not evidence that the
+/// service is foreign -- and answering `false` to it made a failed `ps` kill a
+/// healthy service and spawn a replacement, which raises the spawn rate, which
+/// makes `ps` fail more. That feedback loop manufactures the duplicate
+/// services the cleanup exists to prevent.
+///
+/// The conservative answer was already chosen one term earlier in the same
+/// expression: `is_pid_alive` treats an unreadable process state as ALIVE
+/// (`read_process_state(pid).is_none_or(..)`) precisely so it never declares
+/// death on missing data. `lifecycle_orphans` and `install_cleanup` resolve
+/// every uncertain branch the same way. This brings the verifier in line with
+/// all three rather than inventing a new rule.
+///
+/// Treating unknown as still-ours costs a slow failure in the genuinely
+/// foreign case -- the ensure waits on a service that will not answer and
+/// reports that -- which is the right trade against killing a healthy one.
+fn live_native_project_service_from_identity(
+    pid_is_alive: bool,
+    identity: ProcessIdentityMatch,
+) -> bool {
+    if !pid_is_alive {
+        return false;
+    }
+    match identity {
+        ProcessIdentityMatch::Matches => true,
+        ProcessIdentityMatch::DoesNotMatch => false,
+        ProcessIdentityMatch::CouldNotRead => true,
+    }
+}
+
+/// Which project-service pids a process listing says are live.
+///
+/// Separate from the two trait methods below so that a failed `ps` is a
+/// RESULT rather than an empty list. The trait returns `Vec<i32>` and is
+/// implemented more than once, so the could-not-ask cannot travel through its
+/// signature; this keeps the distinction where the decision is made, and the
+/// callers below log the error before folding it.
+///
+/// The fold itself stays as it was, and deliberately: these pids feed a
+/// TERMINATE loop, so not knowing must mean "terminate nothing". The bug was
+/// never the direction, it was that `list_process_args`'s
+/// `unwrap_or_default()` made a broken `ps` indistinguishable from a machine
+/// with no stale services -- and the terminate loop then reported an empty
+/// `terminated` list, which reads as "nothing needed cleaning up". On a box
+/// where exec itself was failing, that silence is the difference between a
+/// cleanup that could not run and one that found nothing to do.
+fn live_project_service_pids_in_listing(
+    listing: Result<Vec<crate::process_inspector::ProcessArgsEntry>, String>,
+    is_alive: &dyn Fn(i32) -> bool,
+    expected: &[(String, ProjectServiceProcessIdentity)],
+) -> Result<BTreeMap<String, Vec<i32>>, String> {
+    let mut by_project = expected
+        .iter()
+        .map(|(project_id, _)| (project_id.clone(), Vec::new()))
+        .collect::<BTreeMap<_, _>>();
+    for entry in listing? {
+        if !is_alive(entry.pid) {
+            continue;
+        }
+        for (project_id, identity) in expected {
+            if is_aimux_project_service_process_args(&entry.args, None, identity) {
+                by_project
+                    .entry(project_id.clone())
+                    .or_default()
+                    .push(entry.pid);
+            }
+        }
+    }
+    Ok(by_project)
+}
+
+/// Says a process inventory could not be taken, and goes on to terminate
+/// nothing.
+fn report_unreadable_process_inventory(context: &str, error: &str) {
+    log_lifecycle_always(
+        "project service process inventory unavailable",
+        "project-service",
+        Some(json!({
+            "context": context,
+            "error": error,
+            "effect": "terminated nothing; stale services may survive this pass",
+        })),
+    );
+}
+
 impl ProjectServiceProcessVerifier for SystemProjectServiceProcessVerifier {
     fn is_live(&self, pid: i32) -> bool {
         is_pid_alive(pid)
@@ -842,12 +932,10 @@ impl ProjectServiceProcessVerifier for SystemProjectServiceProcessVerifier {
         let Ok(current_binary) = std::env::current_exe() else {
             return false;
         };
-        is_pid_alive(service.pid)
-            && is_current_native_aimux_project_service_process(
-                service.pid,
-                &expected,
-                &current_binary,
-            )
+        live_native_project_service_from_identity(
+            is_pid_alive(service.pid),
+            current_native_aimux_project_service_process(service.pid, &expected, &current_binary),
+        )
     }
 
     fn live_project_service_pids(&self, project_id: &str, project_root: &str) -> Vec<i32> {
@@ -855,46 +943,50 @@ impl ProjectServiceProcessVerifier for SystemProjectServiceProcessVerifier {
             project_id: Some(project_id.to_owned()),
             project_root: Some(project_root.to_owned()),
         };
-        list_process_args()
-            .into_iter()
-            .filter(|entry| {
-                is_pid_alive(entry.pid)
-                    && is_aimux_project_service_process_args(&entry.args, None, &expected)
-            })
-            .map(|entry| entry.pid)
-            .collect()
+        let expected = [(project_id.to_owned(), expected)];
+        match live_project_service_pids_in_listing(
+            try_list_process_args(),
+            &|pid| is_pid_alive(pid),
+            &expected,
+        ) {
+            Ok(mut by_project) => by_project.remove(project_id).unwrap_or_default(),
+            Err(error) => {
+                report_unreadable_process_inventory("live_project_service_pids", &error);
+                Vec::new()
+            }
+        }
     }
 
     fn live_project_service_pids_by_project(
         &self,
         projects: &[(String, String)],
     ) -> BTreeMap<String, Vec<i32>> {
-        let mut by_project = projects
+        let expected = projects
             .iter()
-            .map(|(project_id, _)| (project_id.clone(), Vec::new()))
-            .collect::<BTreeMap<_, _>>();
-        let processes = list_process_args();
-        for entry in processes
-            .into_iter()
-            .filter(|entry| entry.args.contains("__project-service-internal"))
-        {
-            if !is_pid_alive(entry.pid) {
-                continue;
-            }
-            for (project_id, project_root) in projects {
-                let expected = ProjectServiceProcessIdentity {
-                    project_id: Some(project_id.clone()),
-                    project_root: Some(project_root.clone()),
-                };
-                if is_aimux_project_service_process_args(&entry.args, None, &expected) {
-                    by_project
-                        .entry(project_id.clone())
-                        .or_default()
-                        .push(entry.pid);
-                }
+            .map(|(project_id, project_root)| {
+                (
+                    project_id.clone(),
+                    ProjectServiceProcessIdentity {
+                        project_id: Some(project_id.clone()),
+                        project_root: Some(project_root.clone()),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        match live_project_service_pids_in_listing(
+            try_list_process_args(),
+            &|pid| is_pid_alive(pid),
+            &expected,
+        ) {
+            Ok(by_project) => by_project,
+            Err(error) => {
+                report_unreadable_process_inventory("live_project_service_pids_by_project", &error);
+                projects
+                    .iter()
+                    .map(|(project_id, _)| (project_id.clone(), Vec::new()))
+                    .collect()
             }
         }
-        by_project
     }
 
     fn exit_status_detail(&self, pid: i32) -> Option<String> {
@@ -1224,23 +1316,8 @@ impl RealDaemonRuntime {
     }
 
     fn metadata_endpoint_for_root(&self, project_root: &str) -> Option<MetadataApiEndpoint> {
-        let mut resolver = self.resolver.clone();
-        let state_dir = resolver.project_state_dir_for(project_root);
-        let project_id = compute_project_id(Path::new(project_root));
-        load_metadata_endpoint(state_dir).filter(|endpoint| {
-            self.project_service_process_verifier
-                .is_live_native_project_service(&ProjectServiceState {
-                    project_id: project_id.clone(),
-                    project_root: project_root.to_owned(),
-                    pid: endpoint.pid,
-                    started_at: String::new(),
-                    updated_at: String::new(),
-                    status: None,
-                    restart_count: None,
-                    last_restart_at: None,
-                    last_exit: None,
-                })
-        })
+        let (resolver, verifier) = self.project_service_resolution_handles();
+        resolve_live_metadata_endpoint(resolver, &verifier, project_root)
     }
 
     fn remove_project_with_tmux_stop(
@@ -1345,6 +1422,71 @@ impl RealDaemonRuntime {
         }
     }
 
+    /// Everything `request_project_service_json` needs the runtime for, and
+    /// nothing it does not.
+    ///
+    /// Split out because the blocking half needs NOTHING from `self` once the
+    /// request exists, and the daemon holds one global mutex around a whole
+    /// route. A caller that wants the upstream hop to happen unlocked builds
+    /// the request here, drops the guard, and sends it with
+    /// `send_project_service_json`. That is the 0.55s staircase measured on
+    /// sam-strix: eight concurrent `aimux task list` runs served one at a time.
+    /// Delegates, so there is exactly one copy of the resolution SEMANTICS.
+    ///
+    /// The first version of this split shared only `build_daemon_json_request`
+    /// -- the half that shapes a URL and headers -- and left duplicated the
+    /// half that decides whether this endpoint is the right PROCESS: the
+    /// synthesized `ProjectServiceState` handed to the liveness filter, the
+    /// `compute_project_id` input, and the 503 text. That is the drift the
+    /// shared builder was supposed to prevent, applied to the trivial half.
+    /// A future change to what the filter is given -- honouring `status`, say
+    /// -- would have landed in one copy.
+    ///
+    /// It needs nothing from `self` beyond the two handles, which is why it can
+    /// be a wrapper at all.
+    pub fn build_project_service_json_request(
+        &mut self,
+        project: &str,
+        route_path: &str,
+        body: Option<Value>,
+        timeout_ms: Option<u64>,
+    ) -> Result<(String, DaemonJsonRequest), DaemonRouteResponse> {
+        let (resolver, verifier) = self.project_service_resolution_handles();
+        resolve_project_service_json_request(
+            resolver, &verifier, project, route_path, body, timeout_ms,
+        )
+    }
+
+    /// The resolver and the verifier, for a caller that wants to resolve an
+    /// endpoint WITHOUT holding the guard.
+    ///
+    /// Both halves are pointer copies, but only since #544. The verifier has
+    /// always been an `Arc`; the resolver's `repo_root_cache` became an
+    /// `Arc<Mutex<..>>` there, so a clone now shares it instead of deep-copying
+    /// the map.
+    ///
+    /// Worth spelling out because I got it wrong twice in opposite directions.
+    /// I first wrote "shares its cache" while this branch still predated #544,
+    /// when `Clone` really did deep-copy and the honest claim was "bounded
+    /// allocation". A review caught that. Then #544 merged, which made the
+    /// original claim true and my correction false -- so the comment had to
+    /// move again when master came in. This file also warns about the same
+    /// class a few hundred lines down, where a clone "throws the resolver's
+    /// cache away and resolves the repo root again, which the first version
+    /// did while its comment claimed otherwise".
+    ///
+    /// The lesson for the next person: a comment about what a clone costs is
+    /// only true relative to the cache's representation, so check the field
+    /// rather than trusting a neighbouring comment -- including this one.
+    pub fn project_service_resolution_handles(
+        &self,
+    ) -> (PathResolver, Arc<dyn ProjectServiceProcessVerifier>) {
+        (
+            self.resolver.clone(),
+            Arc::clone(&self.project_service_process_verifier),
+        )
+    }
+
     fn request_project_service_json(
         &mut self,
         project: &str,
@@ -1352,50 +1494,12 @@ impl RealDaemonRuntime {
         body: Option<Value>,
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
-        let project_root = self.resolve_project_root_value(project);
-        let Some(endpoint) = self.metadata_endpoint_for_root(&project_root) else {
-            return ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
-                503,
-                format!("Error: project service unavailable for {project_root}"),
-            ));
-        };
-        let method = if body.is_some() {
-            DaemonHttpMethod::Post
-        } else {
-            DaemonHttpMethod::Get
-        };
-        let body_text = body.map(|value| value.to_string());
-        let mut headers = BTreeMap::from([("accept".to_owned(), "application/json".to_owned())]);
-        if body_text.is_some() {
-            headers.insert("content-type".to_owned(), "application/json".to_owned());
-        }
-        let request = DaemonJsonRequest {
-            url: format!("http://{}:{}{}", endpoint.host, endpoint.port, route_path),
-            method,
-            headers,
-            body: body_text,
-            timeout_ms,
-        };
-        match execute_loopback_json_request(&request) {
-            Ok(response) if (200..300).contains(&response.status) => {
-                ProjectServiceJsonResult::ok(project_root, response.json)
-            }
-            Ok(response) => {
-                let message = response
-                    .json
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("project service request failed");
-                ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
-                    response.status,
-                    format!("Error: {message}"),
-                ))
-            }
-            Err(error) => ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
-                502,
-                format!("Error: {error}"),
-            )),
-        }
+        let (project_root, request) =
+            match self.build_project_service_json_request(project, route_path, body, timeout_ms) {
+                Ok(resolved) => resolved,
+                Err(response) => return ProjectServiceJsonResult::error(response),
+            };
+        send_project_service_json(&project_root, &request)
     }
 
     fn read_project_online_agent_count(&mut self, project: &ProjectsRouteProject) -> Option<usize> {
@@ -1513,17 +1617,12 @@ impl RealDaemonRuntime {
                 timeout_ms,
             );
         };
-        let body_text = body.to_string();
-        let request = DaemonJsonRequest {
-            url: format!("http://{}:{}{}", endpoint.host, endpoint.port, route_path),
-            method: DaemonHttpMethod::Post,
-            headers: BTreeMap::from([
-                ("accept".to_owned(), "application/json".to_owned()),
-                ("content-type".to_owned(), "application/json".to_owned()),
-            ]),
-            body: Some(body_text),
-            timeout_ms,
-        };
+        // The shared builder, not a third hand-rolled copy of the same POST
+        // shape. This one survived the first pass and is exactly the `/health`
+        // failure the split was meant to end: the same accept and
+        // content-type headers and the same URL format, written out again.
+        let request =
+            build_daemon_json_request(&endpoint, route_path, Some(body.clone()), timeout_ms);
         match execute_loopback_json_request(&request) {
             Ok(response) if (200..300).contains(&response.status) => {
                 ProjectServiceJsonResult::ok(project_root, response.json)
@@ -2780,30 +2879,52 @@ fn read_metadata_endpoint_value_for_project_id(
     resolver: &PathResolver,
     project_id: &str,
 ) -> Result<Option<Value>, String> {
+    let Some(endpoint) = read_metadata_endpoint_for_project_id(resolver, project_id)? else {
+        return Ok(None);
+    };
+    serde_json::to_value(endpoint)
+        .map(Some)
+        .map_err(|error| format!("failed to serialize project service endpoint: {error}"))
+}
+
+/// Where one project's service last said it was listening.
+///
+/// `Ok(None)` means the project has never had a service. An unreadable or
+/// unparseable file is an error, not an absence: a share follows this answer,
+/// and "cannot tell" must not route like "no service".
+pub fn read_metadata_endpoint_for_project_id(
+    resolver: &PathResolver,
+    project_id: &str,
+) -> Result<Option<MetadataApiEndpoint>, String> {
     let path = metadata_endpoint_path(
         resolver
             .global_aimux_dir()
             .join("projects")
             .join(project_id),
     );
-    if !path.exists() {
-        return Ok(None);
-    }
-    let raw = fs::read_to_string(&path).map_err(|error| {
-        format!(
-            "failed to read project service endpoint {}: {error}",
-            path.display()
-        )
-    })?;
-    let endpoint = serde_json::from_str::<MetadataApiEndpoint>(&raw).map_err(|error| {
-        format!(
-            "failed to parse project service endpoint {}: {error}",
-            path.display()
-        )
-    })?;
-    serde_json::to_value(endpoint)
+    // Only NotFound is an absence. `exists()` answers false for a directory it
+    // cannot traverse too, which would report a project whose endpoint we
+    // simply could not read as a project that never had a service -- against
+    // what this function says it does, and a share left on a stale port with
+    // nothing in the log.
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "failed to read project service endpoint {}: {error}",
+                path.display()
+            ));
+        }
+    };
+    serde_json::from_str::<MetadataApiEndpoint>(&raw)
         .map(Some)
-        .map_err(|error| format!("failed to serialize project service endpoint: {error}"))
+        .map_err(|error| {
+            format!(
+                "failed to parse project service endpoint {}: {error}",
+                path.display()
+            )
+        })
 }
 
 fn project_service_info_value() -> Value {
@@ -2812,8 +2933,44 @@ fn project_service_info_value() -> Value {
         .unwrap_or_else(|error| json!({ "error": error.to_string() }))
 }
 
+/// The two fields `/health` answers with, read without the runtime mutex.
+///
+/// `/health` is what every readiness wait polls, and `daemon_supervisor.rs`
+/// polls it on a 2.5s client budget. It was already written as a route that
+/// does no slow work -- and then took the global runtime mutex anyway, for two
+/// fields that are never written after startup. So whenever any other route
+/// held that mutex, readiness was answered late or not at all, and the CLI
+/// printed "still waiting for aimux daemon at <host>:<port>" about a daemon
+/// that was up and listening the whole time.
+///
+/// Measured on sam-strix, 2026-11-16, against the installed daemon on :43190:
+/// `/health` at p50 was 0.44ms and at max 4.5s over 20 sequential calls, and
+/// eight concurrent calls all returned together at 11.2s. Nothing in the route
+/// is slow; every outlier was a wait for someone else's lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DaemonHealthIdentity {
+    pub pid: i32,
+    pub port: u16,
+}
+
+impl DaemonHealthIdentity {
+    /// Takes the runtime mutex once, to copy two values out of it.
+    ///
+    /// The daemon calls this at startup, before the serve loop, and keeps the
+    /// result for the process's life. Calling it per request would hand the
+    /// lock back exactly the route this type exists to keep out of it.
+    pub fn from_runtime(runtime: &Arc<Mutex<RealDaemonRuntime>>) -> Self {
+        let runtime = runtime.lock().expect("daemon runtime mutex poisoned");
+        Self {
+            pid: runtime.info.pid,
+            port: runtime.info.port,
+        }
+    }
+}
+
 pub fn handle_daemon_runtime_request_with_mutex(
     runtime: &Arc<Mutex<RealDaemonRuntime>>,
+    health_identity: DaemonHealthIdentity,
     request: DaemonHttpRequest,
 ) -> PreparedDaemonResponse {
     let route_url = DaemonRouteUrl::parse(&request.path);
@@ -2824,7 +2981,7 @@ pub fn handle_daemon_runtime_request_with_mutex(
             |method, path, body, headers| {
                 build_daemon_route_context(method, path, body, headers.clone(), &[])
             },
-            |_, _, _, context, issued_at| {
+            |_, _, _, context, _issued_at| {
                 if let Some(access) = &context.access_decision
                     && !access.ok
                 {
@@ -2836,19 +2993,17 @@ pub fn handle_daemon_runtime_request_with_mutex(
                         }),
                     );
                 }
-                let info = {
-                    let runtime = runtime.lock().expect("daemon runtime mutex poisoned");
-                    runtime.current_daemon_info(issued_at)
-                };
+                // No `runtime.lock()` here, deliberately. See
+                // `DaemonHealthIdentity`: this route is the readiness probe,
+                // and taking the global mutex made it answer at the speed of
+                // whatever unrelated work happened to hold it.
                 DaemonRouteResponse::json(
                     200,
-                    json!({
-                        "ok": true,
-                        "kind": DAEMON_HEALTH_KIND,
-                        "pid": info.pid,
-                        "port": info.port,
-                        "serviceInfo": project_service_info_value(),
-                    }),
+                    crate::daemon::status::daemon_health_payload(
+                        health_identity.pid,
+                        health_identity.port,
+                        project_service_info_value(),
+                    ),
                 )
             },
         );
@@ -2962,14 +3117,428 @@ pub fn handle_daemon_runtime_request_with_mutex(
             },
         );
     }
+    // The same condition the `doctor_versions` carve-out above carries, and for
+    // the same reason. `task_list_text` is in `local_cli_text_routes`, so
+    // `daemon/router.rs` refuses it two ways -- 403 "core text routes are
+    // loopback-only" for a remote actor, 403 "core text routes are cli-only"
+    // for a request with an `Origin` header. Those refusals live on the route,
+    // not in the access decision, and `assert_remote_access_allowed` allows an
+    // Owner actor and no actor alike. A carve-out without this condition
+    // therefore SERVES the task list to a relay-stamped owner and to a browser,
+    // both of which the daemon turns away. Anyone excluded here takes the
+    // locked path and is refused there, by the one copy of the rule.
+    // Pathname second, before the header work, which is where it was before
+    // this guard covered two routes. `parse_remote_actor` and
+    // `has_origin_header` are pure and cheap -- header lookups and an optional
+    // JSON parse -- but they are still more expensive than a string compare,
+    // and hoisting them ran them for every daemon GET. One copy of the rule,
+    // cheapest discriminator first.
+    if request.method == "GET"
+        && (pathname == crate::core_command_contract::CORE_API_ROUTES.task_list_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.agent_ps_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.agent_list_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.thread_list_text
+            // Both pathnames reach the SAME route function in
+            // `collaboration.rs`, and carving out only one left the alias
+            // holding the mutex across its upstream hop -- one function, two
+            // lock behaviours. This is the function-versus-pathname divergence
+            // showing up inside a route I had already called done.
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.threads_list_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.worktree_list_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.graveyard_list_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.team_show_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.usage_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.notification_list_text
+            // NOT a CORE_API_ROUTES name: review list is dispatched from the
+            // bare `native_cli_dispatch` constant. `CORE_API_ROUTES` has no
+            // `review_list_text` at all, so that spelling does not compile --
+            // the compiler catches the obvious mistake. The silent one is
+            // reaching for a NEIGHBOURING field that does exist, such as
+            // `review_approve_text`, which compiles and never matches
+            // `/core/review/list-text`; the lock gate is what catches that.
+            || pathname == crate::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.thread_show_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.task_show_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.outline_list_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.host_agent_read_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.doctor_exchange_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text
+            // Three pathnames, ONE route function: the filter kind comes from
+            // the dispatcher rather than the url, so each arm pairs the shared
+            // resolve with its own named render.
+            || pathname == crate::native_cli_dispatch::CORE_LOOP_LIST_TEXT_ROUTE
+            || pathname == crate::native_cli_dispatch::CORE_OVERSEER_STATUS_TEXT_ROUTE
+            || pathname == crate::native_cli_dispatch::CORE_SCRIBE_STATUS_TEXT_ROUTE)
+        && parse_remote_actor(&request.headers).is_none()
+        && !crate::daemon::router::has_origin_header(&request.headers)
+    {
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.task_list_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::collaboration::resolve_task_list_request,
+                crate::daemon::text::collaboration::render_task_list_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.agent_ps_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::agents::resolve_agent_ps_request,
+                crate::daemon::text::agents::render_agent_ps_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.agent_list_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::agents::resolve_agent_list_request,
+                crate::daemon::text::agents::render_agent_list_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.thread_list_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.threads_list_text
+        {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::collaboration::resolve_thread_list_request,
+                crate::daemon::text::collaboration::render_thread_list_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.worktree_list_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::worktrees::resolve_worktree_list_request,
+                crate::daemon::text::worktrees::render_worktree_list_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.graveyard_list_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::worktrees::resolve_graveyard_list_request,
+                crate::daemon::text::worktrees::render_graveyard_list_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.team_show_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::team::resolve_team_show_request,
+                crate::daemon::text::team::render_team_show_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.usage_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::project_content::resolve_usage_request,
+                crate::daemon::text::project_content::render_usage_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.notification_list_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::notifications::resolve_notification_list_request,
+                crate::daemon::text::notifications::render_notification_list_result,
+            );
+        }
+        if pathname == crate::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::collaboration::resolve_review_list_request,
+                crate::daemon::text::collaboration::render_review_list_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.thread_show_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::collaboration::resolve_thread_show_request,
+                crate::daemon::text::collaboration::render_thread_show_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.task_show_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::collaboration::resolve_task_show_request,
+                crate::daemon::text::collaboration::render_task_show_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.outline_list_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::project_content::resolve_outline_list_request,
+                crate::daemon::text::project_content::render_outline_list_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.host_agent_read_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::host_agent::resolve_host_agent_read_request,
+                crate::daemon::text::host_agent::render_host_agent_read_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.doctor_exchange_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::operations::resolve_doctor_exchange_request,
+                crate::daemon::text::operations::render_doctor_exchange_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::operations::resolve_doctor_lifecycle_request,
+                crate::daemon::text::operations::render_doctor_lifecycle_result,
+            );
+        }
+        if pathname == crate::native_cli_dispatch::CORE_LOOP_LIST_TEXT_ROUTE {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::agents::resolve_agent_list_request,
+                crate::daemon::text::agents::render_loop_list_result,
+            );
+        }
+        if pathname == crate::native_cli_dispatch::CORE_OVERSEER_STATUS_TEXT_ROUTE {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::agents::resolve_agent_list_request,
+                crate::daemon::text::agents::render_overseer_status_result,
+            );
+        }
+        if pathname == crate::native_cli_dispatch::CORE_SCRIBE_STATUS_TEXT_ROUTE {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::agents::resolve_agent_list_request,
+                crate::daemon::text::agents::render_scribe_status_result,
+            );
+        }
+    }
     let mut runtime = runtime.lock().expect("daemon runtime mutex poisoned");
     handle_daemon_runtime_request(&mut *runtime, request)
 }
 
+/// What a core read route needs resolved before it can call its project
+/// service.
+///
+/// Named fields rather than a `(String, String)`, and that is not style. Both
+/// the carve-out and the locked path consume these in the same order, so a
+/// route whose resolve returned them the other way round would be wrong
+/// IDENTICALLY on both paths -- which the parity test cannot see, because
+/// parity compares the two paths against each other. A positional pair put
+/// exactly the mistake the shared machinery exists to prevent back within
+/// reach of the next route.
+pub struct CoreReadTarget {
+    pub project: String,
+    pub route_path: String,
+}
+
+/// A single-upstream-call core read route, served without the global runtime
+/// mutex held across the upstream hop.
+///
+/// Every other core text route is dispatched under that one mutex for its
+/// whole duration, blocking HTTP included. On sam-strix that showed up as an
+/// even 0.55s staircase: eight concurrent `aimux task list` runs completed one
+/// at a time, 16.15s through 19.92s, while a control that sends no daemon
+/// request did not queue at all. `/health` was taken out of the queue first,
+/// because the watchdog polls it and was ending healthy daemons; this is the
+/// queue itself.
+///
+/// Three phases. The runtime is needed for the first and nothing else:
+///   1. lock, resolve the project and build the request
+///   2. DROP THE GUARD, then make the call
+///   3. render, which is pure
+///
+/// Each route's resolve and render halves are shared with its locked-path
+/// handler rather than reimplemented, because a carve-out means one route
+/// served from two places and `/health` already taught that lesson: it had two
+/// handlers building the same body until they were given one
+/// `daemon_health_payload` between them.
+///
+/// A 503 from `render` does NOT reach the ensure-and-retry, and the status
+/// collision invites the opposite conclusion. The retry inspects the
+/// `ProjectServiceJsonResult` that `send_project_service_json` returned,
+/// before `render` is called at all, so a 503 the route synthesises later --
+/// `aimux ps` refusing an unverified tmux liveness query, for instance --
+/// cannot restart a project service. The locked path behaves the same way,
+/// because its retry lives inside `get_hot_or_ensured_project_service_json`.
+///
+/// The guard condition, the lock/unlock split and the ensure-and-retry live
+/// HERE, once, rather than per route. `task_list_text` was carved out first
+/// and shipped twice broken -- once serving callers the router refuses because
+/// the guard was missing, once answering 503 on a cold project because the
+/// ensure-and-retry was missing. A second near-copy of this function is a
+/// second chance to forget either, so a new route supplies only its resolve
+/// and its render.
+fn handle_core_read_route_without_holding_the_lock(
+    runtime: &Arc<Mutex<RealDaemonRuntime>>,
+    request: DaemonHttpRequest,
+    resolve: impl Fn(&DaemonRouteUrl, Option<&Value>) -> Result<CoreReadTarget, DaemonRouteResponse>,
+    render: impl Fn(&DaemonRouteUrl, ProjectServiceJsonResult) -> DaemonRouteResponse,
+) -> PreparedDaemonResponse {
+    handle_daemon_http_request(
+        request,
+        |method, path, body, headers| {
+            // An empty project list is sound because of the condition on the
+            // carve-out above, and the code is stronger than "the list is
+            // consulted for Operator and Peer actors", which is what this
+            // comment used to claim. `build_daemon_route_context_for_actor`
+            // reads `projects` only INSIDE
+            // `actor.filter(|a| matches!(a.role, Operator | Peer))`, so with
+            // no actor the `Option::filter` short-circuits and the slice is
+            // never read on any path. The condition is therefore
+            // `parse_remote_actor(..).is_none()` and nothing else -- it does
+            // not depend on which pathname got here, which is why putting two
+            // route checks under it cannot invalidate it. The proxy fast path
+            // has to exclude those two roles explicitly because it serves
+            // actors.
+            build_daemon_route_context(method, path, body, headers.clone(), &[])
+        },
+        |_, path, body, context, _| {
+            if let Some(access) = &context.access_decision
+                && !access.ok
+            {
+                return DaemonRouteResponse::json(
+                    access.status.unwrap_or(403),
+                    json!({
+                        "ok": false,
+                        "error": access.error.as_deref().unwrap_or("remote access denied")
+                    }),
+                );
+            }
+            let route_url = DaemonRouteUrl::parse(path);
+            let CoreReadTarget {
+                project,
+                route_path,
+            } = match resolve(&route_url, body) {
+                Ok(resolved) => resolved,
+                Err(response) => return response,
+            };
+            // Phase one holds the guard ONLY to copy two handles, both of
+            // which are pointer copies since #544 made the resolver's cache
+            // shared. It used to do the whole resolution here, which meant two
+            // subprocesses -- `rev-parse` and `ps` -- ran inside the critical
+            // section.
+            let (resolver, verifier) = {
+                let locked = runtime.lock().expect("daemon runtime mutex poisoned");
+                locked.project_service_resolution_handles()
+            };
+            // The guard is gone by here, and the resolution below is where the
+            // spawns live.
+            let built = resolve_project_service_json_request(
+                resolver,
+                &verifier,
+                &project,
+                &route_path,
+                None,
+                None,
+            );
+            let hot = match built {
+                Ok((project_root, json_request)) => {
+                    send_project_service_json(&project_root, &json_request)
+                }
+                Err(response) => ProjectServiceJsonResult::error(response),
+            };
+
+            // `get_hot_or_ensured_project_service_json` is what the generic
+            // route reaches through this trait, and on 502 or 503 it STARTS the
+            // project service and retries. Dropping that would mean
+            // `aimux task list` stopped working on a project whose service is
+            // not up -- a 503 where it used to start the service and answer.
+            // So the retry is mirrored here, with the same split: the ensure
+            // mutates the runtime and is locked, the send is not.
+            let result = match hot {
+                ProjectServiceJsonResult::Err { response }
+                    if response.status == 502 || response.status == 503 =>
+                {
+                    // STILL THE WORST SPAN ON THIS ROUTE, and worse than
+                    // "a different span", which is how I first described it.
+                    // One guard covers `ensure_project_service_for_text_request`
+                    // -- itself another `rev-parse` -- then a service spawn and
+                    // a startup wait of up to PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+                    // and THEN a second full resolution with another
+                    // `rev-parse` and another `ps`. So the retry puts back
+                    // double what phase one above just removed. It is only the
+                    // cold path, but it wants its own change and its own gate.
+                    let ensured = {
+                        let mut locked = runtime.lock().expect("daemon runtime mutex poisoned");
+                        match locked.ensure_project_service_for_text_request(&project) {
+                            // The handles are copied while the guard is
+                            // already held -- two clones -- so the SECOND
+                            // resolution below runs unlocked, exactly like
+                            // phase one's. It used to run here, putting
+                            // another `rev-parse` and another `ps` back inside
+                            // the critical section.
+                            Ok(project_root) => {
+                                let (resolver, verifier) =
+                                    locked.project_service_resolution_handles();
+                                Ok((project_root, resolver, verifier))
+                            }
+                            Err(error) => Err(crate::daemon::routing::text_error(
+                                502,
+                                format!("Error: {error}"),
+                            )),
+                        }
+                    };
+                    match ensured {
+                        // The guard is gone by here. Handing the RESOLVED root
+                        // back to a function that resolves again is safe
+                        // because resolution is idempotent, which 36fe8aa1e
+                        // pinned for exactly these routes.
+                        Ok((project_root, resolver, verifier)) => {
+                            match resolve_project_service_json_request(
+                                resolver,
+                                &verifier,
+                                &project_root,
+                                &route_path,
+                                None,
+                                None,
+                            ) {
+                                Ok((project_root, json_request)) => {
+                                    send_project_service_json(&project_root, &json_request)
+                                }
+                                Err(response) => ProjectServiceJsonResult::error(response),
+                            }
+                        }
+                        Err(response) => ProjectServiceJsonResult::error(response),
+                    }
+                }
+                result => result,
+            };
+            render(&route_url, result)
+        },
+    )
+}
+
+/// The fast path builds its access context with an EMPTY project list, which
+/// is fine for a caller whose decision does not depend on one and wrong for a
+/// caller whose decision does. An operator was already excluded for that
+/// reason; a peer is excluded for the same one, because its allowlist asks
+/// whether the proxy target is one of this machine's own project services and
+/// an empty list answers "no" to every port, including the right one.
+///
+/// Keyed on the role rather than on the path: the question is who is asking,
+/// and a list of paths would go stale the moment the allowlist grew.
 fn proxy_fast_path_can_skip_runtime_lock(headers: &BTreeMap<String, String>) -> bool {
-    !parse_remote_actor(headers)
-        .as_ref()
-        .is_some_and(|actor| actor.role == RemoteActorRole::Operator)
+    !parse_remote_actor(headers).as_ref().is_some_and(|actor| {
+        matches!(
+            actor.role,
+            RemoteActorRole::Operator | RemoteActorRole::Peer
+        )
+    })
 }
 
 fn aimux_cli_launch_json(launch: AimuxCliLaunchCommand) -> Value {
@@ -3303,6 +3872,13 @@ pub fn run_daemon_internal() -> Result<()> {
             .with_global_expose_hot_snapshot_coordinator(global_expose_hot_snapshots.clone())
             .with_daemon_scheduler(daemon_scheduler.clone()),
     ));
+    // Here, and not later. `from_runtime` is a BLOCKING lock, and by the time
+    // the serve loop is set up the scheduler and the hosted listener are both
+    // live and both take this mutex -- so taking it there made daemon startup
+    // wait on a periodic task's first tick, which is the opposite of what a
+    // lock-free readiness route is for. At this point nothing else holds a
+    // handle, so it cannot contend.
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     // Held for the daemon's lifetime. A local build gets `None` and holds
     // nothing, which is why the binding is not gated.
     let _hosted_server = crate::remote_control_edge::RemoteDaemonState::start_hosted_listener(
@@ -3311,6 +3887,19 @@ pub fn run_daemon_internal() -> Result<()> {
         Some(Arc::clone(&scheduler_context)),
         Some(daemon_scheduler.clone()),
     )?;
+    // The only wiring call. A poisoned mutex here leaves the endpoint task
+    // with no reporter for the daemon's whole life, so it is said out loud
+    // rather than skipped by an `if let Ok`.
+    match runtime.lock() {
+        Ok(runtime) => runtime
+            .remote
+            .register_relay_project_endpoints_push(&scheduler_context),
+        Err(_) => log_lifecycle_always(
+            "relay endpoint reporter not registered: daemon runtime lock poisoned",
+            "relay",
+            None,
+        ),
+    }
     spawn_daemon_scheduler(
         Arc::clone(&scheduler_context),
         daemon_periodic_tasks(global_expose_hot_snapshots),
@@ -3331,7 +3920,9 @@ pub fn run_daemon_internal() -> Result<()> {
     let serve_result = crate::async_runtime::process_runtime().block_on(
         serve_daemon_http_with_metadata_and_interceptor_until(
             DaemonListenConfig { host, port },
-            move |request| handle_daemon_runtime_request_with_mutex(&route_runtime, request),
+            move |request| {
+                handle_daemon_runtime_request_with_mutex(&route_runtime, health_identity, request)
+            },
             || crate::daemon::listener::DaemonRequestMetadata {
                 issued_at: now_iso(),
                 stopping: crate::process_signals::received_shutdown_signal().is_some(),
@@ -4141,6 +4732,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         &mut self,
         project_root: &str,
         session_id: &str,
+        requested_overseer: Option<&str>,
         goal: Option<&str>,
         instructions: Option<&str>,
     ) -> Result<Value, CoreCommandFailure> {
@@ -4158,10 +4750,22 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                 error: format!("agent not found: {session_id}"),
             });
         };
-        if is_project_control_agent(target) {
+        // An overseer is watchable: it is the manager class at every level
+        // above the leaf, so a mid-tier overseer reports to the one above it.
+        // Promotion sets `projectControl`, so the old project-control test
+        // refused exactly the agents this tree is made of. The scribe is the
+        // case that rule was really protecting, and it is still refused here
+        // and again in `bind_watch`.
+        // The same predicate the project service applies, so this layer
+        // cannot admit a target the service will refuse. A project-control
+        // session that is neither overseer nor scribe passed a scribe-only
+        // test here and was refused two calls later.
+        if !is_overseer_agent(target) && is_project_control_agent(target) {
             return Err(CoreCommandFailure {
                 status: 400,
-                error: format!("cannot watch project control session: {session_id}"),
+                error: format!(
+                    "cannot watch project control session {session_id}: only an overseer is a report"
+                ),
             });
         }
         if !is_agent_live(target) {
@@ -4183,7 +4787,48 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                 });
             }
         };
-        let overseer_session_id = if let Some(owner_id) = bound_owner {
+        // A named manager is honoured and never second-guessed: it must be
+        // a published overseer, and the service refuses a cycle. Silently
+        // substituting another would be the same lie the auto-pick told.
+        if let Some(requested) = requested_overseer {
+            if !overseer_ids.iter().any(|id| id == requested) {
+                return Err(CoreCommandFailure {
+                    status: 400,
+                    error: format!(
+                        "cannot watch {session_id} under {requested}: it is not a published project overseer"
+                    ),
+                });
+            }
+            if let Some(bound) = bound_owner
+                && bound != requested
+            {
+                return Err(CoreCommandFailure {
+                    status: 409,
+                    error: format!(
+                        "cannot watch {session_id} under {requested}: it is already watched by {bound}"
+                    ),
+                });
+            }
+            // The same readiness the bound-owner path demands. Without it a
+            // named manager that is offline is waited on for the full input
+            // budget and then reported as a timeout, which names the wrong
+            // problem.
+            let ready = find_agent(&initial_agents, requested).is_some_and(is_agent_input_ready);
+            if !ready {
+                return Err(CoreCommandFailure {
+                    status: 409,
+                    error: format!(
+                        "cannot watch {session_id} under {requested}: it is not ready for input (status: {})",
+                        find_agent(&initial_agents, requested)
+                            .and_then(agent_status)
+                            .unwrap_or("unknown")
+                    ),
+                });
+            }
+        }
+        let overseer_session_id = if let Some(requested) = requested_overseer {
+            requested.to_owned()
+        } else if let Some(owner_id) = bound_owner {
             if !overseer_ids.iter().any(|id| id == owner_id) {
                 return Err(CoreCommandFailure {
                     status: 409,
@@ -4209,6 +4854,14 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         } else {
             overseer_ids
                 .iter()
+                // Now that an overseer can be a report, the target's own
+                // descendants are in this list. Handing the target to one of
+                // them closes a loop, and the caller gets a cycle refusal
+                // naming a chain it never asked about -- for the ordinary act
+                // of watching the top of a tree. Skip the target and
+                // everything beneath it; spawning a fresh overseer is the
+                // right answer when nothing else is eligible.
+                .filter(|id| !reports_to(&initial_agents, id, session_id))
                 .find(|id| find_agent(&initial_agents, id).is_some_and(is_agent_input_ready))
                 .cloned()
                 .map(Ok)
@@ -4250,12 +4903,10 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         if let Some(goal) = goal {
             loop_body.insert("goal".to_owned(), Value::String(goal.to_owned()));
         }
-        self.project_service_json(
-            &project_root,
-            project_routes::agents::LOOP,
-            Some(Value::Object(loop_body)),
-            None,
-        )?;
+        // The binding first. Starting the loop first meant that a watch the
+        // service then refused -- which it now can, for a cycle -- left the
+        // agent looping with nobody watching it, and the caller saw only the
+        // refusal.
         self.project_service_json(
             &project_root,
             project_routes::agents::WATCH,
@@ -4266,14 +4917,28 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             })),
             None,
         )?;
+        self.project_service_json(
+            &project_root,
+            project_routes::agents::LOOP,
+            Some(Value::Object(loop_body)),
+            None,
+        )?;
 
         let updated_agents = self.read_project_agents(&project_root)?;
         let updated_target = find_agent(&updated_agents, session_id)
             .cloned()
             .unwrap_or_else(|| target.clone());
+        // The prompt lists what this overseer is responsible for, which is
+        // the agents bound to it -- not every looping agent in the project.
+        // The old project-control filter was hiding that: with overseers
+        // watchable it stopped hiding it, and a mid-tier overseer was handed
+        // a list containing its own manager and other subtrees, under a line
+        // telling it to treat that list as the source of truth.
         let watched = updated_agents
             .iter()
-            .filter(|agent| !is_project_control_agent(agent))
+            .filter(|agent| {
+                trimmed_value_string(agent.get("watchedBy")) == Some(&overseer_session_id)
+            })
             .filter(|agent| agent.pointer("/loop/active").and_then(Value::as_bool) == Some(true))
             .cloned()
             .collect::<Vec<_>>();
@@ -4742,6 +5407,55 @@ impl DaemonMetadataTextRuntime for RealDaemonRuntime {
 impl DaemonAgentTextRuntime for RealDaemonRuntime {
     fn resolve_project_root(&self, value: &str) -> String {
         self.resolve_project_root_value(value)
+    }
+
+    fn hosts_session_locally(&mut self, project_root: &str, session_id: &str) -> bool {
+        // The runtime topology is the inventory AGENTS.md points at for
+        // session liveness, and it is a file this daemon already owns. One
+        // read, and no subprocess of its own -- which matters because this is
+        // on every `aimux input`. `&mut self.resolver` rather than a clone for
+        // exactly that reason: a clone throws the resolver's cache away and
+        // resolves the repo root again, which the first version did while its
+        // comment claimed otherwise.
+        //
+        // Could-not-read means assume it is ours: a topology this machine
+        // cannot parse is not evidence that somebody else is running the
+        // session, and the local path is what the person would have got
+        // before any of this existed. A MISSING topology is not an error --
+        // it reads as an empty one, which is what lets a machine that does not
+        // have the checkout fall through to the owner table.
+        let state_dir = self.resolver.project_state_dir_for(project_root);
+        let Ok(topology) = crate::runtime_topology::read_runtime_topology(
+            crate::runtime_topology::runtime_topology_path(&state_dir),
+        ) else {
+            return true;
+        };
+        // The statuses the reconciler actually keeps, and NOT `None`.
+        //
+        // `None` means no filter, which also returns GRAVEYARD rows: sessions
+        // deliberately removed. There is no "stopped" session status to
+        // preserve either -- that word is a SERVICE status -- so the reason
+        // the first version gave for `None` was fiction, and what it really
+        // did was let a killed session claim "it is here" and suppress the
+        // forward forever. A real project's topology was half graveyard rows.
+        crate::runtime_topology::list_topology_session_states(
+            &topology,
+            Some(crate::project_service::session_visibility::DASHBOARD_SESSION_STATUSES),
+        )
+        .iter()
+        .any(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
+    }
+
+    fn peer_owner_for_input(&self, project_root: &str) -> (Option<String>, &'static str) {
+        self.remote.peer_owner_for_input(project_root)
+    }
+
+    fn forward_agent_input(
+        &mut self,
+        machine_id: &str,
+        body: &Value,
+    ) -> Result<(u16, Value), String> {
+        self.remote.forward_agent_input(machine_id, body)
     }
 
     fn get_project_service_json(
@@ -5236,8 +5950,33 @@ fn is_agent_input_ready(agent: &Value) -> bool {
     matches!(agent_status(agent), Some("running" | "idle" | "waiting"))
 }
 
+/// Whether `candidate` is `ancestor`, or reports to it through any chain of
+/// managers -- read off the `watchedBy` each agent record carries.
+///
+/// Bounded by the number of agents so a registry that already holds a cycle
+/// cannot spin here.
+fn reports_to(agents: &[Value], candidate: &str, ancestor: &str) -> bool {
+    let mut current = candidate;
+    for _ in 0..=agents.len() {
+        if current == ancestor {
+            return true;
+        }
+        let Some(next) = find_agent(agents, current)
+            .and_then(|agent| trimmed_value_string(agent.get("watchedBy")))
+        else {
+            return false;
+        };
+        current = next;
+    }
+    false
+}
+
+fn is_overseer_agent(agent: &Value) -> bool {
+    crate::team_contract::is_overseer_session(Some(agent))
+}
+
 fn is_project_control_agent(agent: &Value) -> bool {
-    is_project_control_session(Some(agent))
+    crate::team_contract::is_project_control_session(Some(agent))
 }
 
 fn agent_watch_label(agent: &Value) -> &str {
@@ -6668,6 +7407,101 @@ mod dashboard_alive_lookup_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn service_entry(pid: i32, project_id: &str, project_root: &str) -> ProcessArgsEntry {
+        ProcessArgsEntry {
+            pid,
+            args: format!(
+                "aimux __project-service-internal --project-id {project_id} --project-root {project_root}"
+            ),
+        }
+    }
+
+    fn one_project() -> Vec<(String, ProjectServiceProcessIdentity)> {
+        vec![(
+            "proj".to_owned(),
+            ProjectServiceProcessIdentity {
+                project_id: Some("proj".to_owned()),
+                project_root: Some("/tmp/proj".to_owned()),
+            },
+        )]
+    }
+
+    /// A readable inventory with a matching service reports that pid.
+    ///
+    /// The control: without it, a decision function that returned `Err` for
+    /// everything would satisfy the error assertion below.
+    #[test]
+    fn a_readable_process_inventory_reports_the_matching_service() {
+        let found = live_project_service_pids_in_listing(
+            Ok(vec![
+                service_entry(4242, "proj", "/tmp/proj"),
+                ProcessArgsEntry {
+                    pid: 99,
+                    args: "some other process".to_owned(),
+                },
+            ]),
+            &|_| true,
+            &one_project(),
+        )
+        .expect("a readable inventory is not an error");
+        assert_eq!(found.get("proj"), Some(&vec![4242]));
+    }
+
+    /// A readable inventory with nothing matching reports an empty list.
+    ///
+    /// This is the outcome a failed `ps` used to be indistinguishable from,
+    /// and it must keep working: genuine absence still takes the no-data path.
+    #[test]
+    fn a_machine_with_no_services_reports_an_empty_list() {
+        let found = live_project_service_pids_in_listing(
+            Ok(vec![ProcessArgsEntry {
+                pid: 99,
+                args: "some other process".to_owned(),
+            }]),
+            &|_| true,
+            &one_project(),
+        )
+        .expect("an empty machine is not an error");
+        assert_eq!(found.get("proj"), Some(&Vec::new()));
+    }
+
+    /// And a `ps` that could not run is an ERROR, not an empty machine.
+    ///
+    /// These pids feed a terminate loop, so the fold stays "terminate
+    /// nothing" either way -- but the caller can only say which happened if
+    /// the distinction survives this far. `list_process_args`'s
+    /// `unwrap_or_default()` destroyed it one frame earlier, and the terminate
+    /// loop then reported an empty `terminated` list, which reads as "nothing
+    /// needed cleaning up" rather than "I could not look".
+    #[test]
+    fn a_failed_process_inventory_is_an_error_not_an_empty_machine() {
+        let outcome = live_project_service_pids_in_listing(
+            Err("failed to run ps process inventory: Resource temporarily unavailable".to_owned()),
+            &|_| true,
+            &one_project(),
+        );
+        let error = outcome.expect_err(
+            "a failed ps must not come back as an empty machine; that is the whole bug",
+        );
+        assert!(
+            error.contains("ps process inventory"),
+            "the error must name what could not be read, so the log says why nothing was terminated: {error}"
+        );
+    }
+
+    /// A live-check that rejects the pid still reports nothing, and is not an
+    /// error. Being dead and being unreadable are also two different answers.
+    #[test]
+    fn a_dead_pid_is_filtered_without_becoming_an_error() {
+        let found = live_project_service_pids_in_listing(
+            Ok(vec![service_entry(4242, "proj", "/tmp/proj")]),
+            &|_| false,
+            &one_project(),
+        )
+        .expect("a dead pid is not an unreadable inventory");
+        assert_eq!(found.get("proj"), Some(&Vec::new()));
+    }
     use crate::daemon_state::{ProjectServiceStatus, save_metadata_endpoint};
     use crate::runtime_topology::write_runtime_topology;
     use crate::tmux::project_session;
@@ -7099,7 +7933,32 @@ mod tests {
             "projectControl": false
         });
 
+        // The guard that decides watchability is the scribe test now: an
+        // overseer is a legitimate report, so being project control is no
+        // longer what excludes an agent. Asserting that on this fixture alone
+        // proves nothing -- it was false under the old rule too -- so the
+        // pair that actually diverged is asserted beside it.
         assert!(!is_project_control_agent(&worker));
+        let overseer = json!({
+            "id": "claude-lead",
+            "status": "idle",
+            "tool": "claude",
+            "overseer": true,
+            "projectControl": true
+        });
+        assert!(
+            is_overseer_agent(&overseer),
+            "an overseer must be watchable, which is the whole tree"
+        );
+        assert!(is_project_control_agent(&overseer));
+        let scribe = json!({
+            "id": "claude-scribe",
+            "status": "idle",
+            "tool": "claude",
+            "scribe": true,
+            "projectControl": true
+        });
+        assert!(!is_overseer_agent(&scribe) && is_project_control_agent(&scribe));
         let (agents, published) = overseer_watch_inventory(&json!({
             "agents": [worker], "overseerSessionIds": []
         }))
@@ -8062,6 +8921,36 @@ mod tests {
         assert_eq!(timeout, Duration::from_millis(120_000));
         assert_eq!(poll, Duration::from_millis(1));
         fixture.cleanup();
+    }
+
+    /// A `ps` that could not run must not condemn a live project service.
+    ///
+    /// The caller of `is_live_native_project_service` TERMINATES on `false`,
+    /// logging "project service ensure terminating invalid service", so this
+    /// mapping is a kill decision. `CouldNotRead` used to answer `false`.
+    ///
+    /// All three identity outcomes are asserted, and the dead-pid case too,
+    /// because a mapping that always answered `true` would pass a test that
+    /// only checked the unknown case -- and that mapping would never reap a
+    /// genuinely foreign process.
+    #[test]
+    fn an_unreadable_process_identity_does_not_condemn_a_live_service() {
+        assert!(
+            live_native_project_service_from_identity(true, ProcessIdentityMatch::CouldNotRead),
+            "a live pid whose args could not be read was reported as not our service; its caller terminates on that, so a broken ps kills a healthy project service and spawns a replacement"
+        );
+        assert!(
+            live_native_project_service_from_identity(true, ProcessIdentityMatch::Matches),
+            "a live pid that matches must be reported as ours"
+        );
+        assert!(
+            !live_native_project_service_from_identity(true, ProcessIdentityMatch::DoesNotMatch),
+            "a live pid that genuinely does not match must still be reapable, or this mapping would never reap anything"
+        );
+        assert!(
+            !live_native_project_service_from_identity(false, ProcessIdentityMatch::CouldNotRead),
+            "a dead pid is not our live service whatever ps says about its args"
+        );
     }
 
     #[test]
@@ -12224,5 +13113,157 @@ mod tests {
         ];
         let rc = unsafe { libc::utimes(c_path.as_ptr(), times.as_ptr()) };
         assert_eq!(rc, 0, "utimes failed for {}", path.display());
+    }
+}
+
+/// The request itself, built the same way for both resolution paths.
+///
+/// Shared so the locked builder and the unlocked one cannot drift in the
+/// headers, the method choice or the URL shape -- the `/health` lesson, where
+/// two handlers built the same body until they were given one builder.
+fn build_daemon_json_request(
+    endpoint: &MetadataApiEndpoint,
+    route_path: &str,
+    body: Option<Value>,
+    timeout_ms: Option<u64>,
+) -> DaemonJsonRequest {
+    let method = if body.is_some() {
+        DaemonHttpMethod::Post
+    } else {
+        DaemonHttpMethod::Get
+    };
+    let body_text = body.map(|value| value.to_string());
+    let mut headers = BTreeMap::from([("accept".to_owned(), "application/json".to_owned())]);
+    if body_text.is_some() {
+        headers.insert("content-type".to_owned(), "application/json".to_owned());
+    }
+    DaemonJsonRequest {
+        url: format!("http://{}:{}{}", endpoint.host, endpoint.port, route_path),
+        method,
+        headers,
+        body: body_text,
+        timeout_ms,
+    }
+}
+
+/// Which endpoint, if any, is a LIVE project service for this root.
+///
+/// The one copy of the liveness semantics. What lives here is not the URL
+/// shape -- that is `build_daemon_json_request` -- but the decision about
+/// whether an endpoint belongs to the right PROCESS: the `compute_project_id`
+/// input and the synthesized `ProjectServiceState` the verifier is handed.
+///
+/// It was duplicated between the method and the unlocked resolution after the
+/// first pass of this split, which shared the trivial half and left the half
+/// that matters in two places. A future change to what the filter is given --
+/// honouring `status`, say, or keying on `started_at` -- would have landed in
+/// one copy and silently diverged the two paths. The parity tests could not
+/// have caught that, because they compare the paths against each other and
+/// both would have been wrong in the same direction only until someone edited
+/// one.
+fn resolve_live_metadata_endpoint(
+    mut resolver: PathResolver,
+    verifier: &Arc<dyn ProjectServiceProcessVerifier>,
+    project_root: &str,
+) -> Option<MetadataApiEndpoint> {
+    let state_dir = resolver.project_state_dir_for(project_root);
+    let project_id = compute_project_id(Path::new(project_root));
+    load_metadata_endpoint(state_dir).filter(|endpoint| {
+        verifier.is_live_native_project_service(&ProjectServiceState {
+            project_id: project_id.clone(),
+            project_root: project_root.to_owned(),
+            pid: endpoint.pid,
+            started_at: String::new(),
+            updated_at: String::new(),
+            status: None,
+            restart_count: None,
+            last_restart_at: None,
+            last_exit: None,
+        })
+    })
+}
+
+/// Everything phase one used to do under the lock, with no `&self` to hold the
+/// guard through.
+///
+/// Phase one was supposed to be the fast part, and it was not. It spawns TWO
+/// subprocesses: `resolve_repo_root` runs `rev-parse --git-common-dir`, and the
+/// endpoint's liveness filter runs `ps -o args=` to confirm the pid really is
+/// this build's project service for this project. Both ran while the caller
+/// held the one global runtime mutex, so the carve-outs moved the HTTP hop off
+/// the lock and left two process spawns on it.
+///
+/// Neither needs the runtime. `resolve_project_root_value` and
+/// `metadata_endpoint_for_root` use exactly two pieces of state -- the
+/// resolver, which is `Clone` and shares its cache, and the process verifier,
+/// which is already an `Arc`. So a caller clones those two under the lock,
+/// which is a pointer copy and a map clone, drops the guard, and comes here.
+///
+/// Free rather than a method for the same reason `send_project_service_json`
+/// is: with no `self` there is nothing to hold the mutex through, so the next
+/// person cannot accidentally put this back inside the critical section.
+///
+/// The liveness filter is NOT skipped. It is what stops a recycled port
+/// serving a request from an unrelated listener, and the retry cannot recover
+/// that because the request would SUCCEED against the wrong process.
+pub fn resolve_project_service_json_request(
+    mut resolver: PathResolver,
+    verifier: &Arc<dyn ProjectServiceProcessVerifier>,
+    project: &str,
+    route_path: &str,
+    body: Option<Value>,
+    timeout_ms: Option<u64>,
+) -> Result<(String, DaemonJsonRequest), DaemonRouteResponse> {
+    // By value: the caller already cloned it under the guard, and cloning
+    // again here would pay the map copy twice.
+    let project_root = resolver
+        .resolve_repo_root(project)
+        .to_string_lossy()
+        .into_owned();
+    let endpoint = resolve_live_metadata_endpoint(resolver, verifier, &project_root);
+    let Some(endpoint) = endpoint else {
+        return Err(crate::daemon::routing::text_error(
+            503,
+            format!("Error: project service unavailable for {project_root}"),
+        ));
+    };
+    Ok((
+        project_root,
+        build_daemon_json_request(&endpoint, route_path, body, timeout_ms),
+    ))
+}
+
+/// The blocking half of a project-service call, which needs no runtime at all.
+///
+/// Free rather than a method so that a caller which wants the hop unlocked
+/// CAN have it: build the request with `build_project_service_json_request`
+/// under the guard, drop the guard, come here. It does not by itself prevent
+/// anything -- `request_project_service_json` calls it from `&mut self`, so on
+/// every route that still goes through the generic locked dispatch this runs
+/// with the mutex held exactly as before. Nothing gates that, and the earlier
+/// claim that there was "nothing to hold the mutex through" was wrong.
+pub fn send_project_service_json(
+    project_root: &str,
+    request: &DaemonJsonRequest,
+) -> ProjectServiceJsonResult {
+    match execute_loopback_json_request(request) {
+        Ok(response) if (200..300).contains(&response.status) => {
+            ProjectServiceJsonResult::ok(project_root.to_owned(), response.json)
+        }
+        Ok(response) => {
+            let message = response
+                .json
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("project service request failed");
+            ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
+                response.status,
+                format!("Error: {message}"),
+            ))
+        }
+        Err(error) => ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
+            502,
+            format!("Error: {error}"),
+        )),
     }
 }

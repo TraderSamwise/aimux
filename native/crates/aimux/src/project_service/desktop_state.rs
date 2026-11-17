@@ -52,6 +52,7 @@ use super::usage::parse_recency_timestamp;
 use super::visual_clients::VisualClientLeaseRoute;
 
 use crate::runtime_topology::LIVE_WORKTREE_STATUSES as ACTIVE_WORKTREE_STATUSES;
+use crate::team_contract::manager_session_id;
 const DASHBOARD_SERVICE_STATUSES: &[&str] = &[
     "planned", "starting", "running", "stopped", "offline", "error",
 ];
@@ -291,9 +292,15 @@ pub async fn desktop_state_for_context_async(
         return Ok(desktop_state.clone());
     }
     let project_state_dir = context.project_state_dir();
-    let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
-    let metadata = try_load_metadata_state(&project_state_dir)?;
-    let exchange = try_read_runtime_exchange(runtime_exchange_path(&project_state_dir))?;
+    // All three on the blocking pool in one hop. This handler runs per
+    // request, so a sync read here parks one of the project service's two
+    // async workers; two concurrent requests park both.
+    let (topology, metadata, exchange) =
+        crate::project_service::scheduler::read_route_scan_inputs_off_the_worker(
+            project_state_dir.to_path_buf(),
+        )
+        .await
+        .map_err(|error| error.detail().to_owned())?;
     let live_window_ids_owned;
     let mut live_window_query_error = None;
     let live_window_projection = match context.live_window_ids_status() {
@@ -2151,7 +2158,7 @@ fn dashboard_service_status(status: Option<&str>) -> &'static str {
 }
 
 fn is_teammate_session(session: &Value) -> bool {
-    team_string_field(session, "parentSessionId").is_some()
+    manager_session_id(session).is_some()
 }
 
 fn dashboard_session_visibility_allows(session: &Value) -> bool {
@@ -2698,16 +2705,6 @@ fn canonical_worktree_path(trimmed: &str) -> String {
         .to_string_lossy()
         .trim_end_matches('/')
         .to_owned()
-}
-
-fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value
-        .get("team")
-        .and_then(Value::as_object)
-        .and_then(|team| team.get(key))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
 }
 
 fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {

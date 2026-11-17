@@ -5,11 +5,8 @@ use super::scheduler::{PeriodicTask, PeriodicTaskFuture};
 use super::session_visibility::LIVE_SESSION_STATUSES;
 use super::watcher_delivery::TickLoopBudget;
 use crate::backend_session_ids::claude_transcript_path;
-use crate::daemon_state::try_load_metadata_state;
 use crate::debug_logging::{LogLevel, log_at};
-use crate::runtime_topology::{
-    list_topology_session_states, read_runtime_topology, runtime_topology_path,
-};
+use crate::runtime_topology::list_topology_session_states;
 use crate::subagent_activity::{
     CodexSubagentScan, SubagentPublish, SubagentRun, claude_subagent_key,
     claude_subagent_meta_path, claude_subagent_run, claude_subagent_running, claude_subagents_dir,
@@ -398,13 +395,23 @@ impl PeriodicTask for SubagentActivityTask {
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             let dir = context.project_state_dir();
-            let topology = read_runtime_topology(runtime_topology_path(&dir))
-                .map_err(|e| format!("sub-agent topology: {e}"))?;
+            // Both reads on the blocking pool: see
+            // `read_scan_inputs_off_the_worker`.
+            let (topology, metadata) =
+                super::scheduler::read_scan_inputs_off_the_worker(dir.clone())
+                    .await
+                    .map_err(|error| match &error {
+                        super::scheduler::ScanInputError::Topology(detail) => {
+                            format!("sub-agent topology: {detail}")
+                        }
+                        super::scheduler::ScanInputError::Metadata(detail) => {
+                            format!("sub-agent metadata: {detail}")
+                        }
+                        super::scheduler::ScanInputError::NotRead(detail) => {
+                            format!("sub-agent scan inputs were not read: {detail}")
+                        }
+                    })?;
             let sessions = list_topology_session_states(&topology, None);
-            let metadata = serde_json::to_value(
-                try_load_metadata_state(&dir).map_err(|e| format!("sub-agent metadata: {e}"))?,
-            )
-            .map_err(|e| e.to_string())?;
             let now = now_millis().ok_or("sub-agent scan clock is before epoch")?;
             let budget = TickLoopBudget::new(SCAN_BUDGET);
             self.scan_sessions(&sessions, &metadata, now, &budget, &mut |id, outcome| {

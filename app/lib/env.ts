@@ -5,6 +5,7 @@
  */
 
 import { rawEnv } from "./envRuntime";
+import { sentryDsn, sentryEnvironment, sentryRelease } from "./sentry-config";
 import {
   resolveAppConnectionMode,
   resolveAppDaemonUrl,
@@ -24,5 +25,19 @@ export const env = {
   },
   get AIMUX_CONNECTION_MODE(): AppConnectionMode {
     return resolveAppConnectionMode();
+  },
+  /**
+   * Where delivery diagnostics go. One implementation, in `sentry-config`,
+   * because that module is importable without a native runtime and this one
+   * is not.
+   */
+  get SENTRY_DSN(): string | undefined {
+    return sentryDsn();
+  },
+  get SENTRY_ENVIRONMENT(): string {
+    return sentryEnvironment();
+  },
+  get SENTRY_RELEASE(): string | undefined {
+    return sentryRelease();
   },
 };

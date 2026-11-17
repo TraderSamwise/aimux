@@ -11,9 +11,9 @@ use aimux::daemon::listener::{
 };
 use aimux::daemon::process::handle_daemon_runtime_request;
 use aimux::daemon::runtime::{
-    PROJECT_SERVICE_STARTUP_TIMEOUT_MS, ProjectServiceHealthProbe, ProjectServiceLauncher,
-    ProjectServiceProcessVerifier, RealDaemonRuntime, SystemProjectServiceLauncher,
-    handle_daemon_runtime_request_with_mutex,
+    DaemonHealthIdentity, PROJECT_SERVICE_STARTUP_TIMEOUT_MS, ProjectServiceHealthProbe,
+    ProjectServiceLauncher, ProjectServiceProcessVerifier, RealDaemonRuntime,
+    SystemProjectServiceLauncher, handle_daemon_runtime_request_with_mutex,
 };
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::agents::DaemonAgentTextRuntime;
@@ -56,7 +56,9 @@ use std::time::{Duration, Instant};
 
 mod support;
 
-use support::scripted_http::{read_http_request, request_is_complete};
+use support::scripted_http::{
+    MAX_STRAY_CONNECTIONS, ScriptedRequest, read_http_request, request_is_complete,
+};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -227,12 +229,112 @@ fn native_daemon_http_routes_health_and_projects_through_real_runtime() {
     fixture.cleanup();
 }
 
+/// The two `/health` routes answer identically.
+///
+/// Two of them exist: `daemon/status.rs`, reached with the runtime already
+/// borrowed, and the lock-free one in `daemon/runtime.rs` that the loopback
+/// listener reaches first. AGENTS.md calls a fact computed twice the bug even
+/// while the two answers agree, and `DaemonHealthIdentity` was about to make
+/// `pid` and `port` two different derivations.
+///
+/// Compared against each other rather than each against a literal, because a
+/// per-surface test passes happily while the surfaces disagree -- which is
+/// exactly how this class survives.
+#[test]
+fn both_health_routes_answer_the_same_body() {
+    let fixture = RuntimeFixture::new("health-parity");
+    let expected_pid = fixture.info.pid;
+    let expected_port = fixture.info.port;
+    let mut borrowed = fixture.runtime();
+
+    // The status-contract route, reached with the runtime borrowed.
+    let borrowed_response = handle_daemon_runtime_request(&mut borrowed, request("GET", "/health"));
+    let borrowed_body: Value =
+        serde_json::from_slice(&borrowed_response.body).expect("borrowed health json");
+
+    // The lock-free route the listener reaches first.
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let lock_free_response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request("GET", "/health"),
+    );
+    let lock_free_body: Value =
+        serde_json::from_slice(&lock_free_response.body).expect("lock-free health json");
+
+    assert_eq!(borrowed_response.status, lock_free_response.status);
+    assert_eq!(
+        borrowed_body, lock_free_body,
+        "the two health routes must not drift: {borrowed_body} vs {lock_free_body}"
+    );
+    assert_eq!(lock_free_body["pid"], json!(expected_pid));
+    assert_eq!(lock_free_body["port"], json!(expected_port));
+    fixture.cleanup();
+}
+
+/// `/health` answers while another request holds the runtime mutex.
+///
+/// The load test below says in its own comment that "a regression that
+/// serialised the fleet behind a mutex into twenty seconds would pass here",
+/// and on 2026-11-16 that regression was live: on sam-strix eight concurrent
+/// `/health` calls to the installed daemon all returned together at 11.2s,
+/// against a p50 of 0.44ms. `daemon_supervisor.rs` polls this route on a
+/// 2.5s client budget (`DAEMON_HEALTH_PROBE_TIMEOUT_MS`), so a daemon that was
+/// up and listening was reported as one that had not started -- the CLI
+/// printed "still waiting for aimux daemon at 127.0.0.1:43190 (40s)".
+///
+/// This is the one latency claim about `/health` that needs no load and no
+/// wall-clock budget: hold the lock, ask for health, require an answer. It is
+/// bounded by a channel rather than a join, so a route that takes the mutex
+/// back FAILS here in ten seconds instead of hanging the suite forever.
+#[test]
+fn health_answers_while_another_request_holds_the_runtime_mutex() {
+    let fixture = RuntimeFixture::new("health-under-lock");
+    let expected_pid = fixture.info.pid;
+    let expected_port = fixture.info.port;
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    // Taken before the probe starts and released only after it answers, so
+    // the probe cannot pass by winning a race for an uncontended lock.
+    let held = runtime.lock().expect("hold the runtime mutex");
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let probe_runtime = Arc::clone(&runtime);
+    let probe = std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &probe_runtime,
+            health_identity,
+            request("GET", "/health"),
+        );
+        let _ = sender.send(response);
+    });
+
+    // Released before the assert, so a failure still joins the probe and runs
+    // `cleanup` instead of panicking with the lock in hand.
+    let answered = receiver.recv_timeout(Duration::from_secs(10));
+    drop(held);
+    probe.join().expect("health probe thread");
+    let response = answered.expect("/health answered while the runtime mutex was held");
+
+    let body: Value = serde_json::from_slice(&response.body).expect("health json");
+    assert_eq!(response.status, 200);
+    assert_eq!(body["kind"], "aimux-daemon");
+    assert_eq!(body["pid"], json!(expected_pid));
+    assert_eq!(body["port"], json!(expected_port));
+    fixture.cleanup();
+}
+
 #[test]
 fn native_daemon_projects_route_reports_genuine_empty_registry_as_empty() {
     let fixture = RuntimeFixture::new("projects-empty-registry");
     let runtime = Arc::new(Mutex::new(fixture.runtime()));
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request("GET", "/projects"),
+    );
     let body: Value = serde_json::from_slice(&response.body).expect("projects json");
 
     assert_eq!(response.status, 200);
@@ -270,9 +372,14 @@ fn native_daemon_projects_route_reports_unreadable_registered_root_not_empty() {
     fs::set_permissions(&locked_parent, fs::Permissions::from_mode(0o000)).expect("lock parent");
     let runtime = Arc::new(Mutex::new(fixture.runtime()));
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request("GET", "/projects"),
+    );
     let cli_response = handle_daemon_runtime_request_with_mutex(
         &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
         request(
             "GET",
             &format!("{}?json=1", CORE_API_ROUTES.daemon_projects_text),
@@ -322,9 +429,14 @@ fn native_daemon_projects_route_omits_genuinely_absent_registered_root() {
     .expect("registry");
     let runtime = Arc::new(Mutex::new(fixture.runtime()));
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request("GET", "/projects"),
+    );
     let cli_response = handle_daemon_runtime_request_with_mutex(
         &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
         request(
             "GET",
             &format!("{}?json=1", CORE_API_ROUTES.daemon_projects_text),
@@ -349,7 +461,11 @@ fn native_daemon_projects_route_reports_registry_parse_failure_not_empty() {
     fs::write(resolver.projects_registry_path(), "{").expect("bad registry");
     let runtime = Arc::new(Mutex::new(fixture.runtime()));
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request("GET", "/projects"),
+    );
     let body: Value = serde_json::from_slice(&response.body).expect("projects error json");
 
     assert_eq!(response.status, 500);
@@ -392,7 +508,11 @@ fn native_daemon_projects_route_and_doctor_report_endpoint_parse_failure() {
     fs::write(&endpoint_path, "{").expect("bad endpoint");
     let runtime = Arc::new(Mutex::new(fixture.runtime()));
 
-    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
+        request("GET", "/projects"),
+    );
     let body: Value = serde_json::from_slice(&response.body).expect("projects json");
 
     assert_eq!(response.status, 200);
@@ -541,6 +661,11 @@ fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
     let address = listener.local_addr().expect("daemon address");
     let request_count = 60 * 5 + 1;
     let server_runtime = Arc::clone(&runtime);
+    // Hoisted, because deriving it per request took the global mutex on every
+    // one of the 301 requests below -- including the post-load `/health` this
+    // test exists to ask. That both diverged from production, which passes a
+    // startup copy, and added contention to the thing being measured.
+    let server_health_identity = DaemonHealthIdentity::from_runtime(&runtime);
     let server_join = std::thread::spawn(move || {
         let mut joins = Vec::new();
         for _ in 0..request_count {
@@ -576,7 +701,11 @@ fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
                         })
                     },
                     &mut |request| {
-                        handle_daemon_runtime_request_with_mutex(&request_runtime, request)
+                        handle_daemon_runtime_request_with_mutex(
+                            &request_runtime,
+                            server_health_identity,
+                            request,
+                        )
                     },
                 );
             }));
@@ -641,10 +770,18 @@ fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
     //
     // Narrowed from a first draft that said "nothing in the suite puts a
     // wall-clock bound on these routes", which a review refuted:
-    // `daemon_supervisor.rs` asks `/health` with a 400ms client budget and
-    // bounds the call at 5s. That gates the CLIENT giving up on a daemon that
-    // never answers, not the daemon's latency, which is the distinction the
-    // first draft lost.
+    // `daemon_supervisor.rs` asks `/health` with a client budget and bounds
+    // the call. That gates the CLIENT giving up on a daemon that never
+    // answers, not the daemon's latency, which is the distinction the first
+    // draft lost.
+    //
+    // The refutation named "a 400ms client budget", and that number was never
+    // real: `DAEMON_HEALTH_PROBE_TIMEOUT_MS` is 2_500 and has been since the
+    // constant was introduced in 3b6620134. A 2026-11-16 change read this
+    // comment, trusted it, and copied 400ms into two more places before a
+    // review caught it. The figure is gone rather than corrected inline,
+    // because the point here does not need one and a number in a comment is
+    // what went stale.
     //
     // This was the only post-load responsiveness gate in the repo and it is a
     // liveness gate now -- a deliberate trade, since the alternative is a
@@ -2237,8 +2374,10 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
         ]}),
         json!({ "ok": true }),
         json!({ "ok": true, "active": true, "overseerSessionId": "claude-overseer", "watchedSessionId": "codex-1", "watchedSessionIds": ["codex-1"] }),
+        // `watchedBy` is what makes this agent part of the prompt's list now:
+        // the list is what this overseer manages, not every looping agent.
         json!({ "overseerSessionIds": ["claude-overseer"], "agents": [
-            { "id": "codex-1", "tool": "codex", "status": "running", "loop": { "active": true, "goal": "keep going" } },
+            { "id": "codex-1", "tool": "codex", "status": "running", "watchedBy": "claude-overseer", "loop": { "active": true, "goal": "keep going" } },
             { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
         ]}),
         json!({ "ok": true }),
@@ -2268,6 +2407,7 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
         .overseer_watch(
             project.to_str().expect("project path"),
             "codex-1",
+            None,
             Some("keep going"),
             Some("watch CI"),
         )
@@ -2288,9 +2428,20 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
         json!({ "tool": "claude", "open": false, "overseer": true })
     );
     assert_request_path(&requests[2], "GET", "/agents");
-    assert_request_path(&requests[3], "POST", "/agents/loop");
+    // The binding comes first: a watch the service refuses must not leave the
+    // agent looping with nobody watching it.
+    assert_request_path(&requests[3], "POST", "/agents/watch");
     assert_eq!(
         request_json_body(&requests[3]),
+        json!({
+            "overseerSessionId": "claude-overseer",
+            "watchedSessionId": "codex-1",
+            "active": true
+        })
+    );
+    assert_request_path(&requests[4], "POST", "/agents/loop");
+    assert_eq!(
+        request_json_body(&requests[4]),
         json!({
             "sessionId": "codex-1",
             "active": true,
@@ -2298,15 +2449,6 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
             "source": "dashboard",
             "updatedBy": "dashboard",
             "goal": "keep going"
-        })
-    );
-    assert_request_path(&requests[4], "POST", "/agents/watch");
-    assert_eq!(
-        request_json_body(&requests[4]),
-        json!({
-            "overseerSessionId": "claude-overseer",
-            "watchedSessionId": "codex-1",
-            "active": true
         })
     );
     assert_request_path(&requests[5], "GET", "/agents");
@@ -2357,6 +2499,7 @@ fn overseer_watch_refuses_missing_agent_before_mutation() {
             "missing",
             None,
             None,
+            None,
         )
         .expect_err("missing agent fails");
 
@@ -2369,7 +2512,225 @@ fn overseer_watch_refuses_missing_agent_before_mutation() {
 }
 
 #[test]
-fn overseer_watch_refuses_project_control_agent_before_mutation() {
+fn overseer_watch_does_not_hand_a_manager_to_its_own_descendant() {
+    // The tree is `top -> mid`, and `top` has no manager of its own. Watching
+    // `top` auto-picks from the published overseers, which now includes
+    // `mid` -- a descendant. Handing `top` to `mid` closes a loop, and the
+    // caller would get a cycle refusal naming a chain it never asked about,
+    // for the ordinary act of watching the top of a tree. A fresh overseer is
+    // spawned instead.
+    let fixture = RuntimeFixture::new("overseer-watch-descendant");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let agents = json!({ "overseerSessionIds": ["mid"], "agents": [
+        { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+        { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" }
+    ]});
+    let server = ScriptedHttpServer::spawn(vec![
+        agents.clone(),
+        json!({ "sessionId": "claude-fresh" }),
+        json!({ "overseerSessionIds": ["mid", "claude-fresh"], "agents": [
+            { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+            { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" },
+            { "id": "claude-fresh", "tool": "claude", "status": "idle", "overseer": true }
+        ]}),
+        json!({ "ok": true }),
+        json!({ "ok": true }),
+        json!({ "overseerSessionIds": ["mid", "claude-fresh"], "agents": [
+            { "id": "top", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "claude-fresh", "loop": { "active": true } },
+            { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" },
+            { "id": "claude-fresh", "tool": "claude", "status": "idle", "overseer": true }
+        ]}),
+        json!({ "ok": true }),
+    ]);
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_665));
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
+
+    let result = runtime
+        .overseer_watch(
+            project.to_str().expect("project path"),
+            "top",
+            None,
+            None,
+            None,
+        )
+        .expect("watching the top of a tree is ordinary");
+
+    assert_eq!(
+        result["overseerSessionId"], "claude-fresh",
+        "a descendant was handed its own manager: {result:?}"
+    );
+    // And the prompt names only what this overseer manages.
+    assert_eq!(result["watchedSessionIds"], json!(["top"]));
+
+    let requests = server.join();
+    assert_request_path(&requests[1], "POST", "/agents/spawn");
+    fixture.cleanup();
+}
+
+#[test]
+fn naming_the_manager_is_what_makes_a_third_level_reachable() {
+    // Without this argument the service picks the first ready published
+    // overseer, so after promoting `mid` every later watch still lands on
+    // whichever overseer sorts first -- `top -> mid -> leaf` could only be
+    // built by hand-posting to the project service. The whole recursive tree
+    // was unreachable from any surface that calls this.
+    let fixture = RuntimeFixture::new("overseer-watch-named");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let inventory = json!({ "overseerSessionIds": ["top", "mid"], "agents": [
+        { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+        { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" },
+        { "id": "leaf", "tool": "codex", "status": "running" }
+    ]});
+    let server = ScriptedHttpServer::spawn(vec![
+        inventory.clone(),
+        inventory.clone(),
+        json!({ "ok": true }),
+        json!({ "ok": true }),
+        json!({ "overseerSessionIds": ["top", "mid"], "agents": [
+            { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+            { "id": "mid", "tool": "claude", "status": "idle", "overseer": true, "watchedBy": "top" },
+            { "id": "leaf", "tool": "codex", "status": "running", "watchedBy": "mid", "loop": { "active": true } }
+        ]}),
+        json!({ "ok": true }),
+    ]);
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_666));
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
+
+    let result = runtime
+        .overseer_watch(
+            project.to_str().expect("project path"),
+            "leaf",
+            Some("mid"),
+            None,
+            None,
+        )
+        .expect("naming a published overseer is allowed");
+
+    assert_eq!(
+        result["overseerSessionId"], "mid",
+        "the named manager was ignored: {result:?}"
+    );
+    // Nothing was spawned: the named overseer was used as given.
+    assert!(launcher.calls().is_empty());
+    let requests = server.join();
+    assert_request_path(&requests[2], "POST", "/agents/watch");
+    assert_eq!(
+        request_json_body(&requests[2])["overseerSessionId"],
+        "mid",
+        "the binding did not name the requested manager"
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn naming_a_manager_that_is_not_an_overseer_is_refused_rather_than_substituted() {
+    let fixture = RuntimeFixture::new("overseer-watch-named-bad");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let server =
+        ScriptedHttpServer::spawn(vec![json!({ "overseerSessionIds": ["top"], "agents": [
+            { "id": "top", "tool": "claude", "status": "idle", "overseer": true },
+            { "id": "worker", "tool": "codex", "status": "running" },
+            { "id": "leaf", "tool": "codex", "status": "running" }
+        ]})]);
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_667));
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
+
+    let error = runtime
+        .overseer_watch(
+            project.to_str().expect("project path"),
+            "leaf",
+            Some("worker"),
+            None,
+            None,
+        )
+        .expect_err("a coder is not a manager");
+
+    assert_eq!(error.status, 400);
+    assert!(
+        error.error.contains("not a published project overseer"),
+        "unexpected refusal: {}",
+        error.error
+    );
+    assert!(launcher.calls().is_empty());
+    let requests = server.join();
+    assert_eq!(requests.len(), 1, "refused before any mutation");
+    fixture.cleanup();
+}
+
+#[test]
+fn overseer_watch_refuses_the_scribe_before_mutation() {
+    // An overseer IS watchable -- it is the manager class at every level above
+    // the leaf. The scribe is the one project-control session that stays out
+    // of the tree, and it is the case this guard now names.
     let fixture = RuntimeFixture::new("overseer-watch-control");
     let project = fixture.project("repo");
     let mut resolver = fixture.resolver();
@@ -2378,7 +2739,7 @@ fn overseer_watch_refuses_project_control_agent_before_mutation() {
         .expect("register project")
         .expect("entry");
     let server = ScriptedHttpServer::spawn(vec![json!({ "overseerSessionIds": [], "agents": [
-        { "id": "claude-overseer", "tool": "claude", "status": "idle", "overseer": true }
+        { "id": "claude-scribe", "tool": "claude", "status": "idle", "scribe": true }
     ]})]);
     persist_service(
         &resolver,
@@ -2404,16 +2765,17 @@ fn overseer_watch_refuses_project_control_agent_before_mutation() {
     let error = runtime
         .overseer_watch(
             project.to_str().expect("project path"),
-            "claude-overseer",
+            "claude-scribe",
+            None,
             None,
             None,
         )
-        .expect_err("project control agent fails");
+        .expect_err("the scribe is not a report");
 
     assert_eq!(error.status, 400);
     assert_eq!(
         error.error,
-        "cannot watch project control session: claude-overseer"
+        "cannot watch project control session claude-scribe: only an overseer is a report"
     );
     let requests = server.join();
     assert_eq!(requests.len(), 1);
@@ -2701,6 +3063,7 @@ fn the_versions_report_carries_what_the_snapshot_read() {
 
     let json_response = handle_daemon_runtime_request_with_mutex(
         &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
         request(
             "GET",
             &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
@@ -2733,6 +3096,7 @@ fn the_versions_report_carries_what_the_snapshot_read() {
 
     let text_response = handle_daemon_runtime_request_with_mutex(
         &runtime,
+        DaemonHealthIdentity::from_runtime(&runtime),
         request("GET", CORE_API_ROUTES.doctor_versions_text),
     );
     let text = String::from_utf8(text_response.body).expect("versions text");
@@ -2778,6 +3142,7 @@ fn the_versions_report_is_built_with_the_runtime_lock_released() {
     let request_thread = thread::spawn(move || {
         handle_daemon_runtime_request_with_mutex(
             &request_runtime,
+            DaemonHealthIdentity::from_runtime(&request_runtime),
             request("GET", CORE_API_ROUTES.doctor_versions_text),
         )
     });
@@ -2862,6 +3227,7 @@ fn the_versions_fast_path_answers_each_caller_as_the_locked_path_would() {
         assert_eq!(
             served(handle_daemon_runtime_request_with_mutex(
                 &runtime,
+                DaemonHealthIdentity::from_runtime(&runtime),
                 versions_request("GET", &path, None)
             )),
             if path.contains("json=1") {
@@ -2887,6 +3253,7 @@ fn the_versions_fast_path_answers_each_caller_as_the_locked_path_would() {
             ] {
                 let through_fast_path = served(handle_daemon_runtime_request_with_mutex(
                     &runtime,
+                    DaemonHealthIdentity::from_runtime(&runtime),
                     versions_request(method, &path, header),
                 ));
                 let through_lock = {
@@ -3505,9 +3872,26 @@ impl ScriptedHttpServer {
         let port = listener.local_addr().expect("listener addr").port();
         let handle = std::thread::spawn(move || {
             let mut requests = Vec::new();
-            for response in responses {
+            // A stray connection -- one that closes without asking anything --
+            // must not consume a scripted response, or every later request is
+            // served the wrong one and the failure surfaces far from its cause.
+            let mut strays = 0_usize;
+            let mut pending = responses.into_iter();
+            let mut next = pending.next();
+            while let Some(response) = next.take() {
                 let (mut stream, _) = listener.accept().expect("accept");
-                let request = read_http_request(&mut stream);
+                let request = match read_http_request(&mut stream) {
+                    ScriptedRequest::Complete(request) => request,
+                    ScriptedRequest::PeerLeftWithoutAsking => {
+                        strays += 1;
+                        assert!(
+                            strays <= MAX_STRAY_CONNECTIONS,
+                            "scripted server saw {strays} connections close without sending a request; something is dialling it in a loop"
+                        );
+                        next = Some(response);
+                        continue;
+                    }
+                };
                 let body = response.to_string();
                 let response = format!(
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
@@ -3518,6 +3902,7 @@ impl ScriptedHttpServer {
                     .write_all(response.as_bytes())
                     .expect("write response");
                 requests.push(request);
+                next = pending.next();
             }
             requests
         });
@@ -3771,6 +4156,7 @@ fn overseer_watch_chooses_the_first_ready_published_owner_without_replacing_sibl
             .overseer_watch(
                 project.to_str().expect("path"),
                 "worker",
+                None,
                 Some("keep going"),
                 None,
             )
@@ -3781,14 +4167,14 @@ fn overseer_watch_chooses_the_first_ready_published_owner_without_replacing_sibl
         assert_eq!(requests.len(), 6);
         assert_request_path(&requests[0], "GET", "/agents");
         assert_request_path(&requests[1], "GET", "/agents");
-        assert_request_path(&requests[2], "POST", "/agents/loop");
-        assert_request_path(&requests[3], "POST", "/agents/watch");
+        assert_request_path(&requests[2], "POST", "/agents/watch");
         assert_eq!(
-            request_json_body(&requests[3]),
+            request_json_body(&requests[2]),
             json!({
                 "overseerSessionId": chosen, "watchedSessionId": "worker", "active": true,
             })
         );
+        assert_request_path(&requests[3], "POST", "/agents/loop");
         assert_request_path(&requests[4], "GET", "/agents");
         assert_request_path(&requests[5], "POST", "/agents/input");
         assert_eq!(request_json_body(&requests[5])["sessionId"], chosen);
@@ -3832,6 +4218,7 @@ fn overseer_watch_repeated_updates_keep_the_existing_second_published_owner() {
             .overseer_watch(
                 project.to_str().expect("path"),
                 "worker",
+                None,
                 Some(goal),
                 Some("check CI"),
             )
@@ -3846,13 +4233,13 @@ fn overseer_watch_repeated_updates_keep_the_existing_second_published_owner() {
     {
         assert_request_path(&requests[0], "GET", "/agents");
         assert_request_path(&requests[1], "GET", "/agents");
-        assert_request_path(&requests[2], "POST", "/agents/loop");
-        assert_eq!(request_json_body(&requests[2])["goal"], goal);
-        assert_request_path(&requests[3], "POST", "/agents/watch");
+        assert_request_path(&requests[2], "POST", "/agents/watch");
         assert_eq!(
-            request_json_body(&requests[3])["overseerSessionId"],
+            request_json_body(&requests[2])["overseerSessionId"],
             "control-b"
         );
+        assert_request_path(&requests[3], "POST", "/agents/loop");
+        assert_eq!(request_json_body(&requests[3])["goal"], goal);
         assert_request_path(&requests[4], "GET", "/agents");
         assert_request_path(&requests[5], "POST", "/agents/input");
         let input = request_json_body(&requests[5]);
@@ -3953,6 +4340,7 @@ fn overseer_watch_refuses_invalid_or_unavailable_bound_owners_before_any_mutatio
             .overseer_watch(
                 project.to_str().expect("path"),
                 "worker",
+                None,
                 Some("new goal"),
                 Some("new instructions"),
             )
@@ -4084,7 +4472,7 @@ fn overseer_watch_rejects_invalid_published_inventory_before_spawning_or_assigni
         let mut runtime =
             fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
         let error = runtime
-            .overseer_watch(project.to_str().expect("path"), "worker", None, None)
+            .overseer_watch(project.to_str().expect("path"), "worker", None, None, None)
             .expect_err("invalid inventory must never become an empty overseer set");
         assert_eq!(error.status, expected);
         assert!(error.error.contains(reason), "{name}: {}", error.error);
@@ -4093,5 +4481,2461 @@ fn overseer_watch_rejects_invalid_published_inventory_before_spawning_or_assigni
         assert_eq!(requests.len(), 1);
         assert_request_path(&requests[0], "GET", "/agents");
         fixture.cleanup();
+    }
+}
+
+/// A listener that accepts and never answers.
+///
+/// This is what makes the lock question answerable without a latency budget.
+/// Core text routes build their `DaemonJsonRequest` with `timeout_ms: None`,
+/// so `execute_loopback_json_request` waits forever. A route that holds the
+/// runtime mutex across that call therefore holds it FOREVER, which turns
+/// "does the daemon still answer other routes" from a timing question into a
+/// progress question -- the only kind these gates can ask without becoming
+/// flaky on a loaded runner.
+struct HangingUpstream {
+    port: u16,
+    /// Signals each accepted connection. This is the gate's BARRIER, and the
+    /// upstream has to be the one to provide it: the route blocks inside its
+    /// HTTP call, so it can never signal "I am in the call" afterwards itself.
+    /// Without this the second thread races the first and can take the lock
+    /// before the first one wants it, which passes the gate while the bug is
+    /// present -- the same way an earlier interceptor gate passed by timing
+    /// luck.
+    accepted: mpsc::Receiver<()>,
+    /// The accepted connections, kept so the test can close them and let the
+    /// parked route finish, rather than leaving a thread wedged and files open
+    /// under the fixture root for the rest of the binary.
+    held: Arc<Mutex<Vec<TcpStream>>>,
+    _listener: TcpListener,
+}
+
+impl HangingUpstream {
+    fn spawn() -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind hanging upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
+        let accepting = listener.try_clone().expect("clone hanging upstream");
+        let (accepted_tx, accepted) = mpsc::channel();
+        let held: Arc<Mutex<Vec<TcpStream>>> = Arc::new(Mutex::new(Vec::new()));
+        let holding = Arc::clone(&held);
+        std::thread::spawn(move || {
+            // Accept and hold. Never write a byte, never close.
+            for stream in accepting.incoming() {
+                match stream {
+                    Ok(stream) => {
+                        holding.lock().expect("held streams").push(stream);
+                        if accepted_tx.send(()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        Self {
+            port,
+            accepted,
+            held,
+            _listener: listener,
+        }
+    }
+
+    /// Wait until the route is genuinely inside its upstream call.
+    ///
+    /// This closes TWO silent-pass modes, not one. The obvious one is the race:
+    /// a second thread that takes the lock before the first one wants it proves
+    /// nothing. The other is vacuity -- if the metadata endpoint ever stopped
+    /// resolving, the route would fail fast without making any call at all, the
+    /// probe would answer 200, and the gate would pass in milliseconds while
+    /// testing nothing. Because a TCP accept happens from inside
+    /// `execute_loopback_json_request`, requiring one proves the route really
+    /// reached the hop, so that second mode now fails loudly here instead.
+    fn wait_for_the_route_to_reach_the_call(&self) {
+        self.accepted
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the task list route never opened a connection to its upstream");
+    }
+
+    /// Let the parked route finish, so no thread stays wedged.
+    fn release(&self) {
+        for stream in self.held.lock().expect("held streams").iter() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+/// A core text route does not hold the runtime mutex across its project-service call.
+///
+/// This is the serialization measured on sam-strix: eight concurrent
+/// `aimux task list` runs completed as an even 0.55s staircase, one at a time,
+/// because every core text route holds the one global runtime mutex for its
+/// whole duration -- including the blocking HTTP hop to the project service.
+/// `/health` was taken out of that queue first, which stopped the watchdog
+/// ending healthy daemons; this is the queue itself.
+///
+/// The route's work splits in three with no trait change: resolve the request
+/// (needs the runtime, fast), make the call (needs nothing from the runtime
+/// once the request is built), render (pure). Only the middle phase must run
+/// unlocked.
+#[test]
+fn a_core_text_route_does_not_hold_the_runtime_lock_across_its_upstream_call() {
+    let fixture = RuntimeFixture::new("task-list-lock");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+
+    let upstream = HangingUpstream::spawn();
+    let project_root = project.to_string_lossy().into_owned();
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: upstream.port,
+            // The fixture's verifier trusts this process, so the endpoint
+            // reads as a live project service.
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    // Thread one: a core text route whose upstream never answers.
+    let stuck_runtime = Arc::clone(&runtime);
+    let stuck_path = format!(
+        "{}?project={}",
+        aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+        project_root
+    );
+    let stuck = std::thread::spawn(move || {
+        let _ = handle_daemon_runtime_request_with_mutex(
+            &stuck_runtime,
+            health_identity,
+            request("GET", &stuck_path),
+        );
+    });
+
+    // THE BARRIER. Until the upstream reports a connection, the stuck route may
+    // not have reached its HTTP call at all, and a second thread that takes the
+    // lock before the first one wants it proves nothing. The gate's first form
+    // was missing this.
+    upstream.wait_for_the_route_to_reach_the_call();
+
+    // Thread two: any other route. It needs the runtime, so it can only answer
+    // if the stuck route is not sitting on the mutex.
+    //
+    // WHY `/projects` IS A MEANINGFUL PROBE, because it is not obvious: it has
+    // its own fast path ahead of this carve-out, so it looks like a route that
+    // never takes the mutex at all. It does -- `daemon_project_read_snapshot`
+    // locks just long enough to clone the resolver and the verifier, then does
+    // the slow directory work unlocked. That brief acquisition is the thing
+    // this gate detects. If `/projects` is ever made snapshot-free, this gate
+    // goes quietly vacuous and must move to another route that still needs the
+    // runtime; the mutation proof in the commit body is what would catch that.
+    let other_runtime = Arc::clone(&runtime);
+    let (answered_tx, answered) = mpsc::channel();
+    std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &other_runtime,
+            health_identity,
+            request("GET", "/projects"),
+        );
+        let _ = answered_tx.send(response.status);
+    });
+
+    // A quiet window, not a deadline: the stuck route holds its lock forever
+    // when this regresses, so the failure is permanent rather than slow and a
+    // loaded machine cannot turn a pass into a fail.
+    let outcome = answered.recv_timeout(Duration::from_secs(30));
+
+    assert_eq!(
+        outcome.ok(),
+        Some(200),
+        "GET /projects never answered while a core text route waited on an upstream that never replies. The route is holding the global runtime mutex across its project-service call, which is the 0.55s staircase measured on sam-strix: every aimux command on the machine queues behind whichever one is slowest"
+    );
+
+    // Close the held connection so the parked route errors out and finishes,
+    // instead of leaving a wedged thread and open files under the fixture root.
+    upstream.release();
+    let _ = stuck.join();
+    fixture.cleanup();
+}
+
+/// A project service that answers task-list requests.
+struct TaskListUpstream {
+    port: u16,
+}
+
+impl TaskListUpstream {
+    fn spawn() -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind task list upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let body =
+                    json!({ "tasks": [{ "id": "t1", "title": "from the upstream" }] }).to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                use std::io::Write;
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        Self { port }
+    }
+}
+
+/// The carve-out still STARTS a project service that is not running.
+///
+/// This is a regression the carve-out nearly shipped, so it gets a gate of its
+/// own. `aimux task list` reaches the project service through
+/// `DaemonCollaborationTextRuntime::get_project_service_json`, which is
+/// `get_hot_or_ensured_project_service_json`: on 502 or 503 it starts the
+/// service and retries. A carve-out that calls build+send directly answers 503
+/// instead, so the command would stop working on any project whose service is
+/// not already up -- the common case after a reboot.
+#[test]
+fn the_carved_out_task_list_route_still_starts_a_project_service_that_is_down() {
+    let fixture = RuntimeFixture::new("task-list-cold");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    // No endpoint file: the project service is NOT running. The launcher
+    // publishes one pointing at a real upstream when asked to start it.
+    let upstream = TaskListUpstream::spawn();
+    let mut launcher = FakeLauncher::new(std::process::id() as i32);
+    launcher.endpoint_port = Some(upstream.port);
+    let launcher = Arc::new(launcher);
+    let runtime = Arc::new(Mutex::new(fixture.runtime_with_launcher(
+        Arc::clone(&launcher),
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    )));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        health_identity,
+        request(
+            "GET",
+            &format!(
+                "{}?project={}",
+                aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+                project_root
+            ),
+        ),
+    );
+
+    assert_eq!(
+        response.status, 200,
+        "the carved-out route answered {} instead of starting the project service and retrying. Without the ensure-and-retry the generic route performs, `aimux task list` returns 503 on any project whose service is not already up",
+        response.status
+    );
+    assert_eq!(
+        launcher.calls(),
+        vec![project_root],
+        "the route should have asked the launcher to start the project service exactly once"
+    );
+    fixture.cleanup();
+}
+
+/// The carved-out task list answers exactly what the locked path answers.
+///
+/// This is the test the `doctor_versions` carve-out already had and mine did
+/// not, and its absence is how I shipped a carve-out that served the task list
+/// to callers the daemon refuses. `task_list_text` is in
+/// `local_cli_text_routes`, so the router turns away a remote actor ("core text
+/// routes are loopback-only") and a request carrying an `Origin` ("core text
+/// routes are cli-only"). Those refusals live on the route, and
+/// `assert_remote_access_allowed` allows an Owner actor and no actor alike, so
+/// a carve-out missing that condition answers 200 where the daemon answers 403.
+///
+/// Comparing the two paths against each other is the point: a per-path test
+/// passes happily while the paths disagree, which is exactly how this class
+/// survives.
+#[test]
+fn the_carved_out_task_list_answers_what_the_locked_path_answers() {
+    let fixture = RuntimeFixture::new("task-list-parity");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    // A live upstream, so a local caller really is SERVED at both renderings.
+    // Without it both paths would refuse everything and the comparison would
+    // pass for free.
+    let upstream = TaskListUpstream::spawn();
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: upstream.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+
+    let served = |response: aimux::daemon::http::PreparedDaemonResponse| {
+        let status = response.status;
+        let body = String::from_utf8(response.body).expect("body");
+        // WHICH rendering, not merely that something came back: a carve-out
+        // that dropped the query string would still answer 200, with text
+        // where `--json` expects JSON.
+        (
+            status,
+            body.contains("from the upstream"),
+            serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|json| json["tasks"].as_array().map(|tasks| tasks.len()))
+                .is_some(),
+        )
+    };
+    let task_request = |method: &str, path: &str, header: Option<(&str, &str)>| {
+        let mut request = request(method, path);
+        if let Some((name, value)) = header {
+            request.headers.insert(name.into(), value.into());
+        }
+        request
+    };
+
+    for path in [
+        format!(
+            "{}?project={}",
+            aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+            project_root
+        ),
+        format!(
+            "{}?project={}&json=1",
+            aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+            project_root
+        ),
+    ] {
+        // Not vacuous: a local caller is really served at both paths.
+        let local = served(handle_daemon_runtime_request_with_mutex(
+            &runtime,
+            DaemonHealthIdentity::from_runtime(&runtime),
+            task_request("GET", &path, None),
+        ));
+        assert_eq!(
+            local.0, 200,
+            "a local caller must be served the task list at {path}, otherwise this test compares two refusals"
+        );
+
+        for method in ["GET", "HEAD", "POST"] {
+            for header in [
+                None,
+                Some(("x-aimux-actor-role", "owner")),
+                Some(("x-aimux-actor-role", "guest")),
+                Some(("x-aimux-actor-role", "operator")),
+                // An origin CORS ALLOWS, so the request reaches the route and
+                // the cli-only rule is what refuses it. A cross-origin value
+                // would be rejected before any route ran, and the `Origin`
+                // half of the condition could go missing unnoticed.
+                Some(("origin", "http://localhost:3000")),
+                Some(("Origin", "http://localhost:3000")),
+            ] {
+                let through_carve_out = served(handle_daemon_runtime_request_with_mutex(
+                    &runtime,
+                    DaemonHealthIdentity::from_runtime(&runtime),
+                    task_request(method, &path, header),
+                ));
+                let through_lock = {
+                    let mut locked = runtime.lock().expect("runtime lock");
+                    served(handle_daemon_runtime_request(
+                        &mut *locked,
+                        task_request(method, &path, header),
+                    ))
+                };
+                assert_eq!(
+                    through_carve_out, through_lock,
+                    "the carve-out answered {method} {header:?} at {path} differently from the locked path"
+                );
+            }
+        }
+    }
+    fixture.cleanup();
+}
+
+/// `aimux ps` is served without the runtime mutex held across its upstream call.
+///
+/// The second route through the shared carve-out, and it gets its own gate
+/// rather than riding on the task list's. Being wired into the dispatch is the
+/// thing that can be forgotten, and a gate on another route cannot see that.
+#[test]
+fn the_agent_ps_route_does_not_hold_the_runtime_lock_across_its_upstream_call() {
+    let fixture = RuntimeFixture::new("agent-ps-lock");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+
+    let upstream = HangingUpstream::spawn();
+    let project_root = project.to_string_lossy().into_owned();
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: upstream.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let stuck_runtime = Arc::clone(&runtime);
+    let stuck_path = format!(
+        "{}?project={}",
+        aimux::core_command_contract::CORE_API_ROUTES.agent_ps_text,
+        project_root
+    );
+    let stuck = std::thread::spawn(move || {
+        let _ = handle_daemon_runtime_request_with_mutex(
+            &stuck_runtime,
+            health_identity,
+            request("GET", &stuck_path),
+        );
+    });
+
+    upstream.wait_for_the_route_to_reach_the_call();
+
+    let other_runtime = Arc::clone(&runtime);
+    let (answered_tx, answered) = mpsc::channel();
+    std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &other_runtime,
+            health_identity,
+            request("GET", "/projects"),
+        );
+        let _ = answered_tx.send(response.status);
+    });
+
+    let outcome = answered.recv_timeout(Duration::from_secs(30));
+    upstream.release();
+    let _ = stuck.join();
+
+    assert_eq!(
+        outcome.ok(),
+        Some(200),
+        "GET /projects never answered while aimux ps waited on an upstream that never replies: the route is holding the global runtime mutex across its project-service call"
+    );
+    fixture.cleanup();
+}
+
+/// The carved-out `aimux ps` answers exactly what the locked path answers.
+///
+/// This is the test that caught the carve-out serving callers the router
+/// refuses when `task_list_text` was done, so the second route gets it too
+/// rather than trusting the shared machinery. `agent_ps_text` is in
+/// `local_cli_text_routes`, so a remote actor and an `Origin` are each refused
+/// on the route, not in the access decision.
+///
+/// Run over TWO upstream payloads, because the first version was happy-path
+/// only: it never produced a liveness refusal, so the carve-out's refusal
+/// rendering had no coverage and was correct only because
+/// `render_agent_ps_payload` happens to be shared. That is the shape of
+/// "currently correct for a reason no test states" that this route already
+/// shipped twice. Two refusals are vacuous only when they are refusals for the
+/// WRONG reason; two liveness refusals that must match byte for byte is a real
+/// parity claim, and it is the one that catches a future carve-out that
+/// renders without the check.
+#[test]
+fn the_carved_out_agent_ps_answers_what_the_locked_path_answers() {
+    assert_agent_ps_parity(
+        "a live agent",
+        AgentPsUpstream::spawn_live(),
+        200,
+        "from-the-upstream",
+    );
+    assert_agent_ps_parity(
+        "a failed liveness query",
+        AgentPsUpstream::spawn_unverified(),
+        503,
+        "could not verify agent tmux liveness: tmux socket busy",
+    );
+}
+
+fn assert_agent_ps_parity(
+    label: &str,
+    upstream: AgentPsUpstream,
+    expected_status: u16,
+    expected_body_fragment: &str,
+) {
+    let fixture = RuntimeFixture::new("agent-ps-parity");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: upstream.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+
+    // Status AND the whole body. The first version compared a coarse tuple,
+    // which cannot see two paths rendering the same refusal differently.
+    let served = |response: aimux::daemon::http::PreparedDaemonResponse| {
+        (
+            response.status,
+            String::from_utf8(response.body).expect("body"),
+        )
+    };
+    let ps_request = |method: &str, path: &str, header: Option<(&str, &str)>| {
+        let mut request = request(method, path);
+        if let Some((name, value)) = header {
+            request.headers.insert(name.into(), value.into());
+        }
+        request
+    };
+
+    for path in [
+        format!(
+            "{}?project={}",
+            aimux::core_command_contract::CORE_API_ROUTES.agent_ps_text,
+            project_root
+        ),
+        format!(
+            "{}?project={}&json=1",
+            aimux::core_command_contract::CORE_API_ROUTES.agent_ps_text,
+            project_root
+        ),
+    ] {
+        let local = served(handle_daemon_runtime_request_with_mutex(
+            &runtime,
+            DaemonHealthIdentity::from_runtime(&runtime),
+            ps_request("GET", &path, None),
+        ));
+        assert_eq!(
+            local.0, expected_status,
+            "{label}: a local caller must reach the upstream's answer at {path}, otherwise this compares two unrelated failures"
+        );
+        assert!(
+            local.1.contains(expected_body_fragment),
+            "{label}: the served body did not mention {expected_body_fragment:?} at {path}, so this case is not exercising what it claims: {}",
+            local.1
+        );
+
+        for method in ["GET", "HEAD", "POST"] {
+            for header in [
+                None,
+                Some(("x-aimux-actor-role", "owner")),
+                Some(("x-aimux-actor-role", "guest")),
+                Some(("x-aimux-actor-role", "operator")),
+                Some(("origin", "http://localhost:3000")),
+                Some(("Origin", "http://localhost:3000")),
+            ] {
+                let through_carve_out = served(handle_daemon_runtime_request_with_mutex(
+                    &runtime,
+                    DaemonHealthIdentity::from_runtime(&runtime),
+                    ps_request(method, &path, header),
+                ));
+                let through_lock = {
+                    let mut locked = runtime.lock().expect("runtime lock");
+                    served(handle_daemon_runtime_request(
+                        &mut *locked,
+                        ps_request(method, &path, header),
+                    ))
+                };
+                assert_eq!(
+                    through_carve_out, through_lock,
+                    "{label}: the carve-out answered {method} {header:?} at {path} differently from the locked path"
+                );
+            }
+        }
+    }
+    fixture.cleanup();
+}
+
+/// A project service that answers agent-list requests with a given payload.
+struct AgentPsUpstream {
+    port: u16,
+}
+
+impl AgentPsUpstream {
+    /// One live agent and no liveness complaint.
+    ///
+    /// There is deliberately NO `tmuxVerified` key here. An earlier version of
+    /// this fixture set `tmuxVerified: true` and claimed in a comment that it
+    /// was what kept the route from refusing. That was wrong twice over:
+    /// `reject_unverified_tmux_liveness` keys on
+    /// `tmuxLiveWindowQuery.ok == false`, and `tmuxVerified` has no readers in
+    /// the daemon at all. The payload avoided the refusal because the
+    /// `tmuxLiveWindowQuery` key is absent, which is the function's first `?`.
+    fn spawn_live() -> Self {
+        Self::spawn_serving(
+            json!({
+                "agents": [{
+                    "id": "from-the-upstream",
+                    "sessionId": "from-the-upstream",
+                    "status": "running"
+                }]
+            })
+            .to_string(),
+        )
+    }
+
+    /// A liveness query that failed, which the route must refuse with 503.
+    fn spawn_unverified() -> Self {
+        Self::spawn_serving(
+            json!({
+                "agents": [],
+                "tmuxLiveWindowQuery": { "ok": false, "error": "tmux socket busy" }
+            })
+            .to_string(),
+        )
+    }
+
+    fn spawn_serving(body: String) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind agent ps upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                use std::io::Write;
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        Self { port }
+    }
+}
+
+/// The carved-out `aimux ps` still starts a project service that is down.
+///
+/// The ensure-and-retry lives in the shared carve-out now, but a route reaches
+/// it only if it is wired through, and this is the mistake that shipped once on
+/// the task list: without the retry the command answers 503 on any project
+/// whose service is not already up, which is the common case after a reboot.
+#[test]
+fn the_carved_out_agent_ps_route_still_starts_a_project_service_that_is_down() {
+    let fixture = RuntimeFixture::new("agent-ps-cold");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    let upstream = AgentPsUpstream::spawn_live();
+    let mut launcher = FakeLauncher::new(std::process::id() as i32);
+    launcher.endpoint_port = Some(upstream.port);
+    let launcher = Arc::new(launcher);
+    let runtime = Arc::new(Mutex::new(fixture.runtime_with_launcher(
+        Arc::clone(&launcher),
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    )));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        health_identity,
+        request(
+            "GET",
+            &format!(
+                "{}?project={}",
+                aimux::core_command_contract::CORE_API_ROUTES.agent_ps_text,
+                project_root
+            ),
+        ),
+    );
+
+    assert_eq!(
+        response.status, 200,
+        "the carved-out agent ps route answered {} instead of starting the project service and retrying",
+        response.status
+    );
+    assert_eq!(
+        launcher.calls(),
+        vec![project_root],
+        "the route should have asked the launcher to start the project service exactly once"
+    );
+    fixture.cleanup();
+}
+
+/// `aimux agents` is served without the runtime mutex held across its call.
+///
+/// Its own gate rather than riding on `aimux ps`: being wired into the
+/// dispatch is the thing that gets forgotten, and a gate on a sibling route
+/// cannot see that.
+#[test]
+fn the_agent_list_route_does_not_hold_the_runtime_lock_across_its_upstream_call() {
+    let fixture = RuntimeFixture::new("agent-list-lock");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+
+    let upstream = HangingUpstream::spawn();
+    let project_root = project.to_string_lossy().into_owned();
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: upstream.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let stuck_runtime = Arc::clone(&runtime);
+    let stuck_path = format!(
+        "{}?project={}",
+        aimux::core_command_contract::CORE_API_ROUTES.agent_list_text,
+        project_root
+    );
+    let stuck = std::thread::spawn(move || {
+        let _ = handle_daemon_runtime_request_with_mutex(
+            &stuck_runtime,
+            health_identity,
+            request("GET", &stuck_path),
+        );
+    });
+
+    upstream.wait_for_the_route_to_reach_the_call();
+
+    let other_runtime = Arc::clone(&runtime);
+    let (answered_tx, answered) = mpsc::channel();
+    std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &other_runtime,
+            health_identity,
+            request("GET", "/projects"),
+        );
+        let _ = answered_tx.send(response.status);
+    });
+
+    let outcome = answered.recv_timeout(Duration::from_secs(30));
+    upstream.release();
+    let _ = stuck.join();
+
+    assert_eq!(
+        outcome.ok(),
+        Some(200),
+        "GET /projects never answered while aimux agents waited on an upstream that never replies: the route is holding the global runtime mutex across its project-service call"
+    );
+    fixture.cleanup();
+}
+
+/// The carved-out `aimux agents` answers what the locked path answers.
+///
+/// Two payloads, for the reason #541 established: a happy-path-only matrix
+/// leaves the refusal rendering uncovered and correct only because the render
+/// half happens to be shared. Each case also asserts the body contains what it
+/// claims to exercise, because a check removed from SHARED code changes both
+/// paths identically and pure parity cannot see it.
+///
+/// For this route that second assertion carries extra weight: unlike `ps`,
+/// `agents` renders the project root the result carries, so a render that
+/// dropped it would drop it on both paths and compare equal.
+#[test]
+fn the_carved_out_agent_list_answers_what_the_locked_path_answers() {
+    assert_agent_list_parity(
+        "a live agent",
+        AgentPsUpstream::spawn_live(),
+        200,
+        "from-the-upstream",
+    );
+    assert_agent_list_parity(
+        "a failed liveness query",
+        AgentPsUpstream::spawn_unverified(),
+        503,
+        "could not verify agent tmux liveness: tmux socket busy",
+    );
+}
+
+fn assert_agent_list_parity(
+    label: &str,
+    upstream: AgentPsUpstream,
+    expected_status: u16,
+    expected_body_fragment: &str,
+) {
+    let fixture = RuntimeFixture::new("agent-list-parity");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: upstream.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+
+    let served = |response: aimux::daemon::http::PreparedDaemonResponse| {
+        (
+            response.status,
+            String::from_utf8(response.body).expect("body"),
+        )
+    };
+    let list_request = |method: &str, path: &str, header: Option<(&str, &str)>| {
+        let mut request = request(method, path);
+        if let Some((name, value)) = header {
+            request.headers.insert(name.into(), value.into());
+        }
+        request
+    };
+
+    for path in [
+        format!(
+            "{}?project={}",
+            aimux::core_command_contract::CORE_API_ROUTES.agent_list_text,
+            project_root
+        ),
+        format!(
+            "{}?project={}&json=1",
+            aimux::core_command_contract::CORE_API_ROUTES.agent_list_text,
+            project_root
+        ),
+    ] {
+        let local = served(handle_daemon_runtime_request_with_mutex(
+            &runtime,
+            DaemonHealthIdentity::from_runtime(&runtime),
+            list_request("GET", &path, None),
+        ));
+        assert_eq!(
+            local.0, expected_status,
+            "{label}: a local caller must reach the upstream's answer at {path}, otherwise this compares two unrelated failures"
+        );
+        assert!(
+            local.1.contains(expected_body_fragment),
+            "{label}: the served body did not mention {expected_body_fragment:?} at {path}, so this case is not exercising what it claims: {}",
+            local.1
+        );
+        // The project root SPECIFICALLY, on the text rendering, and this is
+        // the assertion the route's own doc comment needs in order to be
+        // true. `agents` renders the project root the result carries -- it
+        // reaches `render_core_agent_list_lines` as the "Main Checkout <root>"
+        // heading -- and a render that dropped it would drop it on BOTH paths
+        // and compare equal. I checked: deleting it from the payload passed
+        // all 71 tests in this file. core_text's own tests cover "given a
+        // project root, render it"; nothing covered "this route supplies it".
+        // The JSON rendering carries `json!(agents)` and so has no root in it.
+        if expected_status == 200 && !path.contains("json=1") {
+            assert!(
+                local.1.contains(&project_root),
+                "{label}: the text rendering did not carry the project root at {path}, so this route is no longer passing it into the payload: {}",
+                local.1
+            );
+        }
+
+        for method in ["GET", "HEAD", "POST"] {
+            for header in [
+                None,
+                Some(("x-aimux-actor-role", "owner")),
+                Some(("x-aimux-actor-role", "guest")),
+                Some(("x-aimux-actor-role", "operator")),
+                Some(("origin", "http://localhost:3000")),
+                Some(("Origin", "http://localhost:3000")),
+            ] {
+                let through_carve_out = served(handle_daemon_runtime_request_with_mutex(
+                    &runtime,
+                    DaemonHealthIdentity::from_runtime(&runtime),
+                    list_request(method, &path, header),
+                ));
+                let through_lock = {
+                    let mut locked = runtime.lock().expect("runtime lock");
+                    served(handle_daemon_runtime_request(
+                        &mut *locked,
+                        list_request(method, &path, header),
+                    ))
+                };
+                assert_eq!(
+                    through_carve_out, through_lock,
+                    "{label}: the carve-out answered {method} {header:?} at {path} differently from the locked path"
+                );
+            }
+        }
+    }
+    fixture.cleanup();
+}
+
+/// The carved-out `aimux agents` still starts a project service that is down.
+#[test]
+fn the_carved_out_agent_list_route_still_starts_a_project_service_that_is_down() {
+    let fixture = RuntimeFixture::new("agent-list-cold");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    let upstream = AgentPsUpstream::spawn_live();
+    let mut launcher = FakeLauncher::new(std::process::id() as i32);
+    launcher.endpoint_port = Some(upstream.port);
+    let launcher = Arc::new(launcher);
+    let runtime = Arc::new(Mutex::new(fixture.runtime_with_launcher(
+        Arc::clone(&launcher),
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    )));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        health_identity,
+        request(
+            "GET",
+            &format!(
+                "{}?project={}",
+                aimux::core_command_contract::CORE_API_ROUTES.agent_list_text,
+                project_root
+            ),
+        ),
+    );
+
+    assert_eq!(
+        response.status, 200,
+        "the carved-out agent list route answered {} instead of starting the project service and retrying",
+        response.status
+    );
+    assert_eq!(
+        launcher.calls(),
+        vec![project_root],
+        "the route should have asked the launcher to start the project service exactly once"
+    );
+    fixture.cleanup();
+}
+
+/// A verifier that blocks, standing in for the `ps` spawn.
+///
+/// The real phase-one work is two subprocesses -- `rev-parse` and `ps -o
+/// args=` -- and a test cannot make a real spawn hang on demand. The verifier
+/// is already injectable, so blocking inside it puts an unbounded wait exactly
+/// where the `ps` runs, which is the same move the hanging upstream makes for
+/// the HTTP hop: control the resource so the park is unbounded and the
+/// question becomes progress rather than latency.
+struct BlockingProcessVerifier {
+    reached: mpsc::Sender<()>,
+    release: Arc<Mutex<bool>>,
+}
+
+impl ProjectServiceProcessVerifier for BlockingProcessVerifier {
+    fn is_live_native_project_service(&self, _service: &ProjectServiceState) -> bool {
+        let _ = self.reached.send(());
+        // Parks until the test lets go, like a `ps` that never returns.
+        loop {
+            if *self.release.lock().expect("release flag") {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn live_project_service_pids(&self, _project_id: &str, _project_root: &str) -> Vec<i32> {
+        Vec::new()
+    }
+
+    fn is_live(&self, _pid: i32) -> bool {
+        true
+    }
+}
+
+/// Endpoint resolution does not hold the runtime mutex.
+///
+/// Phase one of the carve-out was meant to be the fast part and was not: it
+/// spawned `rev-parse --git-common-dir` and `ps -o args=` while holding the one
+/// global runtime mutex. So #538, #541 and #543 moved the HTTP hop off the lock
+/// and left two process spawns on it.
+///
+/// This blocks inside the process verifier, which is where the `ps` runs, and
+/// requires another route to still answer.
+#[test]
+fn endpoint_resolution_does_not_hold_the_runtime_lock() {
+    let fixture = RuntimeFixture::new("endpoint-lock");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: 45_999,
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    // The fixture writes ONLY the endpoint file, and that matters: the probe
+    // route reaches `read_projects_for_route_from_snapshot`, which calls this
+    // same blocking verifier for anything in `services_by_id`. Add a service
+    // state file here and the probe parks in the verifier too, and the gate
+    // reports a lock problem that is really the fixture. Fail-safe direction,
+    // but it is a real dependency and not an accident worth leaving unstated.
+    let (reached_tx, reached) = mpsc::channel();
+    let release = Arc::new(Mutex::new(false));
+    let runtime = Arc::new(Mutex::new(fixture.runtime_with_launcher_and_verifier(
+        Arc::new(FakeLauncher::new(std::process::id() as i32)),
+        Arc::new(BlockingProcessVerifier {
+            reached: reached_tx,
+            release: Arc::clone(&release),
+        }),
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    )));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let stuck_runtime = Arc::clone(&runtime);
+    let stuck_path = format!(
+        "{}?project={}",
+        aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+        project_root
+    );
+    let stuck = std::thread::spawn(move || {
+        let _ = handle_daemon_runtime_request_with_mutex(
+            &stuck_runtime,
+            health_identity,
+            request("GET", &stuck_path),
+        );
+    });
+
+    // The barrier: the verifier itself reports when the route has reached the
+    // work that used to run under the lock. Without it the probe races the
+    // route and passes while the bug is present.
+    reached
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the route never reached the process verifier, so this gate is testing nothing");
+
+    let other_runtime = Arc::clone(&runtime);
+    let (answered_tx, answered) = mpsc::channel();
+    std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &other_runtime,
+            health_identity,
+            request("GET", "/projects"),
+        );
+        let _ = answered_tx.send(response.status);
+    });
+
+    let outcome = answered.recv_timeout(Duration::from_secs(30));
+
+    *release.lock().expect("release flag") = true;
+    let _ = stuck.join();
+    // Cleanup BEFORE the assertions, so a failure does not leave the fixture
+    // directory behind -- the panicking runs are exactly the ones that litter.
+    fixture.cleanup();
+
+    // Three outcomes, not two. `recv_timeout` returns `Disconnected` when the
+    // probe thread panicked, and folding that into the timeout message would
+    // report an unrelated panic as a lock bug.
+    match outcome {
+        Ok(status) => assert_eq!(
+            status, 200,
+            "GET /projects answered {status} while a core text route resolved its endpoint; this gate is about the lock, so an unexpected status means the probe itself is broken"
+        ),
+        Err(mpsc::RecvTimeoutError::Timeout) => panic!(
+            "GET /projects never answered while a core text route was resolving its endpoint. The endpoint resolution is holding the global runtime mutex across its `ps` spawn, which is the second subprocess in the locked phase of every core text route"
+        ),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("the probe thread died without answering, so this says nothing about the lock")
+        }
+    }
+}
+
+/// An upstream that answers every request with one canned body.
+struct CannedUpstream {
+    port: u16,
+}
+
+impl CannedUpstream {
+    fn spawn(body: String) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind canned upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                use std::io::Write;
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        Self { port }
+    }
+}
+
+/// One parity harness for both routes added here.
+///
+/// The three earlier carve-outs each grew their own near-identical copy of
+/// this. I am not churning those in a PR about new routes -- they are proved
+/// and consolidating them is its own change -- but a fourth and fifth copy
+/// would have been indefensible.
+///
+/// WHAT THIS DOES NOT PROVE, checked rather than assumed: it does not protect
+/// the carve-out's EXISTENCE. Disable a route's dispatch arm and this still
+/// passes, necessarily -- with no carve-out both "paths" are the locked path,
+/// so they agree trivially. Parity protects the render SPLIT, that a route
+/// answers identically however it is reached. The lock gate is the only thing
+/// asserting the route is carved out at all, so a route needs both and
+/// "covered by parity" is not the same as "covered".
+///
+/// Compares status AND the whole body across both renderings x three methods x
+/// six header shapes, and asserts the served body contains what the case
+/// claims to exercise. That last part is not decoration: parity compares the
+/// two paths against each other, so anything dropped in SHARED render code
+/// changes both identically and compares equal. That is how a missing
+/// `projectRoot` passed 71 tests on #543.
+fn assert_core_read_route_parity(
+    label: &str,
+    fixture_name: &str,
+    route: &str,
+    upstream_body: serde_json::Value,
+    expected_status: u16,
+    expected_body_fragment: &str,
+) {
+    assert_core_read_route_parity_with_query(
+        label,
+        fixture_name,
+        route,
+        "",
+        upstream_body,
+        expected_status,
+        expected_body_fragment,
+    );
+}
+
+/// The same, for routes that need more than `project` in the query.
+///
+/// `extra_query` is appended verbatim, so it starts with `&`. thread_show and
+/// task_show require an id, and outline_list's single-entry branch is only
+/// reachable with one.
+fn assert_core_read_route_parity_with_query(
+    label: &str,
+    fixture_name: &str,
+    route: &str,
+    extra_query: &str,
+    upstream_body: serde_json::Value,
+    expected_status: u16,
+    expected_body_fragment: &str,
+) {
+    let fixture = RuntimeFixture::new(fixture_name);
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    let upstream = CannedUpstream::spawn(upstream_body.to_string());
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: upstream.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let served = |response: aimux::daemon::http::PreparedDaemonResponse| {
+        (
+            response.status,
+            String::from_utf8(response.body).expect("body"),
+        )
+    };
+    let with_header = |method: &str, path: &str, header: Option<(&str, &str)>| {
+        let mut request = request(method, path);
+        if let Some((name, value)) = header {
+            request.headers.insert(name.into(), value.into());
+        }
+        request
+    };
+
+    for path in [
+        format!("{route}?project={project_root}{extra_query}"),
+        format!("{route}?project={project_root}{extra_query}&json=1"),
+    ] {
+        let local = served(handle_daemon_runtime_request_with_mutex(
+            &runtime,
+            DaemonHealthIdentity::from_runtime(&runtime),
+            with_header("GET", &path, None),
+        ));
+        assert_eq!(
+            local.0, expected_status,
+            "{label}: a local caller must reach the upstream's answer at {path}, otherwise this compares two unrelated failures"
+        );
+        assert!(
+            local.1.contains(expected_body_fragment),
+            "{label}: the served body did not mention {expected_body_fragment:?} at {path}, so this case is not exercising what it claims: {}",
+            local.1
+        );
+
+        for method in ["GET", "HEAD", "POST"] {
+            for header in [
+                None,
+                Some(("x-aimux-actor-role", "owner")),
+                Some(("x-aimux-actor-role", "guest")),
+                Some(("x-aimux-actor-role", "operator")),
+                Some(("origin", "http://localhost:3000")),
+                Some(("Origin", "http://localhost:3000")),
+            ] {
+                let through_carve_out = served(handle_daemon_runtime_request_with_mutex(
+                    &runtime,
+                    DaemonHealthIdentity::from_runtime(&runtime),
+                    with_header(method, &path, header),
+                ));
+                let through_lock = {
+                    let mut locked = runtime.lock().expect("runtime lock");
+                    served(handle_daemon_runtime_request(
+                        &mut *locked,
+                        with_header(method, &path, header),
+                    ))
+                };
+                assert_eq!(
+                    through_carve_out, through_lock,
+                    "{label}: the carve-out answered {method} {header:?} at {path} differently from the locked path"
+                );
+            }
+        }
+    }
+    fixture.cleanup();
+}
+
+/// A core read route does not hold the runtime mutex across its upstream call.
+fn assert_core_read_route_releases_the_lock(fixture_name: &str, route: &str) {
+    assert_core_read_route_releases_the_lock_with_query(fixture_name, route, "");
+}
+
+/// The same, for routes that need more than `project`.
+///
+/// Without the id, thread_show and task_show REFUSE in their resolve and never
+/// reach the upstream at all, so the hanging-upstream barrier never fires and
+/// the gate fails for the wrong reason.
+fn assert_core_read_route_releases_the_lock_with_query(
+    fixture_name: &str,
+    route: &str,
+    extra_query: &str,
+) {
+    let fixture = RuntimeFixture::new(fixture_name);
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+
+    let upstream = HangingUpstream::spawn();
+    let project_root = project.to_string_lossy().into_owned();
+    let state_dir = resolver.project_state_dir_for(&project_root);
+    fs::create_dir_all(&state_dir).expect("project state dir");
+    save_metadata_endpoint(
+        &state_dir,
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: upstream.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".to_owned(),
+        },
+    )
+    .expect("write the metadata endpoint");
+
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let stuck_runtime = Arc::clone(&runtime);
+    let stuck_path = format!("{route}?project={project_root}{extra_query}");
+    let stuck = std::thread::spawn(move || {
+        let _ = handle_daemon_runtime_request_with_mutex(
+            &stuck_runtime,
+            health_identity,
+            request("GET", &stuck_path),
+        );
+    });
+
+    upstream.wait_for_the_route_to_reach_the_call();
+
+    let other_runtime = Arc::clone(&runtime);
+    let (answered_tx, answered) = mpsc::channel();
+    std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &other_runtime,
+            health_identity,
+            request("GET", "/projects"),
+        );
+        let _ = answered_tx.send(response.status);
+    });
+
+    let outcome = answered.recv_timeout(Duration::from_secs(30));
+    upstream.release();
+    let _ = stuck.join();
+    fixture.cleanup();
+
+    match outcome {
+        Ok(status) => assert_eq!(
+            status, 200,
+            "the probe route answered {status}, so it is broken rather than blocked"
+        ),
+        Err(mpsc::RecvTimeoutError::Timeout) => panic!(
+            "GET /projects never answered while {route} waited on an upstream that never replies: the route is holding the global runtime mutex across its project-service call"
+        ),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("the probe thread died without answering, so this says nothing about the lock")
+        }
+    }
+}
+
+#[test]
+fn the_thread_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "thread-list-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_list_text,
+    );
+}
+
+#[test]
+fn the_carved_out_thread_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a thread summary",
+        "thread-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_list_text,
+        // The renderer reads a NESTED `thread` object for id, kind and status;
+        // a flat summary renders as "?  ?  ?" and a parity test without the
+        // body-fragment assertion would have compared two of those and passed.
+        json!([{ "thread": { "id": "from-the-upstream", "kind": "review", "status": "open" } }]),
+        200,
+        "from-the-upstream",
+    );
+    // The refusal path: this route demands an array and 502s otherwise, and
+    // without a case for it the matrix would be happy-path only -- which is
+    // how #543's refusal rendering went uncovered.
+    assert_core_read_route_parity(
+        "a non-array payload",
+        "thread-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_list_text,
+        json!({ "summaries": [] }),
+        502,
+        "invalid thread list response",
+    );
+}
+
+#[test]
+fn the_worktree_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "worktree-list-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.worktree_list_text,
+    );
+}
+
+#[test]
+fn the_carved_out_worktree_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a worktree",
+        "worktree-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.worktree_list_text,
+        json!({ "worktrees": [{ "name": "from-the-upstream", "path": "/repo/wt" }] }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a payload with no worktrees key",
+        "worktree-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.worktree_list_text,
+        json!({ "other": [] }),
+        502,
+        // The whole phrase, not just "worktree list": a fragment that coarse
+        // matches other errors in the same family, which defeats the point of
+        // asserting the body at all -- it is there to prove the case exercises
+        // what it claims.
+        "worktrees is required",
+    );
+}
+
+/// A core read route still starts a project service that is down.
+///
+/// The three earlier carve-outs each have one of these and the two added here
+/// did not, so they shipped two gates against three. The ensure-and-retry now
+/// lives in the shared helper and cannot be forgotten per route, which is why
+/// the gap was low severity -- but nothing per route would notice if that
+/// shared retry broke for a route with a DIFFERENT resolve shape, and
+/// `thread_list`'s query-bearing path is exactly that case.
+fn assert_core_read_route_starts_a_service_that_is_down(
+    fixture_name: &str,
+    route: &str,
+    upstream_body: serde_json::Value,
+) {
+    assert_core_read_route_starts_a_service_that_is_down_with_query(
+        fixture_name,
+        route,
+        "",
+        upstream_body,
+    );
+}
+
+/// The same, for routes that need more than `project` in the query.
+fn assert_core_read_route_starts_a_service_that_is_down_with_query(
+    fixture_name: &str,
+    route: &str,
+    extra_query: &str,
+    upstream_body: serde_json::Value,
+) {
+    let fixture = RuntimeFixture::new(fixture_name);
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    // No endpoint file: the service is NOT running. The launcher publishes one
+    // pointing at a real upstream when it is asked to start.
+    let upstream = CannedUpstream::spawn(upstream_body.to_string());
+    let mut launcher = FakeLauncher::new(std::process::id() as i32);
+    launcher.endpoint_port = Some(upstream.port);
+    let launcher = Arc::new(launcher);
+    let runtime = Arc::new(Mutex::new(fixture.runtime_with_launcher(
+        Arc::clone(&launcher),
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    )));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let response = handle_daemon_runtime_request_with_mutex(
+        &runtime,
+        health_identity,
+        request(
+            "GET",
+            &format!("{route}?project={project_root}{extra_query}"),
+        ),
+    );
+
+    assert_eq!(
+        response.status, 200,
+        "{route} answered {} instead of starting the project service and retrying; without the ensure-and-retry the command returns 503 on any project whose service is not already up, which is the common case after a reboot",
+        response.status
+    );
+    assert_eq!(
+        launcher.calls(),
+        vec![project_root],
+        "{route} should have asked the launcher to start the project service exactly once"
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn the_carved_out_thread_list_still_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "thread-list-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_list_text,
+        json!([{ "thread": { "id": "t-1", "kind": "review", "status": "open" } }]),
+    );
+}
+
+#[test]
+fn the_carved_out_worktree_list_still_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "worktree-list-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.worktree_list_text,
+        json!({ "worktrees": [{ "name": "wt", "path": "/repo/wt" }] }),
+    );
+}
+
+/// The thread-list ALIAS pathname is carved out too.
+///
+/// `collaboration.rs` dispatches both `thread_list_text` and
+/// `threads_list_text` to the same route function, and the first version of
+/// this carve-out added only the former -- so one function had two lock
+/// behaviours and nothing gated the alias. A review found it inside a route I
+/// had already called done, which is the function-versus-pathname divergence
+/// biting in my own work.
+///
+/// The lock gate is the load-bearing one for an alias: parity would pass
+/// either way, because with no carve-out both paths are the locked path.
+#[test]
+fn the_threads_list_alias_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "threads-list-alias-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.threads_list_text,
+    );
+}
+
+#[test]
+fn the_carved_out_threads_list_alias_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a thread summary through the alias",
+        "threads-list-alias-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.threads_list_text,
+        json!([{ "thread": { "id": "from-the-upstream", "kind": "review", "status": "open" } }]),
+        200,
+        "from-the-upstream",
+    );
+}
+
+// --------------------------------------------------------------------------
+// graveyard list, team show and usage: the second tranche of core read routes
+// served without the global runtime mutex held across the upstream hop.
+//
+// Each gets all THREE gates the earlier routes have. The lock gate is the only
+// one that proves the carve-out is WIRED -- parity passes with the dispatch arm
+// removed, because then both paths are the locked path and agree trivially.
+// --------------------------------------------------------------------------
+
+#[test]
+fn the_graveyard_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "graveyard-list-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.graveyard_list_text,
+    );
+}
+
+#[test]
+fn the_carved_out_graveyard_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a graveyard entry",
+        "graveyard-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.graveyard_list_text,
+        // The renderer reads `id`, `tool` and `backendSessionId` from each
+        // entry; a `name`/`path` entry renders as "?  ?  (none)" and this case
+        // would have compared two of those and passed without the
+        // body-fragment assertion. Same trap thread_list documents.
+        json!({
+            "entries": [{
+                "id": "from-the-upstream",
+                "tool": "claude",
+                "backendSessionId": "s1"
+            }],
+            "worktrees": []
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a payload with no entries key",
+        "graveyard-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.graveyard_list_text,
+        json!({ "other": [] }),
+        502,
+        // The precise phrase, not "graveyard list": a fragment that coarse
+        // matches every error in the family and would pass for an unrelated
+        // failure.
+        "entries is required",
+    );
+}
+
+#[test]
+fn the_carved_out_graveyard_list_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "graveyard-list-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.graveyard_list_text,
+        json!({ "entries": [], "worktrees": [] }),
+    );
+}
+
+#[test]
+fn the_team_show_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "team-show-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.team_show_text,
+    );
+}
+
+#[test]
+fn the_carved_out_team_show_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a team config",
+        "team-show-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.team_show_text,
+        json!({
+            "config": {
+                "roles": { "from-the-upstream": { "description": "a role" } },
+                "defaultRole": "from-the-upstream"
+            }
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a config with no defaultRole",
+        "team-show-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.team_show_text,
+        json!({ "config": { "roles": {} } }),
+        502,
+        "config.defaultRole is required",
+    );
+}
+
+#[test]
+fn the_carved_out_team_show_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "team-show-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.team_show_text,
+        json!({ "config": { "roles": {}, "defaultRole": "lead" } }),
+    );
+}
+
+#[test]
+fn the_usage_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "usage-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.usage_text,
+    );
+}
+
+#[test]
+fn the_carved_out_usage_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a usage display line",
+        "usage-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.usage_text,
+        json!({ "displayLines": ["from-the-upstream"] }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a payload with no displayLines key",
+        "usage-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.usage_text,
+        json!({ "other": [] }),
+        502,
+        "displayLines is required",
+    );
+}
+
+#[test]
+fn the_carved_out_usage_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "usage-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.usage_text,
+        json!({ "displayLines": ["a line"] }),
+    );
+}
+
+// --------------------------------------------------------------------------
+// notification list and review list, off the global runtime mutex.
+//
+// review list is the spelling trap in this tranche: it is dispatched from
+// `native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE`, not a `CORE_API_ROUTES`
+// name. The obvious wrong spelling does NOT compile -- there is no
+// `CORE_API_ROUTES.review_list_text` -- so the hazard is not the one it looks
+// like. What compiles, and silently never matches, is a neighbouring field
+// such as `review_approve_text`, and the lock gate below is what catches it.
+// --------------------------------------------------------------------------
+
+#[test]
+fn the_notification_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "notification-list-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.notification_list_text,
+    );
+}
+
+#[test]
+fn the_carved_out_notification_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a notification",
+        "notification-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.notification_list_text,
+        json!({
+            "notifications": [{ "title": "from-the-upstream", "sessionId": "s1" }],
+            "unreadCount": 1
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a payload with no notifications key",
+        "notification-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.notification_list_text,
+        json!({ "other": [] }),
+        502,
+        "notifications is required",
+    );
+}
+
+#[test]
+fn the_carved_out_notification_list_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "notification-list-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.notification_list_text,
+        json!({ "notifications": [], "unreadCount": 0 }),
+    );
+}
+
+#[test]
+fn the_review_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "review-list-lock",
+        aimux::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE,
+    );
+}
+
+#[test]
+fn the_carved_out_review_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a review task",
+        "review-list-parity",
+        aimux::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE,
+        // `type: review` is what makes the row survive the render's filter; a
+        // plain task would be filtered out and the case would compare two
+        // empty renderings.
+        json!({
+            "tasks": [{ "id": "from-the-upstream", "type": "review", "title": "a review" }]
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a payload with no tasks key",
+        "review-list-parity",
+        aimux::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE,
+        json!({ "other": [] }),
+        502,
+        "tasks is required",
+    );
+}
+
+#[test]
+fn the_carved_out_review_list_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "review-list-cold",
+        aimux::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE,
+        json!({ "tasks": [] }),
+    );
+}
+
+/// A launcher that announces it has been asked to start a service.
+///
+/// The signal is what makes the gate below possible: it marks the boundary
+/// between the ensure, which is deliberately locked, and the resolution that
+/// follows it, which must not be.
+struct AnnouncingLauncher {
+    inner: FakeLauncher,
+    launched: Arc<AtomicBool>,
+}
+
+impl ProjectServiceLauncher for AnnouncingLauncher {
+    fn launch(
+        &self,
+        project_id: &str,
+        project_root: &Path,
+        project_state_dir: &Path,
+    ) -> Result<i32, String> {
+        let pid = self
+            .inner
+            .launch(project_id, project_root, project_state_dir)?;
+        self.launched.store(true, Ordering::SeqCst);
+        Ok(pid)
+    }
+
+    fn terminate(&self, service: &ProjectServiceState, force: bool) -> Result<(), String> {
+        self.inner.terminate(service, force)
+    }
+}
+
+/// Parks in the process verifier, but only once a service has been launched.
+struct ParkAfterLaunchVerifier {
+    launched: Arc<AtomicBool>,
+    reached: mpsc::Sender<()>,
+    release: Arc<Mutex<bool>>,
+}
+
+impl ProjectServiceProcessVerifier for ParkAfterLaunchVerifier {
+    fn is_live_native_project_service(&self, _service: &ProjectServiceState) -> bool {
+        if !self.launched.load(Ordering::SeqCst) {
+            return true;
+        }
+        let _ = self.reached.send(());
+        loop {
+            if *self.release.lock().expect("release flag") {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn live_project_service_pids(&self, _project_id: &str, _project_root: &str) -> Vec<i32> {
+        Vec::new()
+    }
+
+    fn is_live(&self, _pid: i32) -> bool {
+        true
+    }
+}
+
+/// The cold path's SECOND resolution does not hold the runtime mutex.
+///
+/// On a 502 or 503 the carve-out mirrors the generic route's ensure-and-retry.
+/// The ensure is deliberately locked -- `ensure_project` reads stored service
+/// state, TERMINATES extra services and persists the result, so two
+/// unserialized ensures would double-spawn, which is the leak this effort
+/// began with. But the guard also used to cover the resolution AFTER the
+/// ensure, putting another `rev-parse` and another `ps` back inside the
+/// critical section that phase one had just cleared.
+///
+/// WHY THE VERIFIER PARKS ONLY AFTER A LAUNCH, rather than always: the hot
+/// attempt resolves first, through the same free function and the same
+/// verifier, so a verifier that always parked would stop the route before it
+/// ever reached the cold path -- the gate would pass while proving nothing
+/// about the retry. The launcher call is the boundary, and the startup wait in
+/// between polls the HEALTH PROBE, not the verifier, so nothing parks during
+/// the part that is still locked on purpose.
+///
+/// WHAT THIS DOES NOT COVER, stated so it is not mistaken for more: the
+/// startup wait itself is still under the global mutex, and
+/// PROJECT_SERVICE_STARTUP_TIMEOUT_MS is 10_000. A separate gate, driven by a
+/// parking health probe, fails on that today -- it is recorded, not included,
+/// because the fix is a lifecycle restructure rather than a span move.
+#[test]
+fn the_cold_path_resolution_does_not_hold_the_runtime_lock() {
+    let fixture = RuntimeFixture::new("cold-resolution-lock");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    // No endpoint file, so the hot attempt fails and the retry runs. The
+    // launcher publishes one pointing at a real upstream when asked to start.
+    let upstream = CannedUpstream::spawn(json!({ "tasks": [] }).to_string());
+    let launched = Arc::new(AtomicBool::new(false));
+    let launcher = Arc::new(AnnouncingLauncher {
+        inner: FakeLauncher::new(std::process::id() as i32).with_endpoint(upstream.port),
+        launched: Arc::clone(&launched),
+    });
+
+    let (reached_tx, reached) = mpsc::channel();
+    let release = Arc::new(Mutex::new(false));
+    let runtime = Arc::new(Mutex::new(
+        RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver(),
+            fixture.info.clone(),
+            launcher,
+            Arc::new(ParkAfterLaunchVerifier {
+                launched: Arc::clone(&launched),
+                reached: reached_tx,
+                release: Arc::clone(&release),
+            }),
+            PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+        )
+        .with_project_service_health_probe(Arc::new(AlwaysReadyHealthProbe)),
+    ));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let probe_path = format!(
+        "{}?project=/nonexistent-project-for-the-lock-probe",
+        aimux::core_command_contract::CORE_API_ROUTES.outline_list_text
+    );
+
+    // The control: with the mutex free this probe answers. Without it, silence
+    // later could just mean the probe never answers at all.
+    let control_runtime = Arc::clone(&runtime);
+    let (control_tx, control) = mpsc::channel();
+    let control_path = probe_path.clone();
+    std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &control_runtime,
+            health_identity,
+            request("GET", &control_path),
+        );
+        let _ = control_tx.send(response.status);
+    });
+    control.recv_timeout(Duration::from_secs(20)).expect(
+        "the probe route does not answer even with the mutex free, so this gate cannot attribute silence to the lock",
+    );
+
+    let stuck_runtime = Arc::clone(&runtime);
+    let stuck_path = format!(
+        "{}?project={}",
+        aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+        project_root
+    );
+    let stuck = std::thread::spawn(move || {
+        let _ = handle_daemon_runtime_request_with_mutex(
+            &stuck_runtime,
+            health_identity,
+            request("GET", &stuck_path),
+        );
+    });
+
+    reached.recv_timeout(Duration::from_secs(30)).expect(
+        "the route never reached the verifier after a launch, so it never got to the cold path's resolution and this gate is testing nothing",
+    );
+
+    let other_runtime = Arc::clone(&runtime);
+    let (answered_tx, answered) = mpsc::channel();
+    std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &other_runtime,
+            health_identity,
+            request("GET", &probe_path),
+        );
+        let _ = answered_tx.send(response.status);
+    });
+
+    let outcome = answered.recv_timeout(Duration::from_secs(20));
+
+    *release.lock().expect("release flag") = true;
+    let _ = stuck.join();
+    fixture.cleanup();
+
+    assert!(
+        outcome.is_ok(),
+        "another route could not be served while the cold path sat in the resolution AFTER its ensure: that resolution is holding the global runtime mutex across its `rev-parse` and `ps`"
+    );
+}
+
+// --------------------------------------------------------------------------
+// thread show, task show and outline list: the three routes that could not
+// join the carve-out until the render could see the request body.
+//
+// thread_show and task_show interpolate an id into their 404, read with
+// `required_param(route_url, body, ..)`. outline_list renders a DIFFERENT
+// payload for a single-entry request, and `entryId` can arrive in the body
+// rather than the query.
+// --------------------------------------------------------------------------
+
+#[test]
+fn the_thread_show_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock_with_query(
+        "thread-show-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_show_text,
+        "&threadId=t-1",
+    );
+}
+
+#[test]
+fn the_carved_out_thread_show_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity_with_query(
+        "a thread with its messages",
+        "thread-show-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_show_text,
+        "&threadId=t-1",
+        json!({
+            "thread": { "id": "from-the-upstream", "kind": "review", "status": "open" },
+            "messages": []
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity_with_query(
+        "a payload with no thread key",
+        "thread-show-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_show_text,
+        "&threadId=t-1",
+        json!({ "other": {} }),
+        502,
+        "thread is required",
+    );
+}
+
+#[test]
+fn the_carved_out_thread_show_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down_with_query(
+        "thread-show-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.thread_show_text,
+        "&threadId=t-1",
+        json!({ "thread": { "id": "t-1", "kind": "review", "status": "open" }, "messages": [] }),
+    );
+}
+
+#[test]
+fn the_task_show_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock_with_query(
+        "task-show-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.task_show_text,
+        "&taskId=k-1",
+    );
+}
+
+#[test]
+fn the_carved_out_task_show_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity_with_query(
+        "a task",
+        "task-show-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.task_show_text,
+        "&taskId=k-1",
+        // `messages` is required too, and `task.id` must be a string.
+        json!({
+            "task": { "id": "from-the-upstream", "title": "a task", "status": "open" },
+            "messages": []
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity_with_query(
+        "a payload with no task key",
+        "task-show-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.task_show_text,
+        "&taskId=k-1",
+        json!({ "other": {} }),
+        502,
+        "task is required",
+    );
+}
+
+#[test]
+fn the_carved_out_task_show_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down_with_query(
+        "task-show-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.task_show_text,
+        "&taskId=k-1",
+        json!({
+            "task": { "id": "k-1", "title": "a task", "status": "open" },
+            "messages": []
+        }),
+    );
+}
+
+#[test]
+fn the_outline_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "outline-list-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.outline_list_text,
+    );
+}
+
+#[test]
+fn the_carved_out_outline_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "an outline entry",
+        "outline-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.outline_list_text,
+        // The renderer reads `entryId`, `title`, `status`, `worktreePath` and
+        // `sessionIds`; an `id` entry renders "undefined [undefined]" and the
+        // case would compare two identically wrong renderings.
+        json!({
+            "entries": [{
+                "entryId": "from-the-upstream",
+                "title": "an entry",
+                "status": "open"
+            }]
+        }),
+        200,
+        "from-the-upstream",
+    );
+    assert_core_read_route_parity(
+        "a payload with no entries key",
+        "outline-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.outline_list_text,
+        json!({ "other": [] }),
+        502,
+        "entries is required",
+    );
+    // The single-entry shape, which is the branch that needs `body`: asked for
+    // by query here, since the parity harness sends a GET.
+    assert_core_read_route_parity_with_query(
+        "a single outline entry by id",
+        "outline-list-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.outline_list_text,
+        "&entryId=e-1",
+        json!({
+            "entry": {
+                "entryId": "from-the-upstream",
+                "title": "an entry",
+                "status": "open"
+            }
+        }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_outline_list_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "outline-list-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.outline_list_text,
+        json!({ "entries": [] }),
+    );
+}
+
+// --------------------------------------------------------------------------
+// host agent-read and the two doctor routes.
+//
+// host_agent_read is the only carve-out route that answers RAW TEXT, and its
+// resolve has a fallible integer param. The doctor routes are the third
+// resolve shape: an OPTIONAL project under either of two names with a cwd
+// default, so a required_param resolve copied from a sibling would turn
+// "answer for here" into a refusal.
+// --------------------------------------------------------------------------
+
+#[test]
+fn the_host_agent_read_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock_with_query(
+        "host-agent-read-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.host_agent_read_text,
+        "&sessionId=s-1",
+    );
+}
+
+#[test]
+fn the_carved_out_host_agent_read_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity_with_query(
+        "agent output as raw text",
+        "host-agent-read-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.host_agent_read_text,
+        "&sessionId=s-1",
+        json!({ "ok": true, "output": "from-the-upstream\n" }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_host_agent_read_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down_with_query(
+        "host-agent-read-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.host_agent_read_text,
+        "&sessionId=s-1",
+        json!({ "ok": true, "output": "output\n" }),
+    );
+}
+
+#[test]
+fn the_doctor_exchange_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "doctor-exchange-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_exchange_text,
+    );
+}
+
+#[test]
+fn the_carved_out_doctor_exchange_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "exchange diagnostics",
+        "doctor-exchange-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_exchange_text,
+        // The renderer prints the exchange `path`, not arbitrary keys; a
+        // `note` field renders nothing and this case would have compared two
+        // bodies that both say only "Project: <root>".
+        json!({ "runtimeExchange": { "path": "/from-the-upstream/exchange" } }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_doctor_exchange_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "doctor-exchange-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_exchange_text,
+        json!({ "runtimeExchange": { "queueDepth": 0 } }),
+    );
+}
+
+#[test]
+fn the_doctor_lifecycle_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "doctor-lifecycle-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text,
+    );
+}
+
+#[test]
+fn the_carved_out_doctor_lifecycle_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "lifecycle diagnostics",
+        "doctor-lifecycle-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text,
+        // `projectRoot` is what this renderer prints; without it the body is
+        // "Project: unknown" on both paths, which is exactly what the first
+        // version of this case compared.
+        json!({ "projectRoot": "/from-the-upstream/repo", "telemetry": {} }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_doctor_lifecycle_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "doctor-lifecycle-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text,
+        json!({ "lifecycle": {} }),
+    );
+}
+
+/// The doctor routes answer for the CURRENT DIRECTORY when no project is named.
+///
+/// Their resolve is the one shape in this carve-out that does not require a
+/// `project`, and the failure mode is quiet: a `required_param` resolve copied
+/// from a sibling route would refuse with 400 instead of answering, and every
+/// gate above would still pass because they all pass a project explicitly.
+#[test]
+fn the_carved_out_doctor_routes_still_answer_without_a_project_param() {
+    for route in [
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_exchange_text,
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text,
+    ] {
+        let fixture = RuntimeFixture::new("doctor-no-project");
+        let runtime = Arc::new(Mutex::new(fixture.runtime()));
+        let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+        // No `project` and no `projectRoot`: the route must resolve the cwd
+        // rather than refuse.
+        let response = handle_daemon_runtime_request_with_mutex(
+            &runtime,
+            health_identity,
+            request("GET", route),
+        );
+        let body = String::from_utf8_lossy(&response.body).into_owned();
+        fixture.cleanup();
+
+        assert_ne!(
+            response.status, 400,
+            "{route} refused a request with no project param; these routes answer for the current directory, and a required_param resolve would have broken that silently: {body}"
+        );
+    }
+}
+
+// --------------------------------------------------------------------------
+// loop list, overseer status and scribe status: THREE pathnames served by ONE
+// route function, whose filter kind comes from the dispatcher rather than the
+// url. One shared resolve -- the same `resolve_agent_list_request` that
+// `aimux agents` uses -- and three named renders.
+//
+// Each pathname gets its own lock gate, because the guard keys on pathnames
+// and carving out the function is not the same as carving out all three ways
+// in. That distinction cost a missed alias in a route already called done.
+// --------------------------------------------------------------------------
+
+#[test]
+fn the_loop_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "loop-list-lock",
+        aimux::native_cli_dispatch::CORE_LOOP_LIST_TEXT_ROUTE,
+    );
+}
+
+#[test]
+fn the_overseer_status_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "overseer-status-lock",
+        aimux::native_cli_dispatch::CORE_OVERSEER_STATUS_TEXT_ROUTE,
+    );
+}
+
+#[test]
+fn the_scribe_status_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "scribe-status-lock",
+        aimux::native_cli_dispatch::CORE_SCRIBE_STATUS_TEXT_ROUTE,
+    );
+}
+
+#[test]
+fn the_carved_out_loop_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "an agent with an active loop",
+        "loop-list-parity",
+        aimux::native_cli_dispatch::CORE_LOOP_LIST_TEXT_ROUTE,
+        // `loop.active` is what the filter keeps; an agent without it is
+        // dropped and the case would compare two empty renderings.
+        json!({
+            "agents": [{
+                "id": "from-the-upstream",
+                "tmuxLivenessVerified": true,
+                "loop": { "active": true }
+            }],
+            "tmuxLivenessVerified": true
+        }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_scribe_status_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a scribe session",
+        "scribe-status-parity",
+        aimux::native_cli_dispatch::CORE_SCRIBE_STATUS_TEXT_ROUTE,
+        json!({
+            "agents": [{
+                "id": "from-the-upstream",
+                "tmuxLivenessVerified": true,
+                "role": "scribe"
+            }],
+            "tmuxLivenessVerified": true
+        }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_overseer_status_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "an overseer session",
+        "overseer-status-parity",
+        aimux::native_cli_dispatch::CORE_OVERSEER_STATUS_TEXT_ROUTE,
+        // Overseers are selected by `overseerSessionIds`, not by a predicate
+        // over the agents, so the id has to appear in BOTH or the render
+        // refuses with "session is missing".
+        json!({
+            "agents": [{ "id": "from-the-upstream", "tmuxLivenessVerified": true }],
+            "overseerSessionIds": ["from-the-upstream"],
+            "tmuxLivenessVerified": true
+        }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_loop_list_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "loop-list-cold",
+        aimux::native_cli_dispatch::CORE_LOOP_LIST_TEXT_ROUTE,
+        json!({ "agents": [], "tmuxLivenessVerified": true }),
+    );
+}
+
+/// Each filtered pathname shows ONLY its own agents.
+///
+/// The three arms share a resolve and differ only in which render the dispatch
+/// names, so the interesting failure is a filter that is too WIDE -- two arms
+/// pointing at one render, or a predicate that stops discriminating.
+///
+/// The per-route parity gates cannot see that. Each uses a body tailored to
+/// its own route, so a render that showed everything would still contain the
+/// id those gates look for, and the harness asserts only that a fragment is
+/// PRESENT. I wrote this first claiming it caught a mispointed arm the others
+/// miss; it did not -- the scribe parity gate catches that too. So it asserts
+/// what only a cross-route test can: one upstream body, and each route's
+/// answer must EXCLUDE the other two agents.
+#[test]
+fn each_filtered_route_shows_only_its_own_agents() {
+    let upstream_body = json!({
+        "agents": [
+            { "id": "looping", "tmuxLivenessVerified": true, "loop": { "active": true } },
+            { "id": "scribing", "tmuxLivenessVerified": true, "role": "scribe" },
+            { "id": "overseeing", "tmuxLivenessVerified": true }
+        ],
+        "overseerSessionIds": ["overseeing"],
+        "tmuxLivenessVerified": true
+    });
+
+    for (route, expected, excluded) in [
+        (
+            aimux::native_cli_dispatch::CORE_LOOP_LIST_TEXT_ROUTE,
+            "looping",
+            ["scribing", "overseeing"],
+        ),
+        (
+            aimux::native_cli_dispatch::CORE_SCRIBE_STATUS_TEXT_ROUTE,
+            "scribing",
+            ["looping", "overseeing"],
+        ),
+        (
+            aimux::native_cli_dispatch::CORE_OVERSEER_STATUS_TEXT_ROUTE,
+            "overseeing",
+            ["looping", "scribing"],
+        ),
+    ] {
+        let fixture = RuntimeFixture::new("filtered-only-its-own");
+        let project = fixture.project("repo");
+        let mut resolver = fixture.resolver();
+        resolver
+            .register_project(&project)
+            .expect("register project");
+        let project_root = project.to_string_lossy().into_owned();
+
+        let upstream = CannedUpstream::spawn(upstream_body.to_string());
+        let state_dir = resolver.project_state_dir_for(&project_root);
+        fs::create_dir_all(&state_dir).expect("project state dir");
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: upstream.port,
+                pid: std::process::id() as i32,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("write the metadata endpoint");
+
+        let runtime = Arc::new(Mutex::new(fixture.runtime()));
+        let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+        let response = handle_daemon_runtime_request_with_mutex(
+            &runtime,
+            health_identity,
+            request("GET", &format!("{route}?project={project_root}")),
+        );
+        let body = String::from_utf8_lossy(&response.body).into_owned();
+        fixture.cleanup();
+
+        assert_eq!(response.status, 200, "{route} answered: {body}");
+        assert!(
+            body.contains(expected),
+            "{route} did not show {expected}, so its filter dropped the agent it exists to show: {body}"
+        );
+        for other in excluded {
+            assert!(
+                !body.contains(other),
+                "{route} showed {other} as well as {expected}; its filter is not discriminating, which every per-route gate would still pass because each uses a body tailored to its own route: {body}"
+            );
+        }
     }
 }

@@ -226,6 +226,7 @@ pub(super) fn task_list_text_path(
     project: &str,
     session: Option<&str>,
     status: Option<&str>,
+    stream: Option<&str>,
     json: bool,
 ) -> String {
     let mut path = format!(
@@ -240,6 +241,10 @@ pub(super) fn task_list_text_path(
     if let Some(status) = status {
         path.push_str("&status=");
         path.push_str(&encode_query_component(status));
+    }
+    if let Some(stream) = stream {
+        path.push_str("&stream=");
+        path.push_str(&encode_query_component(stream));
     }
     if json {
         path.push_str("&json=1");

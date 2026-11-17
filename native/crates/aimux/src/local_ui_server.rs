@@ -326,7 +326,27 @@ fn absolute_path(path: PathBuf) -> io::Result<PathBuf> {
 }
 
 async fn serve_file(stream: &mut TcpStream, path: &Path, head: bool) -> io::Result<()> {
-    let body = if head { Vec::new() } else { fs::read(path)? };
+    // On the blocking pool. This runs on an async worker and the file comes off
+    // disk, so a sync read parks that worker for the whole read -- and the
+    // local UI serves every asset through here, so one browser opening a page
+    // does it several times over.
+    //
+    // `spawn_blocking_named` rather than `tokio::fs::read`, because this
+    // workspace does not enable tokio's `fs` feature and turning it on for one
+    // read is a dependency decision, not a fix. The pool hop is what the rest
+    // of this crate does anyway.
+    let body = if head {
+        Vec::new()
+    } else {
+        let path = path.to_path_buf();
+        crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::task_name("local-ui", "serve-file"),
+            move || fs::read(path),
+        )
+        .await
+        // A pool task that never ran is not a missing file.
+        .map_err(|error| io::Error::other(format!("local UI file was not read: {error}")))??
+    };
     let extension = path
         .extension()
         .and_then(|value| value.to_str())

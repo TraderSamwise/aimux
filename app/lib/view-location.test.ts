@@ -38,8 +38,8 @@ describe("view location helpers", () => {
   it("merges current search params with explicit overrides", () => {
     expect(
       mergeViewParams(
-        { project: "/old", machine: "mbp", mode: "map", lens: ["all"], section: undefined },
-        { project: "/new", section: "queue" },
+        { project: "/old", machine: "mbp", mode: "map", lens: ["all"] },
+        { project: "/new" },
       ),
     ).toEqual({
       project: "/new",
@@ -48,7 +48,6 @@ describe("view location helpers", () => {
       machine: "mbp",
       mode: "map",
       lens: "all",
-      section: "queue",
       document: null,
       threadId: null,
     });

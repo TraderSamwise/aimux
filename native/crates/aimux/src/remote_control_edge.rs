@@ -288,6 +288,29 @@ mod enabled_state {
     use crate::paths::PathResolver;
     use crate::remote::remote_login::LoginFlowWaiter;
 
+    /// The endpoint task's view of this machine's relay.
+    struct SupervisorEndpointReporter {
+        relay: std::sync::Weak<crate::remote::daemon_relay::RelaySupervisor>,
+    }
+
+    impl crate::daemon::scheduler::RelayEndpointReporter for SupervisorEndpointReporter {
+        fn ready(&self) -> bool {
+            self.relay
+                .upgrade()
+                .is_some_and(|relay| relay.is_connected())
+        }
+
+        fn report(
+            &self,
+            projects: &[crate::daemon_projects::ProjectEndpoint],
+        ) -> Result<(), String> {
+            match self.relay.upgrade() {
+                Some(relay) => relay.push_project_endpoints(projects),
+                None => Err("relay_off".to_owned()),
+            }
+        }
+    }
+
     #[derive(Default)]
     pub struct RemoteDaemonState {
         auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
@@ -315,6 +338,27 @@ mod enabled_state {
 
         pub fn relay(&self) -> &Arc<crate::remote::daemon_relay::RelaySupervisor> {
             &self.relay
+        }
+
+        /// Let the endpoint task report through this machine's relay.
+        ///
+        /// Weak on purpose: the task outlives nothing, but holding the
+        /// supervisor from the scheduler would keep a stopped relay alive.
+        pub fn register_relay_project_endpoints_push(
+            &self,
+            context: &crate::daemon::scheduler::DaemonSchedulerContext,
+        ) {
+            let push: crate::daemon::scheduler::RelayProjectEndpointsPush =
+                Arc::new(SupervisorEndpointReporter {
+                    relay: Arc::downgrade(&self.relay),
+                });
+            if let Err(error) = context.set_relay_project_endpoints_push(push) {
+                crate::debug_logging::log_lifecycle_always(
+                    "relay endpoint reporter not registered",
+                    "relay",
+                    Some(json!({ "error": error })),
+                );
+            }
         }
 
         /// Dial the relay if the resolved target says we should.
@@ -445,6 +489,7 @@ mod enabled_state {
             vec![
                 Box::new(crate::remote::hosted_server::HostedPruneTask),
                 Box::new(crate::remote::hosted_server::HostedOutboxDrainTask),
+                Box::new(crate::remote::relay_endpoints::RelayProjectEndpointsTask::new()),
             ]
         }
 
@@ -467,9 +512,12 @@ mod enabled_state {
                     self.relay.status()
                 }
                 Ok(None) => json!({ "status": "off" }),
-                Err(error) => {
-                    json!({ "status": "auth_failed", "lastError": error.to_string() })
+                Err(error) => crate::remote::relay_client::RelayStatusSnapshot {
+                    status: Some(crate::remote::relay_client::RelayStatus::AuthFailed),
+                    last_error: Some(error.to_string()),
+                    ..Default::default()
                 }
+                .to_json(),
             }
         }
 
@@ -481,6 +529,18 @@ mod enabled_state {
 
         pub fn disconnect(&self) {
             self.relay.disconnect();
+        }
+
+        pub fn peer_owner_for_input(&self, project_root: &str) -> (Option<String>, &'static str) {
+            self.relay.peer_owner_for_input(project_root)
+        }
+
+        pub fn forward_agent_input(
+            &self,
+            machine_id: &str,
+            body: &Value,
+        ) -> Result<(u16, Value), String> {
+            self.relay.forward_agent_input(machine_id, body)
         }
 
         /// The live client's own state. This used to answer a hardcoded
@@ -499,11 +559,17 @@ mod enabled_state {
                 return json!({ "status": "off" });
             };
             if credentials.remote_enabled {
-                json!({
-                    "status": "disconnected",
-                    "relayUrl": credentials.relay_url,
-                    "lastConnectedAt": Value::Null,
-                })
+                // The full snapshot shape, not a three-field lookalike.
+                // `RelayStatusSnapshot` in src/relay-contract.ts declares
+                // these required, and a second hand-built spelling of the
+                // same object is how a consumer comes to read `undefined`
+                // from one source and a value from another.
+                crate::remote::relay_client::RelayStatusSnapshot {
+                    status: Some(crate::remote::relay_client::RelayStatus::Disconnected),
+                    relay_url: credentials.relay_url,
+                    ..Default::default()
+                }
+                .to_json()
             } else {
                 json!({ "status": "off" })
             }
@@ -590,6 +656,13 @@ mod disabled_state {
             Vec::new()
         }
 
+        /// No relay, so nothing to report endpoints to.
+        pub fn register_relay_project_endpoints_push(
+            &self,
+            _context: &crate::daemon::scheduler::DaemonSchedulerContext,
+        ) {
+        }
+
         /// None to load, so none held.
         pub fn has_credentials(&self, _resolver: &PathResolver) -> bool {
             false
@@ -606,6 +679,23 @@ mod disabled_state {
         }
 
         pub fn disconnect(&self) {}
+
+        /// Nobody else owns anything, because there is no relay to say so --
+        /// and `relay_off` is the reason, not a shrug. The caller's local path
+        /// is correct and unchanged.
+        pub fn peer_owner_for_input(&self, _project_root: &str) -> (Option<String>, &'static str) {
+            (None, "relay_off")
+        }
+
+        /// Unreachable while the above answers `None`, and a refusal rather
+        /// than a silent success if that ever stops being true.
+        pub fn forward_agent_input(
+            &self,
+            _machine_id: &str,
+            _body: &Value,
+        ) -> Result<(u16, Value), String> {
+            Err("remote control is not built into this binary".to_owned())
+        }
 
         /// Off, and not "disconnected": nothing is waiting on a connection
         /// that could be made.

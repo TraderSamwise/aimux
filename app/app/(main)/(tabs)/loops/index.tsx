@@ -73,22 +73,34 @@ export default function LoopsScreen() {
       return session ? [{ session, order }] : [];
     });
   }, [state?.overseerSessionIds, state?.sessions]);
+  // An overseer is a legitimate report of another overseer, so a mid-tier
+  // overseer in a loop belongs in this list. Excluding every published
+  // overseer hid exactly the agents the recursive tree is made of. The scribe
+  // stays out: it is a project function rather than anybody's report.
+  //
+  // Only this list changes. The two candidate lists below offer promotion and
+  // a loop, not a binding -- this screen never calls `/agents/watch` -- so
+  // their exclusions are about who is already an overseer, which is still the
+  // right question for them.
   const watched = useMemo(
     () =>
       entries.filter(
-        (entry) =>
-          entry.session.loop?.active === true &&
-          !overseerIds.has(entry.session.id) &&
-          entry.session.scribe !== true,
+        (entry) => entry.session.loop?.active === true && entry.session.scribe !== true,
       ),
-    [entries, overseerIds],
+    [entries],
   );
   const stateErrorCopy = stateError ? projectStateErrorCopy(stateError) : null;
   const activeCandidates = useMemo(
     () => entries.filter((entry) => isManageableSession(entry.session)),
     [entries],
   );
-  const watchCandidates = useMemo(
+  // Two lists, because they offer two different things. Promoting an agent
+  // that is already an overseer is a no-op, so that list excludes them. The
+  // loop list must not: a mid-tier overseer is a legitimate report, and
+  // excluding it while the watched list above includes it made Stop a
+  // one-way door -- the agent left the watched list and never appeared among
+  // the ones that can be put back.
+  const promotionCandidates = useMemo(
     () =>
       activeCandidates.filter(
         (entry) =>
@@ -98,15 +110,12 @@ export default function LoopsScreen() {
       ),
     [activeCandidates, overseerIds],
   );
-  const overseerCandidates = useMemo(
+  const loopCandidates = useMemo(
     () =>
       activeCandidates.filter(
-        (entry) =>
-          !overseerIds.has(entry.session.id) &&
-          entry.session.scribe !== true &&
-          entry.session.loop?.active !== true,
+        (entry) => entry.session.scribe !== true && entry.session.loop?.active !== true,
       ),
-    [activeCandidates, overseerIds],
+    [activeCandidates],
   );
   const canMutate = Boolean(endpoint) && !busyAction;
   const defaultDemotionWorktreePath = useMemo(
@@ -213,7 +222,7 @@ export default function LoopsScreen() {
           <View className="mb-5 flex-row flex-wrap">
             <SummaryCard label="Overseers" value={String(overseers.length)} />
             <SummaryCard label="Watched" value={String(watched.length)} />
-            <SummaryCard label="Available" value={String(watchCandidates.length)} />
+            <SummaryCard label="Available" value={String(loopCandidates.length)} />
           </View>
 
           {message ? <Notice tone="default" body={message} /> : null}
@@ -265,12 +274,12 @@ export default function LoopsScreen() {
             ) : (
               <EmptyText>No overseers set.</EmptyText>
             )}
-            {overseerCandidates.length > 0 ? (
+            {promotionCandidates.length > 0 ? (
               <View className="mt-3">
                 <Text className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                   Make Overseer
                 </Text>
-                {overseerCandidates.map((entry) => (
+                {promotionCandidates.map((entry) => (
                   <AgentRow
                     key={entry.session.id}
                     entry={entry}
@@ -349,10 +358,10 @@ export default function LoopsScreen() {
           </Section>
 
           <Section title="Available Agents" subtitle="Add running agents to the overseer loop.">
-            {watchCandidates.length === 0 ? (
+            {loopCandidates.length === 0 ? (
               <EmptyText>No running agents are available to watch.</EmptyText>
             ) : (
-              watchCandidates.map((entry) => (
+              loopCandidates.map((entry) => (
                 <AgentRow
                   key={entry.session.id}
                   entry={entry}

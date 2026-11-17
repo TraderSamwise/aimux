@@ -145,6 +145,17 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         .context("repair project .aimux permissions")?;
     secure_permissions::repair_project_state_store(&startup.project_state_dir)
         .context("repair project state permissions")?;
+    // Warm the OnceLock build stamp here, where blocking is free, because
+    // /health is answered WITHOUT a blocking thread and must not be the call
+    // that first reads it off disk. A failure is not fatal and not silent: the
+    // route still reports it in serviceInfo, exactly as it did before.
+    if let Err(error) = crate::project_service_manifest::project_service_build_stamp() {
+        log_lifecycle_always(
+            "project service build stamp unavailable",
+            "project-service",
+            Some(json!({ "error": error.to_string() })),
+        );
+    }
     log_lifecycle_always(
         "project service starting",
         "project-service",
@@ -578,6 +589,36 @@ where
         });
     }
 
+    // Answered without a blocking thread, for the same reason the daemon's
+    // `/health` is: every other route hops to the blocking pool, so when that
+    // pool is saturated the readiness endpoint is the one thing that cannot
+    // answer -- exactly when somebody is asking it why nothing is moving. The
+    // daemon got this in `answerable_without_a_blocking_thread`; the project
+    // service is the sibling surface and did not.
+    //
+    // Safe for this route and no other, and the three things it touches were
+    // each checked rather than assumed:
+    //
+    // - `get_project_service_manifest` reads the release build stamp, but
+    //   `project_service_build_stamp` is `OnceLock`-cached and startup warms
+    //   it, so by the time a request can arrive this is pure memory.
+    // - `scheduler.diagnostics_json` takes the scheduler health lock. Every
+    //   holder of that lock -- `register_task`, `record_run` and the test-only
+    //   setter -- does in-memory map work only, and `record_run` drops the
+    //   guard before publishing its alert, so the lock is never held across
+    //   anything slow.
+    // - the rest is the state dir string and the pid.
+    //
+    // Any route that can block must keep the hop, which is why this is a
+    // pathname test and not a flag a caller could pass.
+    if project_service_health_answerable_without_a_blocking_thread(&request.method, &request.path) {
+        let response = super::reads::project_service_health_response(&context);
+        return Ok(ProjectServiceTransportResponse {
+            response: prepare_dispatch_response(response, cors),
+            lifecycle_progress: None,
+        });
+    }
+
     let body = if method_reads_json_body(&request.method) {
         match read_json_body_limited(
             request.body_chunks.iter().map(Vec::as_slice),
@@ -740,6 +781,16 @@ fn async_agent_output_route(method: &str, path: &str) -> bool {
             | routes::agents::INTERRUPT
             | routes::live_pane::INTERRUPT
     )
+}
+
+/// `GET /health` on the project service, which is answerable in place.
+///
+/// Mirrors `daemon::listener::answerable_without_a_blocking_thread`. The
+/// safety argument lives at the call site, with the three things the handler
+/// touches.
+fn project_service_health_answerable_without_a_blocking_thread(method: &str, path: &str) -> bool {
+    method.eq_ignore_ascii_case("GET")
+        && super::dispatcher::project_service_pathname(path) == routes::HEALTH
 }
 
 fn async_read_control_route(method: &str, path: &str) -> bool {
@@ -1846,6 +1897,12 @@ fn agent_output_stream_fingerprint(payload: &serde_json::Value) -> String {
         "activity": payload.get("activity"),
         "activityText": payload.get("activityText"),
         "attention": payload.get("attention"),
+        // The chooser a client renders as controls. Without it a frame whose
+        // only change is WHICH option the cursor is on is suppressed as
+        // unchanged, and the app highlights a row the pane has moved off --
+        // and in chat mode, where `output` and `outputAnsi` are omitted
+        // entirely, this field is the only place that change appears.
+        "paneState": payload.get("paneState"),
     }))
     .unwrap_or_default()
 }
@@ -2355,9 +2412,90 @@ mod tests {
         .expect("write topology");
     }
 
+    /// The point of answering `/health` in place, proved structurally.
+    ///
+    /// The real blocking pool is tokio's default 512 threads, so saturating it
+    /// for real would need 512 stuck routes -- which is why this sat at the
+    /// bottom of the list for so long. A runtime with a ONE thread blocking
+    /// pool is the same situation at a size a test can hold, and it tests the
+    /// structure that matters: whether this route needs a pool thread at all.
+    #[test]
+    fn health_answers_while_the_blocking_pool_is_saturated() {
+        let root = unique_test_root("health-saturated-pool");
+        let project_root = root.join("repo");
+        let state_dir = root.join("state");
+        create_git_checkout(&project_root);
+        fs::create_dir_all(&state_dir).expect("create state dir");
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .max_blocking_threads(1)
+            .enable_all()
+            .build()
+            .expect("saturated-pool runtime");
+
+        // aimux-async-seam: test - the gate drives the transport handler directly
+        let status = runtime.block_on(async {
+            // Occupy the one blocking thread with a park that cannot end on its
+            // own: a channel recv whose sender is held here. Unbounded by
+            // construction, so this is not a timing bet -- and the task reports
+            // when it is actually ON the thread, so saturation is observed
+            // rather than assumed.
+            let (sender, receiver) = std::sync::mpsc::channel::<()>();
+            let holding = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let reports = Arc::clone(&holding);
+            // aimux-async-blocking: test - the park IS the fixture, and it is
+            // already inside spawn_blocking; the audit's closure stripper does
+            // not match this call's formatting
+            let stuck =
+                crate::async_runtime::spawn_blocking_named("test:saturate-pool", move || {
+                    reports.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let _ = receiver.recv();
+                });
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while !holding.load(std::sync::atomic::Ordering::SeqCst) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the saturating task never reached the blocking pool"
+                );
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let mut reader = tokio::io::empty();
+            let request = ProjectServiceHttpRequest {
+                method: "GET".to_owned(),
+                path: routes::HEALTH.to_owned(),
+                headers: Default::default(),
+                body_chunks: Vec::new(),
+            };
+            let response = tokio::time::timeout(
+                Duration::from_secs(5),
+                handle_project_service_http_request_transport_async(request, context, &mut reader),
+            )
+            .await
+            .expect("health must answer while the blocking pool is saturated")
+            .expect("health route returns");
+
+            // Release the pool so the runtime can shut down.
+            drop(sender);
+            let _ = stuck.await;
+            response.response.status
+        });
+
+        assert_eq!(status, 200, "a saturated pool must not change the answer");
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn async_read_control_routes_bypass_blocking_dispatcher() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-read-control");
@@ -2774,6 +2912,9 @@ mod tests {
     #[test]
     fn async_connection_routes_http_to_rust_project_router() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-connection");
@@ -2811,6 +2952,9 @@ mod tests {
     #[test]
     fn async_listener_serves_complete_request_while_slowloris_waits() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-slowloris");
@@ -2866,6 +3010,8 @@ mod tests {
     #[test]
     fn async_connection_cancelled_during_blocking_route_writes_no_partial_response() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - a sync channel is the handshake; the test has to
+        // know the route reached its blocking section before it cancels the connection
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-cancel-blocking");
@@ -2952,6 +3098,9 @@ mod tests {
     #[test]
     fn async_lifecycle_success_publishes_dashboard_refresh_event() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-lifecycle-publishes-refresh");
@@ -3006,6 +3155,9 @@ mod tests {
     #[test]
     fn async_lifecycle_failure_does_not_publish_dashboard_refresh_event() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-lifecycle-no-false-refresh");
@@ -3084,6 +3236,9 @@ mod tests {
     #[test]
     fn async_agent_output_disconnect_before_irreversible_write_cancels_route() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-output-disconnect");
@@ -3142,6 +3297,9 @@ mod tests {
     #[test]
     fn async_agent_input_disconnect_after_irreversible_write_waits_for_route() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-input-irreversible");
@@ -3196,6 +3354,9 @@ mod tests {
     #[test]
     fn async_agent_input_disconnect_after_first_write_finishes_remaining_writes() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-input-no-half-delivery");
@@ -3264,6 +3425,9 @@ mod tests {
     #[test]
     fn async_lifecycle_stop_reports_tmux_kill_failure_without_taking_session_offline() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-stop-kill-failure");
@@ -3317,6 +3481,9 @@ mod tests {
     #[test]
     fn async_lifecycle_kill_reports_tmux_kill_failure_without_graveyarding_session() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-kill-kill-failure");
@@ -3376,6 +3543,9 @@ mod tests {
     #[test]
     fn async_lifecycle_stop_disconnect_after_tmux_kill_started_records_abandoned_response() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-lifecycle-stop-abandoned");
@@ -3538,6 +3708,9 @@ mod tests {
     #[test]
     fn async_lifecycle_spawn_disconnect_after_create_started_records_abandoned_response() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-lifecycle-spawn-abandoned");
@@ -3607,6 +3780,9 @@ mod tests {
     #[test]
     fn async_lifecycle_write_failure_after_irreversible_step_records_abandoned_response() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-lifecycle-abandoned-response");
@@ -3657,6 +3833,9 @@ mod tests {
     #[test]
     fn async_project_event_stream_wakes_on_publish_before_poll_interval() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - the fixture builds a temp project and state
+        // dir on disk before driving the route; the reads under test are the
+        // route's own, which the route now takes on the pool
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-event-stream");
@@ -4104,4 +4283,49 @@ fn now_iso() -> String {
         now.second(),
         now.millisecond()
     )
+}
+
+#[cfg(test)]
+mod stream_fingerprint_tests {
+    use super::agent_output_stream_fingerprint;
+    use serde_json::json;
+
+    #[test]
+    fn a_moved_chooser_cursor_is_a_changed_frame() {
+        // The frame is suppressed when its fingerprint repeats, and a client
+        // renders the chooser's rows as controls. In chat mode `output` and
+        // `outputAnsi` are left out of the payload entirely, so without
+        // `paneState` in here a change confined to WHICH row is selected has
+        // nowhere to show up, and the app goes on highlighting a row the pane
+        // has moved off.
+        let chooser = |selected_first: bool| {
+            json!({
+                "sessionId": "claude-1",
+                "startLine": -200,
+                "messages": [],
+                "paneState": {
+                    "promptVisible": false,
+                    "errorVisible": false,
+                    "interruptedVisible": false,
+                    "updatePromptVisible": false,
+                    "selection": {
+                        "question": "Do you want to create hello.txt?",
+                        "options": [
+                            { "number": 1, "label": "Yes", "selected": selected_first },
+                            { "number": 2, "label": "No", "selected": !selected_first },
+                        ],
+                    },
+                },
+            })
+        };
+
+        assert_ne!(
+            agent_output_stream_fingerprint(&chooser(true)),
+            agent_output_stream_fingerprint(&chooser(false))
+        );
+        assert_eq!(
+            agent_output_stream_fingerprint(&chooser(true)),
+            agent_output_stream_fingerprint(&chooser(true))
+        );
+    }
 }

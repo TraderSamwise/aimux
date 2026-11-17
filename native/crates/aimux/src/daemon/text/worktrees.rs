@@ -13,7 +13,7 @@ use crate::daemon::routing::{
 };
 use crate::daemon::text::params::{
     ProjectServiceJsonResult, required_project_service_array, required_project_service_string,
-    resolve_project_relative_path,
+    resolve_project_relative_path, unwrap_project_result,
 };
 use crate::project_api_contract::routes as project_routes;
 use serde_json::{Map, Value, json};
@@ -142,21 +142,54 @@ pub fn route_worktree_text_request(
     None
 }
 
+/// Phase one of `aimux worktree list`. Pure, and public, because this route is
+/// served from the generic locked dispatch and from the shared carve-out.
+pub fn resolve_worktree_list_request(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: project_routes::WORKTREES.to_owned(),
+    })
+}
+
+/// Phase three of `aimux worktree list`, from a raw project-service result.
+pub fn render_worktree_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    render_worktree_list_payload(route_url, &json)
+}
+
 pub fn worktree_list_text_route(
     runtime: &mut impl DaemonWorktreeTextRuntime,
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
 ) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_worktree_list_request(route_url, body) {
+        Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let result = runtime.get_project_service_json(&project, project_routes::WORKTREES);
+    let result = runtime.get_project_service_json(&project, &route_path);
     let (json, _) = match unwrap_project_result(result) {
         Ok(result) => result,
         Err(response) => return response,
     };
-    let worktrees = match required_project_service_array(&json, "worktree list", "worktrees") {
+    render_worktree_list_payload(route_url, &json)
+}
+
+/// Phase three proper. Pure.
+fn render_worktree_list_payload(route_url: &DaemonRouteUrl, json: &Value) -> DaemonRouteResponse {
+    let worktrees = match required_project_service_array(json, "worktree list", "worktrees") {
         Ok(worktrees) => worktrees,
         Err(response) => return response,
     };
@@ -401,16 +434,25 @@ pub fn worktree_path_text_route(
     text_or_json_lines(route_url, payload.clone(), &(input.render)(&payload))
 }
 
-pub fn graveyard_list_text_route(
-    runtime: &mut impl DaemonWorktreeTextRuntime,
+/// Phase one of `aimux graveyard list`: everything decidable without the
+/// project service, so the carve-out can resolve under the lock and release it
+/// before the upstream hop.
+pub fn resolve_graveyard_list_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: project_routes::GRAVEYARD.to_owned(),
+    })
+}
+
+/// Phase three of `aimux graveyard list`, from a raw project-service result.
+pub fn render_graveyard_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
 ) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
-    let result = runtime.get_project_service_json(&project, project_routes::GRAVEYARD);
     let (json, _) = match unwrap_project_result(result) {
         Ok(result) => result,
         Err(response) => return response,
@@ -430,6 +472,25 @@ pub fn graveyard_list_text_route(
         payload.clone(),
         &render_core_graveyard_lines(&payload),
     )
+}
+
+pub fn graveyard_list_text_route(
+    runtime: &mut impl DaemonWorktreeTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_graveyard_list_request(route_url, body) {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_graveyard_list_result(route_url, result)
 }
 
 pub fn graveyard_agent_text_route(
@@ -652,15 +713,6 @@ fn graveyard_resurrect_input() -> GraveyardAgentRouteInput {
         action: "graveyard resurrect",
         route_path: project_routes::graveyard_actions::RESURRECT_AGENT,
         status_fallback: None,
-    }
-}
-
-fn unwrap_project_result(
-    result: ProjectServiceJsonResult,
-) -> Result<(Value, String), DaemonRouteResponse> {
-    match result {
-        ProjectServiceJsonResult::Ok { project_root, json } => Ok((json, project_root)),
-        ProjectServiceJsonResult::Err { response } => Err(response),
     }
 }
 

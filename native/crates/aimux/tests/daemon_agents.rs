@@ -29,9 +29,50 @@ struct FakeAgentRuntime {
     invalid_agents: bool,
     tmux_live_window_error: Option<String>,
     agent_response: Option<Value>,
+    /// Whether this machine runs the session. `false` is the case the forward
+    /// is for: a session that lives on another machine.
+    hosts_session: bool,
+    /// Which machine the owner table names for any checkout, and why not.
+    owner: Option<String>,
+    owner_reason: &'static str,
+    /// What the owning machine answers, or the transport's own failure.
+    forwarded: Option<Result<(u16, Value), String>>,
+    forwards: Vec<(String, Value)>,
+}
+
+impl FakeAgentRuntime {
+    fn owned_elsewhere(answer: Result<(u16, Value), String>) -> Self {
+        Self {
+            // Not here, which is the only case a forward is for.
+            hosts_session: false,
+            owner: Some("strix".to_owned()),
+            owner_reason: "owner_elsewhere",
+            forwarded: Some(answer),
+            ..Default::default()
+        }
+    }
 }
 
 impl DaemonAgentTextRuntime for FakeAgentRuntime {
+    fn hosts_session_locally(&mut self, _project_root: &str, _session_id: &str) -> bool {
+        self.hosts_session
+    }
+
+    fn peer_owner_for_input(&self, _project_root: &str) -> (Option<String>, &'static str) {
+        (self.owner.clone(), self.owner_reason)
+    }
+
+    fn forward_agent_input(
+        &mut self,
+        machine_id: &str,
+        body: &Value,
+    ) -> Result<(u16, Value), String> {
+        self.forwards.push((machine_id.to_owned(), body.clone()));
+        self.forwarded
+            .clone()
+            .unwrap_or_else(|| Err("no forward configured".to_owned()))
+    }
+
     fn resolve_project_root(&self, value: &str) -> String {
         if value == "." {
             "/repo".into()
@@ -250,6 +291,209 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
             _ => ProjectServiceJsonResult::error(DaemonRouteResponse::text(404, "not found\n")),
         }
     }
+}
+
+fn input_request(extra: &str) -> String {
+    format!(
+        "{}?json=1&project=/repo&sessionId=codex-1&text=look%20at%20the%20shards{extra}",
+        CORE_API_ROUTES.agent_input_text
+    )
+}
+
+fn send_input(runtime: &mut FakeAgentRuntime, extra: &str) -> DaemonRouteResponse {
+    route_agent_text_request(runtime, "POST", &input_request(extra), None)
+        .expect("the input route answered")
+}
+
+fn body_text(response: &DaemonRouteResponse) -> String {
+    match &response.body {
+        DaemonResponseBody::Text(text) => text.clone(),
+        DaemonResponseBody::Json(value) => value.to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// When another machine owns the checkout, the words go there.
+///
+/// And they go as a PROJECT, not as a port: the owner resolves its own
+/// address, which is the whole reason this door exists.
+#[test]
+fn input_for_a_checkout_another_machine_owns_is_forwarded_to_it() {
+    let mut runtime = FakeAgentRuntime::owned_elsewhere(Ok((
+        200,
+        json!({ "ok": true, "sessionId": "codex-1", "accepted": true }),
+    )));
+
+    let response = send_input(&mut runtime, "&from=claude-utymep&task=task-1");
+
+    assert_eq!(response.status, 200, "{}", body_text(&response));
+    assert_eq!(
+        runtime.forwards,
+        vec![(
+            "strix".to_owned(),
+            json!({
+                "project": "/repo",
+                "sessionId": "codex-1",
+                "text": "look at the shards",
+                "from": "claude-utymep",
+                "task": "task-1"
+            })
+        )]
+    );
+    // And nothing was sent to this machine's own project service.
+    assert!(runtime.calls.is_empty(), "{:?}", runtime.calls);
+}
+
+/// Every reason the owner is not somebody else takes today's local path, and
+/// SAYS which reason -- the eight were computed and discarded, which made the
+/// whole set decorative.
+#[test]
+fn input_takes_the_local_path_for_every_reason_it_is_not_forwarded() {
+    for reason in [
+        "relay_off",
+        "relay_unavailable",
+        "owner_unknown",
+        "owner_none",
+        "owner_ambiguous",
+        "owner_is_this_machine",
+        "owner_unidentified",
+        "owner_offline",
+    ] {
+        let mut runtime = FakeAgentRuntime {
+            // Not here, so the owner table IS consulted -- otherwise every
+            // iteration would be the same execution and the reason would
+            // never be read.
+            hosts_session: false,
+            owner: None,
+            owner_reason: reason,
+            agent_response: Some(json!({ "ok": true, "sessionId": "codex-1" })),
+            ..Default::default()
+        };
+
+        let response = send_input(&mut runtime, "");
+
+        assert_eq!(response.status, 200, "{reason}: {}", body_text(&response));
+        assert!(runtime.forwards.is_empty(), "{reason} must not forward");
+        assert_eq!(
+            runtime.calls.len(),
+            1,
+            "{reason} must reach this machine's project service"
+        );
+        assert_eq!(runtime.calls[0].route_path, project_routes::agents::INPUT);
+        assert!(
+            body_text(&response).contains(reason),
+            "{reason} must be carried to the caller: {}",
+            body_text(&response)
+        );
+    }
+}
+
+/// A session on a machine that SERVES the checkout stays local, whoever owns
+/// the path.
+///
+/// Ownership is an exclusive claim on a path; it does not mean the other
+/// machine is the only one running agents there. Without this, `aimux input`
+/// for a laptop-local agent in an owned checkout was sent to the owner and
+/// refused there -- and `--force` was refused before it could even be tried,
+/// so there was no way to reach a local session at all.
+#[test]
+fn a_session_this_machine_runs_is_never_forwarded() {
+    for extra in ["", "&force=1"] {
+        let mut runtime = FakeAgentRuntime {
+            // Running here AND the path owned by somebody else: the case that
+            // was broken.
+            hosts_session: true,
+            owner: Some("strix".to_owned()),
+            owner_reason: "owner_elsewhere",
+            forwarded: Some(Ok((200, json!({ "ok": true })))),
+            agent_response: Some(json!({ "ok": true, "sessionId": "codex-1" })),
+            ..Default::default()
+        };
+
+        let response = send_input(&mut runtime, extra);
+
+        assert_eq!(response.status, 200, "{extra}: {}", body_text(&response));
+        assert!(
+            runtime.forwards.is_empty(),
+            "{extra} must not be forwarded off a machine that serves the checkout"
+        );
+        assert_eq!(runtime.calls.len(), 1, "{extra} must be delivered locally");
+        assert!(
+            body_text(&response).contains("session_is_here"),
+            "{extra}: {}",
+            body_text(&response)
+        );
+    }
+}
+
+/// `--force` cannot cross, and says so here rather than coming back as a 403
+/// from somewhere else.
+///
+/// The owner's allowlist refuses a peer's `force` by name, so carrying it
+/// would turn this into another machine's refusal about a flag this one
+/// accepted -- and dropping it silently would deliver unforced input while the
+/// person believes otherwise.
+#[test]
+fn forcing_input_onto_another_machine_is_refused_here() {
+    let mut runtime = FakeAgentRuntime::owned_elsewhere(Ok((200, json!({ "ok": true }))));
+
+    let response = send_input(&mut runtime, "&force=1");
+
+    assert_eq!(response.status, 400, "{}", body_text(&response));
+    assert!(
+        body_text(&response).contains("--force cannot be sent to strix"),
+        "{}",
+        body_text(&response)
+    );
+    assert!(runtime.forwards.is_empty(), "nothing may be sent");
+    assert!(runtime.calls.is_empty(), "and not locally either");
+}
+
+/// The owner's refusal is carried verbatim and NAMES the owner.
+///
+/// Its rules are stricter than this machine's -- input arriving from elsewhere
+/// is peer input there, so a command or a second line to a shell is refused --
+/// and a bare 403 would read as though this machine had refused its own
+/// keyboard.
+#[test]
+fn another_machines_refusal_says_which_machine_refused() {
+    let mut runtime = FakeAgentRuntime::owned_elsewhere(Ok((
+        403,
+        json!({
+            "ok": false,
+            "error": "a peer machine cannot send a command, because a command carries no sender"
+        }),
+    )));
+
+    let response = send_input(&mut runtime, "");
+
+    assert_eq!(response.status, 403);
+    let text = body_text(&response);
+    assert!(text.contains("strix refused it"), "{text}");
+    assert!(text.contains("a command carries no sender"), "{text}");
+}
+
+/// A transport that could not deliver is a 502 naming the machine, never a
+/// quiet fall back to this one.
+///
+/// Falling back locally would put the words in the wrong agent's pane and
+/// report success, which is the worst of the available outcomes.
+#[test]
+fn a_forward_that_could_not_be_delivered_is_not_quietly_sent_locally() {
+    let mut runtime =
+        FakeAgentRuntime::owned_elsewhere(Err("peer was never asked, so it did not answer".into()));
+
+    let response = send_input(&mut runtime, "");
+
+    assert_eq!(response.status, 502, "{}", body_text(&response));
+    let text = body_text(&response);
+    assert!(text.contains("could not reach strix"), "{text}");
+    assert!(text.contains("never asked"), "{text}");
+    assert!(
+        runtime.calls.is_empty(),
+        "a failed forward must not become a local send: {:?}",
+        runtime.calls
+    );
 }
 
 #[test]

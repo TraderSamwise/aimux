@@ -517,18 +517,28 @@ pub(super) async fn launch_agent_session_async(
                 .flatten()
         })
         .or_else(|| effective_session_id_flag.as_ref().map(|_| pseudo_uuid_v4()));
-    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+    // On the blocking pool: a route handler runs per REQUEST, so a sync read
+    // here parks one of the project service's two async workers, and two
+    // concurrent requests park both.
+    let topology = match crate::project_service::scheduler::read_topology_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await
+    {
         Ok(topology) => topology,
         Err(error) => {
+            // The launch-failure record keeps its "read-topology" step and the
+            // underlying detail; only where the read RAN has changed.
+            let detail = error.detail().to_owned();
             record_launch_failure(
                 &project_state_dir,
                 &input,
                 "read-topology",
-                &error,
+                &detail,
                 None,
                 None,
             );
-            return Err(error);
+            return Err(detail);
         }
     };
     if !input.allow_replace_session
@@ -551,29 +561,57 @@ pub(super) async fn launch_agent_session_async(
         .and_then(|runtime| runtime.get("agentPreambleEnabled"))
         .and_then(Value::as_bool)
         != Some(false);
-    let preamble = if input.suppress_startup_preamble {
-        String::new()
-    } else {
-        cap_launch_preamble_for_argv(
-            context.project_root(),
-            &input.session_id,
-            &build_session_preamble(
-                context.project_root(),
-                &input.session_id,
-                &input.command,
-                input.worktree_path.as_deref(),
-                input.extra_preamble.as_deref(),
-                automatic_preamble_enabled,
-                input.team.as_ref(),
-            ),
-        )?
+    // Both of these touch the filesystem on what would otherwise be an async
+    // worker: `build_session_preamble` READS, and `ensure_default_plan` WRITES
+    // a plan file. One hop covers the pair, which keeps `ensure_default_plan`
+    // unconditional -- it runs whether or not a preamble was built, exactly as
+    // before -- and avoids paying two hops for two adjacent sync calls.
+    //
+    // The arguments are owned for the closure. `team` is cloned, which is the
+    // one real cost here, paid once per launch against a read and a write that
+    // can each park a worker for as long as the disk takes.
+    let preamble = {
+        let project_root = context.project_root().to_path_buf();
+        let session_id = input.session_id.clone();
+        let command = input.command.clone();
+        let worktree_path = input.worktree_path.clone();
+        let extra_preamble = input.extra_preamble.clone();
+        let team = input.team.clone();
+        let suppress = input.suppress_startup_preamble;
+        crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::task_name("project-service", "launch-preamble-and-plan"),
+            move || -> Result<String, String> {
+                let preamble = if suppress {
+                    String::new()
+                } else {
+                    cap_launch_preamble_for_argv(
+                        &project_root,
+                        &session_id,
+                        &build_session_preamble(
+                            &project_root,
+                            &session_id,
+                            &command,
+                            worktree_path.as_deref(),
+                            extra_preamble.as_deref(),
+                            automatic_preamble_enabled,
+                            team.as_ref(),
+                        ),
+                    )?
+                };
+                ensure_default_plan(
+                    &project_root,
+                    &session_id,
+                    &command,
+                    worktree_path.as_deref(),
+                );
+                Ok(preamble)
+            },
+        )
+        .await
+        // A pool task that never ran is not an empty preamble: an empty one
+        // would launch the agent with no instructions at all.
+        .map_err(|error| format!("launch preamble was not built: {error}"))??
     };
-    ensure_default_plan(
-        context.project_root(),
-        &input.session_id,
-        &input.command,
-        input.worktree_path.as_deref(),
-    );
     let preamble_flag = string_array_field(tool_config.get("preambleFlag"));
     let should_inject_preamble = is_configured_tool_command
         && !input.suppress_startup_preamble

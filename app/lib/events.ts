@@ -3,9 +3,22 @@
 import type { ProjectUpdateEvent } from "../../src/project-api-contract";
 import type { AgentActivityState, AgentAttentionState } from "../../src/agent-events-contract";
 import type { AgentTranscriptMessage } from "../../src/agent-transcript-contract";
-import type { TmuxUnavailableMarker } from "../../src/project-api-contract";
+import type {
+  LivePaneSelection,
+  LivePaneSelectionOption,
+  LivePaneState,
+  TmuxUnavailableMarker,
+} from "../../src/project-api-contract";
 
-export type { ProjectUpdateEvent, AgentTranscriptMessage, AgentActivityState, AgentAttentionState };
+export type {
+  ProjectUpdateEvent,
+  AgentTranscriptMessage,
+  AgentActivityState,
+  AgentAttentionState,
+  LivePaneSelection,
+  LivePaneSelectionOption,
+  LivePaneState,
+};
 
 export type AlertKind =
   | "notification"
@@ -98,6 +111,8 @@ export interface AgentOutputEvent {
   /** The tool's own progress line, e.g. `Jitterbugging… (2m 23s · ↓ 8.1k tokens)`. */
   activityText?: string;
   attention?: AgentAttentionState;
+  /** How the runtime reads the pane's own chrome, including any live chooser. */
+  paneState?: LivePaneState;
   tmuxUnavailable?: TmuxUnavailableMarker;
 }
 

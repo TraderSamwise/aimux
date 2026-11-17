@@ -34,6 +34,7 @@ daemon_auth
 daemon_coherence_doctor
 daemon_collaboration
 daemon_disk_doctor
+daemon_health_pool
 daemon_host_agent
 daemon_http
 daemon_jobs
@@ -111,7 +112,6 @@ plugin_tick_tasks
 process_inspector
 project_api_contract
 project_liveness_surfaces
-project_service_agent_controls
 project_service_agent_output
 project_service_attachments
 project_service_desktop_alerts
@@ -152,6 +152,7 @@ project_service_worktrees
 proxy_project_binding
 registry
 relay_client_protocol
+relay_project_endpoints
 relay_runner
 remote_access
 remote_credentials
@@ -169,6 +170,8 @@ subagent_activity_task
 supervisor_lane_surfaces
 terminal_key_parser_contract
 tmux_expose
+topology_deep_row_width
+topology_depth_surfaces
 transcript_reconciler_behavior
 transcript_reconciler_task
 transcript_tail_encoding

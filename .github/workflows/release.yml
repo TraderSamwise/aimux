@@ -45,16 +45,23 @@ jobs:
             variant: local
             asset: aimux-local-linux-arm64
             runner: ubuntu-24.04-arm
+          # macos-15, not macos-14: GitHub retired the macos-14 image, and a
+          # job asking for it is CANCELLED one second after it starts rather
+          # than failing with a message. That is what happened to v0.1.73 --
+          # both Darwin asset jobs died instantly, every publish job skipped
+          # for want of their assets, and the run reported "cancelled" with
+          # nothing to say why. The bottle and tap jobs below already run on
+          # macos-15.
           - platform: darwin
             arch: arm64
             variant: full
             asset: aimux-darwin-arm64
-            runner: macos-14
+            runner: macos-15
           - platform: darwin
             arch: arm64
             variant: local
             asset: aimux-local-darwin-arm64
-            runner: macos-14
+            runner: macos-15
 
     steps:
       - uses: actions/checkout@v4

@@ -22,8 +22,7 @@ use crate::project_service::graveyard_contract::WORKTREE_GRAVEYARD_AGENT_REASON;
 use crate::project_service::lifecycle::{now_iso, prune_restore_eligibility};
 use crate::project_service::prompt_context::clear_prompt_context;
 use crate::runtime_topology::{
-    list_topology_session_states, read_runtime_topology, runtime_topology_path,
-    update_runtime_topology,
+    list_topology_session_states, runtime_topology_path, update_runtime_topology,
 };
 use crate::runtime_topology_sessions::move_topology_session_to_graveyard;
 
@@ -55,8 +54,17 @@ impl PeriodicTask for RetiredWorktreeReaperTask {
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             let topology_path = runtime_topology_path(context.project_state_dir());
-            let topology = read_runtime_topology(&topology_path).map_err(|error| {
-                format!("retired worktree reaper topology unavailable: {error}")
+            // The UPDATE below already hops; this read did not, and the
+            // comment there explains exactly why it should have.
+            let topology = super::scheduler::read_topology_off_the_worker(
+                context.project_state_dir().to_path_buf(),
+            )
+            .await
+            .map_err(|error| {
+                format!(
+                    "retired worktree reaper topology unavailable: {}",
+                    error.detail()
+                )
             })?;
             if stranded_agent_ids(&topology).is_empty() {
                 return Ok(());

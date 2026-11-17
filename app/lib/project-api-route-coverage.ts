@@ -83,6 +83,7 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/live-pane/input": "client-api",
   "/live-pane/interrupt": "client-api",
   "/live-pane/resize": "client-api",
+  "/live-pane/select": "client-api",
   "/services/create": "client-api",
   "/services/stop": "client-api",
   "/services/resume": "client-api",

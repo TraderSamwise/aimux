@@ -1274,8 +1274,31 @@ impl DashboardController {
     }
 
     pub fn set_subscreen_actions(&mut self, actions: Vec<DashboardSubscreenAction>) {
+        // Follow the row the person chose, not the slot it was in. This list is
+        // rebuilt from the response on every poll while the index survives, so
+        // a reordering list silently re-points the selection at a different
+        // agent and Enter opens that one instead. Topology now orders its rows
+        // by the delegation tree, which reorders whenever a watch is bound.
+        let held = self
+            .subscreen_actions
+            .get(self.subscreen_index)
+            .filter(|action| !matches!(action, DashboardSubscreenAction::None))
+            .cloned();
         self.subscreen_item_count = actions.len();
         self.subscreen_actions = actions;
+        if let Some(held) = held {
+            // Only when the row is unambiguous. A list can carry the same
+            // action twice -- two rows about one agent -- and snapping to the
+            // first of them would move a selection the person did not move.
+            let mut found = self
+                .subscreen_actions
+                .iter()
+                .enumerate()
+                .filter(|(_, action)| **action == held);
+            if let (Some((moved, _)), None) = (found.next(), found.next()) {
+                self.subscreen_index = moved;
+            }
+        }
         if self.subscreen_index >= self.subscreen_item_count {
             self.subscreen_index = self.subscreen_item_count.saturating_sub(1);
         }
@@ -4233,7 +4256,7 @@ pub fn is_teammate_session(session: &DashboardSession) -> bool {
     session
         .team
         .as_ref()
-        .is_some_and(|team| !team.parent_session_id.is_empty())
+        .is_some_and(|team| team.manager_session_id().is_some())
 }
 
 pub fn sorted_teammates_for_parent<'a>(
@@ -4247,7 +4270,7 @@ pub fn sorted_teammates_for_parent<'a>(
             session
                 .team
                 .as_ref()
-                .is_some_and(|team| team.parent_session_id == parent_session_id)
+                .is_some_and(|team| team.manager_session_id() == Some(parent_session_id))
         })
         .collect::<Vec<_>>();
     // Teammate rows render in the same tmux screen as the footer chips, so

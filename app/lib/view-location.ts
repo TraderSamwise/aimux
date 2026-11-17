@@ -9,7 +9,6 @@ export interface AimuxViewParams {
   machine?: string | null;
   mode?: string | null;
   lens?: string | null;
-  section?: string | null;
   document?: string | null;
   threadId?: string | null;
 }
@@ -90,7 +89,6 @@ export function mergeViewParams(
     machine: next.machine !== undefined ? next.machine : cleanSearchValue(current.machine),
     mode: next.mode !== undefined ? next.mode : cleanSearchValue(current.mode),
     lens: next.lens !== undefined ? next.lens : cleanSearchValue(current.lens),
-    section: next.section !== undefined ? next.section : cleanSearchValue(current.section),
     document: next.document !== undefined ? next.document : cleanSearchValue(current.document),
     threadId: next.threadId !== undefined ? next.threadId : cleanSearchValue(current.threadId),
   };

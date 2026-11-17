@@ -48,6 +48,16 @@ pub struct CoreAgentInputArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     pub force: bool,
+    /// Who is sending, when the sender is another agent rather than a person.
+    ///
+    /// Optional because a person typing into their own terminal is not
+    /// announcing themselves to anybody, and because every caller that
+    /// existed before this field has to keep working unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// The task this input is acting on, so the delivery reaches the ledger.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,6 +380,13 @@ pub struct CoreCollaborationArgs {
 pub struct CoreTaskArgs {
     pub command: String,
     pub subcommand: String,
+    /// The workstream a task belongs to, across worktrees and projects.
+    ///
+    /// Without it, membership gets encoded in the description -- the queue on
+    /// tealstreet-next carries two items hand-prefixed `[deaws]` for exactly
+    /// this reason, because there was no field to put it in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -21,8 +21,9 @@ use tokio::io::{
 use tokio::net::TcpStream;
 use tokio::time::Instant;
 
-use crate::async_runtime::{spawn_blocking_named, task_name};
+use crate::async_runtime::{block_on_named, spawn_blocking_named, task_name};
 use crate::daemon::routing::DaemonRouteUrl;
+use crate::debug_logging::{LogLevel, log_always_at};
 use crate::desktop_notifier::{DesktopNotificationPayload, send_desktop_notification_and_wait};
 use crate::launcher_env::DEFAULT_DAEMON_PORT;
 use crate::machine_identity::MachineIdentity;
@@ -477,6 +478,14 @@ fn security_notification(title: &str, message: &str) {
     });
 }
 
+/// How long a forwarded input may hold the daemon's runtime mutex.
+///
+/// Short on purpose. The text route runs with that mutex held, so this is time
+/// in which no other daemon request is served at all -- and a person waiting
+/// on `aimux input` would rather hear that it did not go than have the whole
+/// daemon stop answering while they wait.
+const PEER_INPUT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Owns the relay client for the life of the daemon.
 #[derive(Default)]
 pub struct RelaySupervisor {
@@ -504,6 +513,28 @@ impl RelaySupervisor {
                 if !force && !finished {
                     return;
                 }
+                // A replacement leaves no other trace, and that is how it
+                // hid. The new runner gets a fresh status snapshot -- no
+                // close code, no reason, streak zero -- so from every surface
+                // it looks like a link that has only ever been connected.
+                // The close recording cannot catch it either: this stops the
+                // runner first, and an orderly stop is deliberately not an
+                // ending worth stamping.
+                //
+                // Measured on sam-mini: `lastConnectedAt` moved while NOT a
+                // single "relay connection closed" was logged, which is only
+                // possible if the socket never closed and the runner was
+                // swapped underneath it.
+                log_always_at(
+                    LogLevel::Warn,
+                    "relay runner replaced",
+                    "relay",
+                    Some(json!({
+                        "previousStatus": status.map(|status| status.as_str()),
+                        "forced": force,
+                        "relayUrl": relay_url,
+                    })),
+                );
                 handle.stop();
             }
         }
@@ -544,6 +575,131 @@ impl RelaySupervisor {
             return Err("relay_disconnected".to_owned());
         }
         runner.push_notification(notification)
+    }
+
+    /// Whether a relay is connected right now.
+    ///
+    /// A status read, no I/O: the endpoint task asks this before it reads the
+    /// project registry, so a machine that is logged out pays nothing.
+    pub fn is_connected(&self) -> bool {
+        match self.current.lock() {
+            Ok(current) => current.as_ref().is_some_and(|(_, handle)| {
+                handle.status().status == Some(crate::remote::relay_client::RelayStatus::Connected)
+            }),
+            // A poisoned mutex is not a disconnected relay, but it is also not
+            // a reason to go and read the registry: `push_project_endpoints`
+            // answers `relay_unavailable` for it, which fails the tick and
+            // names it.
+            Err(_) => true,
+        }
+    }
+
+    /// Who owns this checkout, and is it somebody else.
+    ///
+    /// `None` means "do not forward" for every reason that is not an owner
+    /// elsewhere: the relay is off, the table has not arrived, nobody owns it,
+    /// two rows fold to one key, or the owner is this machine. The caller's
+    /// local path is correct in all of them, and the second return value says
+    /// which so it can be printed rather than guessed at.
+    pub fn peer_owner_for_input(&self, project_root: &str) -> (Option<String>, &'static str) {
+        let Ok(current) = self.current.lock() else {
+            // A poisoned mutex is not a reason to route a person's keystrokes
+            // anywhere, and the local path is what they would have got before
+            // any of this existed.
+            return (None, "relay_unavailable");
+        };
+        let Some((runner, _)) = current.as_ref() else {
+            return (None, "relay_off");
+        };
+        // The decision itself is a pure function, so it can be tested without
+        // standing up a relay.
+        crate::remote::remote_project_owners::peer_owner_decision(
+            runner.project_owner_for(project_root),
+            runner.machine_id(),
+        )
+    }
+
+    /// Forward one agent input to the machine that owns the checkout.
+    ///
+    /// The timeout is deliberately short. The daemon's runtime mutex is held
+    /// across the whole text route, so every second spent here is a second no
+    /// other daemon request can be served -- which is the failure the mutex's
+    /// own comment documents. A person waiting on `aimux input` would rather
+    /// be told it did not go than have the daemon stop answering.
+    pub fn forward_agent_input(
+        &self,
+        machine_id: &str,
+        body: &serde_json::Value,
+    ) -> Result<(u16, serde_json::Value), String> {
+        let Ok(current) = self.current.lock() else {
+            return Err("relay_unavailable".to_owned());
+        };
+        let Some((runner, _)) = current.as_ref() else {
+            return Err("relay_off".to_owned());
+        };
+        let runner = Arc::clone(runner);
+        // Dropped before the wait, and this matters more than the comment on
+        // the timeout below. Held across `block_on_named`, this lock would
+        // stop `status`, `push`, `push_project_endpoints`, `is_connected`,
+        // `connect` and `disconnect` for the whole five seconds -- a broader
+        // stall than the runtime mutex the timeout is bounded for, and every
+        // other method on this type only queues.
+        drop(current);
+        let machine_id = machine_id.to_owned();
+        let body = body.clone();
+        // Bound first so the call below stays on one line with its marker:
+        // the seam audit wants the two adjacent, and `cargo fmt` wraps a long
+        // `block_on_named(...)` onto the next line, which leaves the marker
+        // describing nothing.
+        let ask = async move {
+            runner
+                .request_peer(
+                    &machine_id,
+                    "POST",
+                    crate::proxy_project_binding::PEER_AGENT_INPUT_ROUTE,
+                    &body,
+                    PEER_INPUT_TIMEOUT,
+                )
+                .await
+        };
+        // The daemon's text routes are sync and run on a blocking worker, which
+        // is the context `block_on_named` is for. The marker below has to be
+        // the line directly above the call -- a second comment line between
+        // them and the audit reads it as describing nothing.
+        //
+        // aimux-async-seam: permanent - a sync daemon text route awaits a peer
+        let answer = block_on_named("relay:forward-input", ask);
+        match answer {
+            Ok(answer) => Ok((answer.status, answer.body)),
+            // `PeerRequestError::message` rather than sentences of my own.
+            // Four endings that a person needs told apart -- above all whether
+            // the words may have arrived anyway -- and the first draft here
+            // had `TimedOut` and `AnsweredNothing` the wrong way round. The
+            // type that defines the distinction is the one that should say it.
+            Err(error) => Err(error.message()),
+        }
+    }
+
+    /// Report where the project services are listening, or say why it could
+    /// not go.
+    ///
+    /// The caller records what it pushed, so a refusal has to be an error and
+    /// not a silent no-op: recording a frame that never left would leave the
+    /// share pointing at a dead port until the next time the port changed.
+    pub fn push_project_endpoints(
+        &self,
+        projects: &[crate::remote::relay_client::ProjectEndpoint],
+    ) -> Result<(), String> {
+        let Ok(current) = self.current.lock() else {
+            return Err("relay_unavailable".to_owned());
+        };
+        let Some((runner, handle)) = current.as_ref() else {
+            return Err("relay_off".to_owned());
+        };
+        if handle.status().status != Some(crate::remote::relay_client::RelayStatus::Connected) {
+            return Err("relay_disconnected".to_owned());
+        }
+        runner.push_project_endpoints(projects)
     }
 
     /// `off` means there is no client at all, which is a different thing from a
@@ -706,6 +862,40 @@ mod tests {
     use tokio::sync::Notify;
     use tokio::time::Instant;
 
+    /// A replacement must say so, because nothing else can.
+    ///
+    /// `RelaySupervisor::connect` stops the live runner and builds a new one
+    /// with a fresh status snapshot -- no close code, no reason, streak zero
+    /// -- so every surface then reports a link that has only ever been
+    /// connected. The close recording cannot see it either: the stop comes
+    /// first, and an orderly stop is deliberately not an ending worth
+    /// stamping. Measured on sam-mini, `lastConnectedAt` moved while not one
+    /// "relay connection closed" line was written, which is only possible if
+    /// the socket never closed and the runner was swapped underneath it.
+    ///
+    /// `connect` dials for real, so it cannot be driven here; the log is
+    /// pinned at the source instead, bounded to the branch that does the
+    /// replacing so a line anywhere else in the function cannot satisfy it.
+    #[test]
+    fn replacing_the_relay_runner_is_logged_where_it_happens() {
+        let source = include_str!("daemon_relay.rs");
+        let guard = source
+            .find("if !force && !finished {")
+            .expect("the keep-the-existing-runner guard is still here");
+        let stop = source[guard..]
+            .find("handle.stop();")
+            .expect("the replacement still stops the old runner");
+        let branch = &source[guard..guard + stop];
+        assert!(
+            branch.contains("\"relay runner replaced\""),
+            "a replacement must be logged between the guard and the stop, or it leaves no trace at all"
+        );
+        assert!(
+            branch.contains("previousStatus"),
+            "the log must say what it replaced, or it cannot be told from a reconnect"
+        );
+    }
+
     #[test]
     fn relay_daemon_response_over_the_cap_is_an_error() {
         let mut response = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
@@ -829,6 +1019,8 @@ mod tests {
     #[test]
     fn relay_daemon_request_connect_failure_is_not_reported_as_committed() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - binds a std listener only to claim a port and
+        // drops it at once, so the relay has a closed port to fail a connect against
         // aimux-async-seam: test - daemon relay unit test drives async loopback bridge
         crate::async_runtime::block_on_named("daemon-relay:test-connect-failure", async {
             let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind free port");

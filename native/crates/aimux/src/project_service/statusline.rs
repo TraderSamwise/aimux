@@ -27,6 +27,7 @@ use super::desktop_state::{
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
+use crate::team_contract::manager_session_id;
 
 const STATUSLINE_STALE_MS: u128 = 8_000;
 const STATUSLINE_REFRESH_STATE_FILE: &str = "statusline-refresh.json";
@@ -148,11 +149,43 @@ where
     F: FnOnce(Vec<String>) -> Fut,
     Fut: Future<Output = Result<(), String>>,
 {
+    // This route wrote to disk FIVE times on the async worker serving it, and
+    // only one of those was a call my audit's name list knew about. Two of the
+    // five are hopped here; the middle three cannot be, and the comment above
+    // them explains what proved it.
     let project_state_dir = context.project_state_dir();
     if input.force {
-        invalidate_tmux_statusline_artifacts(&project_state_dir);
+        let dir = project_state_dir.clone();
+        crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::task_name("project-service", "statusline-invalidate"),
+            move || invalidate_tmux_statusline_artifacts(&dir),
+        )
+        .await
+        .map_err(|error| format!("statusline artifacts were not invalidated: {error}"))?;
     }
     let snapshot = build_statusline_snapshot_async(context).await?;
+    // aimux-async-blocking: permanent - these three writes must not be
+    // interrupted by a cancellation, and a hop is an await point
+    //
+    // THESE STAY INLINE DELIBERATELY, and a test says why:
+    // `async_statusline_refresh_cancellation_leaves_refresh_marked_pending`
+    // asserts that the artifacts are COMPLETE before the tmux refresh is
+    // awaited, so that a caller who gives up mid-refresh still finds a
+    // coherent state on disk rather than a snapshot with no refresh record.
+    //
+    // I tried hopping them and the test caught it: moving the three into one
+    // `spawn_blocking` introduces an await point between the snapshot and the
+    // writes, so a cancellation can land there. The closure does finish --
+    // tokio does not cancel a blocking task whose handle was dropped -- but it
+    // finishes LATER, and the observable state in between is exactly the half
+    // written one the test forbids. The run showed it precisely:
+    // `statusline.json` present, `statusline-refresh.json` absent.
+    //
+    // The snapshot build above cannot join them into one uncancellable unit
+    // either, because it genuinely awaits (`desktop_state_for_context_async`).
+    // So the write burst is accepted here, and the two file operations that do
+    // NOT carry this constraint -- the invalidate before it and the refresh
+    // state after it -- are hopped.
     write_statusline_snapshot(&project_state_dir, &snapshot)?;
     write_precomputed_tmux_statusline_files(
         &project_state_dir,
@@ -168,25 +201,53 @@ where
     )?;
     let tmux_refresh_error = match refresh_status(refresh_status_argv()).await {
         Ok(()) => {
-            write_statusline_refresh_state(
+            write_statusline_refresh_state_off_the_worker(
                 &project_state_dir,
                 "applied",
                 input.session_id.as_deref(),
                 None,
-            )?;
+            )
+            .await?;
             None
         }
         Err(error) => {
-            write_statusline_refresh_state(
+            // The refresh error is what this route reports, so it survives the
+            // hop: a failure to RECORD it must not overwrite it.
+            write_statusline_refresh_state_off_the_worker(
                 &project_state_dir,
                 "failed",
                 input.session_id.as_deref(),
                 Some(&error),
-            )?;
+            )
+            .await?;
             Some(error)
         }
     };
     Ok(StatuslineRefreshResult { tmux_refresh_error })
+}
+
+/// `write_statusline_refresh_state` off the async worker.
+///
+/// Both arms of the tmux-refresh match write this state, so the owning and
+/// hopping lives here once instead of twice.
+async fn write_statusline_refresh_state_off_the_worker(
+    project_state_dir: &Path,
+    status: &str,
+    session_id: Option<&str>,
+    error: Option<&str>,
+) -> Result<(), String> {
+    let dir = project_state_dir.to_path_buf();
+    let status = status.to_owned();
+    let session_id = session_id.map(str::to_owned);
+    let error = error.map(str::to_owned);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("project-service", "statusline-refresh-state"),
+        move || {
+            write_statusline_refresh_state(&dir, &status, session_id.as_deref(), error.as_deref())
+        },
+    )
+    .await
+    .map_err(|error| format!("statusline refresh state was not written: {error}"))?
 }
 
 pub(crate) fn refresh_tmux_status(args: &[String]) {
@@ -291,7 +352,13 @@ pub async fn build_statusline_snapshot_async(
     context: &ProjectServiceRequestContext,
 ) -> Result<Value, String> {
     let project_state_dir = context.project_state_dir();
-    let metadata = load_metadata_state(&project_state_dir);
+    // On the blocking pool. `load_metadata_state` is infallible -- a missing or
+    // unreadable file becomes an empty state -- so the only error here is a
+    // pool task that never ran, which is not the same thing.
+    let metadata = crate::project_service::scheduler::read_metadata_state_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await?;
     let desktop_state = if let Some(desktop_state) = context.desktop_state.as_ref() {
         desktop_state.clone()
     } else {
@@ -1222,15 +1289,12 @@ fn resolve_focused_teammate_group<'a>(
     let Some(focused) = resolve_focused_teammate(snapshot, project_root, options) else {
         return Vec::new();
     };
-    let Some(parent_session_id) = string_field_from_path(focused, &["team", "parentSessionId"])
-    else {
+    let Some(parent_session_id) = manager_session_id(focused) else {
         return Vec::new();
     };
     let mut teammates = statusline_session_group(snapshot, "teammates")
         .into_iter()
-        .filter(|session| {
-            string_field_from_path(session, &["team", "parentSessionId"]) == Some(parent_session_id)
-        })
+        .filter(|session| manager_session_id(session) == Some(parent_session_id))
         .filter(|session| is_live_footer_session(session))
         .collect::<Vec<_>>();
     teammates.sort_by(compare_teammate_sessions);
@@ -1252,14 +1316,12 @@ fn resolve_current_teammates<'a>(
     else {
         return Vec::new();
     };
-    if string_field_from_path(parent_session, &["team", "parentSessionId"]).is_some() {
+    if manager_session_id(parent_session).is_some() {
         return Vec::new();
     }
     let mut teammates = statusline_session_group(snapshot, "teammates")
         .into_iter()
-        .filter(|session| {
-            string_field_from_path(session, &["team", "parentSessionId"]) == Some(parent_session_id)
-        })
+        .filter(|session| manager_session_id(session) == Some(parent_session_id))
         .filter(|session| is_live_footer_session(session))
         .collect::<Vec<_>>();
     teammates.sort_by(compare_teammate_sessions);
@@ -1999,6 +2061,60 @@ mod tests {
         assert!(!rendered.contains("other"));
         assert!(rendered.find("claude(coder)").unwrap() < rendered.find("shell[svc]").unwrap());
         assert!(rendered.find("shell[svc]").unwrap() < rendered.find("team:").unwrap());
+    }
+
+    #[test]
+    fn a_blank_stored_parent_does_not_make_an_agent_somebody_else_s_report() {
+        // `supervisor_team(role)` seeds `"parentSessionId": ""`, and this file
+        // used to read that path without trimming: the blank arrived as
+        // `Some("")`, the parent counted as its own teammate, and its team
+        // footer was dropped. Every other reader in the tree already treated
+        // blank as absent.
+        let snapshot = json!({
+            "sessions": [
+                {
+                    "id": "parent",
+                    "kind": "agent",
+                    "tool": "claude",
+                    "role": "coder",
+                    "team": { "teamId": "coder", "role": "coder", "parentSessionId": "" },
+                    "windowName": "claude",
+                    "tmuxWindowId": "@1",
+                    "worktreePath": "/repo",
+                    "status": "running"
+                }
+            ],
+            "teammates": [
+                {
+                    "id": "reviewer",
+                    "kind": "agent",
+                    "tool": "codex",
+                    "role": "reviewer",
+                    "label": "review",
+                    "windowName": "codex",
+                    "tmuxWindowId": "@9",
+                    "worktreePath": "/repo",
+                    "status": "running",
+                    "team": { "teamId": "team-1", "parentSessionId": "parent", "role": "reviewer", "label": "review", "order": 1 }
+                }
+            ]
+        });
+
+        let rendered = render_bottom_line(
+            &snapshot,
+            "/repo",
+            RenderOptions {
+                current_window: Some("claude"),
+                current_window_id: Some("@1"),
+                current_path: Some("/repo"),
+                ..RenderOptions::default()
+            },
+        );
+
+        assert!(
+            rendered.contains("team: review running"),
+            "rendered was {rendered:?}"
+        );
     }
 
     #[test]
