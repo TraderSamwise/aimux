@@ -2983,3 +2983,142 @@ fn the_delivery_tick_clears_failures_off_the_worker() {
         );
     }
 }
+
+/// Frees every reader parked on a writerless FIFO, and stops on its own.
+///
+/// The barrier has to be RELEASABLE or the gate cannot finish either way: an
+/// async task blocked inside `fs::read_to_string` cannot be cancelled, so the
+/// runtime never shuts down while one is parked. The existing delivery harness
+/// above has the same requirement and meets it with `drop(held)`.
+///
+/// A write-open of a FIFO blocks until a reader is present, which would strand
+/// this thread once the readers are gone -- so it opens NON-BLOCKING, which
+/// succeeds while a reader waits and returns `ENXIO` when none does. Closing
+/// immediately sends EOF to whoever was paired, and `read_to_string` returns.
+#[cfg(unix)]
+fn release_fifo_readers(path: &Path) {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut freed_any = false;
+    while std::time::Instant::now() < deadline {
+        match fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)
+        {
+            Ok(writer) => {
+                // Closing sends EOF to EVERY reader blocked on this FIFO, not
+                // one of them, so a single cycle can free all of them. Counting
+                // opens against the reader count was what made this spin to its
+                // deadline and cost the gate twenty seconds on a pass.
+                drop(writer);
+                freed_any = true;
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(_) if freed_any => return,
+            Err(_) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+}
+
+/// A scan task's topology read must not hold an async worker.
+///
+/// THE BARRIER COMES FROM THE RESOURCE, not from the task. A file read is a
+/// bounded park -- it finishes on its own -- and a progress-based gate cannot
+/// see a bounded park, while a latency-based one is what made this family of
+/// checks flaky. So the topology path is a FIFO with no writer, where
+/// `fs::read_to_string` blocks until one appears. Nothing in the task has to
+/// cooperate and there is no timing budget to tune.
+///
+/// Modelled on `assert_delivery_hop_does_not_consume_a_worker`, including its
+/// two-phase shape: every reader must get polled, AND a task that only yields
+/// must still run afterwards. The first half alone passes when the work starts
+/// after an await rather than inside the pool.
+#[cfg(unix)]
+#[test]
+fn a_scan_tasks_topology_read_does_not_consume_an_async_worker() {
+    const WORKERS: usize = aimux::async_runtime::ASYNC_RUNTIME_WORKER_THREADS;
+    let attempts = WORKERS + 2;
+    let quiet_window = Duration::from_secs(20);
+
+    let root = std::env::temp_dir().join(format!("aimux-scan-read-hop-{}", std::process::id()));
+    let state_dir = root.join("state");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&state_dir).expect("state dir");
+
+    let topology = aimux::runtime_topology::runtime_topology_path(&state_dir);
+    let made = std::process::Command::new("mkfifo")
+        .arg(&topology)
+        .status()
+        .expect("mkfifo runs here");
+    assert!(
+        made.success(),
+        "could not create the FIFO barrier at {topology:?}"
+    );
+
+    let async_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(WORKERS)
+        .enable_all()
+        .build()
+        .expect("a runtime with the project service's worker count");
+    let _entered = async_runtime.enter();
+
+    let (polled_tx, polled) = mpsc::channel();
+    for index in 0..attempts {
+        let dir = state_dir.clone();
+        let polled_tx = polled_tx.clone();
+        async_runtime.spawn(async move {
+            polled_tx.send(index).expect("the test is still listening");
+            let _ = aimux::project_service::scheduler::read_scan_inputs_off_the_worker(dir).await;
+        });
+    }
+    drop(polled_tx);
+
+    let mut reported = 0;
+    while reported < attempts {
+        match polled.recv_timeout(quiet_window) {
+            Ok(_) => reported += 1,
+            Err(_) => break,
+        }
+    }
+
+    // Phase two, repeatedly: one probe can be answered by a worker that is
+    // between reads, which is how the earlier version of this family of gates
+    // passed by timing luck.
+    let (tick_tx, tick) = mpsc::channel();
+    async_runtime.spawn(async move {
+        for round in 0..PHASE_TWO_ROUNDS {
+            tokio::task::yield_now().await;
+            if tick_tx.send(round).is_err() {
+                return;
+            }
+            tokio::time::sleep(PHASE_TWO_SETTLE).await;
+        }
+    });
+    let mut rounds = 0;
+    let mut still_polling = true;
+    while rounds < PHASE_TWO_ROUNDS {
+        match tick.recv_timeout(quiet_window) {
+            Ok(_) => rounds += 1,
+            Err(_) => {
+                still_polling = false;
+                break;
+            }
+        }
+    }
+
+    release_fifo_readers(&topology);
+    drop(_entered);
+    async_runtime.shutdown_timeout(Duration::from_secs(10));
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(
+        reported, attempts,
+        "{reported} of {attempts} topology readers were polled on {WORKERS} workers and then nothing more happened for {quiet_window:?}. Progress stopped rather than slowed, which is what a read holding a worker looks like"
+    );
+    assert!(
+        still_polling,
+        "every reader was polled, but a task that only yields then went {quiet_window:?} without running. The workers are occupied even though each reader got its first poll"
+    );
+}

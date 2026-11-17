@@ -13,8 +13,10 @@ use std::time::{Duration, UNIX_EPOCH};
 use serde_json::Value;
 
 use crate::config::{load_config_for_known_project_root, project_config_path_for_known_root};
+use crate::daemon_state::try_load_metadata_state;
 use crate::paths::PathResolver;
 use crate::periodic_scheduler as periodic;
+use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
 use super::notifications::{NotificationWriteInput, add_notification};
 use super::operation_failures::{
@@ -338,4 +340,67 @@ fn adapt_tasks(
         .into_iter()
         .map(|task| Box::new(ProjectPeriodicTask { task }) as Box<_>)
         .collect()
+}
+
+/// The topology and metadata a scan task starts from, read off the async
+/// workers.
+///
+/// Five periodic tasks open the same two files at the top of their `run`
+/// bodies -- `read_runtime_topology` and `try_load_metadata_state`, both
+/// `fs::read_to_string` underneath -- and they did it on the async worker that
+/// polls them. The project service has TWO workers, so two such tasks reading
+/// at once is the whole runtime, which is exactly the shape
+/// `audit-async-blocking`'s shared-mutex hazard describes for the interceptor
+/// that killed daemons: every other task accepted and never polled, `/health`
+/// among them, and the watchdog ends the process after three failed probes.
+///
+/// The audit cannot see this one. Its hazards are `std::process`, `std::net`,
+/// `thread::sleep`, a shared mutex and a blocking channel recv -- there is no
+/// filesystem hazard at all, so a sync read behind a project-level wrapper is
+/// invisible to it.
+/// Which of the two scan inputs could not be read.
+///
+/// Named rather than a single string, because the scheduler-visible failure
+/// has to say WHICH file was unreadable. Collapsing them is the mistake this
+/// enum exists to prevent: two tests pin the distinction
+/// (`corrupt_scribe_topology_records_scheduler_visible_failure` and
+/// `corrupt_scribe_metadata_records_scheduler_visible_failure`), and they
+/// caught it when a first version of this helper returned one message for
+/// both.
+#[derive(Debug)]
+pub enum ScanInputError {
+    Topology(String),
+    Metadata(String),
+    /// The pool task never ran. Not an empty topology, and not a corrupt file.
+    NotRead(String),
+}
+
+impl ScanInputError {
+    /// The underlying message, for a caller adding its own prefix.
+    pub fn detail(&self) -> &str {
+        match self {
+            Self::Topology(detail) | Self::Metadata(detail) | Self::NotRead(detail) => detail,
+        }
+    }
+}
+
+pub async fn read_scan_inputs_off_the_worker(
+    project_state_dir: PathBuf,
+) -> Result<(Value, Value), ScanInputError> {
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("project-service", "scan-inputs"),
+        move || {
+            let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))
+                .map_err(ScanInputError::Topology)?;
+            let metadata = try_load_metadata_state(&project_state_dir)
+                .map_err(ScanInputError::Metadata)
+                .and_then(|state| {
+                    serde_json::to_value(state)
+                        .map_err(|error| ScanInputError::Metadata(error.to_string()))
+                })?;
+            Ok((topology, metadata))
+        },
+    )
+    .await
+    .map_err(|error| ScanInputError::NotRead(error.to_string()))?
 }
