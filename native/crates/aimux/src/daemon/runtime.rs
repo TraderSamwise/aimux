@@ -114,9 +114,9 @@ use crate::lifecycle_orphans::{
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, ProjectEntry, compute_project_id};
 use crate::process_inspector::{
-    ProcessArgsEntry, ProjectServiceProcessIdentity, is_aimux_project_service_process,
-    is_aimux_project_service_process_args, is_current_native_aimux_project_service_process,
-    list_process_args, try_list_process_args,
+    ProcessArgsEntry, ProcessIdentityMatch, ProjectServiceProcessIdentity,
+    current_native_aimux_project_service_process, is_aimux_project_service_process,
+    is_aimux_project_service_process_args, list_process_args, try_list_process_args,
 };
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, try_list_registered_desktop_projects};
@@ -824,6 +824,42 @@ impl SystemProjectServiceHealthProbe {
 #[derive(Debug, Default)]
 pub struct SystemProjectServiceProcessVerifier;
 
+/// Whether a stored service is still OUR live native project service.
+///
+/// Split out from the verifier so the disposition can be gated on its own: the
+/// caller of `is_live_native_project_service` TERMINATES the service when this
+/// is false, logging "project service ensure terminating invalid service".
+///
+/// `CouldNotRead` means `ps` could not be run, which is not evidence that the
+/// service is foreign -- and answering `false` to it made a failed `ps` kill a
+/// healthy service and spawn a replacement, which raises the spawn rate, which
+/// makes `ps` fail more. That feedback loop manufactures the duplicate
+/// services the cleanup exists to prevent.
+///
+/// The conservative answer was already chosen one term earlier in the same
+/// expression: `is_pid_alive` treats an unreadable process state as ALIVE
+/// (`read_process_state(pid).is_none_or(..)`) precisely so it never declares
+/// death on missing data. `lifecycle_orphans` and `install_cleanup` resolve
+/// every uncertain branch the same way. This brings the verifier in line with
+/// all three rather than inventing a new rule.
+///
+/// Treating unknown as still-ours costs a slow failure in the genuinely
+/// foreign case -- the ensure waits on a service that will not answer and
+/// reports that -- which is the right trade against killing a healthy one.
+fn live_native_project_service_from_identity(
+    pid_is_alive: bool,
+    identity: ProcessIdentityMatch,
+) -> bool {
+    if !pid_is_alive {
+        return false;
+    }
+    match identity {
+        ProcessIdentityMatch::Matches => true,
+        ProcessIdentityMatch::DoesNotMatch => false,
+        ProcessIdentityMatch::CouldNotRead => true,
+    }
+}
+
 impl ProjectServiceProcessVerifier for SystemProjectServiceProcessVerifier {
     fn is_live(&self, pid: i32) -> bool {
         is_pid_alive(pid)
@@ -841,12 +877,10 @@ impl ProjectServiceProcessVerifier for SystemProjectServiceProcessVerifier {
         let Ok(current_binary) = std::env::current_exe() else {
             return false;
         };
-        is_pid_alive(service.pid)
-            && is_current_native_aimux_project_service_process(
-                service.pid,
-                &expected,
-                &current_binary,
-            )
+        live_native_project_service_from_identity(
+            is_pid_alive(service.pid),
+            current_native_aimux_project_service_process(service.pid, &expected, &current_binary),
+        )
     }
 
     fn live_project_service_pids(&self, project_id: &str, project_root: &str) -> Vec<i32> {
@@ -8649,6 +8683,36 @@ mod tests {
         assert_eq!(timeout, Duration::from_millis(120_000));
         assert_eq!(poll, Duration::from_millis(1));
         fixture.cleanup();
+    }
+
+    /// A `ps` that could not run must not condemn a live project service.
+    ///
+    /// The caller of `is_live_native_project_service` TERMINATES on `false`,
+    /// logging "project service ensure terminating invalid service", so this
+    /// mapping is a kill decision. `CouldNotRead` used to answer `false`.
+    ///
+    /// All three identity outcomes are asserted, and the dead-pid case too,
+    /// because a mapping that always answered `true` would pass a test that
+    /// only checked the unknown case -- and that mapping would never reap a
+    /// genuinely foreign process.
+    #[test]
+    fn an_unreadable_process_identity_does_not_condemn_a_live_service() {
+        assert!(
+            live_native_project_service_from_identity(true, ProcessIdentityMatch::CouldNotRead),
+            "a live pid whose args could not be read was reported as not our service; its caller terminates on that, so a broken ps kills a healthy project service and spawns a replacement"
+        );
+        assert!(
+            live_native_project_service_from_identity(true, ProcessIdentityMatch::Matches),
+            "a live pid that matches must be reported as ours"
+        );
+        assert!(
+            !live_native_project_service_from_identity(true, ProcessIdentityMatch::DoesNotMatch),
+            "a live pid that genuinely does not match must still be reapable, or this mapping would never reap anything"
+        );
+        assert!(
+            !live_native_project_service_from_identity(false, ProcessIdentityMatch::CouldNotRead),
+            "a dead pid is not our live service whatever ps says about its args"
+        );
     }
 
     #[test]
