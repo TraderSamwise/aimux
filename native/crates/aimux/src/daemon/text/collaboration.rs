@@ -13,6 +13,7 @@ use crate::daemon::routing::{
 };
 use crate::daemon::text::params::{
     ProjectServiceJsonResult, required_project_service_array, required_project_service_object,
+    unwrap_project_result,
 };
 use crate::daemon::text::worktrees::CLI_PROJECT_MUTATION_TIMEOUT_MS;
 use crate::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE;
@@ -1206,15 +1207,6 @@ fn task_mutation_response(
         payload.insert("followUpTask".into(), follow_up_task.clone());
     }
     text_or_json_lines(route_url, json, &render(&Value::Object(payload)))
-}
-
-fn unwrap_project_result(
-    result: ProjectServiceJsonResult,
-) -> Result<(Value, String), DaemonRouteResponse> {
-    match result {
-        ProjectServiceJsonResult::Ok { project_root, json } => Ok((json, project_root)),
-        ProjectServiceJsonResult::Err { response } => Err(response),
-    }
 }
 
 fn optional_string(route_url: &DaemonRouteUrl, body: Option<&Value>, name: &str) -> Option<String> {

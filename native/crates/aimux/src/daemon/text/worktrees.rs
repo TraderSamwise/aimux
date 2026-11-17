@@ -13,7 +13,7 @@ use crate::daemon::routing::{
 };
 use crate::daemon::text::params::{
     ProjectServiceJsonResult, required_project_service_array, required_project_service_string,
-    resolve_project_relative_path,
+    resolve_project_relative_path, unwrap_project_result,
 };
 use crate::project_api_contract::routes as project_routes;
 use serde_json::{Map, Value, json};
@@ -713,15 +713,6 @@ fn graveyard_resurrect_input() -> GraveyardAgentRouteInput {
         action: "graveyard resurrect",
         route_path: project_routes::graveyard_actions::RESURRECT_AGENT,
         status_fallback: None,
-    }
-}
-
-fn unwrap_project_result(
-    result: ProjectServiceJsonResult,
-) -> Result<(Value, String), DaemonRouteResponse> {
-    match result {
-        ProjectServiceJsonResult::Ok { project_root, json } => Ok((json, project_root)),
-        ProjectServiceJsonResult::Err { response } => Err(response),
     }
 }
 

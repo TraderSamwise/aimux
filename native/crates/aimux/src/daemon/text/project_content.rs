@@ -10,7 +10,7 @@ use crate::daemon::routing::{
 };
 use crate::daemon::text::params::{
     ProjectServiceJsonResult, required_project_service_array, required_project_service_object,
-    required_project_service_string,
+    required_project_service_string, unwrap_project_result,
 };
 use crate::daemon::text::worktrees::CLI_PROJECT_MUTATION_TIMEOUT_MS;
 use crate::project_api_contract::routes as project_routes;
@@ -371,15 +371,6 @@ fn push_project_query(path: &mut String, name: &str, value: Option<String>) {
     path.push_str(name);
     path.push('=');
     path.push_str(&url_encode(&value));
-}
-
-fn unwrap_project_result(
-    result: ProjectServiceJsonResult,
-) -> Result<(Value, String), DaemonRouteResponse> {
-    match result {
-        ProjectServiceJsonResult::Ok { project_root, json } => Ok((json, project_root)),
-        ProjectServiceJsonResult::Err { response } => Err(response),
-    }
 }
 
 fn trimmed_string(route_url: &DaemonRouteUrl, body: Option<&Value>, name: &str) -> Option<String> {
