@@ -523,15 +523,6 @@ fn first_arg_token(args: &str) -> Option<&str> {
     args.split_whitespace().map(trim_shell_quotes).next()
 }
 
-pub fn is_native_aimux_project_service_process(
-    pid: i32,
-    expected: &ProjectServiceProcessIdentity,
-) -> bool {
-    process_args_match_with_optional_cwd(pid, read_process_args, read_process_cwd, |args, cwd| {
-        is_native_aimux_project_service_process_args(args, cwd, expected)
-    }) == ProcessIdentityMatch::Matches
-}
-
 /// Whether this pid is OUR current native project service, or that `ps` could
 /// not tell us.
 ///
