@@ -10,25 +10,140 @@ const scanRoots = roots.length > 0 ? roots.map((root) => resolve(repoRoot, root)
 const SYNC_FS_CALLS =
   /\bfs\s*::\s*(read|read_to_string|write|read_dir|metadata|copy|rename|remove_file|remove_dir_all|create_dir_all)\s*\(/;
 
-/// Project-level wrappers that read a state file synchronously.
+/// The sync filesystem readers, DERIVED from the crate instead of listed.
 ///
-/// Each of these is a thin function over `fs::read_to_string`, which is why
-/// the direct-call pattern above cannot see them.
+/// This replaces a hand-maintained list of eight names. That list was the
+/// honest cost of the hazard and it was also wrong: a scan found 218 sync
+/// functions in this crate that read a file directly, 14 reachable from an
+/// async body, and only THREE of the fourteen named. `load_last_used_date`
+/// style omissions are not hypothetical -- `load_topology` was missing, so
+/// `load_control_model_async` read as fixed when only half of it was, and
+/// later `load_last_used_state` was still inline in a route this audit called
+/// clean.
 ///
-/// THIS LIST IS NOT DERIVED AND IS KNOWN INCOMPLETE. A scan of the crate
-/// found 218 sync functions that read a file directly, 14 of them reachable
-/// from an async body, and only three of those fourteen are named here. Some
-/// of the rest are artefacts of matching short generic names, but not all:
-/// `load_last_used_state` reads through `fs::read_to_string` and is called
-/// inside `route_switchable_agent_request_async`, which this audit reports as
-/// clean purely because the name is missing below.
+/// A bare name match on its own is useless: it reports hundreds of hits,
+/// because `new` and `run` and `write` are everywhere. TWO RULES make the
+/// derivation attributable, and both are statements about what this scanner
+/// can PROVE rather than lists of names that look generic:
 ///
-/// So treat a pass as "none of the readers named here", not as "no
-/// synchronous state read". The honest fix is to derive this set from the
-/// crate rather than maintain it by hand, and until that exists, add a name
-/// whenever a new sync reader appears.
-const SYNC_STATE_READERS =
-  /\b(read_runtime_topology|try_load_metadata_state|load_metadata_state|try_read_runtime_exchange|read_agent_input_delivery_queue|load_delivery_state|load_agent_role_registry|load_topology)\s*\(/;
+/// 1. SCOPE. Rust requires a called function to be in scope, so a name counts
+///    only where the calling file defines it or names it in a `use`.
+/// 2. ONE DEFINITION, NO ASYNC TWIN. A name defined as a sync filesystem
+///    reader in more than one place cannot be attributed to any of them --
+///    that is what drops `new`, which has 13 such definitions. And a name that
+///    also exists as an `async fn` cannot be attributed to the sync one,
+///    because this crate pairs sync and async siblings under one name
+///    everywhere; that is what drops `run`, whose call in
+///    `deliver_staged_prompt_async` is awaited.
+///
+/// What those rules exclude, they exclude loudly: `--explain-suppressed` lists
+/// every call they declined to claim, so the blind spot is inspectable instead
+/// of implied. Method calls are the real remaining limit -- a bare name cannot
+/// tell `host.execute(...)` from a free function, which is why the gh-pr-context
+/// tick's four per-tick reads were found by reading rather than by this scan.
+function deriveSyncFilesystemReaders(files) {
+  const definedIn = new Map();
+  const asyncNames = new Set();
+  const fileTexts = new Map();
+
+  for (const file of files) {
+    const text = readFileSync(file, "utf8");
+    fileTexts.set(file, text);
+    const masked = maskRust(text);
+    for (const match of masked.matchAll(
+      /(?:^|\n)[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?(async[ \t]+)?fn[ \t]+([A-Za-z_][A-Za-z0-9_]*)/g,
+    )) {
+      const isAsync = Boolean(match[1]);
+      const name = match[2];
+      if (isAsync) {
+        asyncNames.add(name);
+        continue;
+      }
+      // The body, bounded by brace depth from the declaration.
+      const from = match.index + match[0].length;
+      let depth = 0;
+      let began = false;
+      let end = masked.length;
+      for (let i = from; i < masked.length; i += 1) {
+        const ch = masked[i];
+        if (ch === "{") {
+          depth += 1;
+          began = true;
+        } else if (ch === "}") {
+          depth -= 1;
+          if (began && depth <= 0) {
+            end = i;
+            break;
+          }
+        }
+      }
+      if (SYNC_FS_CALLS.test(text.slice(from, end))) {
+        if (!definedIn.has(name)) definedIn.set(name, new Map());
+        // Keyed by SITE, not by file. Keying by file counted two definitions
+        // in one file as one, so a name that is ambiguous within a single
+        // module read as attributable.
+        definedIn.get(name).set(`${file}:${match.index}`, file);
+      }
+    }
+  }
+
+  const attributable = new Map();
+  const suppressed = new Map();
+  for (const [name, where] of definedIn) {
+    if (where.size > 1) {
+      suppressed.set(name, `${where.size} sync definitions`);
+    } else if (asyncNames.has(name)) {
+      suppressed.set(name, "has an async sibling of the same name");
+    } else {
+      attributable.set(name, [...where.values()][0]);
+    }
+  }
+  return { attributable, suppressed, fileTexts };
+}
+
+/// A call to a FREE function of this name, never a method call on a receiver.
+///
+/// The derivation finds `fn NAME` at module level, so that is all it can claim.
+/// Without this the gate matches `.store(true, Ordering::SeqCst)` against a
+/// module function called `store` -- and `store`, `load`, `write` and `list`
+/// are all attributable names in this crate, while atomics appear in async
+/// bodies constantly. Only the scope rule was keeping that quiet, which is far
+/// too thin for something that fails a build.
+///
+/// The cost is stated rather than hidden: a reader reached through a METHOD
+/// call is invisible here. That is how the gh-pr-context tick hid four
+/// per-tick reads behind `host.execute(...)`, and it was found by reading the
+/// function, not by this scan. Including method calls is useful for hunting
+/// and too noisy to gate on.
+function freeCallRegex(name) {
+  return new RegExp(`(?<![.\\w])${name}\\s*\\(`);
+}
+
+let DERIVED_READERS = null;
+
+/// Whether `fnSource` calls a derived sync reader that is in scope in `file`.
+///
+/// Returns the name so a failure can say which reader it means, and records
+/// what it declined to claim for `--explain-suppressed`.
+const suppressedHits = [];
+function derivedReaderCalledInScope(fnSource, file) {
+  if (!DERIVED_READERS) return null;
+  const { attributable, suppressed, fileTexts } = DERIVED_READERS;
+  const text = fileTexts.get(file) ?? "";
+  for (const [name, definedFile] of attributable) {
+    if (!freeCallRegex(name).test(fnSource)) continue;
+    const inScope =
+      definedFile === file || new RegExp(`^\\s*(pub )?use .*\\b${name}\\b`, "m").test(text);
+    if (inScope) return name;
+  }
+  for (const [name, why] of suppressed) {
+    if (freeCallRegex(name).test(fnSource)) {
+      suppressedHits.push({ file, name, why });
+    }
+  }
+  return null;
+}
+
 
 const NET_TYPES = ["TcpListener", "TcpStream", "UdpSocket", "UnixListener", "UnixStream"];
 
@@ -89,9 +204,10 @@ const HAZARDS = [
     id: "sync-fs",
     message:
       "synchronous state-file read inside an async body; take it inside spawn_blocking_named",
-    matches: (fnSource, _fileText) => {
+    matches: (fnSource, _fileText, filePath) => {
       const body = fnSource.replace(/spawn_blocking_named\s*\([\s\S]*?\n\s{4,}\)/g, " ");
-      return SYNC_FS_CALLS.test(body) || SYNC_STATE_READERS.test(body);
+      if (SYNC_FS_CALLS.test(body)) return true;
+      return derivedReaderCalledInScope(body, filePath) !== null;
     },
   },
   {
@@ -397,12 +513,14 @@ function enclosingFunctionName(masked, offset) {
 }
 
 const violations = [];
-for (const file of scanRoots.flatMap(rustFiles)) {
+const allRustFiles = scanRoots.flatMap(rustFiles);
+DERIVED_READERS = deriveSyncFilesystemReaders(allRustFiles);
+for (const file of allRustFiles) {
   const text = readFileSync(file, "utf8");
   for (const fn of asyncBodies(text)) {
     if (hasSeamMarker(text, fn.start, fn.end)) continue;
     for (const hazard of HAZARDS) {
-      if (!hazard.matches(fn.source, maskRust(text))) continue;
+      if (!hazard.matches(fn.source, maskRust(text), file)) continue;
       violations.push({
         file: relative(repoRoot, file),
         line: lineFor(text, fn.start),
@@ -411,6 +529,26 @@ for (const file of scanRoots.flatMap(rustFiles)) {
         message: hazard.message,
       });
     }
+  }
+}
+
+// What the attribution rules declined to claim. The derivation's blind spot is
+// inspectable rather than implied: every call it saw and would not attribute is
+// listed here with the reason.
+if (process.argv.includes("--explain-suppressed")) {
+  const seen = new Set();
+  console.log(`derived readers: ${DERIVED_READERS.attributable.size} attributable, ${DERIVED_READERS.suppressed.size} unattributable`);
+  // The blast radius worth eyeballing: a SHORT attributable name is where a
+  // false positive would hide, since matching is by bare name.
+  const shortest = [...DERIVED_READERS.attributable.keys()]
+    .sort((left, right) => left.length - right.length)
+    .slice(0, 12);
+  console.log(`  shortest attributable names: ${shortest.join(", ")}`);
+  for (const hit of suppressedHits) {
+    const key = `${hit.file}:${hit.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    console.log(`  not claimed: ${relative(repoRoot, hit.file)} calls ${hit.name} (${hit.why})`);
   }
 }
 

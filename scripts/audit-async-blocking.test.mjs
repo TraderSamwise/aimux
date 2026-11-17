@@ -246,6 +246,92 @@ fn run() -> Pin<Box<dyn Future<Output = ()>>> {
     expect(result.stderr.match(/thread-sleep/g)).toHaveLength(1);
   });
 
+  // The point of deriving: a wrapper NO list contains is still caught, because
+  // the fixture's own file defines it as a sync reader.
+  it("rejects a derived sync reader that no list names", () => {
+    const result = runAudit(
+      writeFixture(`
+fn load_a_name_no_list_contains(path: &Path) -> String {
+    fs::read_to_string(path).unwrap_or_default()
+}
+
+async fn f() {
+    let _ = load_a_name_no_list_contains(path);
+}
+`),
+    );
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("sync-fs");
+  });
+
+  // Attribution rule one: two sync definitions means the scan cannot know
+  // which one a call reaches, so it must not claim it.
+  it("does not claim a reader name that has two sync definitions", () => {
+    const result = runAudit(
+      writeFixture(`
+mod first {
+    fn ambiguous(path: &Path) -> String {
+        fs::read_to_string(path).unwrap_or_default()
+    }
+}
+
+mod second {
+    fn ambiguous(path: &Path) -> String {
+        fs::read_to_string(path).unwrap_or_default()
+    }
+}
+
+async fn f() {
+    let _ = ambiguous(path);
+}
+`),
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  // Attribution rule two: an async sibling under the same name. This crate
+  // pairs them everywhere, and the async body is calling the sibling.
+  it("does not claim a reader name that has an async sibling", () => {
+    const result = runAudit(
+      writeFixture(`
+fn paired(path: &Path) -> String {
+    fs::read_to_string(path).unwrap_or_default()
+}
+
+async fn paired(path: &Path) -> String {
+    String::new()
+}
+
+async fn f() {
+    let _ = paired(path).await;
+}
+`),
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  // A METHOD call is not a free function call. Without this the gate matches
+  // `.store(true, Ordering::SeqCst)` against a module function called `store`,
+  // and atomics are everywhere in async bodies.
+  it("does not claim a method call that shares a reader's name", () => {
+    const result = runAudit(
+      writeFixture(`
+fn store(path: &Path) -> String {
+    fs::read_to_string(path).unwrap_or_default()
+}
+
+async fn f() {
+    reported.store(true, Ordering::SeqCst);
+}
+`),
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   // The hazard the whole blocking-read cleanup was about.
   it("rejects a direct synchronous read inside an async fn", () => {
     const result = runAudit(
@@ -261,7 +347,15 @@ fn run() -> Pin<Box<dyn Future<Output = ()>>> {
   // so a hazard without the named list would have caught none of them.
   it("rejects a state-file wrapper inside an async fn", () => {
     const result = runAudit(
-      writeFixture("async fn f() { let _ = read_runtime_topology(path); }"),
+      writeFixture(`
+fn read_runtime_topology(path: &Path) -> Value {
+    fs::read_to_string(path).map(parse).unwrap_or_default()
+}
+
+async fn f() {
+    let _ = read_runtime_topology(path);
+}
+`),
     );
 
     expect(result.status, result.stderr).toBe(1);
@@ -272,7 +366,11 @@ fn run() -> Pin<Box<dyn Future<Output = ()>>> {
   it("rejects a state-file wrapper inside Box::pin(async move)", () => {
     const result = runAudit(
       writeFixture(`
-fn run() -> Pin<Box<dyn Future<Output = ()>>> {
+fn try_load_metadata_state(dir: &Path) -> State {
+    fs::read_to_string(dir).map(parse).unwrap_or_default()
+}
+
+fn periodic() -> Pin<Box<dyn Future<Output = ()>>> {
     Box::pin(async move {
         let _ = try_load_metadata_state(dir);
     })
