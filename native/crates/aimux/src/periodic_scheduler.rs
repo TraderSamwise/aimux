@@ -332,7 +332,7 @@ struct PeriodicTaskHealthRecord {
 enum PeriodicTaskRunOutcome {
     Completed,
     Failed { error: String },
-    Panicked,
+    Panicked { message: String },
     TimedOut { timeout_ms: i64 },
 }
 
@@ -388,13 +388,15 @@ impl PeriodicTaskHealthRecord {
                 self.consecutive_timeouts = 0;
                 self.last_error = Some(limit_last_error(&error));
             }
-            PeriodicTaskRunOutcome::Panicked => {
+            PeriodicTaskRunOutcome::Panicked { message } => {
                 self.last_completed_at_ms = Some(completed_at_ms);
                 self.last_duration_ms = Some(duration_ms);
                 self.push_duration_sample(duration_ms);
                 self.consecutive_failures = self.consecutive_failures.saturating_add(1);
                 self.consecutive_timeouts = 0;
-                self.last_error = Some("task panicked".to_owned());
+                // Named, not just counted: "task panicked" told you which of
+                // the outcomes happened and nothing about why.
+                self.last_error = Some(limit_last_error(&format!("task panicked: {message}")));
             }
             PeriodicTaskRunOutcome::TimedOut { timeout_ms } => {
                 self.last_duration_ms = Some(duration_ms);
@@ -724,7 +726,12 @@ async fn run_task_once<C: Send + Sync + 'static>(
             timeout_ms: timeout_after.as_millis().min(i64::MAX as u128) as i64,
         }
     } else if task_result.panicked {
-        PeriodicTaskRunOutcome::Panicked
+        PeriodicTaskRunOutcome::Panicked {
+            message: task_result
+                .error
+                .clone()
+                .unwrap_or_else(|| "unknown panic payload".to_owned()),
+        }
     } else if let Some(error) = task_result.error.clone() {
         PeriodicTaskRunOutcome::Failed { error }
     } else {
@@ -915,12 +922,32 @@ impl TaskFutureResult {
 
 fn run_outcome_from_result(result: &TaskFutureResult) -> PeriodicTaskRunOutcome {
     if result.panicked {
-        PeriodicTaskRunOutcome::Panicked
+        PeriodicTaskRunOutcome::Panicked {
+            message: result
+                .error
+                .clone()
+                .unwrap_or_else(|| "unknown panic payload".to_owned()),
+        }
     } else if let Some(error) = result.error.clone() {
         PeriodicTaskRunOutcome::Failed { error }
     } else {
         PeriodicTaskRunOutcome::Completed
     }
+}
+
+/// What a panic said, as far as it can be recovered.
+///
+/// `panic!("text")` and `panic!("{x}")` arrive as `&str` and `String`
+/// respectively; a panic with any other payload has no readable message, and
+/// saying so is better than inventing one.
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_owned();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "unknown panic payload".to_owned()
 }
 
 async fn run_task_future(future: PeriodicTaskFuture<'_>) -> TaskFutureResult {
@@ -933,9 +960,16 @@ async fn run_task_future(future: PeriodicTaskFuture<'_>) -> TaskFutureResult {
                 error: Some(error),
             }),
             Ok(Poll::Pending) => Poll::Pending,
-            Err(_) => Poll::Ready(TaskFutureResult {
+            // The payload is the only description of what went wrong, and it
+            // was being dropped: a panicking task recorded the fixed string
+            // "task panicked", so the health surface said THAT one happened
+            // without saying what it said. `catch_unwind` hands back a
+            // `Box<dyn Any>` which for `panic!("...")` is a `&str` or a
+            // `String`; anything else is named as unknown rather than guessed
+            // at.
+            Err(payload) => Poll::Ready(TaskFutureResult {
                 panicked: true,
-                error: None,
+                error: Some(panic_message(&payload)),
             }),
         }
     })
@@ -982,6 +1016,61 @@ fn limit_last_error(error: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// A panicking periodic task must record WHAT it said, not only that it
+    /// happened.
+    ///
+    /// The loop already survives a panicking task -- `run_task_future` catches
+    /// every poll -- so the risk was never a dead scheduler. It was that the
+    /// health surface said "task panicked" and nothing more, which tells an
+    /// operator which outcome occurred and nothing about the cause.
+    ///
+    /// Driven through the REAL runner rather than a hand-built payload,
+    /// because the wiring is the part a regression would undo. The future
+    /// panics on its first poll, so one poll with a no-op waker is the whole
+    /// run and no runtime is needed.
+    #[test]
+    fn a_panicking_task_records_the_panic_message() {
+        struct Panicker;
+        impl PeriodicTask<()> for Panicker {
+            fn name(&self) -> &str {
+                "panicker"
+            }
+            fn interval_ms(&self) -> i64 {
+                1_000
+            }
+            fn run<'a>(&'a mut self, _: &'a ()) -> PeriodicTaskFuture<'a> {
+                Box::pin(async { panic!("the delivery tick fell over") })
+            }
+        }
+
+        let mut task = Panicker;
+        let mut future = Box::pin(run_task_future(task.run(&())));
+        let waker = std::task::Waker::noop();
+        let mut cx = std::task::Context::from_waker(waker);
+        let result = match future.as_mut().poll(&mut cx) {
+            Poll::Ready(result) => result,
+            Poll::Pending => panic!("a future that panics on first poll cannot be pending"),
+        };
+
+        assert!(result.panicked, "the runner must report a panic as a panic");
+
+        let mut record = PeriodicTaskHealthRecord::default();
+        record.record(run_outcome_from_result(&result), 1, 1_000, 0);
+
+        let last_error = record
+            .last_error
+            .clone()
+            .expect("a panic must leave an error behind");
+        assert!(
+            last_error.contains("the delivery tick fell over"),
+            "the panic's own words must survive into the health record: {last_error}"
+        );
+        assert!(
+            last_error.contains("task panicked"),
+            "and it must stay identifiable as a panic rather than a failure: {last_error}"
+        );
+    }
+
     use super::*;
 
     struct OverrunningProductionTask {
