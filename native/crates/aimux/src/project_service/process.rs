@@ -145,6 +145,17 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         .context("repair project .aimux permissions")?;
     secure_permissions::repair_project_state_store(&startup.project_state_dir)
         .context("repair project state permissions")?;
+    // Warm the OnceLock build stamp here, where blocking is free, because
+    // /health is answered WITHOUT a blocking thread and must not be the call
+    // that first reads it off disk. A failure is not fatal and not silent: the
+    // route still reports it in serviceInfo, exactly as it did before.
+    if let Err(error) = crate::project_service_manifest::project_service_build_stamp() {
+        log_lifecycle_always(
+            "project service build stamp unavailable",
+            "project-service",
+            Some(json!({ "error": error.to_string() })),
+        );
+    }
     log_lifecycle_always(
         "project service starting",
         "project-service",
@@ -578,6 +589,36 @@ where
         });
     }
 
+    // Answered without a blocking thread, for the same reason the daemon's
+    // `/health` is: every other route hops to the blocking pool, so when that
+    // pool is saturated the readiness endpoint is the one thing that cannot
+    // answer -- exactly when somebody is asking it why nothing is moving. The
+    // daemon got this in `answerable_without_a_blocking_thread`; the project
+    // service is the sibling surface and did not.
+    //
+    // Safe for this route and no other, and the three things it touches were
+    // each checked rather than assumed:
+    //
+    // - `get_project_service_manifest` reads the release build stamp, but
+    //   `project_service_build_stamp` is `OnceLock`-cached and startup warms
+    //   it, so by the time a request can arrive this is pure memory.
+    // - `scheduler.diagnostics_json` takes the scheduler health lock. Every
+    //   holder of that lock -- `register_task`, `record_run` and the test-only
+    //   setter -- does in-memory map work only, and `record_run` drops the
+    //   guard before publishing its alert, so the lock is never held across
+    //   anything slow.
+    // - the rest is the state dir string and the pid.
+    //
+    // Any route that can block must keep the hop, which is why this is a
+    // pathname test and not a flag a caller could pass.
+    if project_service_health_answerable_without_a_blocking_thread(&request.method, &request.path) {
+        let response = super::reads::project_service_health_response(&context);
+        return Ok(ProjectServiceTransportResponse {
+            response: prepare_dispatch_response(response, cors),
+            lifecycle_progress: None,
+        });
+    }
+
     let body = if method_reads_json_body(&request.method) {
         match read_json_body_limited(
             request.body_chunks.iter().map(Vec::as_slice),
@@ -740,6 +781,16 @@ fn async_agent_output_route(method: &str, path: &str) -> bool {
             | routes::agents::INTERRUPT
             | routes::live_pane::INTERRUPT
     )
+}
+
+/// `GET /health` on the project service, which is answerable in place.
+///
+/// Mirrors `daemon::listener::answerable_without_a_blocking_thread`. The
+/// safety argument lives at the call site, with the three things the handler
+/// touches.
+fn project_service_health_answerable_without_a_blocking_thread(method: &str, path: &str) -> bool {
+    method.eq_ignore_ascii_case("GET")
+        && super::dispatcher::project_service_pathname(path) == routes::HEALTH
 }
 
 fn async_read_control_route(method: &str, path: &str) -> bool {
@@ -2359,6 +2410,84 @@ mod tests {
             }),
         )
         .expect("write topology");
+    }
+
+    /// The point of answering `/health` in place, proved structurally.
+    ///
+    /// The real blocking pool is tokio's default 512 threads, so saturating it
+    /// for real would need 512 stuck routes -- which is why this sat at the
+    /// bottom of the list for so long. A runtime with a ONE thread blocking
+    /// pool is the same situation at a size a test can hold, and it tests the
+    /// structure that matters: whether this route needs a pool thread at all.
+    #[test]
+    fn health_answers_while_the_blocking_pool_is_saturated() {
+        let root = unique_test_root("health-saturated-pool");
+        let project_root = root.join("repo");
+        let state_dir = root.join("state");
+        create_git_checkout(&project_root);
+        fs::create_dir_all(&state_dir).expect("create state dir");
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .max_blocking_threads(1)
+            .enable_all()
+            .build()
+            .expect("saturated-pool runtime");
+
+        // aimux-async-seam: test - the gate drives the transport handler directly
+        let status = runtime.block_on(async {
+            // Occupy the one blocking thread with a park that cannot end on its
+            // own: a channel recv whose sender is held here. Unbounded by
+            // construction, so this is not a timing bet -- and the task reports
+            // when it is actually ON the thread, so saturation is observed
+            // rather than assumed.
+            let (sender, receiver) = std::sync::mpsc::channel::<()>();
+            let holding = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let reports = Arc::clone(&holding);
+            // aimux-async-blocking: test - the park IS the fixture, and it is
+            // already inside spawn_blocking; the audit's closure stripper does
+            // not match this call's formatting
+            let stuck =
+                crate::async_runtime::spawn_blocking_named("test:saturate-pool", move || {
+                    reports.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let _ = receiver.recv();
+                });
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while !holding.load(std::sync::atomic::Ordering::SeqCst) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the saturating task never reached the blocking pool"
+                );
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let mut reader = tokio::io::empty();
+            let request = ProjectServiceHttpRequest {
+                method: "GET".to_owned(),
+                path: routes::HEALTH.to_owned(),
+                headers: Default::default(),
+                body_chunks: Vec::new(),
+            };
+            let response = tokio::time::timeout(
+                Duration::from_secs(5),
+                handle_project_service_http_request_transport_async(request, context, &mut reader),
+            )
+            .await
+            .expect("health must answer while the blocking pool is saturated")
+            .expect("health route returns");
+
+            // Release the pool so the runtime can shut down.
+            drop(sender);
+            let _ = stuck.await;
+            response.response.status
+        });
+
+        assert_eq!(status, 200, "a saturated pool must not change the answer");
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
