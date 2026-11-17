@@ -341,7 +341,22 @@ pub async fn route_switchable_agent_request_async(
             &project_state_dir,
         );
     }
-    let metadata = load_metadata_state(&project_state_dir);
+    // On the blocking pool. `load_metadata_state` is infallible -- a missing or
+    // unreadable file becomes an empty state -- so the only error here is a
+    // pool task that never ran, which is not the same thing.
+    let metadata = match crate::project_service::scheduler::read_metadata_state_off_the_worker(
+        project_state_dir.to_path_buf(),
+    )
+    .await
+    {
+        Ok(state) => state,
+        Err(error) => {
+            return Some(ProjectServiceDispatchResponse::json(
+                500,
+                json!({ "ok": false, "error": error }),
+            ));
+        }
+    };
     let projection =
         topology_switchable_entries_for_context_async(context, &topology, &metadata.sessions).await;
     let last_used = load_last_used_state(&project_state_dir);

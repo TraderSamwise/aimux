@@ -419,21 +419,43 @@ pub async fn route_agent_read_request_async(
         return None;
     }
     let project_state_dir = context.project_state_dir();
-    let metadata_state = match try_load_metadata_state(&project_state_dir) {
-        Ok(metadata) => metadata,
-        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
-    };
-    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
-        Ok(topology) => topology,
-        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
-    };
-    let exchange = match try_read_runtime_exchange(runtime_exchange_path(&project_state_dir)) {
-        Ok(exchange) => exchange,
-        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
-    };
-    let role_registry = match load_agent_role_registry(&project_state_dir) {
-        Ok(registry) => registry,
-        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    // The three scan inputs in one hop, and the role registry in a second.
+    // This handler runs per request, so a sync read here parks one of the
+    // project service's two async workers; two concurrent requests park both.
+    let (topology, metadata_state, exchange) =
+        match crate::project_service::scheduler::read_route_scan_inputs_off_the_worker(
+            project_state_dir.to_path_buf(),
+        )
+        .await
+        {
+            Ok(inputs) => inputs,
+            Err(error) => {
+                return Some(json_response(
+                    500,
+                    json!({ "ok": false, "error": error.detail() }),
+                ));
+            }
+        };
+    let role_registry = {
+        let dir = project_state_dir.to_path_buf();
+        match crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::task_name("project-service", "agent-role-registry"),
+            move || load_agent_role_registry(&dir),
+        )
+        .await
+        {
+            Ok(Ok(registry)) => registry,
+            Ok(Err(error)) => {
+                return Some(json_response(500, json!({ "ok": false, "error": error })));
+            }
+            // A pool task that never ran is not an empty registry.
+            Err(error) => {
+                return Some(json_response(
+                    500,
+                    json!({ "ok": false, "error": format!("agent role registry was not read: {error}") }),
+                ));
+            }
+        }
     };
     let tools = load_config_for_known_project_root(context.project_root())
         .get("tools")
