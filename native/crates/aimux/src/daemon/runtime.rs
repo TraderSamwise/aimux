@@ -3103,7 +3103,13 @@ pub fn handle_daemon_runtime_request_with_mutex(
             || pathname == crate::core_command_contract::CORE_API_ROUTES.outline_list_text
             || pathname == crate::core_command_contract::CORE_API_ROUTES.host_agent_read_text
             || pathname == crate::core_command_contract::CORE_API_ROUTES.doctor_exchange_text
-            || pathname == crate::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text)
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text
+            // Three pathnames, ONE route function: the filter kind comes from
+            // the dispatcher rather than the url, so each arm pairs the shared
+            // resolve with its own named render.
+            || pathname == crate::native_cli_dispatch::CORE_LOOP_LIST_TEXT_ROUTE
+            || pathname == crate::native_cli_dispatch::CORE_OVERSEER_STATUS_TEXT_ROUTE
+            || pathname == crate::native_cli_dispatch::CORE_SCRIBE_STATUS_TEXT_ROUTE)
         && parse_remote_actor(&request.headers).is_none()
         && !crate::daemon::router::has_origin_header(&request.headers)
     {
@@ -3235,6 +3241,30 @@ pub fn handle_daemon_runtime_request_with_mutex(
                 request,
                 crate::daemon::text::operations::resolve_doctor_lifecycle_request,
                 crate::daemon::text::operations::render_doctor_lifecycle_result,
+            );
+        }
+        if pathname == crate::native_cli_dispatch::CORE_LOOP_LIST_TEXT_ROUTE {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::agents::resolve_agent_list_request,
+                crate::daemon::text::agents::render_loop_list_result,
+            );
+        }
+        if pathname == crate::native_cli_dispatch::CORE_OVERSEER_STATUS_TEXT_ROUTE {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::agents::resolve_agent_list_request,
+                crate::daemon::text::agents::render_overseer_status_result,
+            );
+        }
+        if pathname == crate::native_cli_dispatch::CORE_SCRIBE_STATUS_TEXT_ROUTE {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::agents::resolve_agent_list_request,
+                crate::daemon::text::agents::render_scribe_status_result,
             );
         }
     }

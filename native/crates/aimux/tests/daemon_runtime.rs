@@ -6728,3 +6728,194 @@ fn the_carved_out_doctor_routes_still_answer_without_a_project_param() {
         );
     }
 }
+
+// --------------------------------------------------------------------------
+// loop list, overseer status and scribe status: THREE pathnames served by ONE
+// route function, whose filter kind comes from the dispatcher rather than the
+// url. One shared resolve -- the same `resolve_agent_list_request` that
+// `aimux agents` uses -- and three named renders.
+//
+// Each pathname gets its own lock gate, because the guard keys on pathnames
+// and carving out the function is not the same as carving out all three ways
+// in. That distinction cost a missed alias in a route already called done.
+// --------------------------------------------------------------------------
+
+#[test]
+fn the_loop_list_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "loop-list-lock",
+        aimux::native_cli_dispatch::CORE_LOOP_LIST_TEXT_ROUTE,
+    );
+}
+
+#[test]
+fn the_overseer_status_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "overseer-status-lock",
+        aimux::native_cli_dispatch::CORE_OVERSEER_STATUS_TEXT_ROUTE,
+    );
+}
+
+#[test]
+fn the_scribe_status_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "scribe-status-lock",
+        aimux::native_cli_dispatch::CORE_SCRIBE_STATUS_TEXT_ROUTE,
+    );
+}
+
+#[test]
+fn the_carved_out_loop_list_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "an agent with an active loop",
+        "loop-list-parity",
+        aimux::native_cli_dispatch::CORE_LOOP_LIST_TEXT_ROUTE,
+        // `loop.active` is what the filter keeps; an agent without it is
+        // dropped and the case would compare two empty renderings.
+        json!({
+            "agents": [{
+                "id": "from-the-upstream",
+                "tmuxLivenessVerified": true,
+                "loop": { "active": true }
+            }],
+            "tmuxLivenessVerified": true
+        }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_scribe_status_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a scribe session",
+        "scribe-status-parity",
+        aimux::native_cli_dispatch::CORE_SCRIBE_STATUS_TEXT_ROUTE,
+        json!({
+            "agents": [{
+                "id": "from-the-upstream",
+                "tmuxLivenessVerified": true,
+                "role": "scribe"
+            }],
+            "tmuxLivenessVerified": true
+        }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_overseer_status_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "an overseer session",
+        "overseer-status-parity",
+        aimux::native_cli_dispatch::CORE_OVERSEER_STATUS_TEXT_ROUTE,
+        // Overseers are selected by `overseerSessionIds`, not by a predicate
+        // over the agents, so the id has to appear in BOTH or the render
+        // refuses with "session is missing".
+        json!({
+            "agents": [{ "id": "from-the-upstream", "tmuxLivenessVerified": true }],
+            "overseerSessionIds": ["from-the-upstream"],
+            "tmuxLivenessVerified": true
+        }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_loop_list_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "loop-list-cold",
+        aimux::native_cli_dispatch::CORE_LOOP_LIST_TEXT_ROUTE,
+        json!({ "agents": [], "tmuxLivenessVerified": true }),
+    );
+}
+
+/// Each filtered pathname shows ONLY its own agents.
+///
+/// The three arms share a resolve and differ only in which render the dispatch
+/// names, so the interesting failure is a filter that is too WIDE -- two arms
+/// pointing at one render, or a predicate that stops discriminating.
+///
+/// The per-route parity gates cannot see that. Each uses a body tailored to
+/// its own route, so a render that showed everything would still contain the
+/// id those gates look for, and the harness asserts only that a fragment is
+/// PRESENT. I wrote this first claiming it caught a mispointed arm the others
+/// miss; it did not -- the scribe parity gate catches that too. So it asserts
+/// what only a cross-route test can: one upstream body, and each route's
+/// answer must EXCLUDE the other two agents.
+#[test]
+fn each_filtered_route_shows_only_its_own_agents() {
+    let upstream_body = json!({
+        "agents": [
+            { "id": "looping", "tmuxLivenessVerified": true, "loop": { "active": true } },
+            { "id": "scribing", "tmuxLivenessVerified": true, "role": "scribe" },
+            { "id": "overseeing", "tmuxLivenessVerified": true }
+        ],
+        "overseerSessionIds": ["overseeing"],
+        "tmuxLivenessVerified": true
+    });
+
+    for (route, expected, excluded) in [
+        (
+            aimux::native_cli_dispatch::CORE_LOOP_LIST_TEXT_ROUTE,
+            "looping",
+            ["scribing", "overseeing"],
+        ),
+        (
+            aimux::native_cli_dispatch::CORE_SCRIBE_STATUS_TEXT_ROUTE,
+            "scribing",
+            ["looping", "overseeing"],
+        ),
+        (
+            aimux::native_cli_dispatch::CORE_OVERSEER_STATUS_TEXT_ROUTE,
+            "overseeing",
+            ["looping", "scribing"],
+        ),
+    ] {
+        let fixture = RuntimeFixture::new("filtered-only-its-own");
+        let project = fixture.project("repo");
+        let mut resolver = fixture.resolver();
+        resolver
+            .register_project(&project)
+            .expect("register project");
+        let project_root = project.to_string_lossy().into_owned();
+
+        let upstream = CannedUpstream::spawn(upstream_body.to_string());
+        let state_dir = resolver.project_state_dir_for(&project_root);
+        fs::create_dir_all(&state_dir).expect("project state dir");
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: upstream.port,
+                pid: std::process::id() as i32,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("write the metadata endpoint");
+
+        let runtime = Arc::new(Mutex::new(fixture.runtime()));
+        let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+        let response = handle_daemon_runtime_request_with_mutex(
+            &runtime,
+            health_identity,
+            request("GET", &format!("{route}?project={project_root}")),
+        );
+        let body = String::from_utf8_lossy(&response.body).into_owned();
+        fixture.cleanup();
+
+        assert_eq!(response.status, 200, "{route} answered: {body}");
+        assert!(
+            body.contains(expected),
+            "{route} did not show {expected}, so its filter dropped the agent it exists to show: {body}"
+        );
+        for other in excluded {
+            assert!(
+                !body.contains(other),
+                "{route} showed {other} as well as {expected}; its filter is not discriminating, which every per-route gate would still pass because each uses a body tailored to its own route: {body}"
+            );
+        }
+    }
+}
