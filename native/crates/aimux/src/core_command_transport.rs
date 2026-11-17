@@ -480,15 +480,24 @@ fn execute_loopback_http_request(
     let endpoint = parse_loopback_url(&request.url)?;
     let mut stream = connect_loopback(&endpoint, request.timeout_ms)?;
     let timeout = request_timeout(request.timeout_ms);
-    // Only an unbounded wait needs this. A request with a timeout ends by
-    // itself and says so; a long-lived stream is waiting by design.
+    // A wait worth announcing is one that outlasts the notice delay, which is
+    // NOT the same as an unbounded one.
+    //
+    // This used to read `timeout.is_none()`, on the reasoning that a request
+    // with a timeout "ends by itself and says so". That held while every
+    // timeout here was short. It stopped holding the moment project-service
+    // requests got a 120s ceiling: they now always carry a timeout, so that
+    // test silenced the notice for exactly the case it was built for, and a
+    // stuck read went from announcing itself at 10s to two minutes of silence.
+    // Keying on the delay instead keeps short-timeout requests quiet and keeps
+    // the diagnostic wherever the wait can outlast it.
     //
     // The method and route are named because the address alone was read as
     // "the daemon has not started": a connected socket on a listening daemon
     // produced "still waiting for aimux daemon at 127.0.0.1:43190 (40s)",
     // which says nothing about which request is stuck. Whoever sees this next
     // should be able to tell a cold start from one slow route.
-    let _notice = timeout.is_none().then(|| {
+    let _notice = wait_notice_applies(timeout).then(|| {
         WaitNotice::start(wait_notice_subject(
             request.method.as_str(),
             &endpoint.host,
@@ -781,6 +790,15 @@ fn is_timeout(error: &io::Error) -> bool {
         error.kind(),
         io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
     )
+}
+
+/// Whether a wait should announce itself.
+///
+/// No timeout qualifies, and so does any timeout long enough that the notice
+/// would fire before the request gives up. A timeout shorter than the delay
+/// cannot benefit: the request ends first and reports its own timeout.
+fn wait_notice_applies(timeout: Option<Duration>) -> bool {
+    timeout.is_none_or(|budget| budget > LOOPBACK_WAIT_NOTICE_AFTER)
 }
 
 fn request_timeout(timeout_ms: Option<u64>) -> Option<Duration> {
@@ -1399,6 +1417,30 @@ mod tests {
     /// The notice exists so an unbounded wait is never silent, and it must not
     /// tax the ordinary fast request to do it. A polled version made every
     /// timeout-less call pay up to its sleep interval just to join the thread.
+    /// The case the ceiling created: a bounded wait that still outlasts the
+    /// notice delay must announce itself.
+    #[test]
+    fn a_long_bounded_wait_still_announces_itself() {
+        assert!(
+            wait_notice_applies(None),
+            "an unbounded wait must still announce itself"
+        );
+        assert!(
+            wait_notice_applies(Some(Duration::from_millis(
+                crate::daemon::runtime::PROJECT_SERVICE_REQUEST_WAIT_CEILING_MS
+            ))),
+            "the project-service ceiling is far longer than the notice delay, so a stuck request must not wait it out in silence"
+        );
+        assert!(
+            !wait_notice_applies(Some(LOOPBACK_WAIT_NOTICE_AFTER)),
+            "a timeout equal to the delay ends first and reports itself"
+        );
+        assert!(
+            !wait_notice_applies(Some(Duration::from_millis(20))),
+            "a short timeout cannot benefit from a notice that fires later"
+        );
+    }
+
     #[test]
     fn wait_notice_stops_promptly_and_says_nothing_when_the_wait_is_short() {
         let started = Instant::now();
