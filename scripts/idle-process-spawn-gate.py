@@ -147,8 +147,7 @@ class ProcessSampler:
                 self.samples.append(sample)
 
     def top(self, limit: int = 8) -> list[tuple[str, int]]:
-        counts = Counter(sample.label for sample in self.samples)
-        return counts.most_common(limit)
+        return _top_labels_excluding(self.samples, _INSTRUMENT_PIDS, limit)
 
     def top_in_subtree(self, root_pids: set[int], limit: int = 8) -> list[tuple[str, int]]:
         return _top_samples_in_subtree(self.samples, root_pids, limit)
@@ -161,6 +160,29 @@ class ProcessSampler:
         return []
 
 
+# Pids this script spawned to take its own measurements.
+#
+# The macOS snapshot runs `ps` every sample interval, so a five-second window
+# spawns about fifty of them, and each one's pid is new by the time the next
+# snapshot looks. They landed in the observed-spawner list, where `ps -axo`
+# then read as the top system spawner on the machine -- which is the gate
+# reporting its own instrument. It cost me a wrong hypothesis: I read that line
+# and went looking for which aimux task was polling the process table five
+# times a second.
+#
+# The VERDICT never used this list -- that is attribution by subtree, and it
+# is unaffected. But the list is what someone reads during an incident, which
+# is exactly when a wrong lead is expensive.
+_INSTRUMENT_PIDS: set[int] = set()
+
+
+def _top_labels_excluding(
+    samples: Iterable[SpawnSample], ignore_pids: set[int], limit: int
+) -> list[tuple[str, int]]:
+    counts = Counter(sample.label for sample in samples if sample.pid not in ignore_pids)
+    return counts.most_common(limit)
+
+
 def _read_linux_processes_counter() -> int:
     with open("/proc/stat", "r", encoding="utf-8") as handle:
         for line in handle:
@@ -170,7 +192,15 @@ def _read_linux_processes_counter() -> int:
 
 
 def _spawn_pid_probe() -> int:
-    output = subprocess.check_output(["/bin/sh", "-c", "printf '%s' $$"], text=True)
+    # Counted in the PID-allocation rates deliberately -- that IS the
+    # measurement -- but not an observed spawner on the host.
+    process = subprocess.Popen(
+        ["/bin/sh", "-c", "printf '%s' $$"],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    _INSTRUMENT_PIDS.add(process.pid)
+    output, _ = process.communicate()
     return int(output)
 
 
@@ -211,11 +241,17 @@ def _parse_linux_stat(stat: str) -> tuple[int, int] | None:
 
 def _darwin_process_snapshot() -> list[SpawnSample]:
     try:
-        output = subprocess.check_output(
+        # Popen rather than check_output so the child's pid is known and can be
+        # left out of the observed-spawner list; it is the instrument, not a
+        # spawner on the machine under test.
+        process = subprocess.Popen(
             ["ps", "-axo", "pid=,ppid=,command="],
+            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
         )
+        _INSTRUMENT_PIDS.add(process.pid)
+        output, _ = process.communicate()
     except (subprocess.SubprocessError, OSError):
         return []
     samples: list[SpawnSample] = []
