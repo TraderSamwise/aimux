@@ -292,9 +292,15 @@ pub async fn desktop_state_for_context_async(
         return Ok(desktop_state.clone());
     }
     let project_state_dir = context.project_state_dir();
-    let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
-    let metadata = try_load_metadata_state(&project_state_dir)?;
-    let exchange = try_read_runtime_exchange(runtime_exchange_path(&project_state_dir))?;
+    // All three on the blocking pool in one hop. This handler runs per
+    // request, so a sync read here parks one of the project service's two
+    // async workers; two concurrent requests park both.
+    let (topology, metadata, exchange) =
+        crate::project_service::scheduler::read_route_scan_inputs_off_the_worker(
+            project_state_dir.to_path_buf(),
+        )
+        .await
+        .map_err(|error| error.detail().to_owned())?;
     let live_window_ids_owned;
     let mut live_window_query_error = None;
     let live_window_projection = match context.live_window_ids_status() {

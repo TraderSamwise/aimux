@@ -3067,7 +3067,10 @@ fn assert_scan_read_does_not_consume_a_worker(read: ScanRead) {
         | ScanRead::TopologyOnly
         | ScanRead::TopologyAndState
         // The loop scan reads the topology first, so that is where it parks.
-        | ScanRead::LoopScanInputs => aimux::runtime_topology::runtime_topology_path(&state_dir),
+        // The route trio reads the topology first, so that is where it parks.
+        | ScanRead::LoopScanInputs
+        | ScanRead::RouteTrio => aimux::runtime_topology::runtime_topology_path(&state_dir),
+        ScanRead::MetadataState => aimux::daemon_state::metadata_state_path(&state_dir),
         ScanRead::MetadataOnly => aimux::daemon_state::metadata_state_path(&state_dir),
     };
     let made = std::process::Command::new("mkfifo")
@@ -3114,6 +3117,18 @@ fn assert_scan_read_does_not_consume_a_worker(read: ScanRead) {
                     let _ = aimux::project_service::loop_watcher_task::
                         read_loop_scan_inputs_off_the_worker(dir)
                         .await;
+                }
+                ScanRead::RouteTrio => {
+                    let _ =
+                        aimux::project_service::scheduler::read_route_scan_inputs_off_the_worker(
+                            dir,
+                        )
+                        .await;
+                }
+                ScanRead::MetadataState => {
+                    let _ =
+                        aimux::project_service::scheduler::read_metadata_state_off_the_worker(dir)
+                            .await;
                 }
             }
         });
@@ -3177,6 +3192,8 @@ enum ScanRead {
     MetadataOnly,
     TopologyAndState,
     LoopScanInputs,
+    RouteTrio,
+    MetadataState,
 }
 
 #[cfg(unix)]
@@ -3207,4 +3224,16 @@ fn a_scan_tasks_topology_and_state_read_does_not_consume_an_async_worker() {
 #[test]
 fn a_loop_scan_read_does_not_consume_an_async_worker() {
     assert_scan_read_does_not_consume_a_worker(ScanRead::LoopScanInputs);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_route_handlers_scan_read_does_not_consume_an_async_worker() {
+    assert_scan_read_does_not_consume_a_worker(ScanRead::RouteTrio);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_metadata_state_read_does_not_consume_an_async_worker() {
+    assert_scan_read_does_not_consume_a_worker(ScanRead::MetadataState);
 }
