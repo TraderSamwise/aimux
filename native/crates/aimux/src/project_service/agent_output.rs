@@ -2984,17 +2984,42 @@ async fn input_live_pane_route_async(
             "a peer machine cannot send a command, because a command carries no sender",
         );
     }
-    let mut attachments = Vec::new();
-    for attachment_id in &attachment_ids {
-        let Some(record) = get_attachment_record(
-            context.project_root(),
-            attachment_id,
-            Some(session_id.as_str()),
-        ) else {
-            return json_error(400, format!("attachment not found: {attachment_id}"));
-        };
-        attachments.push(record);
-    }
+    // One hop for the whole loop, not one per attachment. Each
+    // `get_attachment_record` reads from disk, and this handler runs per
+    // request, so N attachments were N sync reads on the async worker serving
+    // it.
+    let attachments = {
+        let project_root = context.project_root().to_path_buf();
+        // Owned: `attachment_ids` borrows the request body, which does not
+        // outlive the pool task.
+        let ids: Vec<String> = attachment_ids.iter().map(|id| (*id).to_owned()).collect();
+        let owner = session_id.clone();
+        match crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::task_name("project-service", "attachment-records"),
+            move || -> Result<Vec<Value>, String> {
+                let mut records = Vec::new();
+                for attachment_id in &ids {
+                    let Some(record) =
+                        get_attachment_record(&project_root, attachment_id, Some(owner.as_str()))
+                    else {
+                        return Err(format!("attachment not found: {attachment_id}"));
+                    };
+                    records.push(record);
+                }
+                Ok(records)
+            },
+        )
+        .await
+        {
+            Ok(Ok(records)) => records,
+            // A missing attachment is still a 400, exactly as before.
+            Ok(Err(error)) => return json_error(400, error),
+            // A pool task that never ran is not a missing attachment.
+            Err(error) => {
+                return json_error(500, format!("attachment records were not read: {error}"));
+            }
+        }
+    };
     let target = match resolve_live_session_target(context, &session_id) {
         Ok(Some(target)) => target,
         Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
