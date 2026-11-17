@@ -6589,3 +6589,142 @@ fn the_carved_out_outline_list_starts_a_project_service_that_is_down() {
         json!({ "entries": [] }),
     );
 }
+
+// --------------------------------------------------------------------------
+// host agent-read and the two doctor routes.
+//
+// host_agent_read is the only carve-out route that answers RAW TEXT, and its
+// resolve has a fallible integer param. The doctor routes are the third
+// resolve shape: an OPTIONAL project under either of two names with a cwd
+// default, so a required_param resolve copied from a sibling would turn
+// "answer for here" into a refusal.
+// --------------------------------------------------------------------------
+
+#[test]
+fn the_host_agent_read_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock_with_query(
+        "host-agent-read-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.host_agent_read_text,
+        "&sessionId=s-1",
+    );
+}
+
+#[test]
+fn the_carved_out_host_agent_read_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity_with_query(
+        "agent output as raw text",
+        "host-agent-read-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.host_agent_read_text,
+        "&sessionId=s-1",
+        json!({ "ok": true, "output": "from-the-upstream\n" }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_host_agent_read_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down_with_query(
+        "host-agent-read-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.host_agent_read_text,
+        "&sessionId=s-1",
+        json!({ "ok": true, "output": "output\n" }),
+    );
+}
+
+#[test]
+fn the_doctor_exchange_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "doctor-exchange-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_exchange_text,
+    );
+}
+
+#[test]
+fn the_carved_out_doctor_exchange_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "exchange diagnostics",
+        "doctor-exchange-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_exchange_text,
+        // The renderer prints the exchange `path`, not arbitrary keys; a
+        // `note` field renders nothing and this case would have compared two
+        // bodies that both say only "Project: <root>".
+        json!({ "runtimeExchange": { "path": "/from-the-upstream/exchange" } }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_doctor_exchange_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "doctor-exchange-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_exchange_text,
+        json!({ "runtimeExchange": { "queueDepth": 0 } }),
+    );
+}
+
+#[test]
+fn the_doctor_lifecycle_route_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "doctor-lifecycle-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text,
+    );
+}
+
+#[test]
+fn the_carved_out_doctor_lifecycle_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "lifecycle diagnostics",
+        "doctor-lifecycle-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text,
+        // `projectRoot` is what this renderer prints; without it the body is
+        // "Project: unknown" on both paths, which is exactly what the first
+        // version of this case compared.
+        json!({ "projectRoot": "/from-the-upstream/repo", "telemetry": {} }),
+        200,
+        "from-the-upstream",
+    );
+}
+
+#[test]
+fn the_carved_out_doctor_lifecycle_starts_a_project_service_that_is_down() {
+    assert_core_read_route_starts_a_service_that_is_down(
+        "doctor-lifecycle-cold",
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text,
+        json!({ "lifecycle": {} }),
+    );
+}
+
+/// The doctor routes answer for the CURRENT DIRECTORY when no project is named.
+///
+/// Their resolve is the one shape in this carve-out that does not require a
+/// `project`, and the failure mode is quiet: a `required_param` resolve copied
+/// from a sibling route would refuse with 400 instead of answering, and every
+/// gate above would still pass because they all pass a project explicitly.
+#[test]
+fn the_carved_out_doctor_routes_still_answer_without_a_project_param() {
+    for route in [
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_exchange_text,
+        aimux::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text,
+    ] {
+        let fixture = RuntimeFixture::new("doctor-no-project");
+        let runtime = Arc::new(Mutex::new(fixture.runtime()));
+        let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+        // No `project` and no `projectRoot`: the route must resolve the cwd
+        // rather than refuse.
+        let response = handle_daemon_runtime_request_with_mutex(
+            &runtime,
+            health_identity,
+            request("GET", route),
+        );
+        let body = String::from_utf8_lossy(&response.body).into_owned();
+        fixture.cleanup();
+
+        assert_ne!(
+            response.status, 400,
+            "{route} refused a request with no project param; these routes answer for the current directory, and a required_param resolve would have broken that silently: {body}"
+        );
+    }
+}

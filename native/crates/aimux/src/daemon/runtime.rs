@@ -3100,7 +3100,10 @@ pub fn handle_daemon_runtime_request_with_mutex(
             || pathname == crate::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE
             || pathname == crate::core_command_contract::CORE_API_ROUTES.thread_show_text
             || pathname == crate::core_command_contract::CORE_API_ROUTES.task_show_text
-            || pathname == crate::core_command_contract::CORE_API_ROUTES.outline_list_text)
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.outline_list_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.host_agent_read_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.doctor_exchange_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text)
         && parse_remote_actor(&request.headers).is_none()
         && !crate::daemon::router::has_origin_header(&request.headers)
     {
@@ -3208,6 +3211,30 @@ pub fn handle_daemon_runtime_request_with_mutex(
                 request,
                 crate::daemon::text::project_content::resolve_outline_list_request,
                 crate::daemon::text::project_content::render_outline_list_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.host_agent_read_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::host_agent::resolve_host_agent_read_request,
+                crate::daemon::text::host_agent::render_host_agent_read_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.doctor_exchange_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::operations::resolve_doctor_exchange_request,
+                crate::daemon::text::operations::render_doctor_exchange_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.doctor_lifecycle_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::operations::resolve_doctor_lifecycle_request,
+                crate::daemon::text::operations::render_doctor_lifecycle_result,
             );
         }
     }
