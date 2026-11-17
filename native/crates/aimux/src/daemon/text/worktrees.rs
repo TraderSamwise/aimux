@@ -434,16 +434,25 @@ pub fn worktree_path_text_route(
     text_or_json_lines(route_url, payload.clone(), &(input.render)(&payload))
 }
 
-pub fn graveyard_list_text_route(
-    runtime: &mut impl DaemonWorktreeTextRuntime,
+/// Phase one of `aimux graveyard list`: everything decidable without the
+/// project service, so the carve-out can resolve under the lock and release it
+/// before the upstream hop.
+pub fn resolve_graveyard_list_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path: project_routes::GRAVEYARD.to_owned(),
+    })
+}
+
+/// Phase three of `aimux graveyard list`, from a raw project-service result.
+pub fn render_graveyard_list_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
 ) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
-    let result = runtime.get_project_service_json(&project, project_routes::GRAVEYARD);
     let (json, _) = match unwrap_project_result(result) {
         Ok(result) => result,
         Err(response) => return response,
@@ -463,6 +472,25 @@ pub fn graveyard_list_text_route(
         payload.clone(),
         &render_core_graveyard_lines(&payload),
     )
+}
+
+pub fn graveyard_list_text_route(
+    runtime: &mut impl DaemonWorktreeTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_graveyard_list_request(route_url, body) {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_graveyard_list_result(route_url, result)
 }
 
 pub fn graveyard_agent_text_route(

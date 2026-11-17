@@ -3051,7 +3051,10 @@ pub fn handle_daemon_runtime_request_with_mutex(
             // lock behaviours. This is the function-versus-pathname divergence
             // showing up inside a route I had already called done.
             || pathname == crate::core_command_contract::CORE_API_ROUTES.threads_list_text
-            || pathname == crate::core_command_contract::CORE_API_ROUTES.worktree_list_text)
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.worktree_list_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.graveyard_list_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.team_show_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.usage_text)
         && parse_remote_actor(&request.headers).is_none()
         && !crate::daemon::router::has_origin_header(&request.headers)
     {
@@ -3095,6 +3098,30 @@ pub fn handle_daemon_runtime_request_with_mutex(
                 request,
                 crate::daemon::text::worktrees::resolve_worktree_list_request,
                 crate::daemon::text::worktrees::render_worktree_list_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.graveyard_list_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::worktrees::resolve_graveyard_list_request,
+                crate::daemon::text::worktrees::render_graveyard_list_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.team_show_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::team::resolve_team_show_request,
+                crate::daemon::text::team::render_team_show_result,
+            );
+        }
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.usage_text {
+            return handle_core_read_route_without_holding_the_lock(
+                runtime,
+                request,
+                crate::daemon::text::project_content::resolve_usage_request,
+                crate::daemon::text::project_content::render_usage_result,
             );
         }
     }

@@ -62,24 +62,38 @@ pub fn route_project_content_text_request(
     None
 }
 
-fn usage_text_route(
-    runtime: &mut impl DaemonProjectContentTextRuntime,
+/// Phase one of `aimux usage`: everything decidable without the project
+/// service, so the carve-out can resolve under the lock and release it before
+/// the upstream hop.
+///
+/// This is the query-bearing resolve shape -- the `refresh` flag becomes part
+/// of the upstream route path, not a separate field -- which is why
+/// `CoreReadTarget::route_path` is an owned `String` rather than a `&'static
+/// str`.
+pub fn resolve_usage_request(
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
-) -> DaemonRouteResponse {
-    let project = match required_param(route_url, body, "project") {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    let project = required_param(route_url, body, "project")?;
     let mut route_path = project_routes::USAGE.to_owned();
     if route_url.search_param("refresh") == Some("1") {
         route_path.push_str("?refresh=1");
     }
-    let (json, _) =
-        match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {
-            Ok(result) => result,
-            Err(response) => return response,
-        };
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    })
+}
+
+/// Phase three of `aimux usage`, from a raw project-service result.
+pub fn render_usage_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    let (json, _) = match unwrap_project_result(result) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
     if json.get("ok").and_then(Value::as_bool) == Some(false) {
         let mut response = if route_url.search_param("json") == Some("1") {
             text_or_json_lines(route_url, json, &[])
@@ -110,6 +124,25 @@ fn usage_text_route(
     };
     let lines = lines.into_iter().map(str::to_owned).collect::<Vec<_>>();
     text_or_json_lines(route_url, json, &lines)
+}
+
+fn usage_text_route(
+    runtime: &mut impl DaemonProjectContentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_usage_request(route_url, body) {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_usage_result(route_url, result)
 }
 
 fn outline_list_text_route(
