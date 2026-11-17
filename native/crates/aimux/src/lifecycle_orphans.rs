@@ -99,12 +99,20 @@ pub trait LifecycleOrphanRuntime {
     fn kill_pid(&mut self, pid: i32, signal: &str) -> Result<(), String>;
     fn sleep_ms(&mut self, ms: u64);
     fn tmux_is_available(&mut self) -> bool;
-    fn list_tmux_session_names(&mut self) -> Vec<String>;
+    /// The tmux sessions, or why they could not be listed.
+    ///
+    /// Fallible for the same reason `list_processes` is: every caller below
+    /// iterates this list and acts on what it finds, so an empty list means
+    /// "kill nothing" -- which is the right fold when tmux cannot be reached,
+    /// and indistinguishable from "this machine is clean" unless the error
+    /// survives. A cleanup that could not look must not report that it found
+    /// no orphans.
+    fn list_tmux_session_names(&mut self) -> Result<Vec<String>, String>;
     fn get_tmux_session_option(&mut self, session_name: &str, key: &str) -> Option<String>;
     fn get_tmux_window_option(&mut self, _window_id: &str, _key: &str) -> Option<String> {
         None
     }
-    fn list_tmux_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo>;
+    fn list_tmux_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String>;
     fn kill_tmux_window(&mut self, target: &TmuxTarget) -> Result<(), String>;
     fn kill_tmux_session(&mut self, session_name: &str) -> Result<(), String>;
     fn list_live_tmux_pane_pids(&mut self) -> Result<BTreeSet<i32>, String>;
@@ -161,8 +169,8 @@ impl LifecycleOrphanRuntime for SystemLifecycleOrphanRuntime {
         self.tmux.is_available()
     }
 
-    fn list_tmux_session_names(&mut self) -> Vec<String> {
-        self.tmux.list_session_names().unwrap_or_default()
+    fn list_tmux_session_names(&mut self) -> Result<Vec<String>, String> {
+        self.tmux.list_session_names()
     }
 
     fn get_tmux_session_option(&mut self, session_name: &str, key: &str) -> Option<String> {
@@ -173,8 +181,8 @@ impl LifecycleOrphanRuntime for SystemLifecycleOrphanRuntime {
         self.tmux.get_window_option(window_id, key)
     }
 
-    fn list_tmux_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo> {
-        self.tmux.list_windows(session_name).unwrap_or_default()
+    fn list_tmux_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
+        self.tmux.list_windows(session_name)
     }
 
     fn kill_tmux_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
@@ -235,38 +243,57 @@ pub fn plan_lifecycle_validation_orphans_with_scope(
             };
         }
     };
-    let (tmux_sessions, tmux_windows) =
-        if tmux_available {
-            let tmux_sessions =
-                unique_strings(runtime.list_tmux_session_names().into_iter().filter(
-                    |session_name| is_lifecycle_validation_tmux_session(session_name, runtime),
-                ));
-            let tmux_windows = project_service_scope
-                .map(|scope| unrecognized_same_owner_dashboard_windows(runtime, scope))
-                .unwrap_or_default();
-            (tmux_sessions, tmux_windows)
-        } else {
-            (Vec::new(), Vec::new())
+    let mut listing_errors = Vec::new();
+    let (tmux_sessions, tmux_windows) = if tmux_available {
+        let listed = match runtime.list_tmux_session_names() {
+            Ok(sessions) => sessions,
+            Err(error) => {
+                // Not a return: the process half of the plan is still worth
+                // reporting, and the error rides along so the caller knows the
+                // tmux half is missing rather than empty.
+                listing_errors.push(error);
+                Vec::new()
+            }
         };
+        let tmux_sessions =
+            unique_strings(listed.into_iter().filter(|session_name| {
+                is_lifecycle_validation_tmux_session(session_name, runtime)
+            }));
+        let tmux_windows = match project_service_scope
+            .map(|scope| unrecognized_same_owner_dashboard_windows(runtime, scope))
+        {
+            Some(Ok(windows)) => windows,
+            Some(Err(error)) => {
+                listing_errors.push(error);
+                Vec::new()
+            }
+            None => Vec::new(),
+        };
+        (tmux_sessions, tmux_windows)
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let processes = match runtime.list_processes() {
         Ok(processes) => processes,
         Err(error) => {
+            listing_errors.push(error);
             return LifecycleOrphanPlan {
                 process_pids: Vec::new(),
                 tmux_sessions,
                 tmux_windows,
-                errors: vec![error],
+                errors: listing_errors,
             };
         }
     };
     let parents = match runtime.list_process_parents() {
         Ok(parents) => parents,
         Err(error) => {
+            listing_errors.push(error);
             return LifecycleOrphanPlan {
                 process_pids: Vec::new(),
                 tmux_sessions,
                 tmux_windows,
-                errors: vec![error],
+                errors: listing_errors,
             };
         }
     };
@@ -282,7 +309,11 @@ pub fn plan_lifecycle_validation_orphans_with_scope(
         process_pids,
         tmux_sessions,
         tmux_windows,
-        errors: Vec::new(),
+        // Not Vec::new(): a tmux listing can fail while the process half of
+        // the plan still succeeds, and that plan is incomplete rather than
+        // clean. Returning no errors here is what made an unreachable tmux
+        // look like a machine with nothing to clean up.
+        errors: listing_errors,
     }
 }
 
@@ -313,7 +344,14 @@ pub fn cleanup_lifecycle_validation_orphans(
     };
     if tmux_available {
         let mut killed_sessions = BTreeSet::new();
-        for session_name in unique_strings(runtime.list_tmux_session_names()) {
+        let listed = match runtime.list_tmux_session_names() {
+            Ok(sessions) => sessions,
+            Err(error) => {
+                result.errors.push(error);
+                Vec::new()
+            }
+        };
+        for session_name in unique_strings(listed) {
             if !is_lifecycle_validation_tmux_session(&session_name, runtime) {
                 continue;
             }
@@ -331,7 +369,14 @@ pub fn cleanup_lifecycle_validation_orphans(
         }
         if let Some(scope) = options.project_service_scope.as_ref() {
             let mut seen_windows = BTreeSet::new();
-            for orphan in unrecognized_same_owner_dashboard_window_targets(runtime, scope) {
+            let orphans = match unrecognized_same_owner_dashboard_window_targets(runtime, scope) {
+                Ok(orphans) => orphans,
+                Err(error) => {
+                    result.errors.push(error);
+                    Vec::new()
+                }
+            };
+            for orphan in orphans {
                 if killed_sessions.contains(&orphan.target.session_name)
                     || !seen_windows.insert(orphan.target.window_id.clone())
                 {
@@ -549,20 +594,22 @@ struct OrphanDashboardWindow {
 fn unrecognized_same_owner_dashboard_windows(
     runtime: &mut impl LifecycleOrphanRuntime,
     scope: &ProjectServiceOrphanScope,
-) -> Vec<String> {
-    unrecognized_same_owner_dashboard_window_targets(runtime, scope)
-        .into_iter()
-        .map(|window| window.label)
-        .collect()
+) -> Result<Vec<String>, String> {
+    Ok(
+        unrecognized_same_owner_dashboard_window_targets(runtime, scope)?
+            .into_iter()
+            .map(|window| window.label)
+            .collect(),
+    )
 }
 
 fn unrecognized_same_owner_dashboard_window_targets(
     runtime: &mut impl LifecycleOrphanRuntime,
     scope: &ProjectServiceOrphanScope,
-) -> Vec<OrphanDashboardWindow> {
+) -> Result<Vec<OrphanDashboardWindow>, String> {
     let mut windows = Vec::new();
     let mut seen = BTreeSet::new();
-    for session_name in unique_strings(runtime.list_tmux_session_names()) {
+    for session_name in unique_strings(runtime.list_tmux_session_names()?) {
         let Some(project_root) =
             runtime.get_tmux_session_option(&session_name, "@aimux-project-root")
         else {
@@ -578,7 +625,7 @@ fn unrecognized_same_owner_dashboard_window_targets(
         {
             continue;
         }
-        for window in runtime.list_tmux_windows(&session_name) {
+        for window in runtime.list_tmux_windows(&session_name)? {
             if is_job_window(runtime, &window.id) {
                 continue;
             }
@@ -598,7 +645,7 @@ fn unrecognized_same_owner_dashboard_window_targets(
             });
         }
     }
-    windows
+    Ok(windows)
 }
 
 fn is_job_window(runtime: &mut impl LifecycleOrphanRuntime, window_id: &str) -> bool {
@@ -954,6 +1001,8 @@ mod tests {
         live_pane_pids_error: Option<String>,
         processes_error: Option<String>,
         parents_error: Option<String>,
+        tmux_sessions_error: Option<String>,
+        tmux_windows_error: Option<String>,
         killed_pids: Vec<(i32, String)>,
         killed_sessions: Vec<String>,
         killed_windows: Vec<String>,
@@ -1064,8 +1113,11 @@ mod tests {
             self.tmux_available
         }
 
-        fn list_tmux_session_names(&mut self) -> Vec<String> {
-            self.tmux_sessions.clone()
+        fn list_tmux_session_names(&mut self) -> Result<Vec<String>, String> {
+            if let Some(error) = &self.tmux_sessions_error {
+                return Err(error.clone());
+            }
+            Ok(self.tmux_sessions.clone())
         }
 
         fn get_tmux_session_option(&mut self, session_name: &str, key: &str) -> Option<String> {
@@ -1080,11 +1132,15 @@ mod tests {
                 .cloned()
         }
 
-        fn list_tmux_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo> {
-            self.tmux_windows
+        fn list_tmux_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
+            if let Some(error) = &self.tmux_windows_error {
+                return Err(error.clone());
+            }
+            Ok(self
+                .tmux_windows
                 .get(session_name)
                 .cloned()
-                .unwrap_or_default()
+                .unwrap_or_default())
         }
 
         fn kill_tmux_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
@@ -1199,6 +1255,89 @@ mod tests {
             plan.errors[0].contains("ps process inventory"),
             "the plan did not say WHY it could not inventory processes: {:?}",
             plan.errors
+        );
+    }
+
+    /// A tmux listing that could not run is not a machine with no sessions.
+    ///
+    /// The sibling gates above cover the PROCESS inventory. These two calls
+    /// were the stragglers: `list_session_names().unwrap_or_default()` and
+    /// `list_windows(..).unwrap_or_default()` in the same trait impl whose
+    /// process calls had already been made fallible. Every consumer iterates
+    /// the list and acts on members, so an unreachable tmux meant "kill
+    /// nothing" -- the right fold, reported as "found no orphans".
+    #[test]
+    fn a_failed_tmux_listing_is_not_an_empty_plan() {
+        let validation_session = "aimux-lifecycle-validation-session".to_owned();
+
+        // The control first: with tmux answering, the session is planned.
+        let mut healthy = FakeLifecycleRuntime {
+            tmux_available: true,
+            tmux_sessions: vec![validation_session.clone()],
+            ..Default::default()
+        };
+        let planned = plan_lifecycle_validation_orphans(&mut healthy, 1);
+        assert!(
+            planned.errors.is_empty(),
+            "the control must plan cleanly or the failing case proves nothing: {:?}",
+            planned.errors
+        );
+
+        let mut failing = FakeLifecycleRuntime {
+            tmux_available: true,
+            tmux_sessions: vec![validation_session],
+            tmux_sessions_error: Some(
+                "failed to list tmux sessions: no server running on /tmp/tmux-501/default"
+                    .to_owned(),
+            ),
+            ..Default::default()
+        };
+        let plan = plan_lifecycle_validation_orphans(&mut failing, 1);
+        assert!(
+            plan.tmux_sessions.is_empty(),
+            "a plan built on a failed tmux listing named sessions to kill: {:?}",
+            plan.tmux_sessions
+        );
+        assert!(
+            plan.errors
+                .iter()
+                .any(|error| error.contains("tmux sessions")),
+            "the plan did not say WHY it could not list tmux sessions, so an unreachable tmux is indistinguishable from a clean machine: {:?}",
+            plan.errors
+        );
+    }
+
+    /// The same when CLEANING UP: kill nothing, and say why.
+    #[test]
+    fn a_failed_tmux_listing_stops_the_cleanup_and_says_so() {
+        let mut runtime = FakeLifecycleRuntime {
+            tmux_available: true,
+            tmux_sessions: vec!["aimux-lifecycle-validation-session".to_owned()],
+            tmux_sessions_error: Some(
+                "failed to list tmux sessions: connection refused".to_owned(),
+            ),
+            ..Default::default()
+        };
+        let result = cleanup_lifecycle_validation_orphans(
+            &mut runtime,
+            CleanupLifecycleOrphansOptions {
+                current_pid: 1,
+                ..Default::default()
+            },
+        );
+        assert!(
+            result.tmux_sessions.is_empty() && result.attempted_tmux_sessions.is_empty(),
+            "a cleanup that could not list tmux sessions still attempted kills: attempted {:?}, killed {:?}",
+            result.attempted_tmux_sessions,
+            result.tmux_sessions
+        );
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|error| error.contains("tmux sessions")),
+            "the cleanup reported no orphans without saying it could not look: {:?}",
+            result.errors
         );
     }
 
