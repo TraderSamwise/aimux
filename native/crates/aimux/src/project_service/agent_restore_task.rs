@@ -554,6 +554,8 @@ mod tests {
     #[test]
     fn idle_topology_does_not_query_tmux_live_windows() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - writes a topology fixture and reads it back to
+        // assert what the snapshot derives; both sides are the fixture
         // aimux-async-seam: test - sync test drives async restore-topology handler
         crate::async_runtime::process_runtime().block_on(async {
             let root = temp_root("agent-restore-idle");
@@ -603,6 +605,8 @@ mod tests {
     #[test]
     fn running_topology_still_queries_tmux_live_windows() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - writes a topology fixture and reads it back to
+        // assert what the snapshot derives; both sides are the fixture
         // aimux-async-seam: test - sync test drives async restore-topology handler
         crate::async_runtime::process_runtime().block_on(async {
             let root = temp_root("agent-restore-running");
