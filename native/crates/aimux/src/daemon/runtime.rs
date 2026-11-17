@@ -473,6 +473,44 @@ pub const PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS: u64 = 5_000;
 /// kills healthy processes.
 const _: () = assert!(PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS > PROJECT_SERVICE_PROBE_TIMEOUT_MS);
 
+/// How long a daemon request will wait for the project service to answer.
+///
+/// Every route except `/health` runs on the blocking pool
+/// (`spawn_blocking_named("daemon-listener", "route")`), so a route waiting
+/// here holds one of tokio's 512 pool threads. Without a ceiling it holds it
+/// FOREVER when the service accepts the connection and never answers:
+/// `request_timeout(None)` becomes `set_read_timeout(None)`, and
+/// `LoopbackRetry` does not help, because its deadline only bounds retries on
+/// transient errors and a silently blocking read never produces one.
+///
+/// Nothing reclaims those threads. `ServiceVerdict::Wedged` is counted and
+/// described -- "killing pid N is the fix" is doctor TEXT -- and no caller acts
+/// on that verdict, so a wedged-but-alive service is never killed
+/// automatically. That is what makes a number worth picking: hung requests
+/// never retire, so they accumulate over a long-lived daemon's life toward 512,
+/// after which only `/health` can answer.
+///
+/// THE NUMBER IS THE HOUSE NUMBER. `QUEUED_LIFECYCLE_TIMEOUT_MS` chose the same
+/// 120s for the same situation, and its comment is the argument for why this is
+/// safe to pick without knowing every route's worst case: it bounds the WAIT,
+/// never the work. The project service keeps doing whatever it is doing; the
+/// daemon stops holding a thread to watch it. Waiting silently forever is the
+/// alternative, and that comment records where that led -- "that is how the
+/// queue died".
+///
+/// Deliberately far above `PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS`, so a
+/// service merely starved of CPU answers long before this. A ceiling near the
+/// probe budgets would let load read as a wedge on the request path, which is
+/// the mistake their own comment warns about.
+pub const PROJECT_SERVICE_REQUEST_WAIT_CEILING_MS: u64 =
+    crate::project_service::lifecycle_mutation_queue::QUEUED_LIFECYCLE_TIMEOUT_MS;
+
+/// Compile-time, because `request_timeout` filters `> 0`: a zero ceiling is
+/// silently "no timeout", which is the bug this constant exists to remove.
+const _: () = assert!(PROJECT_SERVICE_REQUEST_WAIT_CEILING_MS > 0);
+const _: () =
+    assert!(PROJECT_SERVICE_REQUEST_WAIT_CEILING_MS > PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS);
+
 /// How long after replacing a service the daemon refuses to replace it again.
 /// A service that keeps wedging is a different problem from one that wedged,
 /// and killing it every budget forever is worse than saying so. A cooldown
@@ -7406,6 +7444,49 @@ mod dashboard_alive_lookup_tests {
 
 #[cfg(test)]
 mod tests {
+    /// No project-service request leaves without a wait ceiling.
+    ///
+    /// The builder is the funnel both paths reach, so this is the one place a
+    /// test can say that about every route at once. It pairs with
+    /// `loopback_transport_reports_configured_read_timeout`, which already
+    /// proves the transport HONOURS a configured timeout: together they are the
+    /// claim that a wedged service cannot hold a daemon pool thread forever.
+    #[test]
+    fn project_service_requests_always_carry_a_wait_ceiling() {
+        let endpoint = super::MetadataApiEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: 45_991,
+            pid: 91_491,
+            updated_at: "now".to_owned(),
+        };
+
+        let defaulted = super::build_daemon_json_request(&endpoint, "/health", None, None);
+        assert_eq!(
+            defaulted.timeout_ms,
+            Some(super::PROJECT_SERVICE_REQUEST_WAIT_CEILING_MS),
+            "a caller that passes no timeout must still get the ceiling"
+        );
+
+        // `request_timeout` filters `> 0`, so a zero would mean NO timeout and
+        // quietly reintroduce the unbounded wait. It must be normalised away,
+        // not passed through.
+        let zeroed = super::build_daemon_json_request(&endpoint, "/health", None, Some(0));
+        assert_eq!(
+            zeroed.timeout_ms,
+            Some(super::PROJECT_SERVICE_REQUEST_WAIT_CEILING_MS),
+            "a zero timeout means no timeout downstream, so it must not survive"
+        );
+
+        // An explicit budget still wins; this bounds the forgotten case, it does
+        // not override callers who chose.
+        let explicit = super::build_daemon_json_request(&endpoint, "/health", None, Some(250));
+        assert_eq!(
+            explicit.timeout_ms,
+            Some(250),
+            "an explicit non-zero timeout must be left alone"
+        );
+    }
+
     use super::*;
 
     fn service_entry(pid: i32, project_id: &str, project_root: &str) -> ProcessArgsEntry {
@@ -13142,7 +13223,20 @@ fn build_daemon_json_request(
         method,
         headers,
         body: body_text,
-        timeout_ms,
+        // Defaulted HERE, not at the callers. Both paths into the project
+        // service reach this builder -- the trait impls through
+        // `resolve_project_service_json_request` and the lock-free carve-out
+        // through the same function -- so a ceiling applied here cannot be
+        // forgotten by a new route, which is exactly how the unbounded waits
+        // got in.
+        //
+        // `Some(0)` is normalised away rather than passed through, because
+        // `request_timeout` filters `> 0`, so a zero would mean "no timeout"
+        // and quietly reintroduce the thing this removes. An explicit non-zero
+        // timeout still wins.
+        timeout_ms: timeout_ms
+            .filter(|value| *value > 0)
+            .or(Some(PROJECT_SERVICE_REQUEST_WAIT_CEILING_MS)),
     }
 }
 
