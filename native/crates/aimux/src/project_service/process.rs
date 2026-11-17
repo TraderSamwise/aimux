@@ -2872,6 +2872,8 @@ mod tests {
     #[test]
     fn async_connection_cancelled_during_blocking_route_writes_no_partial_response() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-blocking: test - a sync channel is the handshake; the test has to
+        // know the route reached its blocking section before it cancels the connection
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-cancel-blocking");

@@ -155,6 +155,97 @@ async fn f() {
     expect(result.stderr).toContain("std-net");
   });
 
+  // The shape the extractor could not see, and the one the scheduler is built
+  // from: `PeriodicTask::run` is a PLAIN fn returning `Box::pin(async move
+  // { .. })`, because the trait returns a boxed future. 73 bodies in the crate
+  // look like this and no hazard had ever been applied to any of them.
+  it("rejects a blocking spelling inside Box::pin(async move)", () => {
+    const result = runAudit(
+      writeFixture(`
+fn run() -> Pin<Box<dyn Future<Output = ()>>> {
+    Box::pin(async move {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    })
+}
+`),
+    );
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("thread-sleep");
+    // Named after the function it sits in, because "async block at line N" is
+    // a worse thing to read in a failure.
+    expect(result.stderr).toContain("run");
+  });
+
+  // A bare async block in a plain fn counts too, which is how the relay nests
+  // its request futures.
+  it("rejects a blocking spelling inside a bare async block", () => {
+    const result = runAudit(
+      writeFixture(`
+fn drive() {
+    let work = async {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    };
+    let _ = work;
+}
+`),
+    );
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("thread-sleep");
+  });
+
+  // The exemption, using a marker of its own, because the seams marker
+  // accounts for a block_on call and means something different. Some blocking is the fixture: a test task that
+  // sleeps to occupy a worker past its interval is how the scheduler's overrun
+  // handling gets something to handle, and tokio::time::sleep would yield
+  // instead and measure nothing.
+  it("allows a blocking spelling a seam marker accounts for", () => {
+    const result = runAudit(
+      writeFixture(`
+fn run() -> Pin<Box<dyn Future<Output = ()>>> {
+    // aimux-async-blocking: test - the sleep is the fixture, occupying a worker
+    // past its interval so overrun handling has something to handle
+    Box::pin(async move {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    })
+}
+`),
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  // And a marker has to SAY something. A bare mention is not an exemption, or
+  // the escape hatch is just the word.
+  it("does not treat an unclassified marker as an exemption", () => {
+    const result = runAudit(
+      writeFixture(`
+fn run() -> Pin<Box<dyn Future<Output = ()>>> {
+    // aimux-async-blocking: because
+    Box::pin(async move {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    })
+}
+`),
+    );
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("thread-sleep");
+  });
+
+  // An async fn body is collected once, not twice: it is both an `async fn`
+  // and an async-delimited body, and reporting it twice would double every
+  // existing finding.
+  it("reports an async fn body once", () => {
+    const result = runAudit(
+      writeFixture("async fn f() { std::thread::sleep(std::time::Duration::from_millis(1)); }"),
+    );
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr.match(/thread-sleep/g)).toHaveLength(1);
+  });
+
   it("allows the same blocking spellings outside async fn", () => {
     const result = runAudit(
       writeFixture(`

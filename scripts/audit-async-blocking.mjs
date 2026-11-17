@@ -242,28 +242,106 @@ function findBodyEnd(masked, openBrace) {
   return masked.length;
 }
 
-function asyncFunctions(text) {
+/// Does this body carry a seam marker?
+///
+/// Reads the RAW text, because `maskRust` blanks comments -- and its
+/// replacements are length-preserving, so offsets into the masked text index
+/// the raw text as well. The marker is looked for inside the body and on the
+/// few lines above it, which is where `block_on_named` callers already put it.
+///
+/// A marker of its OWN, not the async-seams one, and that was not the first
+/// try. I reused `aimux-async-seam:` on the argument that one annotation read
+/// by two audits beats two conventions -- and the seams audit refused it with
+/// "stale async seam marker has no adjacent seam", correctly. That marker
+/// exists to account for a `block_on` call, sync code driving async, which is
+/// migration debt; its staleness check enforces that every marker sits next to
+/// one. "This block_on boundary is accounted for" and "this blocking call
+/// inside an async body is deliberate" are different claims about different
+/// code, so conflating them was the error and the check caught it.
+///
+/// Same four classifications, for familiarity:
+/// `aimux-async-blocking: test - the sleep is the fixture`.
+function hasSeamMarker(rawText, start, end) {
+  // Six lines, because a marker worth reading usually explains itself over a
+  // few of them and sits directly above the body. Bounded on purpose: a
+  // marker further away than this is not plainly attached to the code it
+  // would excuse.
+  let windowStart = start;
+  for (let line = 0; line < 6 && windowStart > 0; line += 1) {
+    windowStart = rawText.lastIndexOf("\n", windowStart - 1);
+    if (windowStart === -1) {
+      windowStart = 0;
+      break;
+    }
+  }
+  const window = rawText.slice(Math.max(windowStart, 0), end);
+  return /aimux-async-blocking:\s*(?:permanent|transitional|test|fixture)\s+-\s*\S/.test(window);
+}
+
+/// Every async body, not only the ones spelled `async fn`.
+///
+/// The extractor matched `async fn` and nothing else, and the shape it missed
+/// is the one the scheduler is built from: `PeriodicTask::run` is a PLAIN `fn`
+/// returning `Box::pin(async move { .. })`, because the trait returns a boxed
+/// future. Measured on the crate: 73 such bodies, none of which any hazard had
+/// ever been applied to -- so `std::process`, `std::net`, `thread::sleep`, the
+/// shared-mutex hold and a blocking recv were all unenforced inside every
+/// periodic task in the project service.
+///
+/// Same FAMILY as the masker bug: a pass reported over code never looked at.
+/// A different cause -- there the mask blanked 770 lines, here the body was
+/// never selected -- and the measurement is why this is a commit rather than a
+/// claim.
+function asyncBodies(text) {
   const masked = maskRust(text);
   const matches = [];
-  const regex = /\basync\s+(?:unsafe\s+)?(?:extern\s+(?:[A-Za-z_][A-Za-z0-9_]*|"[^"]*")\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)/g;
-  for (const match of masked.matchAll(regex)) {
+
+  const fnRegex = /\basync\s+(?:unsafe\s+)?(?:extern\s+(?:[A-Za-z_][A-Za-z0-9_]*|"[^"]*")\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+  for (const match of masked.matchAll(fnRegex)) {
     const openBrace = masked.indexOf("{", match.index + match[0].length);
     if (openBrace === -1) continue;
     const end = findBodyEnd(masked, openBrace);
     matches.push({
       name: match[1],
       start: match.index,
+      end,
       openBrace,
       source: masked.slice(match.index, end),
     });
   }
+
+  const blockRegex = /\basync\s+(?:move\s+)?\{/g;
+  for (const match of masked.matchAll(blockRegex)) {
+    const openBrace = masked.indexOf("{", match.index + match[0].length - 1);
+    if (openBrace === -1) continue;
+    const end = findBodyEnd(masked, openBrace);
+    // A block that IS an async fn's body is already collected; reporting it
+    // again would name one hazard twice for the same code.
+    if (matches.some((fn) => match.index >= fn.openBrace && end <= fn.end)) continue;
+    matches.push({
+      name: enclosingFunctionName(masked, match.index) ?? "async block",
+      start: match.index,
+      end,
+      openBrace,
+      source: masked.slice(match.index, end),
+    });
+  }
+
   return matches;
+}
+
+/// The nearest `fn NAME` above an offset, so a failure names something a
+/// reader can find rather than a line number alone.
+function enclosingFunctionName(masked, offset) {
+  const match = [...masked.slice(0, offset).matchAll(/\bfn\s+([A-Za-z_][A-Za-z0-9_]*)/g)].pop();
+  return match ? match[1] : null;
 }
 
 const violations = [];
 for (const file of scanRoots.flatMap(rustFiles)) {
   const text = readFileSync(file, "utf8");
-  for (const fn of asyncFunctions(text)) {
+  for (const fn of asyncBodies(text)) {
+    if (hasSeamMarker(text, fn.start, fn.end)) continue;
     for (const hazard of HAZARDS) {
       if (!hazard.matches(fn.source, maskRust(text))) continue;
       violations.push({
