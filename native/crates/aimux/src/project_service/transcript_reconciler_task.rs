@@ -12,12 +12,9 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::daemon_state::try_load_metadata_state;
 use crate::debug_logging::{LogLevel, log_at};
 use crate::project_api_contract::routes;
-use crate::runtime_topology::{
-    list_topology_session_states, read_runtime_topology, runtime_topology_path,
-};
+use crate::runtime_topology::list_topology_session_states;
 use crate::transcript_reconciler::{
     DEFAULT_INTERVAL_MS, SessionView, TranscriptReconciler, TranscriptReconcilerDeps,
 };
@@ -76,8 +73,15 @@ impl PeriodicTask for TranscriptReconcilerTask {
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             let project_state_dir = context.project_state_dir();
-            let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))
-                .map_err(|error| format!("transcript reconciler topology unavailable: {error}"))?;
+            let topology =
+                super::scheduler::read_topology_off_the_worker(project_state_dir.clone())
+                    .await
+                    .map_err(|error| {
+                        format!(
+                            "transcript reconciler topology unavailable: {}",
+                            error.detail()
+                        )
+                    })?;
             let sessions = list_topology_session_states(&topology, Some(LIVE_SESSION_STATUSES))
                 .iter()
                 .filter_map(SessionView::from_value)
@@ -85,12 +89,18 @@ impl PeriodicTask for TranscriptReconcilerTask {
             if sessions.is_empty() {
                 return Ok(());
             }
-            let metadata = serde_json::to_value(
-                try_load_metadata_state(&project_state_dir).map_err(|error| {
-                    format!("transcript reconciler metadata unavailable: {error}")
-                })?,
-            )
-            .map_err(|error| format!("transcript reconciler metadata encode failed: {error}"))?;
+            // A second hop rather than one combined read, because the
+            // early return above means an idle tick must not open this file
+            // at all.
+            let metadata =
+                super::scheduler::read_metadata_off_the_worker(project_state_dir.clone())
+                    .await
+                    .map_err(|error| {
+                        format!(
+                            "transcript reconciler metadata unavailable: {}",
+                            error.detail()
+                        )
+                    })?;
             let pending = pending_interactions_for_stream(&project_state_dir)
                 .iter()
                 .filter_map(|request| {
