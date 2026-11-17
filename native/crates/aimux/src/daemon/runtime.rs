@@ -116,7 +116,7 @@ use crate::paths::{PathResolver, ProjectEntry, compute_project_id};
 use crate::process_inspector::{
     ProcessArgsEntry, ProcessIdentityMatch, ProjectServiceProcessIdentity,
     current_native_aimux_project_service_process, is_aimux_project_service_process,
-    is_aimux_project_service_process_args, list_process_args, try_list_process_args,
+    is_aimux_project_service_process_args, try_list_process_args,
 };
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, try_list_registered_desktop_projects};
@@ -860,6 +860,61 @@ fn live_native_project_service_from_identity(
     }
 }
 
+/// Which project-service pids a process listing says are live.
+///
+/// Separate from the two trait methods below so that a failed `ps` is a
+/// RESULT rather than an empty list. The trait returns `Vec<i32>` and is
+/// implemented more than once, so the could-not-ask cannot travel through its
+/// signature; this keeps the distinction where the decision is made, and the
+/// callers below log the error before folding it.
+///
+/// The fold itself stays as it was, and deliberately: these pids feed a
+/// TERMINATE loop, so not knowing must mean "terminate nothing". The bug was
+/// never the direction, it was that `list_process_args`'s
+/// `unwrap_or_default()` made a broken `ps` indistinguishable from a machine
+/// with no stale services -- and the terminate loop then reported an empty
+/// `terminated` list, which reads as "nothing needed cleaning up". On a box
+/// where exec itself was failing, that silence is the difference between a
+/// cleanup that could not run and one that found nothing to do.
+fn live_project_service_pids_in_listing(
+    listing: Result<Vec<crate::process_inspector::ProcessArgsEntry>, String>,
+    is_alive: &dyn Fn(i32) -> bool,
+    expected: &[(String, ProjectServiceProcessIdentity)],
+) -> Result<BTreeMap<String, Vec<i32>>, String> {
+    let mut by_project = expected
+        .iter()
+        .map(|(project_id, _)| (project_id.clone(), Vec::new()))
+        .collect::<BTreeMap<_, _>>();
+    for entry in listing? {
+        if !is_alive(entry.pid) {
+            continue;
+        }
+        for (project_id, identity) in expected {
+            if is_aimux_project_service_process_args(&entry.args, None, identity) {
+                by_project
+                    .entry(project_id.clone())
+                    .or_default()
+                    .push(entry.pid);
+            }
+        }
+    }
+    Ok(by_project)
+}
+
+/// Says a process inventory could not be taken, and goes on to terminate
+/// nothing.
+fn report_unreadable_process_inventory(context: &str, error: &str) {
+    log_lifecycle_always(
+        "project service process inventory unavailable",
+        "project-service",
+        Some(json!({
+            "context": context,
+            "error": error,
+            "effect": "terminated nothing; stale services may survive this pass",
+        })),
+    );
+}
+
 impl ProjectServiceProcessVerifier for SystemProjectServiceProcessVerifier {
     fn is_live(&self, pid: i32) -> bool {
         is_pid_alive(pid)
@@ -888,46 +943,50 @@ impl ProjectServiceProcessVerifier for SystemProjectServiceProcessVerifier {
             project_id: Some(project_id.to_owned()),
             project_root: Some(project_root.to_owned()),
         };
-        list_process_args()
-            .into_iter()
-            .filter(|entry| {
-                is_pid_alive(entry.pid)
-                    && is_aimux_project_service_process_args(&entry.args, None, &expected)
-            })
-            .map(|entry| entry.pid)
-            .collect()
+        let expected = [(project_id.to_owned(), expected)];
+        match live_project_service_pids_in_listing(
+            try_list_process_args(),
+            &|pid| is_pid_alive(pid),
+            &expected,
+        ) {
+            Ok(mut by_project) => by_project.remove(project_id).unwrap_or_default(),
+            Err(error) => {
+                report_unreadable_process_inventory("live_project_service_pids", &error);
+                Vec::new()
+            }
+        }
     }
 
     fn live_project_service_pids_by_project(
         &self,
         projects: &[(String, String)],
     ) -> BTreeMap<String, Vec<i32>> {
-        let mut by_project = projects
+        let expected = projects
             .iter()
-            .map(|(project_id, _)| (project_id.clone(), Vec::new()))
-            .collect::<BTreeMap<_, _>>();
-        let processes = list_process_args();
-        for entry in processes
-            .into_iter()
-            .filter(|entry| entry.args.contains("__project-service-internal"))
-        {
-            if !is_pid_alive(entry.pid) {
-                continue;
-            }
-            for (project_id, project_root) in projects {
-                let expected = ProjectServiceProcessIdentity {
-                    project_id: Some(project_id.clone()),
-                    project_root: Some(project_root.clone()),
-                };
-                if is_aimux_project_service_process_args(&entry.args, None, &expected) {
-                    by_project
-                        .entry(project_id.clone())
-                        .or_default()
-                        .push(entry.pid);
-                }
+            .map(|(project_id, project_root)| {
+                (
+                    project_id.clone(),
+                    ProjectServiceProcessIdentity {
+                        project_id: Some(project_id.clone()),
+                        project_root: Some(project_root.clone()),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        match live_project_service_pids_in_listing(
+            try_list_process_args(),
+            &|pid| is_pid_alive(pid),
+            &expected,
+        ) {
+            Ok(by_project) => by_project,
+            Err(error) => {
+                report_unreadable_process_inventory("live_project_service_pids_by_project", &error);
+                projects
+                    .iter()
+                    .map(|(project_id, _)| (project_id.clone(), Vec::new()))
+                    .collect()
             }
         }
-        by_project
     }
 
     fn exit_status_detail(&self, pid: i32) -> Option<String> {
@@ -7348,6 +7407,101 @@ mod dashboard_alive_lookup_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn service_entry(pid: i32, project_id: &str, project_root: &str) -> ProcessArgsEntry {
+        ProcessArgsEntry {
+            pid,
+            args: format!(
+                "aimux __project-service-internal --project-id {project_id} --project-root {project_root}"
+            ),
+        }
+    }
+
+    fn one_project() -> Vec<(String, ProjectServiceProcessIdentity)> {
+        vec![(
+            "proj".to_owned(),
+            ProjectServiceProcessIdentity {
+                project_id: Some("proj".to_owned()),
+                project_root: Some("/tmp/proj".to_owned()),
+            },
+        )]
+    }
+
+    /// A readable inventory with a matching service reports that pid.
+    ///
+    /// The control: without it, a decision function that returned `Err` for
+    /// everything would satisfy the error assertion below.
+    #[test]
+    fn a_readable_process_inventory_reports_the_matching_service() {
+        let found = live_project_service_pids_in_listing(
+            Ok(vec![
+                service_entry(4242, "proj", "/tmp/proj"),
+                ProcessArgsEntry {
+                    pid: 99,
+                    args: "some other process".to_owned(),
+                },
+            ]),
+            &|_| true,
+            &one_project(),
+        )
+        .expect("a readable inventory is not an error");
+        assert_eq!(found.get("proj"), Some(&vec![4242]));
+    }
+
+    /// A readable inventory with nothing matching reports an empty list.
+    ///
+    /// This is the outcome a failed `ps` used to be indistinguishable from,
+    /// and it must keep working: genuine absence still takes the no-data path.
+    #[test]
+    fn a_machine_with_no_services_reports_an_empty_list() {
+        let found = live_project_service_pids_in_listing(
+            Ok(vec![ProcessArgsEntry {
+                pid: 99,
+                args: "some other process".to_owned(),
+            }]),
+            &|_| true,
+            &one_project(),
+        )
+        .expect("an empty machine is not an error");
+        assert_eq!(found.get("proj"), Some(&Vec::new()));
+    }
+
+    /// And a `ps` that could not run is an ERROR, not an empty machine.
+    ///
+    /// These pids feed a terminate loop, so the fold stays "terminate
+    /// nothing" either way -- but the caller can only say which happened if
+    /// the distinction survives this far. `list_process_args`'s
+    /// `unwrap_or_default()` destroyed it one frame earlier, and the terminate
+    /// loop then reported an empty `terminated` list, which reads as "nothing
+    /// needed cleaning up" rather than "I could not look".
+    #[test]
+    fn a_failed_process_inventory_is_an_error_not_an_empty_machine() {
+        let outcome = live_project_service_pids_in_listing(
+            Err("failed to run ps process inventory: Resource temporarily unavailable".to_owned()),
+            &|_| true,
+            &one_project(),
+        );
+        let error = outcome.expect_err(
+            "a failed ps must not come back as an empty machine; that is the whole bug",
+        );
+        assert!(
+            error.contains("ps process inventory"),
+            "the error must name what could not be read, so the log says why nothing was terminated: {error}"
+        );
+    }
+
+    /// A live-check that rejects the pid still reports nothing, and is not an
+    /// error. Being dead and being unreadable are also two different answers.
+    #[test]
+    fn a_dead_pid_is_filtered_without_becoming_an_error() {
+        let found = live_project_service_pids_in_listing(
+            Ok(vec![service_entry(4242, "proj", "/tmp/proj")]),
+            &|_| false,
+            &one_project(),
+        )
+        .expect("a dead pid is not an unreadable inventory");
+        assert_eq!(found.get("proj"), Some(&Vec::new()));
+    }
     use crate::daemon_state::{ProjectServiceStatus, save_metadata_endpoint};
     use crate::runtime_topology::write_runtime_topology;
     use crate::tmux::project_session;
