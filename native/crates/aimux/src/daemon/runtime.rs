@@ -3045,6 +3045,12 @@ pub fn handle_daemon_runtime_request_with_mutex(
             || pathname == crate::core_command_contract::CORE_API_ROUTES.agent_ps_text
             || pathname == crate::core_command_contract::CORE_API_ROUTES.agent_list_text
             || pathname == crate::core_command_contract::CORE_API_ROUTES.thread_list_text
+            // Both pathnames reach the SAME route function in
+            // `collaboration.rs`, and carving out only one left the alias
+            // holding the mutex across its upstream hop -- one function, two
+            // lock behaviours. This is the function-versus-pathname divergence
+            // showing up inside a route I had already called done.
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.threads_list_text
             || pathname == crate::core_command_contract::CORE_API_ROUTES.worktree_list_text)
         && parse_remote_actor(&request.headers).is_none()
         && !crate::daemon::router::has_origin_header(&request.headers)
@@ -3073,7 +3079,9 @@ pub fn handle_daemon_runtime_request_with_mutex(
                 crate::daemon::text::agents::render_agent_list_result,
             );
         }
-        if pathname == crate::core_command_contract::CORE_API_ROUTES.thread_list_text {
+        if pathname == crate::core_command_contract::CORE_API_ROUTES.thread_list_text
+            || pathname == crate::core_command_contract::CORE_API_ROUTES.threads_list_text
+        {
             return handle_core_read_route_without_holding_the_lock(
                 runtime,
                 request,

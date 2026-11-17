@@ -5923,3 +5923,34 @@ fn the_carved_out_worktree_list_still_starts_a_project_service_that_is_down() {
         json!({ "worktrees": [{ "name": "wt", "path": "/repo/wt" }] }),
     );
 }
+
+/// The thread-list ALIAS pathname is carved out too.
+///
+/// `collaboration.rs` dispatches both `thread_list_text` and
+/// `threads_list_text` to the same route function, and the first version of
+/// this carve-out added only the former -- so one function had two lock
+/// behaviours and nothing gated the alias. A review found it inside a route I
+/// had already called done, which is the function-versus-pathname divergence
+/// biting in my own work.
+///
+/// The lock gate is the load-bearing one for an alias: parity would pass
+/// either way, because with no carve-out both paths are the locked path.
+#[test]
+fn the_threads_list_alias_does_not_hold_the_runtime_lock() {
+    assert_core_read_route_releases_the_lock(
+        "threads-list-alias-lock",
+        aimux::core_command_contract::CORE_API_ROUTES.threads_list_text,
+    );
+}
+
+#[test]
+fn the_carved_out_threads_list_alias_answers_what_the_locked_path_answers() {
+    assert_core_read_route_parity(
+        "a thread summary through the alias",
+        "threads-list-alias-parity",
+        aimux::core_command_contract::CORE_API_ROUTES.threads_list_text,
+        json!([{ "thread": { "id": "from-the-upstream", "kind": "review", "status": "open" } }]),
+        200,
+        "from-the-upstream",
+    );
+}
