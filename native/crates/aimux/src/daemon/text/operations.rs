@@ -680,14 +680,68 @@ fn display_duty_percent(per_mille: i64) -> String {
     format!("{}.{:01}%", per_mille / 10, (per_mille % 10).abs())
 }
 
+/// The project the doctor routes answer for, BEFORE resolution.
+///
+/// `route_project_root_or_cwd` does two things and only the second needs the
+/// runtime: this pure half reads `projectRoot` or `project` and defaults to the
+/// current directory, and the runtime half is `resolve_project_root`, which is
+/// `resolver.resolve_repo_root` -- exactly the call the shared carve-out
+/// resolution already makes on whatever project value it is handed. So the
+/// resolve hands back the UNRESOLVED value and lets that one resolution do the
+/// work, which is safe because resolution is idempotent (36fe8aa1e pins it).
+fn doctor_project_param_or_cwd(route_url: &DaemonRouteUrl, body: Option<&Value>) -> String {
+    string_param(route_url, body, "projectRoot")
+        .or_else(|| string_param(route_url, body, "project"))
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| path_resolve("."))
+}
+
+/// Phase one of `aimux doctor exchange`.
+///
+/// The third resolve shape in this carve-out: not a required `project`, but an
+/// OPTIONAL one under either of two names with a cwd default. A
+/// `required_param` resolve copied from a sibling route would turn "answer for
+/// here" into a refusal.
+pub fn resolve_doctor_exchange_request(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project: doctor_project_param_or_cwd(route_url, body),
+        route_path: project_routes::DIAGNOSTICS.to_owned(),
+    })
+}
+
 pub fn doctor_exchange_text_route(
     runtime: &mut impl DaemonOperationsTextRuntime,
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
 ) -> DaemonRouteResponse {
-    let project_root = route_project_root_or_cwd(runtime, route_url, body);
-    match runtime.get_project_service_json(&project_root, project_routes::DIAGNOSTICS) {
-        ProjectServiceJsonResult::Ok { json, .. } => {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_doctor_exchange_request(route_url, body) {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_doctor_exchange_result(route_url, result)
+}
+
+/// Phase three of `aimux doctor exchange`, from a raw project-service result.
+///
+/// Takes the resolved root off the result rather than resolving again, the way
+/// `render_agent_list_result` does.
+pub fn render_doctor_exchange_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    match result {
+        ProjectServiceJsonResult::Ok { json, project_root } => {
             let json_payload = json
                 .get("runtimeExchange")
                 .cloned()
@@ -706,13 +760,43 @@ pub fn doctor_exchange_text_route(
     }
 }
 
+/// Phase one of `aimux doctor lifecycle`. Same cwd-default shape as
+/// `resolve_doctor_exchange_request`.
+pub fn resolve_doctor_lifecycle_request(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Result<crate::daemon::runtime::CoreReadTarget, DaemonRouteResponse> {
+    Ok(crate::daemon::runtime::CoreReadTarget {
+        project: doctor_project_param_or_cwd(route_url, body),
+        route_path: project_routes::DIAGNOSTICS_LIFECYCLE.to_owned(),
+    })
+}
+
 pub fn doctor_lifecycle_text_route(
     runtime: &mut impl DaemonOperationsTextRuntime,
     route_url: &DaemonRouteUrl,
     body: Option<&Value>,
 ) -> DaemonRouteResponse {
-    let project_root = route_project_root_or_cwd(runtime, route_url, body);
-    match runtime.get_project_service_json(&project_root, project_routes::DIAGNOSTICS_LIFECYCLE) {
+    let crate::daemon::runtime::CoreReadTarget {
+        project,
+        route_path,
+    } = match resolve_doctor_lifecycle_request(route_url, body) {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
+    let result = runtime.get_project_service_json(&project, &route_path);
+    // The locked path calls the SAME render the carve-out calls, so there is
+    // one copy of these semantics rather than two that parity cannot tell
+    // apart.
+    render_doctor_lifecycle_result(route_url, result)
+}
+
+/// Phase three of `aimux doctor lifecycle`, from a raw project-service result.
+pub fn render_doctor_lifecycle_result(
+    route_url: &DaemonRouteUrl,
+    result: ProjectServiceJsonResult,
+) -> DaemonRouteResponse {
+    match result {
         ProjectServiceJsonResult::Ok { json, .. } => text_or_json_lines(
             route_url,
             json.clone(),
