@@ -6186,3 +6186,185 @@ fn the_carved_out_review_list_starts_a_project_service_that_is_down() {
         json!({ "tasks": [] }),
     );
 }
+
+/// A launcher that announces it has been asked to start a service.
+///
+/// The signal is what makes the gate below possible: it marks the boundary
+/// between the ensure, which is deliberately locked, and the resolution that
+/// follows it, which must not be.
+struct AnnouncingLauncher {
+    inner: FakeLauncher,
+    launched: Arc<AtomicBool>,
+}
+
+impl ProjectServiceLauncher for AnnouncingLauncher {
+    fn launch(
+        &self,
+        project_id: &str,
+        project_root: &Path,
+        project_state_dir: &Path,
+    ) -> Result<i32, String> {
+        let pid = self
+            .inner
+            .launch(project_id, project_root, project_state_dir)?;
+        self.launched.store(true, Ordering::SeqCst);
+        Ok(pid)
+    }
+
+    fn terminate(&self, service: &ProjectServiceState, force: bool) -> Result<(), String> {
+        self.inner.terminate(service, force)
+    }
+}
+
+/// Parks in the process verifier, but only once a service has been launched.
+struct ParkAfterLaunchVerifier {
+    launched: Arc<AtomicBool>,
+    reached: mpsc::Sender<()>,
+    release: Arc<Mutex<bool>>,
+}
+
+impl ProjectServiceProcessVerifier for ParkAfterLaunchVerifier {
+    fn is_live_native_project_service(&self, _service: &ProjectServiceState) -> bool {
+        if !self.launched.load(Ordering::SeqCst) {
+            return true;
+        }
+        let _ = self.reached.send(());
+        loop {
+            if *self.release.lock().expect("release flag") {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn live_project_service_pids(&self, _project_id: &str, _project_root: &str) -> Vec<i32> {
+        Vec::new()
+    }
+
+    fn is_live(&self, _pid: i32) -> bool {
+        true
+    }
+}
+
+/// The cold path's SECOND resolution does not hold the runtime mutex.
+///
+/// On a 502 or 503 the carve-out mirrors the generic route's ensure-and-retry.
+/// The ensure is deliberately locked -- `ensure_project` reads stored service
+/// state, TERMINATES extra services and persists the result, so two
+/// unserialized ensures would double-spawn, which is the leak this effort
+/// began with. But the guard also used to cover the resolution AFTER the
+/// ensure, putting another `rev-parse` and another `ps` back inside the
+/// critical section that phase one had just cleared.
+///
+/// WHY THE VERIFIER PARKS ONLY AFTER A LAUNCH, rather than always: the hot
+/// attempt resolves first, through the same free function and the same
+/// verifier, so a verifier that always parked would stop the route before it
+/// ever reached the cold path -- the gate would pass while proving nothing
+/// about the retry. The launcher call is the boundary, and the startup wait in
+/// between polls the HEALTH PROBE, not the verifier, so nothing parks during
+/// the part that is still locked on purpose.
+///
+/// WHAT THIS DOES NOT COVER, stated so it is not mistaken for more: the
+/// startup wait itself is still under the global mutex, and
+/// PROJECT_SERVICE_STARTUP_TIMEOUT_MS is 10_000. A separate gate, driven by a
+/// parking health probe, fails on that today -- it is recorded, not included,
+/// because the fix is a lifecycle restructure rather than a span move.
+#[test]
+fn the_cold_path_resolution_does_not_hold_the_runtime_lock() {
+    let fixture = RuntimeFixture::new("cold-resolution-lock");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+
+    // No endpoint file, so the hot attempt fails and the retry runs. The
+    // launcher publishes one pointing at a real upstream when asked to start.
+    let upstream = CannedUpstream::spawn(json!({ "tasks": [] }).to_string());
+    let launched = Arc::new(AtomicBool::new(false));
+    let launcher = Arc::new(AnnouncingLauncher {
+        inner: FakeLauncher::new(std::process::id() as i32).with_endpoint(upstream.port),
+        launched: Arc::clone(&launched),
+    });
+
+    let (reached_tx, reached) = mpsc::channel();
+    let release = Arc::new(Mutex::new(false));
+    let runtime = Arc::new(Mutex::new(
+        RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver(),
+            fixture.info.clone(),
+            launcher,
+            Arc::new(ParkAfterLaunchVerifier {
+                launched: Arc::clone(&launched),
+                reached: reached_tx,
+                release: Arc::clone(&release),
+            }),
+            PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+        )
+        .with_project_service_health_probe(Arc::new(AlwaysReadyHealthProbe)),
+    ));
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+
+    let probe_path = format!(
+        "{}?project=/nonexistent-project-for-the-lock-probe",
+        aimux::core_command_contract::CORE_API_ROUTES.outline_list_text
+    );
+
+    // The control: with the mutex free this probe answers. Without it, silence
+    // later could just mean the probe never answers at all.
+    let control_runtime = Arc::clone(&runtime);
+    let (control_tx, control) = mpsc::channel();
+    let control_path = probe_path.clone();
+    std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &control_runtime,
+            health_identity,
+            request("GET", &control_path),
+        );
+        let _ = control_tx.send(response.status);
+    });
+    control.recv_timeout(Duration::from_secs(20)).expect(
+        "the probe route does not answer even with the mutex free, so this gate cannot attribute silence to the lock",
+    );
+
+    let stuck_runtime = Arc::clone(&runtime);
+    let stuck_path = format!(
+        "{}?project={}",
+        aimux::core_command_contract::CORE_API_ROUTES.task_list_text,
+        project_root
+    );
+    let stuck = std::thread::spawn(move || {
+        let _ = handle_daemon_runtime_request_with_mutex(
+            &stuck_runtime,
+            health_identity,
+            request("GET", &stuck_path),
+        );
+    });
+
+    reached.recv_timeout(Duration::from_secs(30)).expect(
+        "the route never reached the verifier after a launch, so it never got to the cold path's resolution and this gate is testing nothing",
+    );
+
+    let other_runtime = Arc::clone(&runtime);
+    let (answered_tx, answered) = mpsc::channel();
+    std::thread::spawn(move || {
+        let response = handle_daemon_runtime_request_with_mutex(
+            &other_runtime,
+            health_identity,
+            request("GET", &probe_path),
+        );
+        let _ = answered_tx.send(response.status);
+    });
+
+    let outcome = answered.recv_timeout(Duration::from_secs(20));
+
+    *release.lock().expect("release flag") = true;
+    let _ = stuck.join();
+    fixture.cleanup();
+
+    assert!(
+        outcome.is_ok(),
+        "another route could not be served while the cold path sat in the resolution AFTER its ensure: that resolution is holding the global runtime mutex across its `rev-parse` and `ps`"
+    );
+}

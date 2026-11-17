@@ -3299,12 +3299,17 @@ fn handle_core_read_route_without_holding_the_lock(
                     let ensured = {
                         let mut locked = runtime.lock().expect("daemon runtime mutex poisoned");
                         match locked.ensure_project_service_for_text_request(&project) {
-                            Ok(project_root) => locked.build_project_service_json_request(
-                                &project_root,
-                                &route_path,
-                                None,
-                                None,
-                            ),
+                            // The handles are copied while the guard is
+                            // already held -- two clones -- so the SECOND
+                            // resolution below runs unlocked, exactly like
+                            // phase one's. It used to run here, putting
+                            // another `rev-parse` and another `ps` back inside
+                            // the critical section.
+                            Ok(project_root) => {
+                                let (resolver, verifier) =
+                                    locked.project_service_resolution_handles();
+                                Ok((project_root, resolver, verifier))
+                            }
                             Err(error) => Err(crate::daemon::routing::text_error(
                                 502,
                                 format!("Error: {error}"),
@@ -3312,8 +3317,24 @@ fn handle_core_read_route_without_holding_the_lock(
                         }
                     };
                     match ensured {
-                        Ok((project_root, json_request)) => {
-                            send_project_service_json(&project_root, &json_request)
+                        // The guard is gone by here. Handing the RESOLVED root
+                        // back to a function that resolves again is safe
+                        // because resolution is idempotent, which 36fe8aa1e
+                        // pinned for exactly these routes.
+                        Ok((project_root, resolver, verifier)) => {
+                            match resolve_project_service_json_request(
+                                resolver,
+                                &verifier,
+                                &project_root,
+                                &route_path,
+                                None,
+                                None,
+                            ) {
+                                Ok((project_root, json_request)) => {
+                                    send_project_service_json(&project_root, &json_request)
+                                }
+                                Err(response) => ProjectServiceJsonResult::error(response),
+                            }
                         }
                         Err(response) => ProjectServiceJsonResult::error(response),
                     }
