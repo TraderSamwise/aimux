@@ -26,7 +26,7 @@ fn project_events_stream_returns_ready_snapshot() {
     let stream = response.stream.as_ref().expect("stream plan");
     assert_eq!(stream.kind, ProjectServiceStreamKind::ProjectEvents);
     assert_eq!(stream.session_id.as_deref(), Some("codex-1"));
-    assert_eq!(stream.start_line, Some(-2000));
+    assert_eq!(stream.start_line, Some(-8000));
     assert_eq!(stream.interval_ms, 250);
     assert_eq!(stream.keepalive_interval_ms, Some(15_000));
     assert_eq!(stream.mode.as_deref(), Some("chat"));
@@ -34,7 +34,7 @@ fn project_events_stream_returns_ready_snapshot() {
     let body = String::from_utf8(response.bytes.unwrap()).unwrap();
     assert!(body.starts_with("event: ready\n"));
     assert!(body.contains("\"sessionId\":\"codex-1\""));
-    assert!(body.contains("\"startLine\":-2000"));
+    assert!(body.contains("\"startLine\":-8000"));
     assert!(body.contains("\"requestedStartLine\":-9999"));
     assert!(body.contains("\"outputStartLineClamped\":true"));
     assert!(body.contains("\"intervalMs\":250"));

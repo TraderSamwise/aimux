@@ -450,7 +450,7 @@ fn host_agent_stream_plans_native_text_route_with_stream_defaults() {
     assert_eq!(
         plan.action,
         CoreCliAction::TextRoute {
-            path: "/core/host-agent-stream-text?project=%2Fresolved%2F.%2Fchild%20dir&sessionId=claude%201&startLine=-2000&intervalMs=500".into(),
+            path: "/core/host-agent-stream-text?project=%2Fresolved%2F.%2Fchild%20dir&sessionId=claude%201&startLine=-8000&intervalMs=500".into(),
             body: None,
         }
     );

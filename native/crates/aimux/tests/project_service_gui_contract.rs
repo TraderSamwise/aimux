@@ -72,9 +72,9 @@ fn advertised_gui_capabilities_have_backing_http_contracts() {
     assert_eq!(output.status, 200);
     assert_eq!(output.body["ok"], true);
     assert_eq!(output.body["sessionId"], "codex-1");
-    assert_eq!(output.body["startLine"], -2000);
+    assert_eq!(output.body["startLine"], -8000);
     assert_eq!(output.body["requestedStartLine"], -9999);
-    assert_eq!(output.body["captureLineLimit"], 2000);
+    assert_eq!(output.body["captureLineLimit"], 8000);
     assert_eq!(output.body["outputTailOnly"], true);
     assert_eq!(output.body["outputStartLineClamped"], true);
     assert_eq!(output.body["activity"], "running");
@@ -91,7 +91,7 @@ fn advertised_gui_capabilities_have_backing_http_contracts() {
         vec![(
             "@1".to_owned(),
             CapturePaneOptions {
-                start_line: Some(-2000),
+                start_line: Some(-8000),
                 end_line: None,
                 include_escapes: true,
             },
@@ -110,8 +110,8 @@ fn advertised_gui_capabilities_have_backing_http_contracts() {
     assert_eq!(ready["sessionId"], "codex-1");
     assert_eq!(ready["startLine"], 5);
     assert_eq!(ready["requestedStartLine"], 5);
-    assert_eq!(ready["endLine"], 2004);
-    assert_eq!(ready["captureLineLimit"], 2000);
+    assert_eq!(ready["endLine"], 8004);
+    assert_eq!(ready["captureLineLimit"], 8000);
     assert_eq!(ready["outputTailOnly"], false);
     assert_eq!(ready["outputStartLineClamped"], false);
     assert_eq!(ready["intervalMs"], 250);

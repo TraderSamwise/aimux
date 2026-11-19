@@ -8,8 +8,8 @@ import { CHAT_HISTORY_FLOOR_LINES } from "./chat-history-floor";
  * AGENTS.md "One Answer, Many Surfaces". The depth this view pages to is a
  * number the service also holds, and the sentence on screen quotes it. Two
  * copies drift silently: raise the service's cap and the app keeps paging to
- * 2000 while claiming the new number, or raise the app's floor and it asks for
- * lines the service refuses.
+ * the old floor while claiming the new number, or raise the app's floor and it
+ * asks for lines the service refuses.
  */
 describe("the history depth, across the app and the service", () => {
   it("matches MAX_AGENT_OUTPUT_CAPTURE_LINES in the project service", () => {
