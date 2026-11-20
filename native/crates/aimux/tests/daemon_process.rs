@@ -1326,6 +1326,74 @@ fn runtime_processor_parses_body_and_dispatches_json_routes() {
     assert_eq!(runtime.calls, vec![r#"push:{"title":"Hello"}"#]);
 }
 
+/// The core-read carve-out answers while the runtime mutex is held.
+///
+/// This is the property the whole text-route carve-out exists for, and it was
+/// the one thing about it with no gate: `daemon_access.rs` pins the ACCESS
+/// invariant the carve-out rests on, and each route's resolve and render are
+/// shared with its locked-path twin so parity covers the semantics — but
+/// nothing asserted that a core read route is answered at all while the lock
+/// is held. Without that, the carve-out could be reverted to the locked path
+/// and every existing test would still pass.
+///
+/// The response here is an ERROR, deliberately: no project service is running,
+/// so resolution fails and the route says so. That is the right observable.
+/// The claim is not what it answers, it is THAT it answers without waiting for
+/// the mutex — the same claim `runtime_mutex_wrapper_routes_owner_get_proxy_
+/// without_head_of_line_blocking` makes for the proxy path, and the peer
+/// control beside it is what separates "needs the lock" from "is slow".
+#[test]
+fn runtime_mutex_wrapper_answers_a_core_read_route_without_head_of_line_blocking() {
+    let fixture = HostedFixture::new("core-read-no-head-of-line");
+    let runtime = Arc::new(Mutex::new(RealDaemonRuntime::new(
+        fixture.resolver.clone(),
+        AimuxDaemonInfo {
+            pid: 124,
+            port: 43192,
+            started_at: "started".into(),
+            updated_at: "updated".into(),
+        },
+    )));
+    // No actor header and no Origin: the carve-out's condition is exactly
+    // "local caller", and a request carrying either takes the locked path.
+    let request = FakeRuntime::request(
+        "GET",
+        aimux::core_command_contract::CORE_API_ROUTES.agent_list_text,
+    );
+    // Before the hold, not inside it: `from_runtime` takes the same mutex.
+    let health_identity = DaemonHealthIdentity::from_runtime(&runtime);
+    let held = runtime.lock().expect("hold runtime lock");
+    let (response_tx, response_rx) = mpsc::channel();
+    let request_runtime = Arc::clone(&runtime);
+    let request_thread = thread::spawn(move || {
+        let response =
+            handle_daemon_runtime_request_with_mutex(&request_runtime, health_identity, request);
+        response_tx
+            .send(response)
+            .expect("send core read response before lock release");
+    });
+
+    let wait = Duration::from_millis(500);
+    let answered = match response_rx.recv_timeout(wait) {
+        Ok(response) => response,
+        Err(error) => {
+            drop(held);
+            request_thread.join().expect("request thread");
+            panic!(
+                "GET agents text did not answer within {}ms while the RealDaemonRuntime mutex was held, so it is waiting for the lock rather than using the carve-out: {error}",
+                wait.as_millis()
+            );
+        }
+    };
+    drop(held);
+    request_thread.join().expect("request thread");
+
+    assert!(
+        !answered.body.is_empty(),
+        "the carve-out must produce a real answer while the lock is held, not an empty response"
+    );
+}
+
 #[test]
 fn runtime_mutex_wrapper_routes_owner_get_proxy_without_head_of_line_blocking() {
     let fixture = HostedFixture::new("owner-get-proxy-no-head-of-line");
