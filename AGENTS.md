@@ -223,6 +223,18 @@ hid four per-tick state reads that way, and reading the function is what found
 them. `yarn audit:async-blocking --explain-suppressed` prints every call the
 rules declined to claim, with the reason.
 
+**Four readers are still named, because they cannot be derived.** A
+*delegating* wrapper — `load_metadata_state` and three like it — holds no
+`fs::` call of its own and reaches the filesystem through another function, so
+seeding on direct calls never finds it. They sit in
+`DELEGATING_STATE_READERS`. Deriving them instead was tried twice and measured
+both times: a transitive closure over callers makes one sync `run` that touches
+a file turn every caller named `run` into a reader, and restricting propagation
+to attributable edges still classifies the hop HELPERS as readers — flagging
+the very functions that exist to take these reads off the worker. Adding to
+that list should feel like a defeat; check first whether the reader can simply
+be found.
+
 **The two markers are different and not interchangeable.**
 
 - `aimux-async-blocking: permanent|transitional|test|fixture - reason`
