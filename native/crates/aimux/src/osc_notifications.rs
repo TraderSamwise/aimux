@@ -59,12 +59,16 @@ impl OscNotificationOutputState {
         }
 
         let cleaned_output = strip_osc_sequences(output);
-        let Ok(mut sessions) = self.inner.lock() else {
-            return OscNotificationOutput {
-                cleaned_output: Some(cleaned_output),
-                notifications: Vec::new(),
-            };
-        };
+        // Returning no notifications here was not "nothing to notify": it was
+        // "could not ask", and nothing ever clears a poisoned mutex, so one
+        // panic under this lock stopped every later OSC notification for the
+        // life of the process while captures kept flowing. It also skipped the
+        // `last_output` update, so the diff stayed stale on top of that. The
+        // session map survives the panic, so recover and answer for real.
+        let mut sessions = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let session = sessions.entry(session_id.to_owned()).or_default();
         let chunk = output
             .strip_prefix(&session.last_output)
@@ -89,10 +93,13 @@ impl OscNotificationOutputState {
 
     #[doc(hidden)]
     pub fn retained_session_count(&self) -> usize {
+        // `0 retained` is a real count, so a poisoned lock must not borrow it
+        // to mean "could not count" -- this is a diagnostic, and a diagnostic
+        // that lies is worse than one that is absent.
         self.inner
             .lock()
-            .map(|sessions| sessions.len())
-            .unwrap_or(0)
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
     }
 
     #[doc(hidden)]
@@ -391,4 +398,41 @@ fn decode_base64_utf8(input: &str) -> Option<String> {
         return None;
     }
     String::from_utf8(bytes).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const OSC_CAPTURE: &str = "before \u{1b}]777;notify;Title;Body\u{7} after";
+
+    #[test]
+    fn a_poisoned_session_map_still_reports_the_notification() {
+        let state = OscNotificationOutputState::default();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = state.inner.lock().expect("lock to poison");
+            panic!("poisoning on purpose");
+        }));
+        assert!(
+            state.inner.is_poisoned(),
+            "the session map must be poisoned"
+        );
+
+        let output = state.process_capture("session-a", OSC_CAPTURE);
+        assert_eq!(
+            output.notifications.len(),
+            1,
+            "a poisoned session map must not silently swallow the notification; \
+             nothing clears the poison, so dropping it here drops every later \
+             one too"
+        );
+        // The other half: the capture must still record `last_output`, or the
+        // next diff re-emits what was already delivered.
+        let repeat = state.process_capture("session-a", OSC_CAPTURE);
+        assert!(
+            repeat.notifications.is_empty(),
+            "the same capture must not notify twice, which proves the recovered \
+             guard carried the session state forward"
+        );
+    }
 }

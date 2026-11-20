@@ -116,9 +116,14 @@ impl AgentTranscriptProjectionStabilityCache {
             session_id: session_id.to_owned(),
             start_line,
         };
-        let Ok(mut cached) = self.inner.lock() else {
-            return;
-        };
+        // Unlike `project_or_reuse`, which recomputes and is therefore right
+        // on a poisoned cache, returning here skips `stabilize_transcript_messages`
+        // as well as the write -- so message identity stops being stable and
+        // the reader sees renumbering, permanently.
+        let mut cached = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(existing) = cached.get(&key) {
             *messages = stabilize_transcript_messages(existing, messages);
         }
