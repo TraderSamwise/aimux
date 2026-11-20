@@ -3213,8 +3213,19 @@ fn hosted_auth_failure_delivery_is_per_peer_and_globally_throttled() {
         assert_eq!(response.status, 401);
     }
     per_peer_webhook.wait_for_count(1);
+    // Two waits, because there are two claims. `wait_for_count` removes the
+    // race on the FIRST delivery arriving -- a fixed 100ms sleep is what made
+    // this test flake on a loaded machine, and the file already had this
+    // helper; this test just was not using it. The settle that follows is what
+    // proves the THROTTLE, so it stays: it asserts no second delivery turns up
+    // after the first one has.
+    per_peer_webhook.wait_for_count(1);
     thread::sleep(Duration::from_millis(100));
-    assert_eq!(per_peer_webhook.count(), 1);
+    assert_eq!(
+        per_peer_webhook.count(),
+        1,
+        "two auth failures from one peer must collapse into a single webhook"
+    );
     per_peer_webhook.stop();
 
     let global_fixture = HostedFixture::new("auth-fail-global-throttle");
@@ -3250,8 +3261,15 @@ fn hosted_auth_failure_delivery_is_per_peer_and_globally_throttled() {
         assert_eq!(response.status, 401);
     }
     global_webhook.wait_for_count(10);
+    // Same split, and the race was worse here: ten deliveries were expected to
+    // land inside one fixed 100ms sleep.
+    global_webhook.wait_for_count(10);
     thread::sleep(Duration::from_millis(100));
-    assert_eq!(global_webhook.count(), 10);
+    assert_eq!(
+        global_webhook.count(),
+        10,
+        "the global throttle must cap the burst at ten webhooks, not merely reach it"
+    );
     global_webhook.stop();
 }
 
