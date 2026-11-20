@@ -127,6 +127,26 @@ change, apply these rules before it ships:
   `if let Ok(..)` branches. In TypeScript, review empty `catch`,
   `.catch(() => null)`, `.catch(() => [])`, and `?? []` or `|| []` applied to a
   failed call rather than an absent field.
+- A poisoned lock is a LATCH, not a blip. Nothing in the standard library ever
+  clears poison, so a `false`, `None`, empty or default answer on a poisoned
+  mutex is not a one-off degradation: it is that feature switched off for the
+  life of the process, silently. One panic under the auth-failure throttle used
+  to stop every later webhook; one under the OSC session map stopped every later
+  agent notification. Recovering with `unwrap_or_else(|poisoned|
+  poisoned.into_inner())` is what the crate does at nearly every lock site, and
+  it is almost always right, because a counter, a `BTreeMap` of timestamps or a
+  session map is structurally intact after an unrelated panic.
+- The question that separates a correct fallback from a defect is whether it is
+  a TRUE ANSWER or a lie. `withdraw_outbox_frame` returning `false` is true --
+  nothing was withdrawn. `project_or_reuse` recomputing is true -- it just
+  skipped its cache. `daemon_relay::push` returning `Err("relay_unavailable")`
+  is true, and its doc comment demands that precision. Against those:
+  `should_deliver_auth_failure` returning `false` claimed "not due" when it meant
+  "could not ask"; `output_metrics::snapshot` handed back zeros that read as a
+  real measurement; and a `release`/`Drop` that skips its decrement LEAKS the
+  slot, so the limit it protects eventually refuses everyone. Those three are
+  the shapes to look for: a confident value, a reading that cannot be told from
+  real data, and a skipped decrement.
 - Severity follows the wrong answer's effect. Before accepting a default, ask
   what that answer can cause on delete, kill, refusal, trust, delivery, repair,
   or config paths. Fixes for this class are not done until mutation proof covers
