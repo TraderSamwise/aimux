@@ -198,6 +198,78 @@ reads or mutates shared project state repeatedly after startup, why is it not a
 `PeriodicTask`, and if an event already reports the change, why is it polling at
 all?"
 
+## Blocking Work Inside Async Bodies
+
+The shared async runtime has **two** worker threads
+(`ASYNC_RUNTIME_WORKER_THREADS`), and both long-lived processes run on it: the
+project service builds it in `project_service/process.rs`, and the daemon's
+serve loop is a `process_runtime().block_on(..)` on the same one. So two
+concurrent synchronous reads park the entire runtime of whichever process ran
+them, which is how a stuck project service used to take the daemon with it. So blocking work reached from an async body — a filesystem
+read or write, a lock held across either, a subprocess, a blocking channel
+recv — goes through `crate::async_runtime::spawn_blocking_named`.
+
+`yarn audit:async-blocking` enforces this and runs inside `yarn verify`, so a
+new route that blocks fails before review. Two things about it are worth
+knowing before it fails on you:
+
+**It derives its reader list from the crate, and its blind spot is stated.**
+It finds every sync function that touches the filesystem and flags calls to
+them from async bodies, with three attribution rules: the name must be in scope
+in the calling file, it must have exactly one such definition and no `async`
+sibling, and the call must be a free call. That last rule is why a reader
+reached through a **method** call is invisible to it — `host.execute(...)`
+hid four per-tick state reads that way, and reading the function is what found
+them. `yarn audit:async-blocking --explain-suppressed` prints every call the
+rules declined to claim, with the reason.
+
+**The two markers are different and not interchangeable.**
+
+- `aimux-async-blocking: permanent|transitional|test|fixture - reason`
+  declares blocking that stays, inside an async body. Put it within six lines
+  above the flagged line.
+- `aimux-async-seam: ... - reason` accounts for a `block_on` bridge and is
+  staleness-checked, so it must sit next to its seam. Using one where the other
+  belongs is refused — and if both apply, the blocking marker goes **above** the
+  seam marker, or the seams audit stops finding the seam.
+
+When a hop replaces an inline call, remember that a pool task that never ran is
+not an absent value: give `JoinError` its own message rather than folding it
+into the empty case. `read_runtime_topology` is the model for the distinction —
+it answers a MISSING file with an empty topology and reserves `Err` for a file
+it could not read.
+
+### Proving a hop, without a flaky gate
+
+Gating this is harder than it looks and the two obvious approaches both fail. A
+**progress-based** gate cannot see a bounded park: the inline read does finish,
+just late, so the runtime makes progress either way and the gate passes on
+hopped and unhopped code alike. A **latency-based** gate is what made these
+checks flaky in the first place. Two techniques work, and both are in the tree:
+
+**Make the park unbounded at the RESOURCE, not the task.** A FIFO with no
+writer, created at the state-file path the code under test reads, makes
+`fs::read_to_string` park indefinitely — so a worker that was going to block is
+still blocked when the gate looks, and no timing budget is involved.
+`assert_scan_read_does_not_consume_a_worker` in
+`tests/project_service_scheduler.rs` is the parameterised version, one case per
+hop. Releasing matters too: closing a FIFO writer sends EOF to **every** blocked
+reader, so counting write-opens against reader count spins to the deadline
+instead of finishing — `release_fifo_readers` is the shape that works.
+
+**Shrink the pool instead of saturating it.** To prove a route needs no
+blocking-pool thread, build a runtime with `max_blocking_threads(1)` rather
+than trying to wedge tokio's default 512, and occupy that one thread with a task
+parked on a channel `recv` whose sender the test holds — unbounded by
+construction. Have the task set a flag before it parks and wait for that flag,
+so saturation is **observed** rather than assumed.
+`health_answers_while_the_blocking_pool_is_saturated` in
+`project_service/process.rs` is the worked example.
+
+Whichever you use, mutate the fix away and watch the gate fail. Several gates in
+this area passed for the wrong reason before someone checked — a gate that
+cannot fail is documentation, not a test.
+
 ## App (`app/`)
 
 The browser and native clients live in `app/`. It is one Expo Router app for
