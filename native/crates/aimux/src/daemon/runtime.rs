@@ -508,6 +508,15 @@ pub const PROJECT_SERVICE_REQUEST_WAIT_CEILING_MS: u64 =
 /// Compile-time, because `request_timeout` filters `> 0`: a zero ceiling is
 /// silently "no timeout", which is the bug this constant exists to remove.
 const _: () = assert!(PROJECT_SERVICE_REQUEST_WAIT_CEILING_MS > 0);
+
+/// Compile-time, because the route-aware default below is only worth having
+/// while this generic ceiling is the SHORTER of the two. If the slow-route
+/// budget ever drops under it, the queued routes would silently take the
+/// ceiling instead and the 180s they were raised to is gone.
+const _: () = assert!(
+    PROJECT_SERVICE_REQUEST_WAIT_CEILING_MS
+        < crate::project_service::lifecycle_mutation_queue::QUEUED_LIFECYCLE_SLOW_TIMEOUT_MS
+);
 const _: () =
     assert!(PROJECT_SERVICE_REQUEST_WAIT_CEILING_MS > PROJECT_SERVICE_PATIENT_PROBE_TIMEOUT_MS);
 
@@ -7491,6 +7500,24 @@ mod tests {
             Some(250),
             "an explicit non-zero timeout must be left alone"
         );
+
+        // A queued lifecycle route keeps its OWN budget, which for the five
+        // filesystem-heavy ones is 180s. Their constant records that each was
+        // raised after being caught reporting a working operation as a
+        // transport timeout, so a flat 120s ceiling would put that bug back.
+        let slow = super::build_daemon_json_request(
+            &endpoint,
+            crate::project_api_contract::routes::worktree_actions::CREATE,
+            Some(serde_json::json!({})),
+            None,
+        );
+        assert_eq!(
+            slow.timeout_ms,
+            Some(
+                crate::project_service::lifecycle_mutation_queue::QUEUED_LIFECYCLE_SLOW_TIMEOUT_MS
+            ),
+            "worktree create does real filesystem work and must keep its 180s budget, not the generic ceiling"
+        );
     }
 
     use super::*;
@@ -13307,6 +13334,22 @@ fn build_daemon_json_request(
         // timeout still wins.
         timeout_ms: timeout_ms
             .filter(|value| *value > 0)
+            // A QUEUED lifecycle route gets its own documented budget before
+            // the generic ceiling. Five of them -- worktree create, cache
+            // cleanup, remove, graveyard, and restore-previous -- carry
+            // QUEUED_LIFECYCLE_SLOW_TIMEOUT_MS at 180s because they do real
+            // filesystem work once they hold the permit, and that constant's
+            // comment records that each was raised "only after it was caught
+            // reporting a working operation as a transport timeout".
+            //
+            // A flat 120s ceiling sits UNDER that and would reintroduce
+            // exactly the bug they were raised to fix, so the ceiling is the
+            // floor here, not the rule.
+            .or_else(|| {
+                crate::project_service::lifecycle_mutation_queue::queued_lifecycle_timeout_ms(
+                    crate::daemon::routing::DaemonRouteUrl::parse(route_path).pathname(),
+                )
+            })
             .or(Some(PROJECT_SERVICE_REQUEST_WAIT_CEILING_MS)),
     }
 }
