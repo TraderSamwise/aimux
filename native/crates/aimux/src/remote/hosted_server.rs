@@ -268,23 +268,37 @@ impl HostedServerState {
         let _ = thread::Builder::new()
             .name("aimux-hosted-event-delivery".to_owned())
             .spawn(move || {
-                if let Ok(mut delivery) = delivery.lock() {
-                    delivery.enqueue(event);
-                }
+                // A poisoned delivery lock is not "no event to send".
+                // `drain_hosted_outbox` already refuses to treat it that way
+                // and respools with the error; this site used to drop the
+                // event with nothing said. The queue itself is intact, so
+                // recover the guard like the rest of the crate.
+                let mut delivery = delivery
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                delivery.enqueue(event);
             });
     }
 
     fn should_deliver_auth_failure(&self, key: &str) -> bool {
-        let Ok(mut throttle) = self.auth_failure_throttle.lock() else {
-            return false;
-        };
+        // Returning `false` on poison answered "not due" to a question this
+        // could not ask, and it never recovered: one panic anywhere under this
+        // lock silenced every auth-failure delivery for the life of the
+        // process. The timestamps are intact, so recover and answer for real.
+        let mut throttle = self
+            .auth_failure_throttle
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         throttle.should_deliver(key, unix_millis(SystemTime::now()))
     }
 
     fn acquire_stream(&self, principal_id: &str) -> bool {
-        let Ok(mut streams) = self.streams_by_principal.lock() else {
-            return false;
-        };
+        // Refusing every stream forever because one panic poisoned the counter
+        // is worse than the limit it enforces; the counts survive the panic.
+        let mut streams = self
+            .streams_by_principal
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let open = streams.get(principal_id).copied().unwrap_or(0);
         if open >= self.stream_limits.max_per_principal {
             return false;
@@ -294,9 +308,12 @@ impl HostedServerState {
     }
 
     fn release_stream(&self, principal_id: &str) {
-        let Ok(mut streams) = self.streams_by_principal.lock() else {
-            return;
-        };
+        // Returning early here LEAKS the slot, so a poisoned counter walks the
+        // principal up to its limit and then refuses every later stream.
+        let mut streams = self
+            .streams_by_principal
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let open = streams
             .get(principal_id)
             .copied()
@@ -362,9 +379,13 @@ struct HostedConnectionPermit {
 
 impl Drop for HostedConnectionPermit {
     fn drop(&mut self) {
-        let Ok(mut peers) = self.peer_counts.lock() else {
-            return;
-        };
+        // Same leak as `release_stream`, in a Drop that has nowhere to
+        // report it: skip the decrement and the peer stays "connected" until
+        // its limit refuses every later connection.
+        let mut peers = self
+            .peer_counts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let Some(open) = peers.get_mut(&self.peer_key) else {
             return;
         };
@@ -2160,6 +2181,106 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
+
+    fn poison(lock: &Mutex<impl Sized>) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = lock.lock().expect("lock to poison");
+            panic!("poisoning on purpose");
+        }));
+        assert!(lock.is_poisoned(), "the mutex under test must be poisoned");
+    }
+
+    #[test]
+    fn a_poisoned_auth_failure_throttle_still_answers_from_the_real_timestamps() {
+        let fixture = HostedServerFixture::new("auth-throttle-poison");
+        let state = HostedServerState::with_resolver(
+            HostedConfig {
+                enabled: true,
+                ..HostedConfig::default()
+            },
+            fixture.resolver.clone(),
+        );
+        poison(&state.auth_failure_throttle);
+
+        // Both directions, because recovering is only right if the answer is
+        // still the throttle's. Returning `false` here used to silence every
+        // auth-failure delivery for the life of the process; returning `true`
+        // unconditionally would be the opposite bug and passes the first
+        // assertion alone.
+        assert!(
+            state.should_deliver_auth_failure("peer-a"),
+            "a first failure from a peer is due, and a poisoned lock is not an \
+             answer to whether it is"
+        );
+        assert!(
+            !state.should_deliver_auth_failure("peer-a"),
+            "the immediate repeat must still be throttled, which proves the \
+             recovered guard carries the real timestamps"
+        );
+    }
+
+    #[test]
+    fn a_poisoned_stream_counter_neither_refuses_nor_leaks() {
+        let fixture = HostedServerFixture::new("stream-counter-poison");
+        let state = HostedServerState::with_resolver(
+            HostedConfig {
+                enabled: true,
+                ..HostedConfig::default()
+            },
+            fixture.resolver.clone(),
+        );
+        poison(&state.streams_by_principal);
+
+        assert!(
+            state.acquire_stream("principal-a"),
+            "a poisoned counter must not refuse a stream that is under the limit"
+        );
+        // The leak is the half a refusal test cannot see: skipping the
+        // decrement walks the principal up to its limit and then refuses
+        // everything, which looks like a working limit until nobody can connect.
+        state.release_stream("principal-a");
+        let open = state
+            .streams_by_principal
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get("principal-a")
+            .copied()
+            .unwrap_or(0);
+        assert_eq!(
+            open, 0,
+            "releasing must decrement through a poisoned lock, or the slot leaks"
+        );
+    }
+
+    #[test]
+    fn a_dropped_permit_decrements_its_peer_through_a_poisoned_counter() {
+        let fixture = HostedServerFixture::new("peer-counter-poison");
+        let state = HostedServerState::with_resolver(
+            HostedConfig {
+                enabled: true,
+                ..HostedConfig::default()
+            },
+            fixture.resolver.clone(),
+        );
+        let permit = state.acquire_connection("peer-a").expect("a first permit");
+        // Poison AFTER the permit exists, so the count really is 1 and the
+        // decrement is the only thing the Drop has left to do.
+        poison(&state.connections_by_peer);
+        drop(permit);
+
+        let open = state
+            .connections_by_peer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get("peer-a")
+            .copied()
+            .unwrap_or(0);
+        assert_eq!(
+            open, 0,
+            "a Drop that skips its decrement leaves the peer connected forever, \
+             and a Drop has nowhere to report that it did"
+        );
+    }
 
     #[test]
     fn hosted_outbox_spool_forces_scheduler_drain_without_waiting_for_backstop() {
