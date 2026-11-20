@@ -3280,9 +3280,27 @@ fn hosted_auth_failure_delivery_is_per_peer_and_globally_throttled() {
         );
         assert_eq!(response.status, 401);
     }
+    // `wait_for_count` covers the first delivery arriving; the settle after it
+    // is what proves the THROTTLE, that no second delivery follows.
+    //
+    // So the flake here is NOT a late first webhook -- that race was already
+    // handled. It is the settle finding TWO, which means the two failures did
+    // not land inside one throttle window. Nothing in the test controls that
+    // spacing, so a stalled machine can separate them legitimately and the
+    // expectation, not the code, is what breaks. Fixing that properly needs
+    // the window driven by an injected clock rather than wall time, which is
+    // more than a message change; what is here is the message that says which
+    // half failed, because the bare `assert_eq!` printed `1` against `2` and
+    // left the reader to guess which claim that was.
     per_peer_webhook.wait_for_count(1);
     thread::sleep(Duration::from_millis(100));
-    assert_eq!(per_peer_webhook.count(), 1);
+    assert_eq!(
+        per_peer_webhook.count(),
+        1,
+        "two auth failures from one peer must collapse into a single webhook; \
+         a count above one means they did not share a throttle window, which a \
+         stalled machine can cause"
+    );
     per_peer_webhook.stop();
 
     let global_fixture = HostedFixture::new("auth-fail-global-throttle");
@@ -3318,8 +3336,13 @@ fn hosted_auth_failure_delivery_is_per_peer_and_globally_throttled() {
         assert_eq!(response.status, 401);
     }
     global_webhook.wait_for_count(10);
+    global_webhook.wait_for_count(10);
     thread::sleep(Duration::from_millis(100));
-    assert_eq!(global_webhook.count(), 10);
+    assert_eq!(
+        global_webhook.count(),
+        10,
+        "the global throttle must CAP the burst at ten webhooks, not merely reach it"
+    );
     global_webhook.stop();
 }
 
