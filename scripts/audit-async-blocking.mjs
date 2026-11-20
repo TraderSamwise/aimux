@@ -10,6 +10,20 @@ const scanRoots = roots.length > 0 ? roots.map((root) => resolve(repoRoot, root)
 const SYNC_FS_CALLS =
   /\bfs\s*::\s*(read|read_to_string|write|read_dir|metadata|copy|rename|remove_file|remove_dir_all|create_dir_all)\s*\(/;
 
+/// Readers the derivation provably cannot see, because they delegate.
+///
+/// Kept deliberately short and justified one by one: each holds no `fs::` call
+/// of its own, so no amount of seeding on direct calls will find it, and each
+/// was named by the hand list this derivation replaced. Adding to this list
+/// should feel like a defeat -- check first whether the reader can simply be
+/// found.
+const DELEGATING_STATE_READERS = new Set([
+  "load_metadata_state",
+  "try_load_metadata_state",
+  "load_topology",
+  "read_agent_input_delivery_queue",
+]);
+
 /// The sync filesystem readers, DERIVED from the crate instead of listed.
 ///
 /// This replaces a hand-maintained list of eight names. That list was the
@@ -77,7 +91,24 @@ function deriveSyncFilesystemReaders(files) {
           }
         }
       }
-      if (SYNC_FS_CALLS.test(text.slice(from, end))) {
+      // A DELEGATING wrapper reaches the filesystem through another function,
+      // so its own body holds no `fs::` call and the derivation cannot see it.
+      // These four are named because the hand list this derivation replaced
+      // named them, and dropping them was a real loss of coverage:
+      // `load_metadata_state` is one call to
+      // `load_metadata_state_at_unix_millis`, and the other three are the same
+      // shape.
+      //
+      // I tried deriving them instead, twice, and measured both: a transitive
+      // closure over callers amplifies the generic-name problem rather than
+      // containing it -- one sync `run` that touches a file made every caller
+      // named `run` a reader -- and restricting propagation to attributable
+      // edges still classified the hop HELPERS as readers, flagging the very
+      // functions that exist to take these reads off the worker. A short list
+      // of names the scanner provably cannot derive is the honest cost; it is
+      // four entries rather than the eight it replaced, and the rest is
+      // derived.
+      if (DELEGATING_STATE_READERS.has(name) || SYNC_FS_CALLS.test(text.slice(from, end))) {
         if (!definedIn.has(name)) definedIn.set(name, new Map());
         // Keyed by SITE, not by file. Keying by file counted two definitions
         // in one file as one, so a name that is ambiguous within a single
