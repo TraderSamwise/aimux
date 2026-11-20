@@ -87,9 +87,12 @@ impl AgentOutputReadMetrics {
     }
 
     pub fn record_metric_at(&self, record: AgentOutputReadMetricRecord, at: String) {
-        let Ok(mut state) = self.inner.lock() else {
-            return;
-        };
+        // Dropping the sample makes the counter undercount silently, and the
+        // poison never clears, so it undercounts for the life of the process.
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.total.record(&record, &at);
         state
             .by_source
@@ -118,9 +121,14 @@ impl AgentOutputReadMetrics {
     }
 
     pub fn snapshot(&self) -> Value {
-        let Ok(state) = self.inner.lock() else {
-            return empty_snapshot();
-        };
+        // An empty snapshot is a real reading -- it means no reads happened.
+        // Answering a poisoned lock with it hands the reader zeros as DATA,
+        // with no way to tell "nothing happened" from "could not look", which
+        // is the one thing an observability surface must never do.
+        let state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         json!({
             "total": state.total.to_json(),
             "bySource": counters_to_json(&state.by_source),
@@ -229,16 +237,6 @@ fn insert_nonzero_u64(map: &mut Map<String, Value>, key: &str, value: u64) {
     }
 }
 
-fn empty_snapshot() -> Value {
-    json!({
-        "total": OutputReadCounter::default().to_json(),
-        "bySource": {},
-        "bySourceMode": {},
-        "bySourcePurpose": {},
-        "recent": [],
-    })
-}
-
 fn now_iso() -> String {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -249,4 +247,53 @@ fn now_iso() -> String {
     datetime
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn a_record() -> AgentOutputReadMetricRecord {
+        AgentOutputReadMetricRecord {
+            source: "capture".to_owned(),
+            session_id: "session-a".to_owned(),
+            mode: None,
+            purpose: None,
+            requested_start_line: None,
+            start_line: None,
+            end_line: None,
+            capture_line_limit: None,
+            output_bytes: 11,
+            response_bytes: 22,
+            duration_ms: 3,
+            coalesced: false,
+            changed: Some(true),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn a_poisoned_metrics_lock_does_not_report_zeros_as_a_reading() {
+        let metrics = AgentOutputReadMetrics::default();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = metrics.inner.lock().expect("lock to poison");
+            panic!("poisoning on purpose");
+        }));
+        assert!(
+            metrics.inner.is_poisoned(),
+            "the metrics state must be poisoned"
+        );
+
+        metrics.record_metric_at(a_record(), "2026-01-01T00:00:00Z".to_owned());
+        let snapshot = metrics.snapshot();
+
+        // Both halves: the sample must survive the poisoned recording path AND
+        // the snapshot must report it. Fixing only one leaves a surface that
+        // still answers zeros, just for the other reason.
+        assert_eq!(
+            snapshot["total"]["count"], 1,
+            "a poisoned lock must not report zero reads as a reading; the \
+             caller cannot tell that from nothing having happened"
+        );
+    }
 }
