@@ -246,6 +246,26 @@ fn run() -> Pin<Box<dyn Future<Output = ()>>> {
     expect(result.stderr.match(/thread-sleep/g)).toHaveLength(1);
   });
 
+  // A DELEGATING wrapper holds no fs:: call of its own, so the derivation
+  // cannot see it and it has to be named. This is the coverage the hand list
+  // had and the first derivation dropped.
+  it("rejects a delegating state reader the derivation cannot see", () => {
+    const result = runAudit(
+      writeFixture(`
+fn load_metadata_state(dir: &Path) -> State {
+    load_metadata_state_at_unix_millis(dir, now())
+}
+
+async fn f() {
+    let _ = load_metadata_state(dir);
+}
+`),
+    );
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("sync-fs");
+  });
+
   // The point of deriving: a wrapper NO list contains is still caught, because
   // the fixture's own file defines it as a sync reader.
   it("rejects a derived sync reader that no list names", () => {
