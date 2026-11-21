@@ -42,12 +42,22 @@ pub struct ProjectEventRecord {
 }
 
 impl ProjectEventBus {
+    /// The sequence a new subscriber should resume after.
+    ///
+    /// Recovered, not defaulted, and the default was the damaging kind: a
+    /// poisoned mutex returned 0, which is exactly what a bus that has
+    /// published nothing reports, so the caller cannot tell the two apart.
+    /// This value is the starting cursor of a project-events stream, and
+    /// `events_since` reads it as "everything after 0" -- so one panic
+    /// elsewhere in this file made every later subscriber replay the whole
+    /// retained buffer, for the life of the process, with nothing saying why.
+    /// Its four siblings below already recover; this one was missed.
     pub fn latest_sequence(&self) -> u64 {
         self.inner
             .state
             .lock()
-            .map(|state| state.latest_sequence)
-            .unwrap_or(0)
+            .unwrap_or_else(|error| error.into_inner())
+            .latest_sequence
     }
 
     pub fn publish(&self, event: Value) -> u64 {
@@ -442,6 +452,37 @@ mod tests {
         assert!(
             bus.inner.state.is_poisoned(),
             "the mutex must actually be poisoned for this test to mean anything"
+        );
+    }
+
+    /// Both directions of the stream cursor, because only one of them is
+    /// about poison.
+    ///
+    /// A poisoned bus must report the sequence it really reached: 0 here is
+    /// indistinguishable from a fresh bus, and it is the cursor a new
+    /// project-events subscriber resumes after, so a wrong 0 replays the
+    /// whole retained buffer to every later subscriber.
+    #[test]
+    fn a_poisoned_bus_reports_the_cursor_it_reached_and_an_empty_one_reports_zero() {
+        let empty = ProjectEventBus::default();
+        assert_eq!(
+            empty.latest_sequence(),
+            0,
+            "a bus that has published nothing must still answer 0"
+        );
+
+        let bus = ProjectEventBus::default();
+        bus.publish(json!({ "kind": "first" }));
+        bus.publish(json!({ "kind": "second" }));
+        let before = bus.latest_sequence();
+        assert_eq!(before, 2, "two publishes must reach sequence 2");
+
+        poison(&bus);
+
+        assert_eq!(
+            bus.latest_sequence(),
+            before,
+            "a poisoned bus reported a different cursor than the one it reached"
         );
     }
 
