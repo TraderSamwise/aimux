@@ -1288,7 +1288,7 @@ fn read_relay_status(status: &Mutex<RelayStatusSnapshot>) -> RelayStatusSnapshot
 ///
 /// Poison here is not a withdrawal and not a no-op: the frame has ALREADY gone
 /// out on the wire, so failing to dequeue it means the pump sends it again,
-/// and again, for as long as the lock stays poisoned. `withdraw_outbox_frame`
+/// and again, for as long as the lock stays poisoned. `drop_outbox_frame`
 /// returning `false` on poison is a true answer -- it did not withdraw
 /// anything -- but there is no true answer available here except removing the
 /// frame.
@@ -1301,7 +1301,7 @@ fn remove_outbox_front_if_matches(outbox: &Mutex<VecDeque<String>>, frame: &str)
     Some(queued.len())
 }
 
-/// so recover the guard, as this crate does at 29 other sites.
+/// so recover the guard, as this crate does at nearly every lock site.
 ///
 /// These are functions over the mutex rather than only methods so the
 /// invariant can be gated without constructing a `RelayRunner`, which needs a
@@ -1322,7 +1322,7 @@ fn mark_frame_being_written(writing_frame: &Mutex<Option<String>>, frame: Option
 /// and sent nothing.
 ///
 /// Note which way the other two outbox readers point, because they are NOT
-/// this bug and should not be "fixed": `withdraw_outbox_frame` returns `false`
+/// this bug and should not be "fixed": `drop_outbox_frame` returns `false`
 /// on a poisoned lock, which is the safe answer -- it did not withdraw, and it
 /// says so, leaving the frame to send. `project_owner_for` returns
 /// `ProjectOwnerLookup::Unknown`, a could-not-ask outcome that is already
@@ -1706,7 +1706,7 @@ mod tests {
     /// This one is not a lost diagnostic. The frame has ALREADY gone out on
     /// the wire; failing to pop it means the pump writes it again, and again,
     /// for as long as the lock stays poisoned. Note the direction differs from
-    /// `withdraw_outbox_frame`, which returns `false` on poison because "I did
+    /// `drop_outbox_frame`, which returns `false` on poison because "I did
     /// not withdraw anything" is a true answer -- here there is no true answer
     /// except removing it.
     #[test]
