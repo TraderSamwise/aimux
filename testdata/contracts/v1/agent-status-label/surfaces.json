@@ -145,6 +145,18 @@
       "appLabel": "Next step",
       "appPill": true,
       "appKind": "needs"
+    },
+    {
+      "why": "the tool account behind the agent has no room left, so input will not help until it resets or the profile changes",
+      "status": "running",
+      "activity": "running",
+      "attention": "normal",
+      "quotaBlocked": "Weekly is used up, resets 1764000000",
+      "userLabel": "quota_blocked",
+      "statusLabel": "out of quota",
+      "appLabel": "Out of quota",
+      "appPill": true,
+      "appKind": "blocked"
     }
   ],
   "userLabels": {
@@ -160,6 +172,7 @@
       "needs_response",
       "next_step",
       "offline",
+      "quota_blocked",
       "ready",
       "starting",
       "stopping",

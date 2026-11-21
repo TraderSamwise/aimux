@@ -38,6 +38,13 @@ fn semantics(case: &Value) -> Value {
         // `optimisticAction` and has its own test. An assigned task is the only
         // way to reach `next_step`, so that one stays.
         has_active_task: case["hasActiveTask"].as_bool().unwrap_or(false),
+        // Read from the case, because `quota_blocked` is the only way to reach
+        // the out-of-quota label: it comes from the usage monitor rather than
+        // from the agent, so no combination of status, activity and attention
+        // produces it. A case naming it and a helper that dropped it is how
+        // the first version of this case asserted `quota_blocked` and got
+        // `working`.
+        quota_blocked: case["quotaBlocked"].as_str().map(str::to_owned),
         ..SessionSemanticsInput::default()
     })
 }
@@ -252,11 +259,20 @@ fn the_pinned_user_labels_are_still_the_ones_the_service_emits() {
         &rest[..end]
     };
 
+    // WHITESPACE-TOLERANT, because the literal scan this replaced was
+    // defeated by rustfmt. A `user(` call whose arguments do not fit on one
+    // line is wrapped as `user(\n    "label",`, so `match_indices("user(\"")`
+    // matched nothing for it -- and `quota_blocked` was added that way, drifted
+    // across three surfaces, and this gate stayed green. The whole point of
+    // scanning the source instead of asserting one input per label was to
+    // catch a fifteenth label; it could not, because of a line break.
     let mut emitted = body
-        .match_indices("user(\"")
-        .map(|(at, _)| {
-            let after = &body[at + "user(\"".len()..];
-            after[..after.find('"').expect("a closed label literal")].to_owned()
+        .match_indices("user(")
+        .filter_map(|(at, _)| {
+            let after = &body[at + "user(".len()..];
+            let after = after.trim_start();
+            let after = after.strip_prefix('"')?;
+            Some(after[..after.find('"')?].to_owned())
         })
         .collect::<Vec<_>>();
     emitted.sort();

@@ -1438,6 +1438,10 @@ pub fn row_state_label(value: &str) -> &str {
         "needs_response" => "Needs reply",
         "next_step" => "Next step",
         "blocked" => "Blocked",
+        // Same words as the service and Expose. Without this arm the
+        // fallthrough handed it to `transient_state_label`, which returns an
+        // unknown value unchanged -- so the row showed `quota_blocked`.
+        "quota_blocked" => "Out of quota",
         "error" => "Error",
         "idle" => "Idle",
         "running" => "Running",
