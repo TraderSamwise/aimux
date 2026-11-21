@@ -1,3 +1,4 @@
+use crate::paths::PathResolver;
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -173,6 +174,29 @@ pub(super) fn route_agent_migrate(
     }
 }
 
+/// The env a new agent on this machine should launch with, before any explicit
+/// per-spawn override.
+///
+/// `Err` when the machine's `credentialProfiles` block cannot be understood,
+/// and the callers REFUSE the spawn on it rather than launching anyway. That
+/// is the deliberate choice: an active profile is an explicit instruction
+/// about which credentials to use, so ignoring an unreadable one would run the
+/// work through whichever account the machine happens to default to and say
+/// nothing. A spawn that fails loudly is recoverable; a month of work on the
+/// wrong account is not.
+///
+/// Only the `credentialProfiles` block can produce this error, so a config
+/// that is malformed elsewhere does not stop agents from starting.
+fn active_profile_launch_env(resolver: &PathResolver) -> Result<Vec<(String, String)>, String> {
+    let config = crate::config::load_global_config_with_resolver(resolver);
+    match crate::credential_profiles::parse_credential_profiles(&config) {
+        profiles @ crate::credential_profiles::CredentialProfiles::Known { .. } => {
+            Ok(crate::credential_profiles::active_launch_env(&profiles))
+        }
+        crate::credential_profiles::CredentialProfiles::Unreadable(reason) => Err(reason),
+    }
+}
+
 pub(super) fn route_agent_spawn(
     context: &ProjectServiceRequestContext,
     body: &Value,
@@ -217,10 +241,31 @@ pub(super) fn route_agent_spawn(
         .map(|launch| launch.args.clone())
         .unwrap_or_else(|| string_array_field(tool_config.get("args")));
     args.extend(string_array_field(body.get("extraArgs")));
-    let mut env = launch_override
-        .as_ref()
-        .map(|launch| launch.env.clone())
-        .unwrap_or_default();
+    // The machine's active profile first, then any explicit per-spawn
+    // override: `env -i K=V` takes the LAST value and the Claude hook search
+    // in `agent_session_launch` does a `.rev().find()`, so appending the
+    // override after means an explicit request still wins over the machine
+    // default. That is the precedence somebody would expect from passing one.
+    let mut env = match active_profile_launch_env(&PathResolver::from_env()) {
+        Ok(env) => env,
+        Err(error) => {
+            log_agent_spawn_route_failure(
+                context,
+                "read-credential-profiles",
+                Some(&tool_key),
+                None,
+                trimmed_string(body.get("worktreePath")).as_deref(),
+                &error,
+            );
+            return json_error(500, error);
+        }
+    };
+    env.extend(
+        launch_override
+            .as_ref()
+            .map(|launch| launch.env.clone())
+            .unwrap_or_default(),
+    );
     let supervisor_role = supervisor_role_from_spawn_body(body);
     let team = supervisor_role
         .as_deref()
@@ -392,10 +437,31 @@ pub(super) async fn route_agent_spawn_async(
         .map(|launch| launch.args.clone())
         .unwrap_or_else(|| string_array_field(tool_config.get("args")));
     args.extend(string_array_field(body.get("extraArgs")));
-    let mut env = launch_override
-        .as_ref()
-        .map(|launch| launch.env.clone())
-        .unwrap_or_default();
+    // The machine's active profile first, then any explicit per-spawn
+    // override: `env -i K=V` takes the LAST value and the Claude hook search
+    // in `agent_session_launch` does a `.rev().find()`, so appending the
+    // override after means an explicit request still wins over the machine
+    // default. That is the precedence somebody would expect from passing one.
+    let mut env = match active_profile_launch_env(&PathResolver::from_env()) {
+        Ok(env) => env,
+        Err(error) => {
+            log_agent_spawn_route_failure(
+                context,
+                "read-credential-profiles",
+                Some(&tool_key),
+                None,
+                trimmed_string(body.get("worktreePath")).as_deref(),
+                &error,
+            );
+            return json_error(500, error);
+        }
+    };
+    env.extend(
+        launch_override
+            .as_ref()
+            .map(|launch| launch.env.clone())
+            .unwrap_or_default(),
+    );
     let supervisor_role = supervisor_role_from_spawn_body(body);
     let team = supervisor_role
         .as_deref()
@@ -2026,8 +2092,78 @@ mod tests {
     use crate::tmux::TmuxTarget;
     use std::collections::BTreeSet;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    /// Writes a global config with the given `credentialProfiles` block and
+    /// returns a resolver pointed at it, so the helper is exercised against a
+    /// real file rather than a hand-built `Value`.
+    fn resolver_with_profiles(label: &str, block: serde_json::Value) -> (PathResolver, PathBuf) {
+        let home = std::env::temp_dir().join(format!(
+            "aimux-profile-launch-{label}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).expect("aimux home");
+        fs::write(
+            home.join("config.json"),
+            serde_json::to_string(&json!({ "credentialProfiles": block })).expect("config json"),
+        )
+        .expect("write config");
+        let resolver = PathResolver::new(&home, &home, Some(home.to_string_lossy().into_owned()));
+        (resolver, home)
+    }
+
+    /// The machine's active profile reaches a launch.
+    #[test]
+    fn an_active_profile_becomes_launch_env() {
+        let (resolver, home) = resolver_with_profiles(
+            "active",
+            json!({
+                "active": "work",
+                "profiles": { "work": { "claudeConfigDir": "/profiles/work/.claude" } },
+            }),
+        );
+        let env = active_profile_launch_env(&resolver).expect("a readable profile block");
+        assert_eq!(
+            env,
+            vec![(
+                "CLAUDE_CONFIG_DIR".to_owned(),
+                "/profiles/work/.claude".to_owned()
+            )]
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// An unreadable block REFUSES rather than launching against whichever
+    /// account the machine defaults to. An active profile is an explicit
+    /// instruction about credentials, so ignoring one we cannot parse would
+    /// run the work somewhere nobody asked for and say nothing.
+    #[test]
+    fn an_unreadable_profile_block_refuses_the_launch_env() {
+        let (resolver, home) = resolver_with_profiles("unreadable", json!("work"));
+        let error = active_profile_launch_env(&resolver)
+            .expect_err("a malformed profile block must not yield an empty env");
+        assert!(error.contains("not an object"), "{error}");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A machine with no profiles configured launches exactly as before.
+    #[test]
+    fn no_profiles_means_no_extra_launch_env() {
+        let home =
+            std::env::temp_dir().join(format!("aimux-profile-launch-none-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).expect("aimux home");
+        fs::write(home.join("config.json"), "{}").expect("write config");
+        let resolver = PathResolver::new(&home, &home, Some(home.to_string_lossy().into_owned()));
+        assert!(
+            active_profile_launch_env(&resolver)
+                .expect("an empty config is readable")
+                .is_empty()
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
 
     #[derive(Default)]
     struct FakeAsyncLifecycleRuntime {
