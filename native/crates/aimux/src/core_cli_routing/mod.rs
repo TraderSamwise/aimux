@@ -803,6 +803,10 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("migration"), Some("audit" | "import" | "rollback")) => {
             parse_core_migration_args(args).is_some()
         }
+        // Exactly `fleet usage`, and nothing else under `fleet`. The verb is
+        // new, so an unrecognised subcommand should fall through to the old
+        // path and say so rather than being planned as a fleet read.
+        (Some("fleet"), Some("usage")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         (Some("spawn"), _) => true,
         (Some("run"), _) => true,
         (Some("attach"), _) => true,
