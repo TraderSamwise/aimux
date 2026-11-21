@@ -1,0 +1,214 @@
+//! Quota headroom across every machine in this account.
+//!
+//! One machine asking the others what their Claude and Codex accounts have
+//! left. It is the first fleet read, and the fact the rest depend on: before
+//! anything decides where work should go, or whether a stalled agent is
+//! stalled because its account ran out, somebody has to be able to ask.
+//!
+//! The shape here is deliberately split. `build_fleet_usage_report` is pure,
+//! so the thing worth proving -- that a machine which did not answer is still
+//! in the report, carrying why -- is provable without a relay, a socket or a
+//! second machine. A gate that needs a live fleet is a gate that does not run.
+
+use serde_json::{Value, json};
+
+/// What one machine said, or did not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FleetPeerUsage {
+    /// The peer answered. Its own `status` is kept rather than flattened to a
+    /// boolean: a peer that replied `500` did answer, and that is a different
+    /// fact from never having been asked.
+    Answered {
+        machine_id: String,
+        status: u16,
+        body: Value,
+    },
+    /// The peer did not answer. `reason` comes from `PeerRequestError::message`
+    /// rather than from a sentence written here, because that type is what
+    /// draws the distinction between a frame that never left and one that did
+    /// -- and whoever writes the sentence twice eventually swaps them. The
+    /// comment in `daemon_relay.rs` records that happening.
+    Unanswered { machine_id: String, reason: String },
+}
+
+impl FleetPeerUsage {
+    pub fn machine_id(&self) -> &str {
+        match self {
+            Self::Answered { machine_id, .. } | Self::Unanswered { machine_id, .. } => machine_id,
+        }
+    }
+}
+
+/// Fold the answers into one report in which every machine asked appears.
+///
+/// The invariant is that nothing drops out. A fleet view that silently omits
+/// the machine it could not reach reads as a fleet where that machine has
+/// nothing to report, which is the same mistake as a scan that cannot tell an
+/// absent store from an unreadable one.
+pub fn build_fleet_usage_report(peers: &[FleetPeerUsage]) -> Value {
+    let machines: Vec<Value> = peers
+        .iter()
+        .map(|peer| match peer {
+            FleetPeerUsage::Answered {
+                machine_id,
+                status,
+                body,
+            } => json!({
+                "machineId": machine_id,
+                // `ok` is about this read, not about the machine. A peer that
+                // answered 500 is reachable and still did not give an answer
+                // worth showing as headroom.
+                "ok": *status == 200,
+                "status": status,
+                "usage": body,
+            }),
+            FleetPeerUsage::Unanswered { machine_id, reason } => json!({
+                "machineId": machine_id,
+                "ok": false,
+                // No `status`: there was no reply to take one from, and
+                // inventing a 0 or a 503 would read as something the peer
+                // said.
+                "error": reason,
+            }),
+        })
+        .collect();
+    json!({
+        "ok": true,
+        // The envelope's own `ok` says the fan-out ran, not that every machine
+        // answered. `asked` is here so a caller can see at a glance that the
+        // list is complete without counting it.
+        "asked": peers.len(),
+        "machines": machines,
+    })
+}
+
+/// Put back any machine that produced no outcome at all.
+///
+/// A fan-out task that panicked returns no `FleetPeerUsage`, and the
+/// `JoinError` it produces instead does not say which machine it was for. So
+/// the list that came back is diffed against the list that was asked, and
+/// anything missing is named rather than left out -- otherwise a panic is the
+/// one failure that makes a machine vanish from the report instead of
+/// appearing with a reason, which is exactly the hole the report exists to
+/// close.
+pub fn with_machines_that_produced_nothing(
+    asked: &[String],
+    mut peers: Vec<FleetPeerUsage>,
+    reason: &str,
+) -> Vec<FleetPeerUsage> {
+    for machine_id in asked {
+        if peers.iter().any(|peer| peer.machine_id() == machine_id) {
+            continue;
+        }
+        peers.push(FleetPeerUsage::Unanswered {
+            machine_id: machine_id.clone(),
+            reason: reason.to_owned(),
+        });
+    }
+    peers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn answered(machine: &str, status: u16) -> FleetPeerUsage {
+        FleetPeerUsage::Answered {
+            machine_id: machine.to_owned(),
+            status,
+            body: json!({ "windows": [{ "id": "claude-5h", "usedPercent": 41.0 }] }),
+        }
+    }
+
+    #[test]
+    fn a_machine_whose_task_produced_nothing_is_named_not_dropped() {
+        let asked = vec!["mbp".to_owned(), "strix".to_owned(), "mini".to_owned()];
+        // `strix` is absent the way a panicked task leaves it absent: no
+        // outcome at all, and no error that says whose it was.
+        let came_back = vec![answered("mbp", 200), answered("mini", 200)];
+
+        let peers =
+            with_machines_that_produced_nothing(&asked, came_back, "fan-out task did not finish");
+        let report = build_fleet_usage_report(&peers);
+        let machines = report["machines"].as_array().expect("machines");
+
+        assert_eq!(machines.len(), 3, "a panicked machine vanished");
+        let strix = machines
+            .iter()
+            .find(|machine| machine["machineId"] == "strix")
+            .expect("strix is missing");
+        assert_eq!(strix["ok"], false);
+        assert_eq!(strix["error"], "fan-out task did not finish");
+    }
+
+    #[test]
+    fn a_machine_that_did_not_answer_is_still_in_the_report() {
+        let report = build_fleet_usage_report(&[
+            answered("mbp", 200),
+            FleetPeerUsage::Unanswered {
+                machine_id: "strix".to_owned(),
+                reason: "peer was asked and did not answer in time; whether it acted is unknown"
+                    .to_owned(),
+            },
+        ]);
+
+        let machines = report["machines"].as_array().expect("machines");
+        assert_eq!(machines.len(), 2, "a machine dropped out of the report");
+        assert_eq!(report["asked"], 2);
+
+        let strix = machines
+            .iter()
+            .find(|machine| machine["machineId"] == "strix")
+            .expect("the unanswered machine is missing");
+        assert_eq!(strix["ok"], false);
+        // The reason is carried through rather than replaced by "unreachable",
+        // because which of the four ways it failed is the part a person acts
+        // on -- above all whether the read may have happened anyway.
+        assert!(
+            strix["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("whether it acted is unknown")),
+            "{:?}",
+            strix["error"]
+        );
+        // And no invented status, because the peer said nothing to take one
+        // from.
+        assert!(strix.get("status").is_none(), "{strix:?}");
+    }
+
+    #[test]
+    fn a_peer_that_answered_an_error_is_not_a_successful_read() {
+        let report = build_fleet_usage_report(&[answered("mbp2", 500)]);
+        let machine = &report["machines"][0];
+        assert_eq!(machine["ok"], false, "a 500 counted as headroom");
+        // Reachable, and the status proves it. This is the direction that
+        // separates "answered badly" from "never answered", and collapsing
+        // them would send someone to check a network that is fine.
+        assert_eq!(machine["status"], 500);
+        assert!(machine.get("error").is_none(), "{machine:?}");
+    }
+
+    #[test]
+    fn every_machine_asked_appears_exactly_once() {
+        let peers = [
+            answered("mbp", 200),
+            FleetPeerUsage::Unanswered {
+                machine_id: "mini".to_owned(),
+                reason: "peer request was not sent: socket is down".to_owned(),
+            },
+            answered("strix", 503),
+        ];
+        let report = build_fleet_usage_report(&peers);
+        let machines = report["machines"].as_array().expect("machines");
+
+        assert_eq!(machines.len(), peers.len());
+        assert_eq!(report["asked"], peers.len());
+        for peer in &peers {
+            let found = machines
+                .iter()
+                .filter(|machine| machine["machineId"] == peer.machine_id())
+                .count();
+            assert_eq!(found, 1, "{} appeared {found} times", peer.machine_id());
+        }
+    }
+}
