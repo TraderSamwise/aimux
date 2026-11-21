@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { credentialProfileView, profileDirectories } from "@/lib/credential-profile-view";
 import { canClaimSwarmHost, swarmHostView } from "@/lib/swarm-host-view";
+import { machineTargets, selectableMachines } from "@/lib/machine-targets";
 import {
   getCredentialProfiles,
   getFleetUsage,
@@ -17,6 +18,7 @@ import {
   type CredentialProfile,
   type CredentialProfilesResponse,
   type FleetUsageMachine,
+  type FleetUsageResponse,
   type SwarmHostResponse,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -78,7 +80,7 @@ function MachineCard({ machine }: { machine: FleetUsageMachine }) {
  * which the machine selector names when it has several -- multi-machine
  * switching from one screen needs that selector wired in, and is not here yet.
  */
-function CredentialProfilePanel() {
+function CredentialProfilePanel({ machineId }: { machineId?: string }) {
   const { getToken } = useAuth();
   const [resource, setResource] = useState<{
     value: CredentialProfilesResponse | null;
@@ -90,7 +92,7 @@ function CredentialProfilePanel() {
     setResource((current) => ({ ...current, pending: true }));
     try {
       const token = await getToken();
-      const value = await getCredentialProfiles({ token });
+      const value = await getCredentialProfiles({ token, machineId });
       setResource({ value, error: null, pending: false });
     } catch (error) {
       setResource((current) => ({
@@ -103,7 +105,7 @@ function CredentialProfilePanel() {
         pending: false,
       }));
     }
-  }, [getToken]);
+  }, [getToken, machineId]);
 
   useEffect(() => {
     void load();
@@ -114,7 +116,7 @@ function CredentialProfilePanel() {
       setResource((current) => ({ ...current, pending: true }));
       try {
         const token = await getToken();
-        const result = await setCredentialProfile(profile, { token });
+        const result = await setCredentialProfile(profile, { token, machineId });
         if (!result.ok) {
           // The daemon refuses an undefined name rather than storing it, so
           // its words are shown rather than a generic failure.
@@ -131,7 +133,7 @@ function CredentialProfilePanel() {
         }));
       }
     },
-    [getToken, load],
+    [getToken, load, machineId],
   );
 
   const report = resource.value;
@@ -288,6 +290,71 @@ function SwarmHostPanel() {
   );
 }
 
+/**
+ * Which machine the per-machine controls below address.
+ *
+ * An unreachable machine is SHOWN and not selectable: hiding it would make the
+ * fleet look smaller than it is, and offering a control the relay will refuse
+ * is worse than offering none. The reason it gave is on the chip.
+ */
+function MachineSelector({
+  report,
+  selected,
+  onSelect,
+}: {
+  report: FleetUsageResponse | null;
+  selected?: string;
+  onSelect: (machineId?: string) => void;
+}) {
+  const targets = machineTargets(report);
+
+  if (targets.kind === "loading") return null;
+  if (targets.kind === "unknown") {
+    return (
+      <Card className="mb-4 p-4">
+        <Text className="mb-1 font-mono text-xs font-semibold text-[#b8bbc6]">Machine</Text>
+        <Text className="font-mono text-xs text-muted-foreground">
+          {targets.reason} Controls below act on this machine.
+        </Text>
+      </Card>
+    );
+  }
+  // Nothing to choose between, so no chooser -- the controls act on this
+  // machine, which is what they did before any of this existed.
+  if (selectableMachines(targets).length === 0 && targets.targets.length === 0) return null;
+
+  return (
+    <Card className="mb-4 p-4">
+      <Text className="mb-2 font-mono text-xs font-semibold text-[#b8bbc6]">Machine</Text>
+      <View className="flex-row flex-wrap gap-2">
+        <Pressable
+          onPress={() => onSelect(undefined)}
+          className={`rounded border px-2 py-1 ${
+            selected == null ? "border-[#7aa2f7] bg-[#1f2335]" : "border-[#2a2e3f]"
+          }`}
+        >
+          <Text className="font-mono text-xs">This machine</Text>
+        </Pressable>
+        {targets.targets.map((target) => (
+          <Pressable
+            key={target.machineId}
+            disabled={!target.reachable}
+            onPress={() => onSelect(target.machineId)}
+            className={`rounded border px-2 py-1 ${
+              selected === target.machineId ? "border-[#7aa2f7] bg-[#1f2335]" : "border-[#2a2e3f]"
+            } ${target.reachable ? "" : "opacity-40"}`}
+          >
+            <Text className="font-mono text-xs">
+              {target.machineId}
+              {target.reachable ? "" : ` (${target.reason})`}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </Card>
+  );
+}
+
 export default function FleetScreen() {
   const { getToken } = useAuth();
   const resource = useAtomValue(fleetUsageResourceAtom);
@@ -321,6 +388,10 @@ export default function FleetScreen() {
   // which machines exist; an empty array means the relay said there are none.
   // The two render differently because they are opposite claims, and the
   // report goes to the trouble of distinguishing them.
+  // `undefined` means "whichever machine this app is already talking to",
+  // which is what every per-machine wrapper does with an absent `machineId`.
+  // So the default needs no special case and no guess at a local machine name.
+  const [selectedMachine, setSelectedMachine] = useState<string | undefined>(undefined);
   const machines = report?.machines;
   const fleetUnknown = report != null && machines == null;
 
@@ -338,7 +409,9 @@ export default function FleetScreen() {
 
       <SwarmHostPanel />
 
-      <CredentialProfilePanel />
+      <MachineSelector report={report} selected={selectedMachine} onSelect={setSelectedMachine} />
+
+      <CredentialProfilePanel machineId={selectedMachine} />
 
       {resource.error ? (
         <Card className="mb-3 border-[#5a2a2a] p-4">
