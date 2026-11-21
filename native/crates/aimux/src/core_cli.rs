@@ -2457,6 +2457,43 @@ where
             },
             CoreCliFallback::None,
         ),
+        ("tool", "use") => {
+            let name = args
+                .get(2)
+                .map(String::as_str)
+                .filter(|argument| !argument.starts_with("--"));
+            let clear = args.iter().any(|argument| argument == "--clear");
+            // ALWAYS a body, which makes this ALWAYS a POST, and that is the
+            // whole point of the arm. `daemon_text_route_method` sends a GET
+            // when there is no body, and a GET on this route LISTS profiles --
+            // so a bare `aimux tool use` with nothing to set would print the
+            // list and exit 0, looking exactly like a switch that worked. The
+            // empty object instead reaches the route's own refusal, which says
+            // what to pass.
+            //
+            // Both-at-once is passed through rather than caught here for the
+            // same reason: the route already refuses it with "choose a profile
+            // or clear the choice, not both", and a second copy of that rule
+            // here is a second place for it to drift.
+            let body = Some(match (clear, name) {
+                (true, Some(name)) => json!({ "clear": true, "profile": name }),
+                (true, None) => json!({ "clear": true }),
+                (false, Some(name)) => json!({ "profile": name }),
+                (false, None) => json!({}),
+            });
+            (
+                CoreCliOperation::CredentialProfiles,
+                CoreCliAction::TextRoute {
+                    path: if mode == CoreCliOutputMode::Json {
+                        format!("{}?json=1", CORE_API_ROUTES.credential_profiles_text)
+                    } else {
+                        CORE_API_ROUTES.credential_profiles_text.to_owned()
+                    },
+                    body,
+                },
+                CoreCliFallback::None,
+            )
+        }
         ("tool", "profiles") => (
             CoreCliOperation::CredentialProfiles,
             CoreCliAction::TextRoute {

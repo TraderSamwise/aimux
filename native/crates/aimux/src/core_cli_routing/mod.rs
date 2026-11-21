@@ -816,6 +816,24 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         // So the allowlist admits one non-flag argument plus the two flags it
         // knows, and refuses anything else -- a stray third argument should
         // fall through rather than be planned with the extra silently dropped.
+        // Same shape as `swarm host`: one non-flag argument plus the flags it
+        // knows. `--clear` is admitted because clearing is a real instruction
+        // here, and a stray third argument falls through rather than being
+        // planned with the extra silently dropped.
+        // Same shape as `swarm host`: one non-flag argument plus the flags it
+        // knows. `--clear` is admitted because clearing is a real instruction
+        // here, and a stray third argument falls through rather than being
+        // planned with the extra silently dropped.
+        (Some("tool"), Some("use")) => {
+            let rest = &args[2..];
+            let flags = rest
+                .iter()
+                .filter(|arg| arg.as_ref().starts_with("--"))
+                .count();
+            rest.iter().all(|arg| {
+                !arg.as_ref().starts_with("--") || matches!(arg.as_ref(), "--json" | "--clear")
+            }) && rest.len() - flags <= 1
+        }
         (Some("swarm"), Some("host")) => {
             let rest = &args[2..];
             let flags = rest

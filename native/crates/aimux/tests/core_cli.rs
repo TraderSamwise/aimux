@@ -87,6 +87,84 @@ fn swarm_host_reads_pins_and_clears_through_one_route() {
     assert!(!is_core_cli_command(&["swarm", "start"]));
 }
 
+/// `aimux tool use` sets the machine's credential profile, and the gate that
+/// matters is that it can NEVER become a read.
+///
+/// The route answers GET by LISTING profiles and POST by choosing one, and
+/// `daemon_text_route_method` picks the method from whether there is a body.
+/// So a bare `aimux tool use` planning `body: None` would print the list and
+/// exit 0 -- indistinguishable, to the person who typed it, from a switch that
+/// worked. Every shape therefore carries a body, including the empty one that
+/// exists purely to reach the route's own refusal.
+#[test]
+fn tool_use_always_writes_and_never_silently_lists() {
+    let chosen = classify_core_cli(&["tool", "use", "work"], &context(true, false))
+        .expect("naming a profile is planned");
+    assert_eq!(chosen.operation, CoreCliOperation::CredentialProfiles);
+    assert_eq!(
+        chosen.action,
+        CoreCliAction::TextRoute {
+            path: "/core/credential-profiles-text".into(),
+            body: Some(json!({ "profile": "work" })),
+        }
+    );
+
+    let cleared = classify_core_cli(&["tool", "use", "--clear"], &context(true, false))
+        .expect("clearing is planned");
+    assert_eq!(
+        cleared.action,
+        CoreCliAction::TextRoute {
+            path: "/core/credential-profiles-text".into(),
+            body: Some(json!({ "clear": true })),
+        }
+    );
+
+    // THE ONE THAT PROTECTS AGAINST A SILENT LISTING. An empty object is still
+    // a body, so this is a POST, so the route refuses it and says what to
+    // pass. `body: None` here would be a GET and would list.
+    let bare = classify_core_cli(&["tool", "use"], &context(true, false))
+        .expect("a bare tool use is planned");
+    assert_eq!(
+        bare.action,
+        CoreCliAction::TextRoute {
+            path: "/core/credential-profiles-text".into(),
+            body: Some(json!({})),
+        },
+        "a bare `tool use` must still POST, or it would silently list profiles"
+    );
+
+    // Both at once is passed through so the ROUTE refuses it, rather than
+    // duplicating that rule in the planner where it could drift.
+    let both = classify_core_cli(&["tool", "use", "work", "--clear"], &context(true, false))
+        .expect("both at once is planned, for the route to refuse");
+    assert_eq!(
+        both.action,
+        CoreCliAction::TextRoute {
+            path: "/core/credential-profiles-text".into(),
+            body: Some(json!({ "clear": true, "profile": "work" })),
+        }
+    );
+
+    // `--json` still reaches the JSON shape of the same route.
+    let as_json = classify_core_cli(&["tool", "use", "work", "--json"], &context(true, false))
+        .expect("the json shape is planned");
+    assert_eq!(
+        as_json.action,
+        CoreCliAction::TextRoute {
+            path: "/core/credential-profiles-text?json=1".into(),
+            body: Some(json!({ "profile": "work" })),
+        }
+    );
+
+    // And the allowlist, which gates BEFORE the match above ever runs.
+    assert!(is_core_cli_command(&["tool", "use"]));
+    assert!(is_core_cli_command(&["tool", "use", "work"]));
+    assert!(is_core_cli_command(&["tool", "use", "--clear"]));
+    assert!(is_core_cli_command(&["tool", "use", "work", "--json"]));
+    assert!(!is_core_cli_command(&["tool", "use", "work", "extra"]));
+    assert!(!is_core_cli_command(&["tool", "use", "--force"]));
+}
+
 #[test]
 fn linear_status_plans_the_linear_settings_read() {
     let plan = classify_core_cli(&["linear", "status"], &context(true, false))
