@@ -611,6 +611,46 @@ export async function getDaemonHealth(opts?: ApiOpts): Promise<DaemonHealth> {
   return callJson<DaemonHealth>(`${getDaemonUrl()}/health`, { method: "GET" }, opts);
 }
 
+/** One machine's answer, or the reason it did not give one. */
+export type FleetUsageMachine = {
+  machineId: string;
+  ok: boolean;
+  /** Absent when the peer said nothing to take a status from. */
+  status?: number;
+  usage?: unknown;
+  /** Present when `ok` is false and the peer did not answer at all. */
+  error?: string;
+};
+
+export type FleetUsageResponse = {
+  ok: boolean;
+  /** How many machines were asked. Absent when the list itself was unknown. */
+  asked?: number;
+  /**
+   * Absent -- not empty -- when this machine does not know which machines
+   * exist. An empty array means the relay said there are none, which is the
+   * opposite claim, so the two must not be collapsed on the way in.
+   */
+  machines?: FleetUsageMachine[];
+  error?: string;
+};
+
+/**
+ * Quota headroom for every machine in this account.
+ *
+ * One request, not one per machine: the daemon fans out to its peers and
+ * merges, so a phone on a flaky link makes a single round trip and the
+ * ordering is decided in one place. The expose-items reader above fans out
+ * client-side instead, which is right for it -- it needs each machine named
+ * per call -- but would mean N round trips and a client-side merge here.
+ */
+export async function getFleetUsage(opts?: ApiOpts): Promise<FleetUsageResponse> {
+  const path = `${CORE_API_ROUTES.fleetUsageText}?json=1`;
+  if (shouldRouteViaRelay())
+    return callDaemonViaRelay<FleetUsageResponse>("GET", path, undefined, opts);
+  return callJson<FleetUsageResponse>(`${getDaemonUrl()}${path}`, { method: "GET" }, opts);
+}
+
 export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
   if (shouldRouteViaRelay()) {
     const data = await callDaemonViaRelay<{ ok: boolean; projects?: unknown }>(
