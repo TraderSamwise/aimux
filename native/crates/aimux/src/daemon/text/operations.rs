@@ -269,6 +269,15 @@ pub trait DaemonOperationsTextRuntime {
     fn fleet_usage_report(&mut self) -> Result<Value, String> {
         Err("fleet reads need a relay, and this runtime has none".into())
     }
+
+    /// Which credential directory each machine launches its tools with.
+    ///
+    /// Defaulted to the same refusal as `fleet_usage_report` above, and for
+    /// the same reason: a runtime with no relay has no fleet, and five test
+    /// doubles should not each have to say so.
+    fn fleet_accounts_report(&mut self) -> Result<Value, String> {
+        Err("fleet reads need a relay, and this runtime has none".into())
+    }
     fn doctor_coherence_report(
         &mut self,
         project_root: &str,
@@ -328,6 +337,9 @@ pub fn route_operations_text_request(
     let route_url = DaemonRouteUrl::parse(path);
     let pathname = route_url.pathname();
 
+    if method == "GET" && pathname == CORE_API_ROUTES.fleet_accounts_text {
+        return Some(fleet_accounts_text_route(runtime, &route_url));
+    }
     if method == "GET" && pathname == CORE_API_ROUTES.fleet_usage_text {
         return Some(fleet_usage_text_route(runtime, &route_url));
     }
@@ -547,6 +559,77 @@ pub fn doctor_coherence_text_route(
 /// answered badly, one that said nothing, one whose task died, and not
 /// knowing which machines exist at all -- so this route passes the body
 /// through rather than flattening any of that into one status.
+/// Ask every machine which credential directory it launches each tool with.
+///
+/// Passes the report through for the reason the quota route does: it already
+/// distinguishes a machine that answered, one that answered badly, one that
+/// said nothing, and not knowing which machines exist, and flattening any of
+/// those into one status would throw away the answer.
+pub fn fleet_accounts_text_route(
+    runtime: &mut impl DaemonOperationsTextRuntime,
+    route_url: &DaemonRouteUrl,
+) -> DaemonRouteResponse {
+    match runtime.fleet_accounts_report() {
+        Ok(report) => {
+            let lines = render_fleet_accounts_report(&report);
+            text_or_json_lines(route_url, report, &lines)
+        }
+        // A relay that is off or unreachable is this machine's own problem,
+        // not a fleet answer, so it is a 500 and not an empty report.
+        Err(error) => text_error(500, format!("Error: {error}")),
+    }
+}
+
+/// One line per machine, naming its Claude directory, in the order the report
+/// gave -- which puts whatever needs attention first.
+pub(crate) fn render_fleet_accounts_report(report: &Value) -> Vec<String> {
+    let Some(machines) = report.get("machines").and_then(Value::as_array) else {
+        let reason = report
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("the fleet could not be read");
+        return vec![reason.to_owned()];
+    };
+    if machines.is_empty() {
+        return vec!["No other machines are online.".to_owned()];
+    }
+    machines
+        .iter()
+        .map(|machine| {
+            let name = machine
+                .get("machineId")
+                .and_then(Value::as_str)
+                .unwrap_or("unnamed machine");
+            if machine.get("ok").and_then(Value::as_bool) != Some(true) {
+                let reason = machine
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| {
+                        let status = machine
+                            .get("status")
+                            .and_then(Value::as_u64)
+                            .unwrap_or_default();
+                        format!("answered {status}")
+                    });
+                return format!("{name}: {reason}");
+            }
+            // The peer's reply, nested because the report stores it whole.
+            let body = machine.get("usage");
+            match body
+                .and_then(|body| body.get("claudeConfigDir"))
+                .and_then(Value::as_str)
+            {
+                Some(dir) => format!("{name}: {dir}"),
+                // Said in words, because a blank reads as a missing answer
+                // when this IS the answer: no profile directory was given, so
+                // the tool uses its own default.
+                None => format!("{name}: no profile directory set"),
+            }
+        })
+        .collect()
+}
+
 pub fn fleet_usage_text_route(
     runtime: &mut impl DaemonOperationsTextRuntime,
     route_url: &DaemonRouteUrl,
@@ -1541,6 +1624,92 @@ mod fleet_usage_render_tests {
             "asked": 0,
             "machines": [],
         }));
+        assert_eq!(lines, vec!["No other machines are online."]);
+    }
+}
+
+#[cfg(test)]
+mod fleet_accounts_render_tests {
+    use super::render_fleet_accounts_report;
+    use serde_json::json;
+
+    fn answered(machine_id: &str, dir: Option<&str>) -> serde_json::Value {
+        json!({
+            "machineId": machine_id,
+            "ok": true,
+            "status": 200,
+            "usage": { "ok": true, "claudeConfigDir": dir },
+        })
+    }
+
+    #[test]
+    fn each_machine_names_its_profile_directory() {
+        let lines = render_fleet_accounts_report(&json!({
+            "ok": true,
+            "asked": 2,
+            "machines": [
+                answered("mbp", Some("/profiles/work/.claude")),
+                answered("mini", Some("/profiles/personal/.claude")),
+            ],
+        }));
+        assert_eq!(
+            lines,
+            vec![
+                "mbp: /profiles/work/.claude",
+                "mini: /profiles/personal/.claude"
+            ]
+        );
+    }
+
+    /// The distinction the read exists to preserve, carried all the way to the
+    /// line a person sees: an unset directory must not render blank or as a
+    /// guessed path, or a configured account cannot be told from an
+    /// unconfigured one.
+    #[test]
+    fn an_unset_directory_says_so_rather_than_rendering_blank() {
+        let lines = render_fleet_accounts_report(&json!({
+            "ok": true,
+            "asked": 1,
+            "machines": [answered("strix", None)],
+        }));
+        assert_eq!(lines, vec!["strix: no profile directory set"]);
+    }
+
+    /// A machine that never answered keeps its reason instead of looking like
+    /// a machine with no profile set, which is a different claim.
+    #[test]
+    fn a_machine_that_did_not_answer_keeps_its_reason() {
+        let lines = render_fleet_accounts_report(&json!({
+            "ok": true,
+            "asked": 1,
+            "machines": [
+                { "machineId": "strix", "ok": false, "error": "peer was never asked, so it did not answer" },
+            ],
+        }));
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].contains("never asked"),
+            "the reason did not survive: {lines:?}"
+        );
+        assert!(
+            !lines[0].contains("no profile directory set"),
+            "a silent machine was rendered as one with no profile: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn no_machine_list_renders_its_reason_not_an_empty_fleet() {
+        let lines = render_fleet_accounts_report(&json!({
+            "ok": false,
+            "error": "the relay has not sent the owner table yet",
+        }));
+        assert_eq!(lines, vec!["the relay has not sent the owner table yet"]);
+    }
+
+    #[test]
+    fn a_known_empty_fleet_says_so() {
+        let lines =
+            render_fleet_accounts_report(&json!({ "ok": true, "asked": 0, "machines": [] }));
         assert_eq!(lines, vec!["No other machines are online."]);
     }
 }

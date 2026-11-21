@@ -807,6 +807,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         // new, so an unrecognised subcommand should fall through to the old
         // path and say so rather than being planned as a fleet read.
         (Some("fleet"), Some("usage")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
+        (Some("fleet"), Some("accounts")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         (Some("tool"), Some("accounts")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         (Some("spawn"), _) => true,
         (Some("run"), _) => true,

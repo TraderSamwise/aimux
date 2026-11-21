@@ -16,6 +16,7 @@ export const CORE_API_ROUTES = {
   doctorDiskText: "/core/doctor/disk-text",
   dashboardReloadText: "/core/dashboard-reload-text",
   fleetUsageText: "/core/fleet/usage-text",
+  fleetAccountsText: "/core/fleet/accounts-text",
   exposeFocus: "/core/expose/focus",
   exposeItems: "/core/expose/items",
   hostAgentReadText: "/core/host-agent-read-text",

@@ -274,6 +274,7 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.doctor_tmux_text,
     crate::core_command_contract::CORE_API_ROUTES.doctor_versions_text,
     crate::core_command_contract::CORE_API_ROUTES.fleet_usage_text,
+    crate::core_command_contract::CORE_API_ROUTES.fleet_accounts_text,
     crate::core_command_contract::CORE_API_ROUTES.tool_accounts_text,
     crate::core_command_contract::CORE_API_ROUTES.graveyard_cleanup_text,
     crate::core_command_contract::CORE_API_ROUTES.graveyard_list_text,
