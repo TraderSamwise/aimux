@@ -137,6 +137,7 @@ fn supervisor_lane_visibility_and_new_agent_defaults_match_the_app() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &json!({}),
+            usage: None,
         },
         Some(&Default::default()),
     );
@@ -304,6 +305,7 @@ fn a_lane_with_no_topology_row_is_never_the_default_destination() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &json!({}),
+            usage: None,
         },
         Some(&Default::default()),
     );
@@ -373,6 +375,7 @@ fn a_live_checkout_spelled_differently_is_still_a_destination() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &json!({}),
+            usage: None,
         },
         Some(&Default::default()),
     );
@@ -445,6 +448,7 @@ fn a_retired_worktree_someone_is_still_working_in_is_not_a_destination() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &json!({}),
+            usage: None,
         },
         Some(&Default::default()),
     );

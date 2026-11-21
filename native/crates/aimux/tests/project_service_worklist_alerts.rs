@@ -202,6 +202,7 @@ fn terminal_obligations_agree_across_worklist_desktop_and_derived_waits() {
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange,
+                usage: None,
             },
             Some(&windows),
         );

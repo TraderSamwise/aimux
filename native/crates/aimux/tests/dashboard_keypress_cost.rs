@@ -125,6 +125,7 @@ fn snapshot(label: &str, worktrees: usize, agents: usize) -> DesktopStateSnapsho
         topology: &topology(&root, worktrees, agents),
         metadata_sessions: &BTreeMap::new(),
         exchange: &json!({}),
+        usage: None,
     });
     serde_json::from_value(state).expect("the service's own state deserialises")
 }

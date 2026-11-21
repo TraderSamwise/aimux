@@ -127,6 +127,7 @@ fn desktop_state(status: &str, exchange: &Value, metadata: Value) -> Value {
             topology: &topology,
             metadata_sessions: &metadata_sessions,
             exchange,
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &["@1"])),
     )
@@ -384,6 +385,7 @@ fn fresh_restore_disclosure_matches_the_app_and_terminal_before_and_after_launch
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange(0, 0),
+                usage: None,
             },
             Some(&support::live_windows("aimux-repo", &["@1"])),
         );
@@ -430,6 +432,7 @@ fn missing_backend_history_can_reach_discovery_through_ordinary_enter_on_both_su
                     topology: &topology,
                     metadata_sessions: &metadata,
                     exchange: &exchange(0, 0),
+                    usage: None,
                 },
                 Some(&support::live_windows("aimux-repo", &[])),
             );
@@ -549,6 +552,7 @@ fn fresh_disclosure_survives_live_tmux_sync_and_topology_reconciliation() {
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange(0, 0),
+                usage: None,
             },
             Some(&support::live_windows("aimux-repo", &["@1"])),
         );

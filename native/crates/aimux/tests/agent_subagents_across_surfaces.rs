@@ -93,6 +93,7 @@ fn desktop_state(summary: Option<&Value>) -> Value {
             topology: &topology,
             metadata_sessions: &metadata_sessions,
             exchange: &empty_exchange(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &["@1"])),
     )

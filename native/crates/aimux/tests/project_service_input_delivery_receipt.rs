@@ -271,6 +271,7 @@ fn urgent_attention_remains_visible_after_unverified_submission_across_surfaces(
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange,
+                usage: None,
             },
             Some(&live),
         );
@@ -382,6 +383,7 @@ fn actionable_pressure_keeps_its_hint_after_unverified_submission_across_surface
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange,
+                usage: None,
             },
             Some(&live),
         );
@@ -524,6 +526,7 @@ fn seven_ready_lanes_publish_the_same_submit_receipt_to_ps_desktop_footer_and_ov
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange,
+                usage: None,
             },
             Some(&live),
         );

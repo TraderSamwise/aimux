@@ -1873,6 +1873,7 @@ fn bulk_offline_worktree_scope_matches_published_dashboard_lane() {
             topology: &topology,
             metadata_sessions: &metadata_sessions,
             exchange: &json!({}),
+            usage: None,
         },
         Some(&aimux::tmux::LiveWindowIndex::default()),
     );
@@ -1947,6 +1948,7 @@ fn bulk_offline_worktree_scope_matches_dashboard_after_control_metadata_changes(
             topology: &topology,
             metadata_sessions: &metadata_sessions,
             exchange: &json!({}),
+            usage: None,
         },
         Some(&aimux::tmux::LiveWindowIndex::default()),
     );
@@ -2106,6 +2108,7 @@ fn bulk_offline_preview_and_dashboard_agree_when_running_inventory_has_lost_its_
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &json!({}),
+            usage: None,
         },
         Some(&live),
     );

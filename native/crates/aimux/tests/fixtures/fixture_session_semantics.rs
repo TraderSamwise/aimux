@@ -158,6 +158,11 @@ fn semantics_input(input: &Value) -> SessionSemanticsInput {
         restore_notice: string(input, "restoreNotice"),
         pending_action: string(input, "pendingAction"),
         activity: string(input, "activity"),
+        // Read from the case like everything else, and absent from all the
+        // recorded ones -- which predate quota labelling the way the comment
+        // above says they predate queued input. So every captured output stays
+        // comparable, and a case that wants the new label can simply name it.
+        quota_blocked: string(input, "quotaBlocked"),
         attention: string(input, "attention"),
         unseen_count: integer(input, "unseenCount"),
         notification_unread_count: integer(input, "notificationUnreadCount"),

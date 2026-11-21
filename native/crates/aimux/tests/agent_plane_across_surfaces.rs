@@ -182,6 +182,7 @@ impl Project {
                 topology: &self.topology(),
                 metadata_sessions: &load_metadata_state(&self.state_dir).sessions,
                 exchange: &json!({}),
+                usage: None,
             },
             Some(&support::live_windows("aimux", &["@1", "@2"])),
         )

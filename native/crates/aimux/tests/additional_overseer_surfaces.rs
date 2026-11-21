@@ -185,6 +185,7 @@ fn observe(project: &Project, count: usize, demote: bool, expected_supervisor: &
             topology: &topology,
             metadata_sessions: &metadata,
             exchange: &json!({}),
+            usage: None,
         },
         Some(&live),
     );

@@ -133,6 +133,7 @@ fn desktop_state(project_root: &str, exchange: &Value, attention: Option<&str>) 
             topology: &topology,
             metadata_sessions: &metadata_sessions,
             exchange,
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &["@1"])),
     )

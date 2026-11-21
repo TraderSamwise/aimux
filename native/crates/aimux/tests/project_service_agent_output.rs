@@ -4514,6 +4514,7 @@ fn queued_input_is_published_on_the_agents_row() {
             topology: &read_runtime_topology(runtime_topology_path(&state_dir)).expect("topology"),
             metadata_sessions: &metadata.sessions,
             exchange: &json!({}),
+            usage: None,
         },
     );
     let row = state["sessions"]
