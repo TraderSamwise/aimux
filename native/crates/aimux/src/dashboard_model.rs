@@ -317,6 +317,14 @@ pub(crate) fn dashboard_session_control_facts(
         project_control: session.project_control,
         overseer: session.overseer,
         scribe: session.scribe,
+        // `None` because `DashboardSession` carries no swarm flag, and the
+        // ROLE below is what classifies a swarm overseer on this path. The
+        // explicit flag exists for stored records read through
+        // `AgentControlFacts::from_record`, which is where a promotion or
+        // demotion would be written; nothing writes one for this class yet, so
+        // typing a field into two structs and their serde contracts would add
+        // mirrors with nothing behind them.
+        swarm: None,
         role: non_empty(session.role.as_deref())
             .or_else(|| non_empty(session.team.as_ref().and_then(|team| team.role.as_deref()))),
     }

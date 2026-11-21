@@ -24,11 +24,27 @@ const SCRIBE_ROLE: AgentRoleDefinition = AgentRoleDefinition {
     show_role_suffix: true,
 };
 
+/// The account-wide overseer: one agent that talks to the overseers on every
+/// machine.
+///
+/// A class rather than a flag on an overseer, because its SCOPE is different.
+/// An overseer answers for one project on one machine; this one answers for
+/// the account, and the thing that makes it possible is the peer input route
+/// -- `agents::INPUT` is the one write `assert_peer_allowed` admits, so a
+/// swarm overseer reaching another machine's overseer is an ordinary peer
+/// write rather than a new transport.
+const SWARM_ROLE: AgentRoleDefinition = AgentRoleDefinition {
+    role: "swarm",
+    should_show_in_expose: true,
+    show_role_suffix: true,
+};
+
 pub fn agent_role_definition(role: &str) -> AgentRoleDefinition {
     match role.trim() {
         "coder" => CODER_ROLE,
         "overseer" => OVERSEER_ROLE,
         "scribe" => SCRIBE_ROLE,
+        "swarm" => SWARM_ROLE,
         _ => AgentRoleDefinition {
             role: "unknown",
             should_show_in_expose: false,
@@ -78,6 +94,11 @@ pub struct AgentControlFacts<'a> {
     pub project_control: Option<bool>,
     pub overseer: Option<bool>,
     pub scribe: Option<bool>,
+    /// Set explicitly when a record says so, the way `overseer` and `scribe`
+    /// are. The role alone would be enough for a freshly spawned session, but
+    /// a stored record can promote or demote one, and this is the field that
+    /// carries that decision.
+    pub swarm: Option<bool>,
     pub role: Option<&'a str>,
 }
 
@@ -152,6 +173,7 @@ impl<'a> AgentControlFacts<'a> {
             project_control: bool_field(session, "projectControl"),
             overseer: bool_field(session, "overseer"),
             scribe: bool_field(session, "scribe"),
+            swarm: bool_field(session, "swarm"),
             role: legacy_role(session),
         }
     }
@@ -165,6 +187,16 @@ pub fn is_overseer(facts: &AgentControlFacts<'_>) -> bool {
         return false;
     }
     facts.role == Some("overseer")
+}
+
+pub fn is_swarm(facts: &AgentControlFacts<'_>) -> bool {
+    if let Some(value) = facts.swarm {
+        return value;
+    }
+    if facts.project_control == Some(false) {
+        return false;
+    }
+    facts.role == Some("swarm")
 }
 
 pub fn is_scribe(facts: &AgentControlFacts<'_>) -> bool {
@@ -183,7 +215,7 @@ pub fn is_project_control(facts: &AgentControlFacts<'_>) -> bool {
         Some(false) => return false,
         None => {}
     }
-    is_overseer(facts) || is_scribe(facts)
+    is_overseer(facts) || is_scribe(facts) || is_swarm(facts)
 }
 
 /// Whether the agent sits in the supervisor plane, without building its lane.
@@ -883,5 +915,101 @@ mod tests {
         assert_eq!(project_control_display_role(Some(&session)), Some("qa"));
         assert_eq!(agent_role(Some(&session)), "qa");
         assert_eq!(agent_lane(Some(&session)), json!({ "kind": "supervisor" }));
+    }
+}
+
+#[cfg(test)]
+mod swarm_role_tests {
+    use super::*;
+
+    fn facts(role: Option<&str>) -> AgentControlFacts<'_> {
+        AgentControlFacts {
+            role,
+            ..AgentControlFacts::default()
+        }
+    }
+
+    #[test]
+    fn a_swarm_role_is_a_swarm_and_a_control_session() {
+        let facts = facts(Some("swarm"));
+        assert!(is_swarm(&facts));
+        assert!(
+            is_project_control(&facts),
+            "a swarm overseer must not land in the worktree lane with the coders"
+        );
+    }
+
+    /// The three classes stay apart. A swarm overseer is not an overseer: one
+    /// answers for the account and the other for one project on one machine,
+    /// and a surface that conflated them would show the account-wide agent as
+    /// though it belonged to whichever project it happened to start in.
+    #[test]
+    fn a_swarm_overseer_is_not_an_overseer_or_a_scribe() {
+        let facts = facts(Some("swarm"));
+        assert!(!is_overseer(&facts));
+        assert!(!is_scribe(&facts));
+    }
+
+    #[test]
+    fn an_overseer_is_not_a_swarm() {
+        assert!(!is_swarm(&facts(Some("overseer"))));
+        assert!(!is_swarm(&facts(Some("coder"))));
+        assert!(!is_swarm(&facts(None)));
+    }
+
+    /// Same precedence as its two siblings: an explicit flag wins over the
+    /// role, so a record can promote an agent that was spawned as something
+    /// else.
+    #[test]
+    fn an_explicit_flag_beats_the_role() {
+        assert!(is_swarm(&AgentControlFacts {
+            swarm: Some(true),
+            role: Some("coder"),
+            ..AgentControlFacts::default()
+        }));
+        assert!(!is_swarm(&AgentControlFacts {
+            swarm: Some(false),
+            role: Some("swarm"),
+            ..AgentControlFacts::default()
+        }));
+    }
+
+    /// And the demotion path, which the other two classes honour and which
+    /// would otherwise leave a demoted agent still classified as control.
+    #[test]
+    fn a_project_control_demotion_beats_the_role() {
+        assert!(!is_swarm(&AgentControlFacts {
+            project_control: Some(false),
+            role: Some("swarm"),
+            ..AgentControlFacts::default()
+        }));
+    }
+
+    #[test]
+    fn the_role_definition_is_shown_and_suffixed() {
+        let definition = agent_role_definition("swarm");
+        assert_eq!(definition.role, "swarm");
+        assert!(
+            definition.should_show_in_expose,
+            "the point of this class is being able to see it"
+        );
+        assert!(definition.show_role_suffix);
+    }
+
+    /// An unknown role must stay unknown. Without an arm, `swarm` fell to the
+    /// catch-all, which is hidden from Expose -- so the account-wide agent
+    /// would have been invisible on the surface built to show everything.
+    #[test]
+    fn an_unknown_role_is_still_hidden_and_not_mistaken_for_swarm() {
+        let unknown = agent_role_definition("swarmish");
+        assert_eq!(unknown.role, "unknown");
+        assert!(!unknown.should_show_in_expose);
+    }
+
+    #[test]
+    fn a_record_naming_the_role_classifies_through_from_record() {
+        let session = json!({ "id": "one", "role": "swarm" });
+        assert!(is_project_control_session(Some(&session)));
+        assert_eq!(project_control_display_role(Some(&session)), Some("swarm"));
     }
 }
