@@ -72,6 +72,22 @@ pub fn build_fleet_usage_report(peers: &[FleetPeerUsage]) -> Value {
             }),
         })
         .collect();
+    // ORDERED HERE, NOT IN A RENDERER. Anything that is not a clean answer
+    // comes first: a fleet read that buries the broken machine under the
+    // healthy ones has not answered the question that made somebody run it.
+    //
+    // This used to live in the daemon's text renderer, which sorted its own
+    // formatted strings. That left the CLI ordered and every JSON caller --
+    // the app, the phone -- holding raw fan-out order, so the two surfaces
+    // answered differently and the app would have had to re-derive the rule
+    // next to its own renderer. Deriving it once here is what AGENTS.md's
+    // "One Answer, Many Surfaces" asks for; a surface may filter or truncate
+    // this order, but it must not compute a different one.
+    //
+    // The sort is stable and `false < true`, so failures keep the machine
+    // order `fleet_machines` already established within each group.
+    let mut machines = machines;
+    machines.sort_by_key(|machine| machine.get("ok").and_then(Value::as_bool) == Some(true));
     json!({
         "ok": true,
         // The envelope's own `ok` says the fan-out ran, not that every machine
@@ -168,6 +184,50 @@ mod tests {
             .expect("strix is missing");
         assert_eq!(strix["ok"], false);
         assert_eq!(strix["error"], "fan-out task did not finish");
+    }
+
+    /// What needs attention comes first, and the report is where that is
+    /// decided -- not in any one surface's renderer.
+    ///
+    /// A machine that answered 500 is as unhelpful as one that never answered,
+    /// so both sort ahead of a healthy one. Within a group the order
+    /// `fleet_machines` established survives, because the sort is stable.
+    #[test]
+    fn the_machines_that_need_attention_come_first() {
+        let report = build_fleet_usage_report(&[
+            FleetPeerUsage::Answered {
+                machine_id: "aaa-healthy".to_owned(),
+                status: 200,
+                body: json!({}),
+            },
+            FleetPeerUsage::Unanswered {
+                machine_id: "zzz-silent".to_owned(),
+                reason: "peer was never asked, so it did not answer".to_owned(),
+            },
+            FleetPeerUsage::Answered {
+                machine_id: "mmm-errored".to_owned(),
+                status: 500,
+                body: json!({}),
+            },
+            FleetPeerUsage::Answered {
+                machine_id: "bbb-healthy".to_owned(),
+                status: 200,
+                body: json!({}),
+            },
+        ]);
+
+        let order: Vec<&str> = report["machines"]
+            .as_array()
+            .expect("machines array")
+            .iter()
+            .map(|machine| machine["machineId"].as_str().expect("machineId"))
+            .collect();
+
+        assert_eq!(
+            order,
+            vec!["zzz-silent", "mmm-errored", "aaa-healthy", "bbb-healthy"],
+            "the report did not put what needs attention first, or did not keep the given order within a group"
+        );
     }
 
     #[test]

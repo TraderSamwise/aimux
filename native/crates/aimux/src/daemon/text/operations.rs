@@ -577,7 +577,7 @@ pub(crate) fn render_fleet_usage_report(report: &Value) -> Vec<String> {
     if machines.is_empty() {
         return vec!["No other machines are online.".to_owned()];
     }
-    let mut lines: Vec<String> = machines
+    let lines: Vec<String> = machines
         .iter()
         .map(|machine| {
             let name = machine
@@ -597,10 +597,12 @@ pub(crate) fn render_fleet_usage_report(report: &Value) -> Vec<String> {
             }
         })
         .collect();
-    lines.sort_by_key(|line| line.ends_with(": answered"));
-    // Anything that is not a clean answer sorts first. A fleet read that
-    // buries the broken machine under the healthy ones has not answered the
-    // question that made somebody run it.
+    // NO SORT HERE. `build_fleet_usage_report` already put what needs
+    // attention first, and every surface reads that same report, so this
+    // formats the order it was given. Sorting again -- which this function
+    // used to do, on its own formatted strings, keyed on a `": answered"`
+    // suffix -- made the CLI's order a second implementation of a rule the
+    // JSON callers never got.
     lines
 }
 
@@ -1416,30 +1418,106 @@ mod fleet_usage_render_tests {
     use super::render_fleet_usage_report;
     use serde_json::json;
 
+    /// The renderer RENDERS. It must not reorder what it was handed.
+    ///
+    /// This gate used to feed an unordered report and assert that the renderer
+    /// sorted it, because the sort lived here. It does not any more --
+    /// `build_fleet_usage_report` orders the machines so that every surface
+    /// reading that report gets the same answer -- so what has to be pinned
+    /// here is the opposite: the order survives formatting untouched. A
+    /// renderer that sorts again is a second implementation of the rule, and
+    /// the next surface would make a third.
     #[test]
-    fn the_machines_that_need_attention_come_first() {
+    fn the_renderer_keeps_the_order_the_report_gave_it() {
         let lines = render_fleet_usage_report(&json!({
             "ok": true,
             "asked": 3,
             "machines": [
-                { "machineId": "mbp", "ok": true, "status": 200, "usage": {} },
                 { "machineId": "strix", "ok": false, "error": "peer was never asked, so it did not answer" },
+                { "machineId": "mbp", "ok": true, "status": 200, "usage": {} },
                 { "machineId": "mini", "ok": true, "status": 200, "usage": {} },
             ],
         }));
 
-        // The reason somebody runs this is to find the machine that needs
-        // them. Listing machines in whatever order they answered buries that
-        // one under the healthy ones, which leaves the question unanswered
-        // rather than answered slowly.
         assert_eq!(lines.len(), 3);
         assert!(
             lines[0].starts_with("strix:"),
-            "the broken machine was not first: {lines:?}"
+            "the first machine in the report was not the first line: {lines:?}"
+        );
+        assert!(
+            lines[1].starts_with("mbp:") && lines[2].starts_with("mini:"),
+            "the renderer moved the machines around: {lines:?}"
         );
         assert!(
             lines[0].contains("never asked"),
             "the reason did not survive: {lines:?}"
+        );
+    }
+
+    /// The surfaces are compared against EACH OTHER, which is the only kind of
+    /// test that catches this class. One test per surface passes happily while
+    /// the two disagree -- the exact failure AGENTS.md records for agent
+    /// ordering, where four surfaces each sorted by a different field.
+    ///
+    /// So: build a real report from real peers, then assert the daemon's text
+    /// lines come out in the same machine order a JSON caller reads from
+    /// `machines`. The app renders that array directly, so this pins the CLI
+    /// and the app to one answer without the app having to be constructed.
+    #[test]
+    fn the_text_lines_and_the_json_machines_agree_on_order() {
+        use crate::fleet_usage::{FleetPeerUsage, build_fleet_usage_report};
+        use serde_json::Value;
+
+        let report = build_fleet_usage_report(&[
+            FleetPeerUsage::Answered {
+                machine_id: "mbp".to_owned(),
+                status: 200,
+                body: json!({ "ok": true }),
+            },
+            FleetPeerUsage::Unanswered {
+                machine_id: "strix".to_owned(),
+                reason: "peer was never asked, so it did not answer".to_owned(),
+            },
+            FleetPeerUsage::Answered {
+                machine_id: "mini".to_owned(),
+                status: 500,
+                body: json!({ "ok": false }),
+            },
+        ]);
+
+        let json_order: Vec<String> = report["machines"]
+            .as_array()
+            .expect("machines array")
+            .iter()
+            .map(|machine| {
+                machine
+                    .get("machineId")
+                    .and_then(Value::as_str)
+                    .expect("machineId")
+                    .to_owned()
+            })
+            .collect();
+
+        let text_order: Vec<String> = render_fleet_usage_report(&report)
+            .iter()
+            .map(|line| {
+                line.split(':')
+                    .next()
+                    .expect("a line names its machine")
+                    .to_owned()
+            })
+            .collect();
+
+        assert_eq!(
+            text_order, json_order,
+            "the CLI and a JSON caller would list the fleet in different orders"
+        );
+        // And the shared order is the useful one: the two machines that did
+        // not give an answer come before the one that did.
+        assert_eq!(
+            json_order.last().map(String::as_str),
+            Some("mbp"),
+            "the only healthy machine was not last: {json_order:?}"
         );
     }
 
