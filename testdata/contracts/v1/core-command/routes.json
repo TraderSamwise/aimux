@@ -68,6 +68,10 @@
       "/core/fleet/usage-text"
     ],
     [
+      "fleetAccountsText",
+      "/core/fleet/accounts-text"
+    ],
+    [
       "exposeFocus",
       "/core/expose/focus"
     ],

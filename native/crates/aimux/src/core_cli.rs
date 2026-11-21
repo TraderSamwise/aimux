@@ -178,6 +178,7 @@ pub enum CoreCliOperation {
     DaemonProjectEnsure,
     DoctorVersions,
     FleetUsage,
+    FleetAccounts,
     ToolAccounts,
     Logs,
     ProjectsList,
@@ -2376,6 +2377,18 @@ where
                 _ => unreachable!("validated migration command"),
             }
         }
+        ("fleet", "accounts") => (
+            CoreCliOperation::FleetAccounts,
+            CoreCliAction::TextRoute {
+                path: if mode == CoreCliOutputMode::Json {
+                    format!("{}?json=1", CORE_API_ROUTES.fleet_accounts_text)
+                } else {
+                    CORE_API_ROUTES.fleet_accounts_text.to_owned()
+                },
+                body: None,
+            },
+            CoreCliFallback::None,
+        ),
         ("fleet", "usage") => (
             CoreCliOperation::FleetUsage,
             CoreCliAction::TextRoute {

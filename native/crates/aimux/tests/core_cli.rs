@@ -69,6 +69,48 @@ fn tool_accounts_plans_the_local_tool_accounts_route() {
     assert!(!is_core_cli_command(&["tool", "profiles"]));
 }
 
+/// `aimux fleet accounts` plans the fleet accounts read.
+///
+/// Asserts the planned PATH, because the mistake available here is the one the
+/// fleet usage gate guards against in the other direction: `fleet/usage-text`
+/// and `fleet/accounts-text` differ by one word, and both are fleet routes, so
+/// a copy-paste would plan a quota read under an accounts verb.
+#[test]
+fn fleet_accounts_plans_the_accounts_read_and_not_the_quota_one() {
+    let plan = classify_core_cli(&["fleet", "accounts"], &context(true, false))
+        .expect("fleet accounts plan");
+    assert_eq!(plan.operation, CoreCliOperation::FleetAccounts);
+    assert_eq!(
+        plan.action,
+        CoreCliAction::TextRoute {
+            path: "/core/fleet/accounts-text".into(),
+            body: None,
+        }
+    );
+
+    let json = classify_core_cli(&["fleet", "accounts", "--json"], &context(true, false))
+        .expect("fleet accounts json plan");
+    assert_eq!(
+        json.action,
+        CoreCliAction::TextRoute {
+            path: "/core/fleet/accounts-text?json=1".into(),
+            body: None,
+        }
+    );
+
+    // The two fleet verbs must not collapse into one another.
+    let usage = classify_core_cli(&["fleet", "usage"], &context(true, false))
+        .expect("fleet usage still plans");
+    assert_ne!(usage.action, plan.action);
+
+    // On the allowlist ITSELF, not only on the planner: a planner-only gate
+    // passes with the allowlist wide open, which I shipped once on
+    // `fleet usage`.
+    assert!(is_core_cli_command(&["fleet", "accounts"]));
+    assert!(is_core_cli_command(&["fleet", "accounts", "--json"]));
+    assert!(!is_core_cli_command(&["fleet", "accounts", "--force"]));
+}
+
 #[test]
 fn fleet_usage_plans_the_fleet_read_and_not_the_local_one() {
     let plan = classify_core_cli(&["fleet", "usage"], &context(true, false)).expect("fleet plan");

@@ -525,7 +525,7 @@ pub struct FleetPeerRead {
 /// them against the peer allowlist without naming each one, which is the half
 /// a new read would otherwise forget.
 pub fn fleet_peer_reads() -> &'static [FleetPeerRead] {
-    &[FLEET_USAGE_READ]
+    &[FLEET_USAGE_READ, FLEET_TOOL_ACCOUNTS_READ]
 }
 
 const FLEET_USAGE_READ: FleetPeerRead = FleetPeerRead {
@@ -533,6 +533,16 @@ const FLEET_USAGE_READ: FleetPeerRead = FleetPeerRead {
     budget: FLEET_USAGE_TIMEOUT,
     seam: "relay:fleet-usage",
     task_failure: "fleet read task did not finish",
+};
+
+const FLEET_TOOL_ACCOUNTS_READ: FleetPeerRead = FleetPeerRead {
+    route: crate::project_api_contract::routes::TOOL_ACCOUNTS,
+    // The same budget as the quota read, and for the same reason: the text
+    // route that calls this holds the global runtime mutex, so what is bounded
+    // is the whole fan-out rather than each machine.
+    budget: FLEET_USAGE_TIMEOUT,
+    seam: "relay:fleet-tool-accounts",
+    task_failure: "fleet accounts read task did not finish",
 };
 
 /// Owns the relay client for the life of the daemon.
@@ -736,6 +746,26 @@ impl RelaySupervisor {
     /// at all -- a successful read of an empty fleet does carry one, and the
     /// two mean opposite things.
     pub fn fleet_usage_report(&self) -> Result<Value, String> {
+        self.fleet_report(&FLEET_USAGE_READ)
+    }
+
+    /// Which credential directory each machine launches its tools with.
+    ///
+    /// The companion to `fleet_usage_report`: that one says a machine is out
+    /// of room, this one says which account ran out. Together they are what
+    /// makes switching an account from another machine a thing somebody can
+    /// decide to do.
+    pub fn fleet_tool_accounts_report(&self) -> Result<Value, String> {
+        self.fleet_report(&FLEET_TOOL_ACCOUNTS_READ)
+    }
+
+    /// Resolve which machines to ask, then ask them.
+    ///
+    /// Shared by every fleet read, because the three-way machine list is not
+    /// per-read: NOT KNOWING which machines exist is a different answer from
+    /// an empty fleet, and that distinction has to be drawn the same way for
+    /// every read or two surfaces end up disagreeing about an empty fleet.
+    fn fleet_report(&self, read: &FleetPeerRead) -> Result<Value, String> {
         let machines = {
             let Ok(current) = self.current.lock() else {
                 return Err("relay_unavailable".to_owned());
@@ -751,7 +781,9 @@ impl RelaySupervisor {
             crate::fleet_usage::FleetMachines::Unknown(reason) => {
                 Ok(crate::fleet_usage::unknown_machines_report(&reason))
             }
-            crate::fleet_usage::FleetMachines::Known(machines) => self.fleet_usage(&machines),
+            crate::fleet_usage::FleetMachines::Known(machines) => {
+                self.fleet_peer_read(&machines, read)
+            }
         }
     }
 
