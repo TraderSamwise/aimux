@@ -155,6 +155,12 @@ export function normalizeAppStatusKind(value: string | null | undefined): AppSta
     case "needs_response":
     case "next_step":
       return "needs";
+    // Toned `blocked`, matching the service and Expose. Without this case the
+    // switch returned null, the row fell back to `offline`, and a live agent
+    // with no quota was painted grey -- the silent wrong answer the
+    // cross-surface test's own comment warned about.
+    case "quota_blocked":
+      return "blocked";
     // `waiting` is work, not an ask, on both the fields that carry it:
     // `dashboard_session_status` emits it for a raw `starting`, and an
     // `activity` of `waiting` is an agent waiting on a tool. Neither is a

@@ -1356,6 +1356,10 @@ pub fn user_label_chip(value: &str) -> Option<(&'static str, &'static str)> {
         "needs_response" => Some(("needs", "Needs reply")),
         "next_step" => Some(("needs", "Next step")),
         "blocked" => Some(("blocked", "Blocked")),
+        // Toned `blocked` because it IS a species of blocked, with the
+        // cause in the words. Without this arm the fallthrough returned
+        // None and the Expose tile had no chip at all.
+        "quota_blocked" => Some(("blocked", "Out of quota")),
         "error" => Some(("error", "Error")),
         "idle" => Some(("idle", "Idle")),
         "offline" => Some(("offline", "Offline")),
