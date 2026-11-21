@@ -125,6 +125,40 @@ pub fn build_managed_job_env(
     env
 }
 
+/// Which credential directory a launched agent will actually use, per tool.
+///
+/// DERIVED FROM `build_managed_launch_env` RATHER THAN RE-READ FROM THE ENV,
+/// because the launch env is the only thing the agent sees and this has to
+/// answer for the agent, not for aimux. Asking the builder means the answer
+/// cannot drift from the launch: the empty-value rule, the allowlist and the
+/// transient-key filter all apply once, where they are written.
+///
+/// Re-reading `std::env::var("CLAUDE_CONFIG_DIR")` would be a fourth set of
+/// rules. There are already three in the tree and they disagree:
+/// `claude_projects_dir` in `backend_session_ids.rs` trims and discards an
+/// empty value, `tool_hooks.rs` takes it untrimmed and joins a relative path
+/// against the cwd, and the builder below drops an empty value entirely. Those
+/// two read the tool's own files and are not wrong for their jobs, but neither
+/// of them answers what a launch carries.
+///
+/// A MISSING ENTRY IS NOT A GUESSED PATH. `None` means nothing names the
+/// directory, so the tool falls back to its own default -- which is the tool's
+/// business, and claiming `~/.claude` here would report a path aimux chose as
+/// though the agent had been told to use it. An empty value reports `None` for
+/// the same reason: the builder drops it, so the agent is never told.
+pub struct LaunchToolDirs {
+    pub claude_config_dir: Option<String>,
+    pub codex_home: Option<String>,
+}
+
+pub fn launch_tool_dirs(base_env: impl IntoIterator<Item = (String, String)>) -> LaunchToolDirs {
+    let env = build_managed_launch_env(base_env);
+    LaunchToolDirs {
+        claude_config_dir: env.get("CLAUDE_CONFIG_DIR").cloned(),
+        codex_home: env.get("CODEX_HOME").cloned(),
+    }
+}
+
 fn should_exclude_env_key(key: &str) -> bool {
     if key.starts_with("LC_") {
         return false;
@@ -174,6 +208,66 @@ fn normalize_interactive_color_env(env: &mut BTreeMap<String, String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn launch_tool_dirs_reports_what_the_launch_carries() {
+        let dirs = launch_tool_dirs(env(&[
+            ("CLAUDE_CONFIG_DIR", "/profiles/work/.claude"),
+            ("CODEX_HOME", "/profiles/work/.codex"),
+            ("HOME", "/Users/sam"),
+        ]));
+
+        assert_eq!(
+            dirs.claude_config_dir.as_deref(),
+            Some("/profiles/work/.claude")
+        );
+        assert_eq!(dirs.codex_home.as_deref(), Some("/profiles/work/.codex"));
+    }
+
+    /// The gate that keeps this honest. An unset directory must not be
+    /// reported as `~/.claude`: nothing told the agent that, and the tool's own
+    /// default is the tool's business. Reporting a path aimux picked would read
+    /// as a configured account.
+    #[test]
+    fn an_unnamed_tool_directory_is_not_a_guessed_home_path() {
+        let dirs = launch_tool_dirs(env(&[("HOME", "/Users/sam")]));
+
+        assert_eq!(dirs.claude_config_dir, None);
+        assert_eq!(dirs.codex_home, None);
+    }
+
+    /// And the gate that pins this to the BUILDER rather than to the raw env.
+    ///
+    /// `build_managed_launch_env` drops an empty value, so an empty
+    /// `CLAUDE_CONFIG_DIR` never reaches the agent and the agent uses its own
+    /// default. A reader that went to `std::env` directly would report the
+    /// empty string as the configured directory -- which is what
+    /// `tool_hooks.rs` does, and why it can read settings from a path the
+    /// agent is not using.
+    #[test]
+    fn an_empty_tool_directory_reports_as_unnamed_because_the_launch_drops_it() {
+        let dirs = launch_tool_dirs(env(&[
+            ("CLAUDE_CONFIG_DIR", ""),
+            ("CODEX_HOME", "   "),
+            ("HOME", "/Users/sam"),
+        ]));
+
+        assert_eq!(
+            dirs.claude_config_dir, None,
+            "an empty value is dropped by the launch, so it is not a directory the agent was given"
+        );
+        // Whitespace is NOT empty, so the builder keeps it and the agent really
+        // is handed it. Reported as it is rather than tidied, because tidying
+        // here would describe a launch that did not happen.
+        assert_eq!(dirs.codex_home.as_deref(), Some("   "));
+    }
 
     #[test]
     fn managed_launch_env_filters_and_normalizes_interactive_env() {

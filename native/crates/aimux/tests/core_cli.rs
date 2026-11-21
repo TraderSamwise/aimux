@@ -4,6 +4,7 @@ use aimux::core_cli::{
     CoreLoopActorContext, build_core_command_transport_request, classify_core_cli,
     classify_core_cli_with_project_resolver, validate_core_command_response,
 };
+use aimux::core_cli_routing::is_core_cli_command;
 use aimux::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use aimux::native_cli_dispatch::{
     CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE,
@@ -28,6 +29,46 @@ fn context(daemon_running: bool, has_credentials: bool) -> CoreCliContext {
 /// needs a project, `fleet usage` is every other machine's and takes none.
 /// Planning the wrong one would answer a question nobody asked, and look like
 /// an answer, so both are asserted here together.
+/// `aimux tool accounts` reaches the local tool-accounts route.
+///
+/// Asserts the planned PATH, because the mistake available here is pointing a
+/// new verb at a neighbouring route: `usage_text` is the local quota read and
+/// one word away in the name.
+#[test]
+fn tool_accounts_plans_the_local_tool_accounts_route() {
+    let plan = classify_core_cli(&["tool", "accounts"], &context(true, false))
+        .expect("tool accounts is planned");
+    assert_eq!(plan.operation, CoreCliOperation::ToolAccounts);
+    assert_eq!(
+        plan.action,
+        CoreCliAction::TextRoute {
+            path: "/core/tool-accounts-text".into(),
+            body: None,
+        }
+    );
+
+    let json_plan = classify_core_cli(&["tool", "accounts", "--json"], &context(true, false))
+        .expect("tool accounts --json is planned");
+    assert_eq!(
+        json_plan.action,
+        CoreCliAction::TextRoute {
+            path: "/core/tool-accounts-text?json=1".into(),
+            body: None,
+        }
+    );
+
+    // The allowlist is keyed on the pair AND on the flags, so a flag this verb
+    // does not have falls through to the old path rather than being planned as
+    // a tool read with the flag dropped. Asserted on the allowlist itself
+    // because the planner's match would refuse it either way -- a gate on
+    // `classify_core_cli` alone would pass with the allowlist wide open, which
+    // is a mistake I shipped once on `fleet usage`.
+    assert!(is_core_cli_command(&["tool", "accounts"]));
+    assert!(is_core_cli_command(&["tool", "accounts", "--json"]));
+    assert!(!is_core_cli_command(&["tool", "accounts", "--force"]));
+    assert!(!is_core_cli_command(&["tool", "profiles"]));
+}
+
 #[test]
 fn fleet_usage_plans_the_fleet_read_and_not_the_local_one() {
     let plan = classify_core_cli(&["fleet", "usage"], &context(true, false)).expect("fleet plan");

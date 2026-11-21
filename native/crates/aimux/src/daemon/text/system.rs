@@ -44,6 +44,9 @@ pub fn route_system_text_request(
     let route_url = DaemonRouteUrl::parse(path);
     let pathname = route_url.pathname();
 
+    if method == "GET" && pathname == CORE_API_ROUTES.tool_accounts_text {
+        return Some(tool_accounts_text_route(&route_url));
+    }
     if method == "GET" && pathname == CORE_API_ROUTES.logs_path_text {
         return Some(logs_path_text_route(runtime, &route_url));
     }
@@ -73,6 +76,43 @@ pub fn route_system_text_request(
     }
 
     None
+}
+
+/// Which credential directory this machine launches each tool with.
+///
+/// Reads no files and asks no project service: the answer is a property of the
+/// launch env, so the route hands `std::env::vars()` to `launch_tool_dirs` and
+/// formats what comes back. The rules live in that function, next to the
+/// builder they are derived from, and are gated there with explicit envs.
+///
+/// Takes no runtime for that reason -- there is nothing to stub.
+pub fn tool_accounts_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
+    let dirs = crate::managed_launch_env::launch_tool_dirs(std::env::vars());
+    let report = json!({
+        "ok": true,
+        // Null, not a path, when nothing names it. See `launch_tool_dirs`:
+        // the tool's own default is the tool's business.
+        "claudeConfigDir": dirs.claude_config_dir,
+        "codexHome": dirs.codex_home,
+    });
+    let lines = render_tool_accounts_report(&report);
+    text_or_json_lines(route_url, report, &lines)
+}
+
+/// One line per tool, naming the directory or saying that nothing names it.
+pub(crate) fn render_tool_accounts_report(report: &Value) -> Vec<String> {
+    [("Claude", "claudeConfigDir"), ("Codex", "codexHome")]
+        .into_iter()
+        .map(
+            |(label, key)| match report.get(key).and_then(Value::as_str) {
+                Some(dir) => format!("{label}: {dir}"),
+                // Said in words rather than left blank, because a blank reads as
+                // a missing answer and this IS the answer: no profile directory
+                // was given, so the tool uses its own default.
+                None => format!("{label}: no profile directory set; the tool uses its own default"),
+            },
+        )
+        .collect()
 }
 
 pub fn logs_path_text_route(
@@ -292,4 +332,46 @@ fn trimmed_param(route_url: &DaemonRouteUrl, body: Option<&Value>, name: &str) -
     string_param(route_url, body, name)
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tool_accounts_render_tests {
+    use super::render_tool_accounts_report;
+    use serde_json::json;
+
+    #[test]
+    fn a_named_directory_is_reported_as_the_profile() {
+        let lines = render_tool_accounts_report(&json!({
+            "ok": true,
+            "claudeConfigDir": "/profiles/work/.claude",
+            "codexHome": "/profiles/work/.codex",
+        }));
+        assert_eq!(
+            lines,
+            vec![
+                "Claude: /profiles/work/.claude",
+                "Codex: /profiles/work/.codex"
+            ]
+        );
+    }
+
+    /// The distinction the whole read exists to preserve. An unset directory
+    /// must not render as blank or as a guessed `~/.claude`: it has to say
+    /// that nothing was set, or the reader cannot tell a configured account
+    /// from an unconfigured one.
+    #[test]
+    fn an_unset_directory_says_so_rather_than_naming_a_path() {
+        let lines = render_tool_accounts_report(&json!({ "ok": true }));
+        assert_eq!(lines.len(), 2);
+        for line in &lines {
+            assert!(
+                line.contains("no profile directory set"),
+                "an unset tool directory did not say so: {line}"
+            );
+            assert!(
+                !line.contains(".claude") && !line.contains(".codex"),
+                "an unset tool directory named a path nobody configured: {line}"
+            );
+        }
+    }
 }
