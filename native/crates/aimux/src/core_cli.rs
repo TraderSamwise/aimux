@@ -178,6 +178,7 @@ pub enum CoreCliOperation {
     DaemonProjectEnsure,
     DoctorVersions,
     FleetUsage,
+    ToolAccounts,
     Logs,
     ProjectsList,
     ProjectsRemove,
@@ -2382,6 +2383,18 @@ where
                     format!("{}?json=1", CORE_API_ROUTES.fleet_usage_text)
                 } else {
                     CORE_API_ROUTES.fleet_usage_text.to_owned()
+                },
+                body: None,
+            },
+            CoreCliFallback::None,
+        ),
+        ("tool", "accounts") => (
+            CoreCliOperation::ToolAccounts,
+            CoreCliAction::TextRoute {
+                path: if mode == CoreCliOutputMode::Json {
+                    format!("{}?json=1", CORE_API_ROUTES.tool_accounts_text)
+                } else {
+                    CORE_API_ROUTES.tool_accounts_text.to_owned()
                 },
                 body: None,
             },
