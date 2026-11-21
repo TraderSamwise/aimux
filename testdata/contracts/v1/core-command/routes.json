@@ -288,6 +288,10 @@
       "/core/credential-profiles-text"
     ],
     [
+      "linearSettingsText",
+      "/core/linear-settings-text"
+    ],
+    [
       "logsTailText",
       "/core/logs/tail-text"
     ],
