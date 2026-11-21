@@ -292,6 +292,10 @@
       "/core/linear-settings-text"
     ],
     [
+      "linearCheckText",
+      "/core/linear-check-text"
+    ],
+    [
       "swarmHostText",
       "/core/swarm-host-text"
     ],

@@ -2445,6 +2445,18 @@ where
             },
             CoreCliFallback::None,
         ),
+        ("linear", "check") => (
+            CoreCliOperation::LinearSettings,
+            CoreCliAction::TextRoute {
+                path: if mode == CoreCliOutputMode::Json {
+                    format!("{}?json=1", CORE_API_ROUTES.linear_check_text)
+                } else {
+                    CORE_API_ROUTES.linear_check_text.to_owned()
+                },
+                body: None,
+            },
+            CoreCliFallback::None,
+        ),
         ("tool", "profiles") => (
             CoreCliOperation::CredentialProfiles,
             CoreCliAction::TextRoute {
