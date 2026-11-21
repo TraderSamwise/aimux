@@ -34,6 +34,30 @@ fn context(daemon_running: bool, has_credentials: bool) -> CoreCliContext {
 /// Asserts the planned PATH, because the mistake available here is pointing a
 /// new verb at a neighbouring route: `usage_text` is the local quota read and
 /// one word away in the name.
+/// `aimux linear status` plans the Linear settings read.
+#[test]
+fn linear_status_plans_the_linear_settings_read() {
+    let plan = classify_core_cli(&["linear", "status"], &context(true, false))
+        .expect("linear status is planned");
+    assert_eq!(plan.operation, CoreCliOperation::LinearSettings);
+    assert_eq!(
+        plan.action,
+        CoreCliAction::TextRoute {
+            path: "/core/linear-settings-text".into(),
+            body: None,
+        }
+    );
+
+    // On the allowlist ITSELF, because `is_core_cli_command` gates before the
+    // planner's match -- and this entry was missed on the first attempt here,
+    // when rustfmt collapsed the arm I anchored on. A planner-only gate would
+    // have passed with the verb unreachable.
+    assert!(is_core_cli_command(&["linear", "status"]));
+    assert!(is_core_cli_command(&["linear", "status", "--json"]));
+    assert!(!is_core_cli_command(&["linear", "status", "--force"]));
+    assert!(!is_core_cli_command(&["linear", "issues"]));
+}
+
 #[test]
 fn tool_accounts_plans_the_local_tool_accounts_route() {
     let plan = classify_core_cli(&["tool", "accounts"], &context(true, false))

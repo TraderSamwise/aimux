@@ -44,6 +44,9 @@ pub fn route_system_text_request(
     let route_url = DaemonRouteUrl::parse(path);
     let pathname = route_url.pathname();
 
+    if method == "GET" && pathname == CORE_API_ROUTES.linear_settings_text {
+        return Some(linear_settings_text_route(&route_url));
+    }
     if pathname == CORE_API_ROUTES.credential_profiles_text {
         // One path, two verbs: GET lists what this machine has, POST chooses.
         // Anything else is refused rather than silently treated as a read,
@@ -103,6 +106,56 @@ pub fn route_system_text_request(
 ///
 /// Takes no runtime for that reason -- there is nothing to stub.
 /// What credential profiles this machine has, and which one is active.
+/// Whether Linear handles tasks for this account, and which project.
+///
+/// A read only. Choosing Linear is a config edit for now, and saying so is
+/// more useful than a route that pretends otherwise -- the point of this one
+/// is that somebody can ask where their tasks are going rather than infer it
+/// from which commands behave oddly.
+pub fn linear_settings_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
+    let resolver = crate::paths::PathResolver::from_env();
+    // The merged view is right here: this only reads, and settings arriving
+    // from a default are still settings this account would honour.
+    let config = crate::config::load_global_config_with_resolver(&resolver);
+    let settings = crate::linear_settings::parse_linear_settings(&config);
+    let report = crate::linear_settings::linear_settings_report(&settings);
+    let lines = render_linear_settings_report(&report);
+    text_or_json_lines(route_url, report, &lines)
+}
+
+/// Where tasks go, in words, because that is the question somebody is asking.
+pub(crate) fn render_linear_settings_report(report: &Value) -> Vec<String> {
+    let Some(configured) = report.get("configured").and_then(Value::as_bool) else {
+        // No `configured` key is an unreadable config, which carries its
+        // reason. Rendering "tasks stay in aimux" here would state the
+        // opposite of what it means.
+        let reason = report
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("the Linear settings could not be read");
+        return vec![reason.to_owned()];
+    };
+    if !configured {
+        return vec!["Linear is not configured; tasks stay in aimux.".to_owned()];
+    }
+    let project = report
+        .get("project")
+        .and_then(Value::as_str)
+        .unwrap_or("an unnamed project");
+    let mut lines = vec![format!("Tasks go to Linear, in project {project}.")];
+    match report.get("tokenEnv").and_then(Value::as_str) {
+        // The NAME, which is not a secret, so a person can check whether the
+        // variable is actually set in the environment the daemon launched in.
+        Some(name) => lines.push(format!("Token read from {name}.")),
+        // Said rather than left out: configured with no token named is a
+        // configuration that cannot be used, and that is worth one line.
+        None => lines.push(
+            "No token environment variable is named, so Linear cannot be reached yet.".to_owned(),
+        ),
+    }
+    lines
+}
+
 pub fn credential_profiles_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
     let resolver = crate::paths::PathResolver::from_env();
     // The MERGED view is right here: this only reads, and a profile block
@@ -568,6 +621,74 @@ mod credential_profiles_render_tests {
         assert!(
             !lines[0].contains("No credential profiles"),
             "an unreadable config read as a machine with none: {lines:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod linear_settings_render_tests {
+    use super::render_linear_settings_report;
+    use serde_json::json;
+
+    #[test]
+    fn an_unconfigured_account_says_tasks_stay_in_aimux() {
+        let lines = render_linear_settings_report(&json!({
+            "ok": true,
+            "configured": false,
+            "tasks": "aimux",
+        }));
+        assert_eq!(
+            lines,
+            vec!["Linear is not configured; tasks stay in aimux."]
+        );
+    }
+
+    #[test]
+    fn a_configured_account_names_the_project_and_the_token_variable() {
+        let lines = render_linear_settings_report(&json!({
+            "ok": true,
+            "configured": true,
+            "tasks": "linear",
+            "project": "Aimux",
+            "tokenEnv": "AIMUX_LINEAR_TOKEN",
+        }));
+        assert_eq!(
+            lines,
+            vec![
+                "Tasks go to Linear, in project Aimux.",
+                "Token read from AIMUX_LINEAR_TOKEN.",
+            ]
+        );
+    }
+
+    /// Configured with no token named cannot actually be used, and that is
+    /// worth saying rather than leaving a reader to wonder why nothing works.
+    #[test]
+    fn a_configured_account_with_no_token_says_it_cannot_be_reached() {
+        let lines = render_linear_settings_report(&json!({
+            "ok": true,
+            "configured": true,
+            "tasks": "linear",
+            "project": "Aimux",
+            "tokenEnv": null,
+        }));
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].contains("cannot be reached yet"), "{lines:?}");
+    }
+
+    /// Unreadable is not unconfigured. Rendering "tasks stay in aimux" for a
+    /// config that names Linear would tell somebody their tasks are somewhere
+    /// they are not.
+    #[test]
+    fn an_unreadable_config_renders_its_reason_not_a_default() {
+        let lines = render_linear_settings_report(&json!({
+            "ok": false,
+            "error": "linear is not an object in the Aimux config",
+        }));
+        assert_eq!(lines, vec!["linear is not an object in the Aimux config"]);
+        assert!(
+            !lines[0].contains("stay in aimux"),
+            "an unreadable config claimed the local engine was in charge: {lines:?}"
         );
     }
 }
