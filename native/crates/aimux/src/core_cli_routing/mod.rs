@@ -812,6 +812,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("tool"), Some("profiles")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         (Some("linear"), Some("status")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         (Some("linear"), Some("check")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
+        (Some("linear"), Some("tasks")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         // Unlike its neighbours this verb takes a POSITIONAL: a machine id.
         // So the allowlist admits one non-flag argument plus the two flags it
         // knows, and refuses anything else -- a stray third argument should

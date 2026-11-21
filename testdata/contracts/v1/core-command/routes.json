@@ -296,6 +296,10 @@
       "/core/linear-check-text"
     ],
     [
+      "linearTasksText",
+      "/core/linear-tasks-text"
+    ],
+    [
       "swarmHostText",
       "/core/swarm-host-text"
     ],

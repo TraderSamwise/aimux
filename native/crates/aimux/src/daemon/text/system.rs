@@ -63,6 +63,9 @@ pub fn route_system_text_request(
     if method == "GET" && pathname == CORE_API_ROUTES.linear_check_text {
         return Some(linear_check_text_route(&route_url));
     }
+    if method == "GET" && pathname == CORE_API_ROUTES.linear_tasks_text {
+        return Some(linear_tasks_text_route(&route_url));
+    }
     if pathname == CORE_API_ROUTES.credential_profiles_text {
         // One path, two verbs: GET lists what this machine has, POST chooses.
         // Anything else is refused rather than silently treated as a read,
@@ -259,6 +262,103 @@ pub fn linear_settings_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResp
 }
 
 /// Where tasks go, in words, because that is the question somebody is asking.
+/// The Linear project's issues, as tasks.
+///
+/// Answers requirement 4 -- "see who is working on what" -- from the system
+/// that owns tasks once Linear is configured. The SHAPING lives in
+/// `linear_tasks`, so this route only decides whether it can ask.
+pub fn linear_tasks_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
+    let resolver = crate::paths::PathResolver::from_env();
+    let config = crate::config::load_global_config_with_resolver(&resolver);
+    let settings = crate::linear_settings::parse_linear_settings(&config);
+    let token =
+        crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
+
+    // Nothing to ask. Reported as not-asked rather than as an empty task list,
+    // because "no tasks" and "could not look" are the two answers a person
+    // most needs kept apart here.
+    let crate::linear_settings::LinearSettings::Configured { project, .. } = &settings else {
+        let reason = match &settings {
+            crate::linear_settings::LinearSettings::Unreadable(reason) => reason.clone(),
+            _ => "No Linear project is configured, so tasks live in the local engine.".to_owned(),
+        };
+        let report = serde_json::json!({ "ok": false, "checked": false, "reason": reason });
+        return text_or_json_lines(route_url, report, &[reason]);
+    };
+    let crate::linear_settings::LinearToken::Readable { env, .. } = &token else {
+        let reason = crate::linear_settings::linear_token_line(&token);
+        let report = serde_json::json!({ "ok": false, "checked": false, "reason": reason });
+        return text_or_json_lines(route_url, report, &[reason]);
+    };
+    let Ok(secret) = std::env::var(env) else {
+        let reason = "The token variable disappeared between reading it and using it.".to_owned();
+        let report = serde_json::json!({ "ok": false, "checked": false, "reason": reason });
+        return text_or_json_lines(route_url, report, &[reason]);
+    };
+
+    match crate::remote_control_edge::fetch_linear_project_issues(secret.trim(), project) {
+        Ok(data) => {
+            let (tasks, problems) = crate::linear_tasks::tasks_from_linear_data(&data);
+            let lines = render_linear_tasks(&tasks, &problems);
+            let report = serde_json::json!({
+                "ok": problems.is_empty(),
+                "checked": true,
+                "project": project,
+                "tasks": tasks,
+                "problems": problems,
+            });
+            text_or_json_lines(route_url, report, &lines)
+        }
+        Err(reason) => {
+            let report = serde_json::json!({ "ok": false, "checked": true, "error": reason });
+            text_or_json_lines(route_url, report, &[reason])
+        }
+    }
+}
+
+/// One line per task, problems last.
+///
+/// Problems go at the END rather than being dropped: the tasks are what was
+/// asked for, and a surface that hid the problems would under-report the
+/// project while looking complete.
+pub fn render_linear_tasks(tasks: &[Value], problems: &[String]) -> Vec<String> {
+    let mut lines = Vec::new();
+    if tasks.is_empty() && problems.is_empty() {
+        lines.push("No issues in the Linear project.".to_owned());
+    }
+    for task in tasks {
+        let key = task
+            .get("identifier")
+            .and_then(Value::as_str)
+            .or_else(|| task.get("id").and_then(Value::as_str))
+            .unwrap_or("?");
+        let description = task
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("(no title)");
+        // An unknown status is SAID, not blanked and not guessed as pending.
+        let status = match (
+            task.get("status").and_then(Value::as_str),
+            task.get("statusUnknown").and_then(Value::as_str),
+        ) {
+            (Some(status), _) => status.to_owned(),
+            (None, Some("")) => "state unknown".to_owned(),
+            (None, Some(other)) => format!("state unknown ({other})"),
+            (None, None) => "state unknown".to_owned(),
+        };
+        let who = task
+            .get("assignee")
+            .and_then(Value::as_str)
+            .map(|assignee| format!(" — {assignee}"))
+            .unwrap_or_else(|| " — unassigned".to_owned());
+        lines.push(format!("{key}  {status}{who}  {description}"));
+    }
+    for problem in problems {
+        lines.push(format!("problem: {problem}"));
+    }
+    lines
+}
+
 /// Ask Linear whether the credential actually works.
 ///
 /// Separate from `linear status` on purpose. Status is LOCAL and instant: it
@@ -1007,5 +1107,97 @@ mod swarm_host_render_tests {
             !lines[0].contains("would claim it"),
             "an unreadable pin invited a second swarm overseer: {lines:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod linear_tasks_render_tests {
+    use super::render_linear_tasks;
+    use serde_json::json;
+
+    /// A task carries who has it, and an UNASSIGNED one says so rather than
+    /// leaving a gap a reader has to interpret.
+    #[test]
+    fn each_line_names_the_issue_its_state_and_who_has_it() {
+        let lines = render_linear_tasks(
+            &[
+                json!({
+                    "identifier": "AIM-12",
+                    "description": "Ship the plane",
+                    "status": "accepted",
+                    "assignee": "Sam S.",
+                }),
+                json!({
+                    "identifier": "AIM-13",
+                    "description": "Write the doc",
+                    "status": "pending",
+                }),
+            ],
+            &[],
+        );
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("AIM-12"), "{lines:?}");
+        assert!(lines[0].contains("accepted"), "{lines:?}");
+        assert!(lines[0].contains("Sam S."), "{lines:?}");
+        assert!(lines[1].contains("unassigned"), "{lines:?}");
+    }
+
+    /// THE RENDERER'S HALF OF THE UNKNOWN-STATE RULE. `linear_tasks` refuses to
+    /// guess `pending`; this proves the line SAYS so instead of showing a blank
+    /// a reader would take for "nothing yet".
+    #[test]
+    fn an_unknown_state_is_said_out_loud_and_never_blank() {
+        let named = render_linear_tasks(
+            &[json!({
+                "identifier": "AIM-14",
+                "description": "Odd one",
+                "statusUnknown": "somethingNew",
+            })],
+            &[],
+        );
+        assert!(named[0].contains("state unknown"), "{named:?}");
+        assert!(
+            named[0].contains("somethingNew"),
+            "the unknown state was not named: {named:?}"
+        );
+        assert!(
+            !named[0].contains("pending"),
+            "an unknown state rendered as pending: {named:?}"
+        );
+
+        // And when Linear sent no state at all, still said, just unnamed.
+        let absent = render_linear_tasks(
+            &[json!({
+                "identifier": "AIM-15",
+                "description": "No state",
+                "statusUnknown": "",
+            })],
+            &[],
+        );
+        assert!(absent[0].contains("state unknown"), "{absent:?}");
+        assert!(!absent[0].contains("pending"), "{absent:?}");
+    }
+
+    /// Problems are rendered AFTER the tasks, never instead of them. Hiding
+    /// them would under-report the project while looking complete.
+    #[test]
+    fn problems_appear_beside_the_tasks_rather_than_replacing_them() {
+        let lines = render_linear_tasks(
+            &[json!({ "identifier": "AIM-12", "description": "Real", "status": "pending" })],
+            &["Linear issue AIM-13 arrived with no title".to_owned()],
+        );
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].contains("AIM-12"), "{lines:?}");
+        assert!(lines[1].starts_with("problem:"), "{lines:?}");
+        assert!(lines[1].contains("AIM-13"), "{lines:?}");
+    }
+
+    /// An empty project says it is empty. A surface handed zero lines has
+    /// nothing to show and reads as a failed read.
+    #[test]
+    fn an_empty_project_still_says_something() {
+        let lines = render_linear_tasks(&[], &[]);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("No issues"), "{lines:?}");
     }
 }
