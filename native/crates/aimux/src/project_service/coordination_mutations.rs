@@ -83,6 +83,19 @@ pub fn route_coordination_mutation_request_with_runtime(
     let pathname = project_service_pathname(path);
     let body = body.unwrap_or(&Value::Null);
     let project_state_dir = context.project_state_dir();
+    // Before any task route runs, because the local engine writing a task for
+    // an account whose tasks live in Linear is the split-brain the settings
+    // work exists to prevent.
+    // The pathname test comes FIRST and the config read second, so a thread or
+    // review mutation never pays for a config read it cannot be refused by.
+    if writes_a_local_task(pathname)
+        && let Some(refusal) = local_task_refusal()
+    {
+        // Shaped like every other task error -- `ok: false` with an `error`
+        // string at 400 -- so the CLI, the app and the TUI render it through
+        // the paths they already have.
+        return Some(json_response(400, json!({ "ok": false, "error": refusal })));
+    }
     let response = match pathname {
         routes::threads::OPEN => route_threads_open(&project_state_dir, body),
         routes::threads::SEND => route_threads_send(&project_state_dir, body),
@@ -111,6 +124,42 @@ pub fn route_coordination_mutation_request_with_runtime(
         ));
     }
     Some(response)
+}
+
+/// Every pathname that writes a task through the LOCAL exchange.
+///
+/// `CREATE_TEAMMATE_TASK` is in this list and that is the whole reason the list
+/// exists rather than a guard on the `ASSIGN` arm: it calls `route_task_assign`
+/// itself, so a guard placed on the dispatcher's assign arm alone would leave
+/// it as an open bypass writing local tasks for an account whose tasks live in
+/// Linear.
+fn writes_a_local_task(pathname: &str) -> bool {
+    matches!(
+        pathname,
+        routes::tasks::ASSIGN
+            | routes::tasks::ACCEPT
+            | routes::tasks::BLOCK
+            | routes::tasks::CANCEL
+            | routes::tasks::COMPLETE
+            | routes::tasks::REOPEN
+            | routes::agents::CREATE_TEAMMATE_TASK
+    )
+}
+
+/// Refuse a local task write when this account's tasks belong to Linear.
+///
+/// Reads the config per call rather than caching: a person who fixes their
+/// `linear` block expects the next command to honour it, and a task mutation
+/// is rare enough that one config read is not the cost worth optimising.
+fn local_task_refusal() -> Option<String> {
+    let resolver = crate::paths::PathResolver::from_env();
+    let config = crate::config::load_global_config_with_resolver(&resolver);
+    let settings = crate::linear_settings::parse_linear_settings(&config);
+    let token =
+        crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
+    crate::task_backend::refuse_local_task_mutation(&crate::task_backend::task_backend(
+        &settings, &token,
+    ))
 }
 
 fn route_threads_open(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
@@ -2286,4 +2335,56 @@ fn now_iso() -> String {
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
     ProjectServiceDispatchResponse::json(status, body)
+}
+
+#[cfg(test)]
+mod local_task_guard_tests {
+    use super::*;
+
+    /// THE BYPASS THAT WOULD HAVE BEEN LEFT OPEN. `CREATE_TEAMMATE_TASK` calls
+    /// `route_task_assign` itself, so guarding the dispatcher's `ASSIGN` arm
+    /// alone still writes a local task for an account whose tasks live in
+    /// Linear. Every route that reaches the local exchange has to be in the
+    /// list, and this is the one a reader would miss.
+    #[test]
+    fn every_route_that_writes_a_local_task_is_guarded() {
+        for pathname in [
+            routes::tasks::ASSIGN,
+            routes::tasks::ACCEPT,
+            routes::tasks::BLOCK,
+            routes::tasks::CANCEL,
+            routes::tasks::COMPLETE,
+            routes::tasks::REOPEN,
+            routes::agents::CREATE_TEAMMATE_TASK,
+        ] {
+            assert!(
+                writes_a_local_task(pathname),
+                "{pathname} writes a local task and is not guarded"
+            );
+        }
+    }
+
+    /// THE INVERSE, which matters just as much: the guard must not reach
+    /// threads, handoffs or reviews. Linear owning TASKS is not Linear owning
+    /// every coordination primitive, and a guard that caught threads would
+    /// stop agents talking to each other the moment Linear was configured.
+    #[test]
+    fn the_guard_does_not_reach_threads_handoffs_or_reviews() {
+        for pathname in [
+            routes::threads::OPEN,
+            routes::threads::SEND,
+            routes::threads::MARK_SEEN,
+            routes::threads::STATUS,
+            routes::handoff::SEND,
+            routes::handoff::ACCEPT,
+            routes::handoff::COMPLETE,
+            routes::reviews::APPROVE,
+            routes::reviews::REQUEST_CHANGES,
+        ] {
+            assert!(
+                !writes_a_local_task(pathname),
+                "{pathname} is not a task write and must not be guarded"
+            );
+        }
+    }
 }

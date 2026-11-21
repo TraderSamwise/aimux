@@ -139,6 +139,7 @@ pub mod state_update_lock;
 pub mod statusline_chip_window;
 pub mod subagent_activity;
 pub mod swarm_host;
+pub mod task_backend;
 pub mod team_contract;
 pub mod terminal_key_parser;
 pub mod tmux;
