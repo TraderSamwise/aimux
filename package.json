@@ -97,7 +97,7 @@
     "hook:attest": "bash scripts/check-commit-hook-attestations.sh",
     "audit:agent-ordering": "./scripts/audit-agent-ordering.mjs",
     "audit:refusal-reason-parity": "./scripts/audit-refusal-reason-parity.mjs",
-    "audit:core-route-parity": "node scripts/audit-core-route-parity.mjs",
+    "audit:core-route-parity": "./scripts/audit-core-route-parity.mjs",
     "audit:shared-guest-route-parity": "./scripts/audit-shared-guest-route-parity.mjs",
     "audit:test-runtime-env": "./scripts/audit-test-runtime-env.mjs",
     "audit:release-asset-lists": "./scripts/audit-release-asset-list-copies.mjs && ./scripts/audit-runtime-package.mjs",
