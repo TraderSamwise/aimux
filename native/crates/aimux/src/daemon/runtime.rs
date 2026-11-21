@@ -5249,6 +5249,10 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         system_tmux_doctor_report(&mut self.resolver, project_root, session_name, window_id)
     }
 
+    fn fleet_usage_report(&mut self) -> Result<Value, String> {
+        self.remote.fleet_usage_report()
+    }
+
     fn doctor_services_report(&mut self) -> Result<ServicesDoctorReport, String> {
         Ok(build_services_doctor_report(self))
     }
