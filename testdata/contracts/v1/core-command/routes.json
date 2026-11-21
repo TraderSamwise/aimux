@@ -300,6 +300,10 @@
       "/core/linear-tasks-text"
     ],
     [
+      "linearAssignText",
+      "/core/linear-assign-text"
+    ],
+    [
       "swarmHostText",
       "/core/swarm-host-text"
     ],

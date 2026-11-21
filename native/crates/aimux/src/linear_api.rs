@@ -161,6 +161,143 @@ pub fn project_issues_query(project: &str) -> Value {
     })
 }
 
+/// Where a new issue goes: Linear needs ids, the config has a name.
+///
+/// `issueCreate` requires a `teamId`, and a project name is not one, so a
+/// create is always two calls: resolve, then write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectTarget {
+    pub project_id: String,
+    pub team_id: String,
+}
+
+/// What resolving a project name found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectLookup {
+    Found(ProjectTarget),
+    /// No project by that name. A real answer, and a config to fix.
+    NotFound,
+    /// SEVERAL projects share the name, so we cannot tell which was meant.
+    ///
+    /// Linear allows this across teams, and picking the first would file work
+    /// into whichever project the API happened to list first -- a confident
+    /// wrong answer, and the kind that is only noticed when somebody goes
+    /// looking for a task that is in the wrong place.
+    Ambiguous {
+        count: usize,
+    },
+    /// A project with no team. Cannot be written to, because `issueCreate`
+    /// needs the team id.
+    NoTeam,
+}
+
+/// The ids behind a project name.
+pub fn project_lookup_query(project: &str) -> Value {
+    json!({
+        "query": "query ProjectTarget($project: String!) { \
+                  projects(filter: { name: { eq: $project } }, first: 10) { \
+                  nodes { id name teams(first: 2) { nodes { id } } } } }",
+        "variables": { "project": project },
+    })
+}
+
+/// Read a project lookup.
+pub fn parse_project_lookup(data: &Value) -> ProjectLookup {
+    let nodes = data
+        .get("projects")
+        .and_then(|projects| projects.get("nodes"))
+        .and_then(Value::as_array);
+    let Some(nodes) = nodes else {
+        return ProjectLookup::NotFound;
+    };
+    match nodes.len() {
+        0 => ProjectLookup::NotFound,
+        1 => {
+            let node = &nodes[0];
+            let Some(project_id) = node.get("id").and_then(Value::as_str) else {
+                return ProjectLookup::NotFound;
+            };
+            let team_id = node
+                .get("teams")
+                .and_then(|teams| teams.get("nodes"))
+                .and_then(Value::as_array)
+                .and_then(|teams| teams.first())
+                .and_then(|team| team.get("id"))
+                .and_then(Value::as_str);
+            match team_id {
+                Some(team_id) => ProjectLookup::Found(ProjectTarget {
+                    project_id: project_id.to_owned(),
+                    team_id: team_id.to_owned(),
+                }),
+                None => ProjectLookup::NoTeam,
+            }
+        }
+        // Two or more. Refused rather than guessed -- see `Ambiguous`.
+        count => ProjectLookup::Ambiguous { count },
+    }
+}
+
+/// Create an issue in a resolved project.
+///
+/// Every value travels as a VARIABLE, never interpolated: a title is arbitrary
+/// user text and the first one containing a quote would both break the query
+/// and give somebody a way to write their own.
+pub fn issue_create_mutation(target: &ProjectTarget, title: &str, description: &str) -> Value {
+    json!({
+        "query": "mutation CreateIssue($teamId: String!, $projectId: String!, \
+                  $title: String!, $description: String!) { \
+                  issueCreate(input: { teamId: $teamId, projectId: $projectId, \
+                  title: $title, description: $description }) { \
+                  success issue { id identifier title url } } }",
+        "variables": {
+            "teamId": target.team_id,
+            "projectId": target.project_id,
+            "title": title,
+            "description": description,
+        },
+    })
+}
+
+/// What Linear made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreatedIssue {
+    pub id: String,
+    pub identifier: String,
+    pub url: Option<String>,
+}
+
+/// Read a create response.
+///
+/// `success: false` with no errors is Linear's way of refusing a mutation it
+/// understood, so it is checked explicitly -- a parser that only looked for
+/// the issue would report a creation that never happened.
+pub fn parse_created_issue(data: &Value) -> Result<CreatedIssue, String> {
+    let create = data
+        .get("issueCreate")
+        .ok_or_else(|| "Linear's answer carried no issueCreate result".to_owned())?;
+    if create.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err("Linear refused to create the issue".to_owned());
+    }
+    let issue = create
+        .get("issue")
+        .ok_or_else(|| "Linear reported success but returned no issue".to_owned())?;
+    let id = issue
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Linear created an issue with no id".to_owned())?;
+    let identifier = issue
+        .get("identifier")
+        .and_then(Value::as_str)
+        // The human key is what a person needs to go and look; without it the
+        // creation is real but unfindable, which is worth saying.
+        .ok_or_else(|| "Linear created an issue with no identifier".to_owned())?;
+    Ok(CreatedIssue {
+        id: id.to_owned(),
+        identifier: identifier.to_owned(),
+        url: issue.get("url").and_then(Value::as_str).map(str::to_owned),
+    })
+}
+
 /// Verify a credential, and say whose it is.
 ///
 /// Generic over the trait so this whole path is provable with a fake: the only
@@ -233,6 +370,168 @@ mod tests {
                 .push((token.to_owned(), body.clone()));
             self.answer.clone()
         }
+    }
+
+    fn target() -> ProjectTarget {
+        ProjectTarget {
+            project_id: "proj-1".to_owned(),
+            team_id: "team-1".to_owned(),
+        }
+    }
+
+    #[test]
+    fn one_project_resolves_to_its_project_and_team_ids() {
+        let data = json!({ "projects": { "nodes": [
+            { "id": "proj-1", "name": "Aimux", "teams": { "nodes": [{ "id": "team-1" }] } }
+        ]}});
+        assert_eq!(parse_project_lookup(&data), ProjectLookup::Found(target()));
+    }
+
+    /// THE GATE THAT MATTERS MOST ON THE WRITE PATH. Linear allows two
+    /// projects to share a name across teams, and taking the first would file
+    /// work into whichever the API happened to list first -- only noticed when
+    /// somebody goes looking for a task that is in the wrong project.
+    #[test]
+    fn two_projects_sharing_a_name_are_refused_rather_than_guessed() {
+        let data = json!({ "projects": { "nodes": [
+            { "id": "a", "name": "Aimux", "teams": { "nodes": [{ "id": "team-1" }] } },
+            { "id": "b", "name": "Aimux", "teams": { "nodes": [{ "id": "team-2" }] } }
+        ]}});
+        assert_eq!(
+            parse_project_lookup(&data),
+            ProjectLookup::Ambiguous { count: 2 }
+        );
+    }
+
+    /// No project and no projects key are both "not found" -- a real answer
+    /// about a config to fix.
+    #[test]
+    fn a_missing_project_is_not_found() {
+        assert_eq!(
+            parse_project_lookup(&json!({ "projects": { "nodes": [] } })),
+            ProjectLookup::NotFound
+        );
+        assert_eq!(parse_project_lookup(&json!({})), ProjectLookup::NotFound);
+    }
+
+    /// A project with no team cannot be written to, because `issueCreate`
+    /// needs the team id. Said rather than reported as "not found", which
+    /// would send somebody to check a name that is perfectly correct.
+    #[test]
+    fn a_project_with_no_team_says_so_rather_than_not_found() {
+        let data = json!({ "projects": { "nodes": [
+            { "id": "proj-1", "name": "Aimux", "teams": { "nodes": [] } }
+        ]}});
+        assert_eq!(parse_project_lookup(&data), ProjectLookup::NoTeam);
+    }
+
+    /// Arbitrary user text in a title must travel as a VARIABLE. The first
+    /// title with a quote in it would otherwise break the query and hand
+    /// somebody a way to write their own.
+    #[test]
+    fn the_title_and_description_travel_as_variables() {
+        let mutation = issue_create_mutation(
+            &target(),
+            "Fix the \"quoted\" thing",
+            "A description with } braces { too",
+        );
+        assert_eq!(
+            mutation["variables"]["title"],
+            json!("Fix the \"quoted\" thing")
+        );
+        assert_eq!(
+            mutation["variables"]["description"],
+            json!("A description with } braces { too")
+        );
+        let text = mutation["query"].as_str().expect("a query");
+        assert!(
+            !text.contains("quoted"),
+            "the title was interpolated into the query: {text}"
+        );
+        assert!(text.contains("$title: String!"), "{text}");
+        // The ids too, for the same reason.
+        assert_eq!(mutation["variables"]["teamId"], json!("team-1"));
+        assert_eq!(mutation["variables"]["projectId"], json!("proj-1"));
+    }
+
+    #[test]
+    fn a_created_issue_carries_the_key_a_person_needs() {
+        let data = json!({ "issueCreate": {
+            "success": true,
+            "issue": {
+                "id": "uuid-1",
+                "identifier": "AIM-20",
+                "title": "x",
+                "url": "https://linear.app/t/issue/AIM-20",
+            }
+        }});
+        assert_eq!(
+            parse_created_issue(&data),
+            Ok(CreatedIssue {
+                id: "uuid-1".to_owned(),
+                identifier: "AIM-20".to_owned(),
+                url: Some("https://linear.app/t/issue/AIM-20".to_owned()),
+            })
+        );
+    }
+
+    /// `success: false` WITH NO ERRORS is how Linear refuses a mutation it
+    /// understood. A parser that only looked for the issue would report a
+    /// creation that never happened.
+    #[test]
+    fn a_refused_mutation_is_not_a_creation() {
+        // A FULLY POPULATED ISSUE BESIDE `success: false`, which is the case
+        // that actually proves the check. My first version paired the refusal
+        // with `issue: null`, so dropping the success check still errored --
+        // on the missing id, for the wrong reason. The mutation passed and
+        // told me the gate was decorative.
+        let refused = json!({ "issueCreate": {
+            "success": false,
+            "issue": { "id": "uuid-1", "identifier": "AIM-99", "url": "https://x" }
+        }});
+        let error = parse_created_issue(&refused).expect_err("a refusal is not a creation");
+        assert!(
+            error.contains("refused"),
+            "a refusal with a populated issue read as a creation: {error}"
+        );
+
+        // And the null-issue refusal, which must also fail.
+        let refused_empty = json!({ "issueCreate": { "success": false, "issue": null } });
+        assert!(parse_created_issue(&refused_empty).is_err());
+
+        // Success with no issue is also not a creation -- it is a protocol
+        // change, and reporting it as made would promise something absent.
+        let hollow = json!({ "issueCreate": { "success": true } });
+        let error = parse_created_issue(&hollow).expect_err("no issue is an error");
+        assert!(error.contains("no issue"), "{error}");
+
+        // And no result at all.
+        assert!(parse_created_issue(&json!({})).is_err());
+    }
+
+    /// An issue with no identifier IS created but cannot be found again, which
+    /// is worth saying rather than returning a blank key.
+    #[test]
+    fn a_created_issue_with_no_identifier_is_reported_not_blanked() {
+        let data = json!({ "issueCreate": {
+            "success": true,
+            "issue": { "id": "uuid-1" }
+        }});
+        let error = parse_created_issue(&data).expect_err("no identifier is an error");
+        assert!(error.contains("identifier"), "{error}");
+    }
+
+    /// A URL is nice and absent is fine -- unlike the identifier, nothing
+    /// depends on it.
+    #[test]
+    fn a_created_issue_without_a_url_is_still_a_creation() {
+        let data = json!({ "issueCreate": {
+            "success": true,
+            "issue": { "id": "uuid-1", "identifier": "AIM-21" }
+        }});
+        let created = parse_created_issue(&data).expect("still created");
+        assert_eq!(created.url, None);
+        assert_eq!(created.identifier, "AIM-21");
     }
 
     /// THE GATE THIS MODULE EXISTS FOR. GraphQL reports query errors with HTTP

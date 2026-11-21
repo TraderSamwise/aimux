@@ -66,6 +66,20 @@ pub fn route_system_text_request(
     if method == "GET" && pathname == CORE_API_ROUTES.linear_tasks_text {
         return Some(linear_tasks_text_route(&route_url));
     }
+    if pathname == CORE_API_ROUTES.linear_assign_text {
+        // POST only, and deliberately: this one CREATES an issue, so a GET
+        // that did it would make a read into a write.
+        return match method {
+            "POST" => Some(linear_assign_text_route(&route_url, body)),
+            _ => Some(text_error(
+                405,
+                format!(
+                    "{} answers POST to file a Linear issue",
+                    CORE_API_ROUTES.linear_assign_text
+                ),
+            )),
+        };
+    }
     if pathname == CORE_API_ROUTES.credential_profiles_text {
         // One path, two verbs: GET lists what this machine has, POST chooses.
         // Anything else is refused rather than silently treated as a read,
@@ -262,6 +276,68 @@ pub fn linear_settings_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResp
 }
 
 /// Where tasks go, in words, because that is the question somebody is asking.
+/// File an issue in the configured Linear project.
+///
+/// The write counterpart to `linear tasks`. Shares its gate on whether we can
+/// ask at all, and its reasons, because "no project configured" and "the token
+/// is unset" are the same two problems whichever direction the data goes.
+pub fn linear_assign_text_route(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let description = string_param(route_url, body, "description");
+    let Some(description) = description.filter(|text| !text.trim().is_empty()) else {
+        return text_error(400, "name what the task is with --description");
+    };
+
+    let resolver = crate::paths::PathResolver::from_env();
+    let config = crate::config::load_global_config_with_resolver(&resolver);
+    let settings = crate::linear_settings::parse_linear_settings(&config);
+    let token =
+        crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
+
+    let crate::linear_settings::LinearSettings::Configured { project, .. } = &settings else {
+        let reason = match &settings {
+            crate::linear_settings::LinearSettings::Unreadable(reason) => reason.clone(),
+            _ => "No Linear project is configured, so there is nowhere to file this.".to_owned(),
+        };
+        return text_error(400, &reason);
+    };
+    let crate::linear_settings::LinearToken::Readable { env, .. } = &token else {
+        return text_error(400, crate::linear_settings::linear_token_line(&token));
+    };
+    let Ok(secret) = std::env::var(env) else {
+        return text_error(
+            400,
+            "The token variable disappeared between reading it and using it.",
+        );
+    };
+
+    // The title is the first line and the description is the whole thing, so a
+    // one-line task reads naturally in Linear and a long one keeps its body.
+    let title = description
+        .lines()
+        .next()
+        .unwrap_or(&description)
+        .trim()
+        .to_owned();
+    match crate::remote_control_edge::create_linear_issue(
+        secret.trim(),
+        project,
+        &title,
+        &description,
+    ) {
+        Ok(created) => {
+            let line = format!("Filed {created} in {project}.");
+            let report = serde_json::json!({ "ok": true, "issue": created, "project": project });
+            text_or_json_lines(route_url, report, &[line])
+        }
+        // The edge's own reason, which already distinguishes a missing project
+        // from an ambiguous one from an unreachable Linear.
+        Err(reason) => text_error(400, &reason),
+    }
+}
+
 /// The Linear project's issues, as tasks.
 ///
 /// Answers requirement 4 -- "see who is working on what" -- from the system

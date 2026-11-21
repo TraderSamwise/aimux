@@ -813,6 +813,18 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("linear"), Some("status")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         (Some("linear"), Some("check")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         (Some("linear"), Some("tasks")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
+        // Takes the task text as one positional, so this is the `swarm host`
+        // shape rather than the flags-only shape its neighbours use.
+        (Some("linear"), Some("assign")) => {
+            let rest = &args[2..];
+            let flags = rest
+                .iter()
+                .filter(|arg| arg.as_ref().starts_with("--"))
+                .count();
+            rest.iter()
+                .all(|arg| !arg.as_ref().starts_with("--") || arg.as_ref() == "--json")
+                && rest.len() - flags <= 1
+        }
         // Unlike its neighbours this verb takes a POSITIONAL: a machine id.
         // So the allowlist admits one non-flag argument plus the two flags it
         // knows, and refuses anything else -- a stray third argument should

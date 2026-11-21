@@ -75,6 +75,7 @@ export const CORE_API_ROUTES = {
   linearSettingsText: "/core/linear-settings-text",
   linearCheckText: "/core/linear-check-text",
   linearTasksText: "/core/linear-tasks-text",
+  linearAssignText: "/core/linear-assign-text",
   swarmHostText: "/core/swarm-host-text",
   logsTailText: "/core/logs/tail-text",
   metadataText: "/core/metadata-text",

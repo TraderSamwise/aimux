@@ -165,6 +165,85 @@ fn tool_use_always_writes_and_never_silently_lists() {
     assert!(!is_core_cli_command(&["tool", "use", "--force"]));
 }
 
+/// `aimux linear assign` files an issue, and must never become a read.
+///
+/// The route answers POST only -- a GET gets a 405 -- so a bodyless plan would
+/// turn "I forgot the text" into "that method is not allowed", which is a
+/// worse message than the route's own "name what the task is". Every shape
+/// therefore carries a body.
+#[test]
+fn linear_assign_always_posts_even_with_nothing_to_file() {
+    let filed = classify_core_cli(
+        &["linear", "assign", "Fix the chart"],
+        &context(true, false),
+    )
+    .expect("naming the task is planned");
+    assert_eq!(filed.operation, CoreCliOperation::LinearSettings);
+    assert_eq!(
+        filed.action,
+        CoreCliAction::TextRoute {
+            path: "/core/linear-assign-text".into(),
+            body: Some(json!({ "description": "Fix the chart" })),
+        }
+    );
+
+    // Empty, but still a POST, so the route's own refusal is what a person
+    // sees rather than a method error.
+    let bare = classify_core_cli(&["linear", "assign"], &context(true, false))
+        .expect("a bare assign is planned");
+    assert_eq!(
+        bare.action,
+        CoreCliAction::TextRoute {
+            path: "/core/linear-assign-text".into(),
+            body: Some(json!({})),
+        },
+        "a bare assign must still POST, or the route answers 405 instead of saying what to pass"
+    );
+
+    let as_json = classify_core_cli(
+        &["linear", "assign", "Fix the chart", "--json"],
+        &context(true, false),
+    )
+    .expect("the json shape is planned");
+    assert_eq!(
+        as_json.action,
+        CoreCliAction::TextRoute {
+            path: "/core/linear-assign-text?json=1".into(),
+            body: Some(json!({ "description": "Fix the chart" })),
+        }
+    );
+
+    // The allowlist, which gates before the planner's match runs at all.
+    assert!(is_core_cli_command(&["linear", "assign"]));
+    assert!(is_core_cli_command(&["linear", "assign", "Fix the chart"]));
+    assert!(is_core_cli_command(&[
+        "linear",
+        "assign",
+        "Fix the chart",
+        "--json"
+    ]));
+    assert!(!is_core_cli_command(&["linear", "assign", "one", "two"]));
+    assert!(!is_core_cli_command(&["linear", "assign", "--force"]));
+}
+
+/// `aimux linear tasks` reads, so it carries no body.
+#[test]
+fn linear_tasks_plans_a_read_with_no_body() {
+    let plan = classify_core_cli(&["linear", "tasks"], &context(true, false))
+        .expect("linear tasks is planned");
+    assert_eq!(
+        plan.action,
+        CoreCliAction::TextRoute {
+            path: "/core/linear-tasks-text".into(),
+            body: None,
+        },
+        "a read must carry no body"
+    );
+    assert!(is_core_cli_command(&["linear", "tasks"]));
+    assert!(is_core_cli_command(&["linear", "tasks", "--json"]));
+    assert!(!is_core_cli_command(&["linear", "tasks", "extra"]));
+}
+
 #[test]
 fn linear_status_plans_the_linear_settings_read() {
     let plan = classify_core_cli(&["linear", "status"], &context(true, false))
