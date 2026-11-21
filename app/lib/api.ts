@@ -22,6 +22,7 @@ import {
   queuedLifecycleTimeoutMs,
   type GlobalExposeItemsResponse,
   type UsageMonitorResponse,
+  type UsageSnapshot,
   type TeamConfigResponse,
   type ActiveWindowRequest,
   type AgentListResponse,
@@ -611,13 +612,27 @@ export async function getDaemonHealth(opts?: ApiOpts): Promise<DaemonHealth> {
   return callJson<DaemonHealth>(`${getDaemonUrl()}/health`, { method: "GET" }, opts);
 }
 
+/**
+ * A peer's reply to the usage route, verbatim.
+ *
+ * Nested because that is what it is: the fleet report stores each peer's whole
+ * response body, and that body carries the snapshot under its own `usage` key.
+ * Flattening it here would hide that a peer can answer 200 with `ok: false`
+ * and an error of its own.
+ */
+export type FleetUsagePeerBody = {
+  ok?: boolean;
+  usage?: UsageSnapshot;
+  error?: string;
+};
+
 /** One machine's answer, or the reason it did not give one. */
 export type FleetUsageMachine = {
   machineId: string;
   ok: boolean;
   /** Absent when the peer said nothing to take a status from. */
   status?: number;
-  usage?: unknown;
+  usage?: FleetUsagePeerBody;
   /** Present when `ok` is false and the peer did not answer at all. */
   error?: string;
 };
@@ -630,6 +645,10 @@ export type FleetUsageResponse = {
    * Absent -- not empty -- when this machine does not know which machines
    * exist. An empty array means the relay said there are none, which is the
    * opposite claim, so the two must not be collapsed on the way in.
+   *
+   * ALREADY ORDERED: whatever needs attention comes first, decided once in
+   * `build_fleet_usage_report` so the CLI and this client cannot disagree. A
+   * surface may filter or truncate this list; it must not re-sort it.
    */
   machines?: FleetUsageMachine[];
   error?: string;

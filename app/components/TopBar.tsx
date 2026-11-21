@@ -2,7 +2,7 @@ import React from "react";
 import { Image, Pressable, View } from "react-native";
 import { usePathname, useRouter, type Href } from "expo-router";
 import { useAtomValue } from "jotai";
-import { Bell, Camera, FolderKanban, MessageSquare, Share2 } from "lucide-react-native";
+import { Bell, Camera, FolderKanban, Gauge, MessageSquare, Share2 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AuthMenu } from "@/components/AuthMenu";
 import { RelayIndicator } from "@/components/RelayIndicator";
@@ -59,9 +59,11 @@ function TopLevelExperienceNav() {
       ? "inbox"
       : pathname === "/monitor" || pathname.startsWith("/monitor/")
         ? "monitor"
-        : pathname === "/shares" || pathname.startsWith("/shares/")
-          ? "shared"
-          : "projects";
+        : pathname === "/fleet" || pathname.startsWith("/fleet/")
+          ? "fleet"
+          : pathname === "/shares" || pathname.startsWith("/shares/")
+            ? "shared"
+            : "projects";
   // A share names one host and carries no machine of its own.
   const projectTarget =
     activeShare && activeShare.ownerUserId === userId
@@ -76,6 +78,9 @@ function TopLevelExperienceNav() {
     },
     { id: "shared", label: "Shared", icon: Share2, href: "/shares" as Href },
     { id: "monitor", label: "Monitor", icon: Camera, href: "/monitor" as Href },
+    // Account-wide, like Monitor and unlike Projects: the fleet read asks
+    // every machine in the account, so it carries no project or machine.
+    { id: "fleet", label: "Fleet", icon: Gauge, href: "/fleet" as Href },
     ...(compact
       ? [{ id: "inbox", label: "Inbox", icon: Bell, href: "/global-notifications" as Href }]
       : []),
