@@ -292,6 +292,10 @@
       "/core/linear-settings-text"
     ],
     [
+      "swarmHostText",
+      "/core/swarm-host-text"
+    ],
+    [
       "logsTailText",
       "/core/logs/tail-text"
     ],

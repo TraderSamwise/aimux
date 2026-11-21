@@ -811,6 +811,20 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("tool"), Some("accounts")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         (Some("tool"), Some("profiles")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         (Some("linear"), Some("status")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
+        // Unlike its neighbours this verb takes a POSITIONAL: a machine id.
+        // So the allowlist admits one non-flag argument plus the two flags it
+        // knows, and refuses anything else -- a stray third argument should
+        // fall through rather than be planned with the extra silently dropped.
+        (Some("swarm"), Some("host")) => {
+            let rest = &args[2..];
+            let flags = rest
+                .iter()
+                .filter(|arg| arg.as_ref().starts_with("--"))
+                .count();
+            rest.iter().all(|arg| {
+                !arg.as_ref().starts_with("--") || matches!(arg.as_ref(), "--json" | "--clear")
+            }) && rest.len() - flags <= 1
+        }
         (Some("spawn"), _) => true,
         (Some("run"), _) => true,
         (Some("attach"), _) => true,

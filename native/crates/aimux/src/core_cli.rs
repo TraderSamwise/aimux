@@ -182,6 +182,7 @@ pub enum CoreCliOperation {
     ToolAccounts,
     CredentialProfiles,
     LinearSettings,
+    SwarmHost,
     Logs,
     ProjectsList,
     ProjectsRemove,
@@ -2403,6 +2404,35 @@ where
             },
             CoreCliFallback::None,
         ),
+        ("swarm", "host") => {
+            // A bare `aimux swarm host` REPORTS; naming a machine pins it and
+            // `--clear` unpins. The body decides the verb --
+            // `daemon_text_route_method` sends a POST when there is one and a
+            // GET when there is not -- so the read and the two writes share
+            // one route without a method argument here.
+            let machine = args
+                .get(2)
+                .map(String::as_str)
+                .filter(|argument| !argument.starts_with("--"));
+            let clear = args.iter().any(|argument| argument == "--clear");
+            let body = match (clear, machine) {
+                (true, Some(_)) | (false, None) => None,
+                (true, None) => Some(json!({ "clear": true })),
+                (false, Some(machine)) => Some(json!({ "machine": machine })),
+            };
+            (
+                CoreCliOperation::SwarmHost,
+                CoreCliAction::TextRoute {
+                    path: if mode == CoreCliOutputMode::Json {
+                        format!("{}?json=1", CORE_API_ROUTES.swarm_host_text)
+                    } else {
+                        CORE_API_ROUTES.swarm_host_text.to_owned()
+                    },
+                    body,
+                },
+                CoreCliFallback::None,
+            )
+        }
         ("linear", "status") => (
             CoreCliOperation::LinearSettings,
             CoreCliAction::TextRoute {

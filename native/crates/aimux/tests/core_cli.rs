@@ -35,6 +35,58 @@ fn context(daemon_running: bool, has_credentials: bool) -> CoreCliContext {
 /// new verb at a neighbouring route: `usage_text` is the local quota read and
 /// one word away in the name.
 /// `aimux linear status` plans the Linear settings read.
+/// `aimux swarm host` reports, names a machine to pin, and clears.
+///
+/// The three shapes share ONE route and the body decides the verb:
+/// `daemon_text_route_method` sends a POST when there is a body and a GET when
+/// there is not. So a bare read must plan `body: None` -- otherwise reporting
+/// the pin would POST and the route would refuse it as a write with no machine.
+#[test]
+fn swarm_host_reads_pins_and_clears_through_one_route() {
+    let read = classify_core_cli(&["swarm", "host"], &context(true, false))
+        .expect("a bare swarm host is planned");
+    assert_eq!(read.operation, CoreCliOperation::SwarmHost);
+    assert_eq!(
+        read.action,
+        CoreCliAction::TextRoute {
+            path: "/core/swarm-host-text".into(),
+            body: None,
+        },
+        "a bare read must carry no body, or it would POST"
+    );
+
+    let pin = classify_core_cli(&["swarm", "host", "mini"], &context(true, false))
+        .expect("naming a machine is planned");
+    assert_eq!(
+        pin.action,
+        CoreCliAction::TextRoute {
+            path: "/core/swarm-host-text".into(),
+            body: Some(json!({ "machine": "mini" })),
+        }
+    );
+
+    let clear = classify_core_cli(&["swarm", "host", "--clear"], &context(true, false))
+        .expect("clearing is planned");
+    assert_eq!(
+        clear.action,
+        CoreCliAction::TextRoute {
+            path: "/core/swarm-host-text".into(),
+            body: Some(json!({ "clear": true })),
+        }
+    );
+
+    // On the allowlist itself. This verb takes a positional, so the entry is
+    // not the one-flag shape its neighbours use -- a stray third argument
+    // should fall through rather than be planned with the extra dropped.
+    assert!(is_core_cli_command(&["swarm", "host"]));
+    assert!(is_core_cli_command(&["swarm", "host", "mini"]));
+    assert!(is_core_cli_command(&["swarm", "host", "--clear"]));
+    assert!(is_core_cli_command(&["swarm", "host", "mini", "--json"]));
+    assert!(!is_core_cli_command(&["swarm", "host", "mini", "extra"]));
+    assert!(!is_core_cli_command(&["swarm", "host", "--force"]));
+    assert!(!is_core_cli_command(&["swarm", "start"]));
+}
+
 #[test]
 fn linear_status_plans_the_linear_settings_read() {
     let plan = classify_core_cli(&["linear", "status"], &context(true, false))
