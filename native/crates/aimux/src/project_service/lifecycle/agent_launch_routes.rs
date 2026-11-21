@@ -187,6 +187,40 @@ pub(super) fn route_agent_migrate(
 ///
 /// Only the `credentialProfiles` block can produce this error, so a config
 /// that is malformed elsewhere does not stop agents from starting.
+/// Refuse a swarm overseer on a machine that does not hold the pin, and claim
+/// the pin when nobody does.
+///
+/// The swarm overseer is pinned to ONE machine, and the default is the machine
+/// it was started from -- so an unclaimed pin is claimed here rather than
+/// asked about. Two of them would each be talking to the same overseers on the
+/// same machines, with nothing downstream able to tell whose instruction it
+/// was answering, which is why this refuses rather than preferring one.
+///
+/// Only a `swarm` role reaches this. Every other role spawns exactly as
+/// before, so a machine with an unreadable swarm block still starts coders and
+/// overseers.
+fn claim_or_refuse_swarm_host(resolver: &PathResolver) -> Result<(), String> {
+    let identity = crate::machine_identity::read_stored(resolver)
+        .map_err(|error| format!("this machine's identity could not be read: {error}"))?
+        // A machine with no persisted identity cannot hold a pin: every one of
+        // them shares the same reserved name, so claiming on its behalf would
+        // pin the swarm to a label rather than to a machine.
+        .ok_or_else(|| {
+            "this machine has no identity yet, so it cannot host the swarm overseer".to_owned()
+        })?;
+    let config = crate::config::try_read_global_config_file(resolver)?.unwrap_or_else(|| json!({}));
+    crate::swarm_host::refuse_unless_swarm_host(&config, &identity.id)?;
+    if crate::swarm_host::swarm_host_decision(&config, &identity.id)
+        == crate::swarm_host::SwarmHostDecision::Unclaimed
+    {
+        // Claimed on the way up, so a second machine starting one afterwards
+        // is refused by name rather than racing this one.
+        let next = crate::swarm_host::with_swarm_host(&config, Some(&identity.id))?;
+        crate::config::write_global_config_file(resolver, &next)?;
+    }
+    Ok(())
+}
+
 fn active_profile_launch_env(resolver: &PathResolver) -> Result<Vec<(String, String)>, String> {
     let config = crate::config::load_global_config_with_resolver(resolver);
     match crate::credential_profiles::parse_credential_profiles(&config) {
@@ -267,6 +301,20 @@ pub(super) fn route_agent_spawn(
             .unwrap_or_default(),
     );
     let supervisor_role = supervisor_role_from_spawn_body(body);
+    // Only a swarm overseer is pinned, so only a swarm overseer is checked.
+    if supervisor_role.as_deref() == Some("swarm")
+        && let Err(error) = claim_or_refuse_swarm_host(&PathResolver::from_env())
+    {
+        log_agent_spawn_route_failure(
+            context,
+            "claim-swarm-host",
+            Some(&tool_key),
+            None,
+            trimmed_string(body.get("worktreePath")).as_deref(),
+            &error,
+        );
+        return json_error(409, error);
+    }
     let team = supervisor_role
         .as_deref()
         .map(|role| supervisor_launch_team_and_env(role, &mut env));
@@ -463,6 +511,20 @@ pub(super) async fn route_agent_spawn_async(
             .unwrap_or_default(),
     );
     let supervisor_role = supervisor_role_from_spawn_body(body);
+    // Only a swarm overseer is pinned, so only a swarm overseer is checked.
+    if supervisor_role.as_deref() == Some("swarm")
+        && let Err(error) = claim_or_refuse_swarm_host(&PathResolver::from_env())
+    {
+        log_agent_spawn_route_failure(
+            context,
+            "claim-swarm-host",
+            Some(&tool_key),
+            None,
+            trimmed_string(body.get("worktreePath")).as_deref(),
+            &error,
+        );
+        return json_error(409, error);
+    }
     let team = supervisor_role
         .as_deref()
         .map(|role| supervisor_launch_team_and_env(role, &mut env));
@@ -2094,6 +2156,97 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    /// An aimux home with a stored identity and the given swarm block, so the
+    /// claim path is exercised against real files rather than a hand-built
+    /// value.
+    fn swarm_home(
+        label: &str,
+        machine: &str,
+        block: Option<serde_json::Value>,
+    ) -> (PathResolver, PathBuf) {
+        let home = std::env::temp_dir().join(format!("aimux-swarm-{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).expect("aimux home");
+        fs::write(
+            home.join("machine.json"),
+            // `version` matters: `read_stored` filters on it, so an identity
+            // without one deserialises and is then dropped as unrecognised --
+            // which my first fixture did, and the claim gate failed with "no
+            // identity yet" against a file that was right there.
+            serde_json::to_string(&json!({ "version": 1, "id": machine, "name": machine }))
+                .expect("identity json"),
+        )
+        .expect("write identity");
+        let config = match block {
+            Some(block) => json!({ "swarm": block }),
+            None => json!({}),
+        };
+        fs::write(
+            home.join("config.json"),
+            serde_json::to_string(&config).expect("config json"),
+        )
+        .expect("write config");
+        let resolver = PathResolver::new(&home, &home, Some(home.to_string_lossy().into_owned()));
+        (resolver, home)
+    }
+
+    /// Starting one where nobody holds the pin CLAIMS it, which is the
+    /// documented default: the swarm overseer belongs to the machine it was
+    /// started from until somebody moves it.
+    #[test]
+    fn an_unclaimed_pin_is_claimed_by_the_machine_that_starts_one() {
+        let (resolver, home) = swarm_home("unclaimed", "mbp", None);
+        claim_or_refuse_swarm_host(&resolver).expect("an unclaimed pin is claimable");
+        let config: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(home.join("config.json")).expect("config"))
+                .expect("config json");
+        assert_eq!(
+            config["swarm"]["host"],
+            json!("mbp"),
+            "the pin was not claimed, so a second machine could start another"
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_pinned_machine_may_start_one_and_the_pin_is_unchanged() {
+        let (resolver, home) = swarm_home("holder", "mbp", Some(json!({ "host": "mbp" })));
+        claim_or_refuse_swarm_host(&resolver).expect("the holder may start one");
+        let config: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(home.join("config.json")).expect("config"))
+                .expect("config json");
+        assert_eq!(config["swarm"]["host"], json!("mbp"));
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The invariant. Two swarm overseers would each be talking to the same
+    /// overseers, so a machine that does not hold the pin refuses and names
+    /// the one that does.
+    #[test]
+    fn a_machine_without_the_pin_refuses_and_names_the_holder() {
+        let (resolver, home) = swarm_home("elsewhere", "mbp", Some(json!({ "host": "mini" })));
+        let error = claim_or_refuse_swarm_host(&resolver)
+            .expect_err("a machine that does not hold the pin must refuse");
+        assert!(error.contains("pinned to mini"), "{error}");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A machine with no persisted identity shares a reserved name with every
+    /// other one, so claiming on its behalf would pin the swarm to a label.
+    #[test]
+    fn a_machine_with_no_identity_cannot_claim_the_pin() {
+        let home =
+            std::env::temp_dir().join(format!("aimux-swarm-nameless-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).expect("aimux home");
+        fs::write(home.join("config.json"), "{}").expect("write config");
+        let resolver = PathResolver::new(&home, &home, Some(home.to_string_lossy().into_owned()));
+        let error = claim_or_refuse_swarm_host(&resolver)
+            .expect_err("a machine with no identity must not claim the pin");
+        assert!(error.contains("no identity yet"), "{error}");
+        let _ = fs::remove_dir_all(&home);
+    }
 
     /// Writes a global config with the given `credentialProfiles` block and
     /// returns a resolver pointed at it, so the helper is exercised against a
