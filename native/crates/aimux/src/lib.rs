@@ -77,6 +77,7 @@ pub mod install_config;
 pub mod jobs;
 pub mod launcher_env;
 pub mod lifecycle_orphans;
+pub mod linear_api;
 pub mod linear_settings;
 pub mod local_ui_server;
 pub mod logs;

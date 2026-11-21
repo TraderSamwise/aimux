@@ -16,6 +16,7 @@ pub mod hosted_outbox;
 pub mod hosted_principals;
 pub mod hosted_rate_limit;
 pub mod hosted_server;
+pub mod linear_http;
 pub mod mobile_push_bridge;
 pub mod relay_client;
 pub mod relay_endpoints;

@@ -44,18 +44,18 @@ pub struct RemoteCommandOutput {
 
 #[cfg(feature = "remote-control")]
 pub use enabled::{
-    command_help, forward_alert_to_mobile_push, forward_alert_to_mobile_push_with_context,
-    has_remote_credentials, host_published_attachment, hosted_backlog_snapshots,
-    plan_remote_core_cli, root_help_commands, run_hosted_root_command, run_remote_cli_action,
-    should_defer_to_hosted_cli,
+    check_linear_credential, command_help, forward_alert_to_mobile_push,
+    forward_alert_to_mobile_push_with_context, has_remote_credentials, host_published_attachment,
+    hosted_backlog_snapshots, plan_remote_core_cli, root_help_commands, run_hosted_root_command,
+    run_remote_cli_action, should_defer_to_hosted_cli,
 };
 
 #[cfg(not(feature = "remote-control"))]
 pub use disabled::{
-    command_help, forward_alert_to_mobile_push, forward_alert_to_mobile_push_with_context,
-    has_remote_credentials, host_published_attachment, hosted_backlog_snapshots,
-    plan_remote_core_cli, root_help_commands, run_hosted_root_command, run_remote_cli_action,
-    should_defer_to_hosted_cli,
+    check_linear_credential, command_help, forward_alert_to_mobile_push,
+    forward_alert_to_mobile_push_with_context, has_remote_credentials, host_published_attachment,
+    hosted_backlog_snapshots, plan_remote_core_cli, root_help_commands, run_hosted_root_command,
+    run_remote_cli_action, should_defer_to_hosted_cli,
 };
 
 #[cfg(feature = "remote-control")]
@@ -66,6 +66,25 @@ mod enabled {
     use crate::remote_cli_vocabulary::RemoteCliAction;
 
     pub use crate::remote::cli::plan_remote_core_cli;
+
+    /// Ask Linear whether a token works, and say whose it is.
+    ///
+    /// Named for the capability rather than for `linear_http`, because a
+    /// far-side MODULE name in this list would put that string in the local
+    /// binary and trip `check-local-build-boundary`. Both the argument and the
+    /// answer are local types, so the local build can name this signature
+    /// without naming anything in `remote/`.
+    pub fn check_linear_credential(token: &str) -> Result<String, String> {
+        use crate::linear_api::{LinearCall, verify_linear_token};
+        match verify_linear_token(&crate::remote::linear_http::HttpLinearApi, token) {
+            LinearCall::Ok(name) => Ok(name),
+            // `failure_line` is exhaustive over the failure variants, so the
+            // fallback below is unreachable rather than a guess at a message.
+            other => Err(other
+                .failure_line()
+                .unwrap_or_else(|| "Linear failed without saying why.".to_owned())),
+        }
+    }
 
     pub fn has_remote_credentials() -> bool {
         let resolver = PathResolver::from_env();
@@ -186,6 +205,13 @@ mod disabled {
     }
 
     /// A local build holds none, which is an answer and not an absence.
+    /// There is no HTTP client in this build, which is a TRUE answer about the
+    /// BINARY rather than a claim about the token. The caller renders it the
+    /// same way it renders a refusal, and nothing here panics.
+    pub fn check_linear_credential(_token: &str) -> Result<String, String> {
+        Err("This build has no HTTP client, so the token cannot be checked.".to_owned())
+    }
+
     pub fn has_remote_credentials() -> bool {
         false
     }
