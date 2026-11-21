@@ -44,6 +44,19 @@ pub fn route_system_text_request(
     let route_url = DaemonRouteUrl::parse(path);
     let pathname = route_url.pathname();
 
+    if pathname == CORE_API_ROUTES.swarm_host_text {
+        return match method {
+            "GET" => Some(swarm_host_text_route(&route_url)),
+            "POST" => Some(set_swarm_host_text_route(&route_url, body)),
+            _ => Some(text_error(
+                405,
+                format!(
+                    "{} answers GET to report the swarm host and POST to move it",
+                    CORE_API_ROUTES.swarm_host_text
+                ),
+            )),
+        };
+    }
     if method == "GET" && pathname == CORE_API_ROUTES.linear_settings_text {
         return Some(linear_settings_text_route(&route_url));
     }
@@ -112,6 +125,103 @@ pub fn route_system_text_request(
 /// more useful than a route that pretends otherwise -- the point of this one
 /// is that somebody can ask where their tasks are going rather than infer it
 /// from which commands behave oddly.
+/// Which machine hosts the swarm overseer.
+pub fn swarm_host_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
+    let resolver = crate::paths::PathResolver::from_env();
+    let this_machine = match crate::machine_identity::read_stored(&resolver) {
+        // A machine with no identity cannot be compared against a pin, and
+        // saying so beats reporting "not the host" -- which would be true of
+        // every machine and useless on all of them.
+        Ok(None) => {
+            return text_error(500, "Error: this machine has no identity yet");
+        }
+        Ok(Some(identity)) => identity.id,
+        Err(error) => {
+            return text_error(
+                500,
+                format!("Error: this machine's identity could not be read: {error}"),
+            );
+        }
+    };
+    let config = crate::config::load_global_config_with_resolver(&resolver);
+    let decision = crate::swarm_host::swarm_host_decision(&config, &this_machine);
+    let report = crate::swarm_host::swarm_host_report(&decision);
+    let lines = render_swarm_host_report(&report, &this_machine);
+    text_or_json_lines(route_url, report, &lines)
+}
+
+/// Move the pin, or clear it.
+///
+/// Read-modify-write against the RAW config file for the reason the credential
+/// profile switch does it: the merged view would bake every default into the
+/// file.
+pub fn set_swarm_host_text_route(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let resolver = crate::paths::PathResolver::from_env();
+    let current = match crate::config::try_read_global_config_file(&resolver) {
+        Ok(Some(config)) => config,
+        Ok(None) => json!({}),
+        Err(error) => return text_error(500, format!("Error: {error}")),
+    };
+    let clear = body
+        .and_then(|body| body.get("clear"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    let machine = string_param(route_url, body, "machine");
+    let chosen = match (clear, machine.as_deref()) {
+        (true, Some(_)) => {
+            return text_error(400, "name a machine or clear the pin, not both");
+        }
+        (true, None) => None,
+        (false, Some(machine)) => Some(machine),
+        (false, None) => {
+            return text_error(400, "name a machine, or clear the pin with --clear");
+        }
+    };
+    let next = match crate::swarm_host::with_swarm_host(&current, chosen) {
+        Ok(next) => next,
+        // An id that is not a machine identity is refused rather than stored:
+        // storing one produces a config that then refuses to start a swarm
+        // overseer anywhere.
+        Err(error) => return text_error(400, format!("Error: {error}")),
+    };
+    if let Err(error) = crate::config::write_global_config_file(&resolver, &next) {
+        return text_error(500, format!("Error: {error}"));
+    }
+    let lines = vec![match chosen {
+        Some(machine) => format!("The swarm overseer is now pinned to {machine}."),
+        None => "The swarm overseer is no longer pinned to any machine.".to_owned(),
+    }];
+    text_or_json_lines(route_url, json!({ "ok": true, "host": chosen }), &lines)
+}
+
+/// Where the pin is, in words, from the asking machine's point of view.
+pub(crate) fn render_swarm_host_report(report: &Value, this_machine: &str) -> Vec<String> {
+    if report.get("ok").and_then(Value::as_bool) != Some(true) {
+        let reason = report
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("the swarm host could not be read");
+        return vec![reason.to_owned()];
+    }
+    if report.get("thisMachine").and_then(Value::as_bool) == Some(true) {
+        return vec![format!(
+            "The swarm overseer is pinned to this machine ({this_machine})."
+        )];
+    }
+    match report.get("host").and_then(Value::as_str) {
+        Some(host) => vec![format!("The swarm overseer is pinned to {host}.")],
+        // Unclaimed, which is not the same as unreadable -- and worth saying
+        // in full, because it is the state in which starting one here claims
+        // it.
+        None => {
+            vec!["No machine is pinned; starting a swarm overseer here would claim it.".to_owned()]
+        }
+    }
+}
+
 pub fn linear_settings_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
     let resolver = crate::paths::PathResolver::from_env();
     // The merged view is right here: this only reads, and settings arriving
@@ -689,6 +799,59 @@ mod linear_settings_render_tests {
         assert!(
             !lines[0].contains("stay in aimux"),
             "an unreadable config claimed the local engine was in charge: {lines:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod swarm_host_render_tests {
+    use super::render_swarm_host_report;
+    use serde_json::json;
+
+    #[test]
+    fn this_machine_holding_the_pin_says_so_and_names_itself() {
+        let lines = render_swarm_host_report(
+            &json!({ "ok": true, "host": null, "thisMachine": true }),
+            "mbp",
+        );
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("this machine (mbp)"), "{lines:?}");
+    }
+
+    #[test]
+    fn another_machine_holding_the_pin_is_named() {
+        let lines = render_swarm_host_report(
+            &json!({ "ok": true, "host": "mini", "thisMachine": false }),
+            "mbp",
+        );
+        assert_eq!(lines, vec!["The swarm overseer is pinned to mini."]);
+    }
+
+    /// Unclaimed is its own line, because it is the state in which starting
+    /// one here claims it -- which a reader needs to know before they do.
+    #[test]
+    fn an_unclaimed_pin_says_starting_here_would_claim_it() {
+        let lines = render_swarm_host_report(
+            &json!({ "ok": true, "host": null, "thisMachine": false }),
+            "mbp",
+        );
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("would claim it"), "{lines:?}");
+    }
+
+    /// Unreadable is not unclaimed. Rendering "no machine is pinned" for a
+    /// config that names one would invite somebody to start a second.
+    #[test]
+    fn an_unreadable_pin_renders_its_reason_not_an_invitation() {
+        let lines = render_swarm_host_report(
+            &json!({ "ok": false, "error": "swarm.host is \"Not A Machine\", which is not a machine id" }),
+            "mbp",
+        );
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("not a machine id"), "{lines:?}");
+        assert!(
+            !lines[0].contains("would claim it"),
+            "an unreadable pin invited a second swarm overseer: {lines:?}"
         );
     }
 }
