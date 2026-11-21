@@ -495,6 +495,46 @@ const PEER_INPUT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5
 /// this bound is what a caller actually waits.
 const FLEET_USAGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
 
+/// What one fleet-wide peer read needs to know about itself.
+///
+/// Every such read is the same shape -- ask each online machine one route,
+/// keep every machine in the report including the ones that said nothing --
+/// and only these four things differ. Carried as a value so the fan-out below
+/// exists once: a second copy of it is how two fleet surfaces start answering
+/// differently, which is the whole reason the report's ordering had to be
+/// moved out of a renderer in 010ee6aab.
+pub struct FleetPeerRead {
+    /// The peer route every machine is asked.
+    ///
+    /// Must be admitted by `assert_peer_allowed`, which is a CLOSED list: a
+    /// route missing from it means every machine answers 403 and the report is
+    /// a wall of refusals rather than an error.
+    pub route: &'static str,
+    /// Bounds the WHOLE fan-out, not each machine, because the text route that
+    /// calls this holds the global runtime mutex for the duration.
+    pub budget: std::time::Duration,
+    /// Names the `block_on` seam, so a stack says which fleet read is waiting.
+    pub seam: &'static str,
+    /// What to say about a machine whose task produced no outcome at all.
+    pub task_failure: &'static str,
+}
+
+/// Every fleet read this binary can perform.
+///
+/// Exists so `every_fleet_peer_read_names_a_route_open_to_a_peer` can check
+/// them against the peer allowlist without naming each one, which is the half
+/// a new read would otherwise forget.
+pub fn fleet_peer_reads() -> &'static [FleetPeerRead] {
+    &[FLEET_USAGE_READ]
+}
+
+const FLEET_USAGE_READ: FleetPeerRead = FleetPeerRead {
+    route: crate::project_api_contract::routes::USAGE,
+    budget: FLEET_USAGE_TIMEOUT,
+    seam: "relay:fleet-usage",
+    task_failure: "fleet read task did not finish",
+};
+
 /// Owns the relay client for the life of the daemon.
 #[derive(Default)]
 pub struct RelaySupervisor {
@@ -726,6 +766,25 @@ impl RelaySupervisor {
     /// the machine it could not reach says that machine has nothing to report,
     /// which is a different claim and a false one.
     pub fn fleet_usage(&self, machine_ids: &[String]) -> Result<Value, String> {
+        self.fleet_peer_read(machine_ids, &FLEET_USAGE_READ)
+    }
+
+    /// Ask every machine one peer route and report what each of them said.
+    ///
+    /// The fan-out itself, shared by every fleet read. Concurrent rather than
+    /// serial because the calling text route holds the runtime mutex; see
+    /// `FleetPeerRead::budget`, which bounds the whole thing instead of each
+    /// machine.
+    ///
+    /// Every machine asked comes back in the report, including the ones that
+    /// said nothing and the one whose task panicked. A fleet view that omits
+    /// the machine it could not reach says that machine has nothing to report,
+    /// which is a different claim and a false one.
+    pub fn fleet_peer_read(
+        &self,
+        machine_ids: &[String],
+        read: &FleetPeerRead,
+    ) -> Result<Value, String> {
         let Ok(current) = self.current.lock() else {
             return Err("relay_unavailable".to_owned());
         };
@@ -739,19 +798,17 @@ impl RelaySupervisor {
         drop(current);
         let asked: Vec<String> = machine_ids.to_vec();
         let spawned = asked.clone();
+        // Copied out before the move: the spawned tasks outlive this
+        // borrow of `read`.
+        let route = read.route;
+        let budget = read.budget;
         let ask = async move {
             let mut tasks = tokio::task::JoinSet::new();
             for machine_id in spawned {
                 let runner = Arc::clone(&runner);
                 tasks.spawn(async move {
                     let answer = runner
-                        .request_peer(
-                            &machine_id,
-                            "GET",
-                            crate::project_api_contract::routes::USAGE,
-                            &json!({}),
-                            FLEET_USAGE_TIMEOUT,
-                        )
+                        .request_peer(&machine_id, "GET", route, &json!({}), budget)
                         .await;
                     match answer {
                         Ok(answer) => crate::fleet_usage::FleetPeerUsage::Answered {
@@ -778,11 +835,11 @@ impl RelaySupervisor {
             peers
         };
         // aimux-async-seam: permanent - a sync daemon text route awaits its peers
-        let peers = block_on_named("relay:fleet-usage", ask);
+        let peers = block_on_named(read.seam, ask);
         let peers = crate::fleet_usage::with_machines_that_produced_nothing(
             &asked,
             peers,
-            "fleet read task did not finish",
+            read.task_failure,
         );
         Ok(crate::fleet_usage::build_fleet_usage_report(&peers))
     }

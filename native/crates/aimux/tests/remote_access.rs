@@ -927,6 +927,37 @@ fn a_peer_may_read_this_machines_quota_headroom() {
     assert!(allowed.ok, "{:?}", allowed.error);
 }
 
+/// Every fleet read's route must be one a peer is allowed to answer.
+///
+/// `assert_peer_allowed` is a CLOSED list, and the fan-out cannot tell a 403
+/// from any other refusal: a fleet read pointed at a route that is not open
+/// comes back as a report in which every single machine failed, which reads as
+/// a broken fleet rather than as a mistake in our own allowlist. There is no
+/// test of the fan-out itself -- it needs a live relay -- so this ties the two
+/// places that have to agree.
+///
+/// Keyed on the spec the fan-out actually uses, not on a repeat of the route
+/// string, so a read added with the wrong route fails here rather than at
+/// runtime on somebody's phone.
+#[test]
+fn every_fleet_peer_read_names_a_route_open_to_a_peer() {
+    for read in aimux::remote::daemon_relay::fleet_peer_reads() {
+        let allowed = allow(
+            Some(&peer(Some("mbp"))),
+            "GET",
+            read.route,
+            "",
+            None,
+            Some(PROJECT_ROOT),
+        );
+        assert!(
+            allowed.ok,
+            "fleet read on {} is refused to a peer, so every machine would answer 403: {:?}",
+            read.route, allowed.error
+        );
+    }
+}
+
 /// The verb belongs to the route, not to the gate.
 ///
 /// Opening a read with one global method rule would have meant relaxing it to
