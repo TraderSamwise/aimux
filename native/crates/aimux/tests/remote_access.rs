@@ -958,6 +958,49 @@ fn every_fleet_peer_read_names_a_route_open_to_a_peer() {
     }
 }
 
+/// A peer may read which credential directory each tool launches with.
+///
+/// The companion to the quota read. A peer that can see a machine is out of
+/// room cannot act on it without knowing WHICH account ran out, and the pair
+/// is what makes switching an account from another machine possible.
+///
+/// It carries directory paths and no credentials, which is why it is a read a
+/// peer may have at all.
+#[test]
+fn a_peer_may_read_which_tool_accounts_this_machine_launches_with() {
+    let allowed = allow(
+        Some(&peer(Some("mbp"))),
+        "GET",
+        project_routes::TOOL_ACCOUNTS,
+        "",
+        None,
+        Some(PROJECT_ROOT),
+    );
+    assert!(allowed.ok, "{:?}", allowed.error);
+}
+
+/// And the inverse, because opening a door is only half of it.
+///
+/// A peer gets this route as a READ. Admitting a POST would hand the handler a
+/// request whose body was never parsed, which is the shape that made every
+/// body refusal vacuous on the input route -- the reason each peer route names
+/// its own verb rather than sharing one global rule.
+#[test]
+fn a_peer_may_not_write_to_the_tool_accounts_route() {
+    let written = allow(
+        Some(&peer(Some("mbp"))),
+        "POST",
+        project_routes::TOOL_ACCOUNTS,
+        "",
+        Some(&json!({ "claudeConfigDir": "/somewhere/else" })),
+        Some(PROJECT_ROOT),
+    );
+    assert!(
+        !written.ok,
+        "POST /tool-accounts was allowed, so a peer could try to set this machine's account"
+    );
+}
+
 /// The verb belongs to the route, not to the gate.
 ///
 /// Opening a read with one global method rule would have meant relaxing it to

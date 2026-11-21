@@ -12,6 +12,7 @@ pub const ROUTES: &[Spec] = &[
     Spec::exact(Method::Get, routes::STATE, Group::Reads),
     Spec::exact(Method::Get, routes::DESKTOP_STATE, Group::Reads),
     Spec::exact(Method::Get, routes::USAGE, Group::Reads),
+    Spec::exact(Method::Get, routes::TOOL_ACCOUNTS, Group::Reads),
     Spec::exact(Method::Get, routes::COORDINATION_WORKLIST, Group::Reads),
     Spec::exact(Method::Get, routes::PROJECT_OBSERVABILITY, Group::Reads),
     Spec::exact(Method::Get, routes::TOPOLOGY, Group::Reads),
