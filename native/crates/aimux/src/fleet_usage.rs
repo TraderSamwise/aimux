@@ -108,6 +108,35 @@ pub fn with_machines_that_produced_nothing(
     peers
 }
 
+/// Which machines there are to ask, or the fact that we cannot say.
+///
+/// `Unknown` is not an empty fleet. The relay pushes the owner table as a
+/// snapshot, so before the first one arrives -- or if the lock holding it is
+/// poisoned -- this machine genuinely does not know who else is out there.
+/// Reporting that as "nobody" would render as a healthy fleet of one, which
+/// is the same mistake as a scan that cannot tell an absent store from an
+/// unreadable one. `project_owner_for` already answers its own question this
+/// way, with `Unknown` separate from `Unowned`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FleetMachines {
+    /// No snapshot has arrived, or it could not be read.
+    Unknown(String),
+    /// The relay said who is out there. Possibly nobody, which is an answer.
+    Known(Vec<String>),
+}
+
+/// The answer when the machine list itself is what could not be had.
+///
+/// `ok: false` and no `machines` key at all, so it cannot be mistaken for a
+/// successful read of an empty fleet. The two look identical if this returns
+/// `machines: []`, and they mean opposite things.
+pub fn unknown_machines_report(reason: &str) -> Value {
+    json!({
+        "ok": false,
+        "error": reason,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,6 +168,30 @@ mod tests {
             .expect("strix is missing");
         assert_eq!(strix["ok"], false);
         assert_eq!(strix["error"], "fan-out task did not finish");
+    }
+
+    #[test]
+    fn not_knowing_the_machines_is_not_an_empty_fleet() {
+        let unknown = unknown_machines_report("the relay has not sent the owner table yet");
+        let empty_but_known = build_fleet_usage_report(&[]);
+
+        // The distinction the whole enum exists for. These two must not be
+        // confusable: one says "I could not find out", the other says "I
+        // found out, and there is nobody".
+        assert_eq!(unknown["ok"], false);
+        assert_eq!(empty_but_known["ok"], true);
+        assert!(
+            unknown.get("machines").is_none(),
+            "an unknown fleet offered a machine list: {unknown:?}"
+        );
+        assert_eq!(empty_but_known["asked"], 0);
+        assert!(
+            unknown["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("owner table")),
+            "{:?}",
+            unknown["error"]
+        );
     }
 
     #[test]

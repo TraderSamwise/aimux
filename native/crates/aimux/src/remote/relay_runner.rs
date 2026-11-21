@@ -910,6 +910,36 @@ impl RelayRunner {
     /// asked and nobody owns this, asked and here is the owner. Collapsing the
     /// first two is how a sender ends up believing a checkout is unowned when
     /// it simply has not heard.
+    /// Which machines the relay says are out there, or why we cannot say.
+    ///
+    /// Same three-way shape as `project_owner_for` below, and for the same
+    /// reason: a poisoned lock and a snapshot that has not arrived are both
+    /// "I do not know", which is a different answer from "there is nobody"
+    /// and must not be flattened into it.
+    pub fn fleet_machines(&self) -> crate::fleet_usage::FleetMachines {
+        let Ok(owners) = self.project_owners.lock() else {
+            return crate::fleet_usage::FleetMachines::Unknown(
+                "the owner table could not be read".to_owned(),
+            );
+        };
+        let Some(owners) = owners.as_ref() else {
+            return crate::fleet_usage::FleetMachines::Unknown(
+                "the relay has not sent the owner table yet".to_owned(),
+            );
+        };
+        let mut machines: Vec<String> = owners
+            .iter()
+            .filter(|owner| owner.online)
+            .map(|owner| owner.machine_id.clone())
+            .filter(|machine_id| machine_id != self.machine_id())
+            .collect();
+        // One machine can own several checkouts, and asking it once per
+        // checkout would multiply the fan-out by however many repos it holds.
+        machines.sort();
+        machines.dedup();
+        crate::fleet_usage::FleetMachines::Known(machines)
+    }
+
     pub fn project_owner_for(
         &self,
         project_root: &str,
