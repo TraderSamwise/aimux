@@ -7,13 +7,17 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { credentialProfileView, profileDirectories } from "@/lib/credential-profile-view";
+import { canClaimSwarmHost, swarmHostView } from "@/lib/swarm-host-view";
 import {
   getCredentialProfiles,
   getFleetUsage,
+  getSwarmHost,
   setCredentialProfile,
+  setSwarmHost,
   type CredentialProfile,
   type CredentialProfilesResponse,
   type FleetUsageMachine,
+  type SwarmHostResponse,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
@@ -184,6 +188,106 @@ function CredentialProfilePanel() {
   );
 }
 
+/**
+ * Where the swarm overseer is pinned, and a way to move it here.
+ *
+ * Only ONE move is offered -- unpinning -- because that is what a person on
+ * this machine can act on without deciding for another. `canClaimSwarmHost`
+ * keeps the control away from the states the daemon would refuse: offering a
+ * button that is going to be refused is worse than not offering it.
+ */
+function SwarmHostPanel() {
+  const { getToken } = useAuth();
+  const [resource, setResource] = useState<{
+    value: SwarmHostResponse | null;
+    error: string | null;
+    pending: boolean;
+  }>({ value: null, error: null, pending: false });
+
+  const load = useCallback(async () => {
+    setResource((current) => ({ ...current, pending: true }));
+    try {
+      const token = await getToken();
+      const value = await getSwarmHost({ token });
+      setResource({ value, error: null, pending: false });
+    } catch (error) {
+      setResource((current) => ({
+        // The last good answer is kept, so a failed refresh does not read as
+        // an unpinned swarm -- which would invite a second overseer.
+        ...current,
+        error: `Unable to read the swarm host: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        pending: false,
+      }));
+    }
+  }, [getToken]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const unpin = useCallback(async () => {
+    setResource((current) => ({ ...current, pending: true }));
+    try {
+      const token = await getToken();
+      const result = await setSwarmHost(null, { token });
+      if (!result.ok) throw new Error(result.error ?? "the move was refused");
+      await load();
+    } catch (error) {
+      setResource((current) => ({
+        ...current,
+        error: `Unable to move the swarm host: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        pending: false,
+      }));
+    }
+  }, [getToken, load]);
+
+  const view = swarmHostView(resource.value);
+
+  return (
+    <Card className="mb-4 p-4">
+      <View className="mb-2 flex-row items-center justify-between">
+        <Text className="font-mono text-xs font-semibold text-[#b8bbc6]">Swarm overseer</Text>
+        {view.kind === "here" || view.kind === "elsewhere" ? (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={resource.pending}
+            onPress={() => void unpin()}
+          >
+            <Text>Unpin</Text>
+          </Button>
+        ) : null}
+      </View>
+
+      {resource.error ? (
+        <Text className="mb-1 font-mono text-xs text-[#f0a0a0]">{resource.error}</Text>
+      ) : null}
+
+      <Text className="font-mono text-xs text-muted-foreground">
+        {view.kind === "unreadable"
+          ? view.reason
+          : view.kind === "loading"
+            ? "Reading the swarm host..."
+            : view.kind === "here"
+              ? "Pinned to this machine."
+              : view.kind === "elsewhere"
+                ? `Pinned to ${view.host}.`
+                : "Not pinned; the next machine to start one claims it."}
+      </Text>
+
+      {canClaimSwarmHost(view) ? (
+        <Text className="mt-1 font-mono text-xs text-muted-foreground">
+          Starting a swarm overseer here would claim it.
+        </Text>
+      ) : null}
+    </Card>
+  );
+}
+
 export default function FleetScreen() {
   const { getToken } = useAuth();
   const resource = useAtomValue(fleetUsageResourceAtom);
@@ -231,6 +335,8 @@ export default function FleetScreen() {
           </Button>
         }
       />
+
+      <SwarmHostPanel />
 
       <CredentialProfilePanel />
 

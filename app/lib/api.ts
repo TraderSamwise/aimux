@@ -654,6 +654,57 @@ export type FleetUsageResponse = {
   error?: string;
 };
 
+export type SwarmHostResponse = {
+  ok: boolean;
+  /**
+   * The machine that holds the pin, or null. Null means EITHER this machine
+   * holds it -- read `thisMachine` -- or nobody does, which is why both fields
+   * travel: a single nullable string could not tell those apart.
+   */
+  host?: string | null;
+  thisMachine?: boolean;
+  error?: string;
+};
+
+/**
+ * Which machine hosts the swarm overseer, from the asked machine's point of
+ * view.
+ *
+ * Per machine because the answer is relative: "this machine" means whichever
+ * one answered, so `machineId` decides whose perspective you get.
+ */
+export async function getSwarmHost(opts?: ApiOpts): Promise<SwarmHostResponse> {
+  const path = `${CORE_API_ROUTES.swarmHostText}?json=1`;
+  if (shouldRouteViaRelay())
+    return callDaemonViaRelay<SwarmHostResponse>("GET", path, undefined, opts);
+  return callJson<SwarmHostResponse>(`${getDaemonUrl()}${path}`, { method: "GET" }, opts);
+}
+
+/**
+ * Move the swarm overseer's pin to a machine, or clear it.
+ *
+ * `null` clears it, which leaves nobody holding it -- the only way to hand the
+ * swarm to a machine that is currently off, since the next machine to start
+ * one claims it.
+ *
+ * The daemon refuses anything that is not a machine id rather than storing it,
+ * because a stored non-id produces a config that then refuses to start a swarm
+ * overseer anywhere.
+ */
+export async function setSwarmHost(
+  machine: string | null,
+  opts?: ApiOpts,
+): Promise<SwarmHostResponse> {
+  const path = CORE_API_ROUTES.swarmHostText;
+  const body = machine === null ? { clear: true } : { machine };
+  if (shouldRouteViaRelay()) return callDaemonViaRelay<SwarmHostResponse>("POST", path, body, opts);
+  return callJson<SwarmHostResponse>(
+    `${getDaemonUrl()}${path}`,
+    { method: "POST", body: JSON.stringify(body) },
+    opts,
+  );
+}
+
 /** One credential profile this machine has. */
 export type CredentialProfile = {
   name: string;
