@@ -486,6 +486,15 @@ fn security_notification(title: &str, message: &str) {
 /// daemon stop answering while they wait.
 const PEER_INPUT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// How long the whole fleet read may take, not how long each machine may take.
+///
+/// Same reason as above, and worse: this one asks several machines. Run
+/// serially, four machines at five seconds each is twenty seconds with the
+/// runtime mutex held, which is not a slow read, it is an outage. The fan-out
+/// is concurrent so the wait is the slowest machine rather than the sum, and
+/// this bound is what a caller actually waits.
+const FLEET_USAGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+
 /// Owns the relay client for the life of the daemon.
 #[derive(Default)]
 pub struct RelaySupervisor {
@@ -678,6 +687,78 @@ impl RelaySupervisor {
             // type that defines the distinction is the one that should say it.
             Err(error) => Err(error.message()),
         }
+    }
+
+    /// Ask every machine what its tool accounts have left.
+    ///
+    /// The first fleet read. Concurrent rather than serial because the text
+    /// route holds the runtime mutex: see `FLEET_USAGE_TIMEOUT`, which bounds
+    /// the whole fan-out instead of each machine.
+    ///
+    /// Every machine asked comes back in the report, including the ones that
+    /// said nothing and the one whose task panicked. A fleet view that omits
+    /// the machine it could not reach says that machine has nothing to report,
+    /// which is a different claim and a false one.
+    pub fn fleet_usage(&self, machine_ids: &[String]) -> Result<Value, String> {
+        let Ok(current) = self.current.lock() else {
+            return Err("relay_unavailable".to_owned());
+        };
+        let Some((runner, _)) = current.as_ref() else {
+            return Err("relay_off".to_owned());
+        };
+        let runner = Arc::clone(runner);
+        // Dropped before the wait, for the reason `forward_agent_input` gives:
+        // held across `block_on_named` this lock stops every other method on
+        // this type for the whole deadline.
+        drop(current);
+        let asked: Vec<String> = machine_ids.to_vec();
+        let spawned = asked.clone();
+        let ask = async move {
+            let mut tasks = tokio::task::JoinSet::new();
+            for machine_id in spawned {
+                let runner = Arc::clone(&runner);
+                tasks.spawn(async move {
+                    let answer = runner
+                        .request_peer(
+                            &machine_id,
+                            "GET",
+                            crate::project_api_contract::routes::USAGE,
+                            &json!({}),
+                            FLEET_USAGE_TIMEOUT,
+                        )
+                        .await;
+                    match answer {
+                        Ok(answer) => crate::fleet_usage::FleetPeerUsage::Answered {
+                            machine_id,
+                            status: answer.status,
+                            body: answer.body,
+                        },
+                        Err(error) => crate::fleet_usage::FleetPeerUsage::Unanswered {
+                            machine_id,
+                            reason: error.message(),
+                        },
+                    }
+                });
+            }
+            let mut peers = Vec::new();
+            while let Some(joined) = tasks.join_next().await {
+                // A `JoinError` is not an absent machine, and it does not say
+                // whose task it was. Nothing is pushed for it here; the diff
+                // below is what names the machine that produced nothing.
+                if let Ok(peer) = joined {
+                    peers.push(peer);
+                }
+            }
+            peers
+        };
+        // aimux-async-seam: permanent - a sync daemon text route awaits its peers
+        let peers = block_on_named("relay:fleet-usage", ask);
+        let peers = crate::fleet_usage::with_machines_that_produced_nothing(
+            &asked,
+            peers,
+            "fleet read task did not finish",
+        );
+        Ok(crate::fleet_usage::build_fleet_usage_report(&peers))
     }
 
     /// Report where the project services are listening, or say why it could
