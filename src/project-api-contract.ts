@@ -9,6 +9,7 @@ export const PROJECT_API_ROUTES = {
   state: "/state",
   desktopState: "/desktop-state",
   usage: "/usage",
+  toolAccounts: "/tool-accounts",
   usageClaudeStatusline: "/usage/claude/statusline",
   coordinationWorklist: "/coordination-worklist",
   projectObservability: "/project-observability",

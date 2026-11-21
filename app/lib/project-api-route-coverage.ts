@@ -17,6 +17,10 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/state": "client-api",
   "/desktop-state": "client-api",
   "/usage": "client-api",
+  // Read by another DAEMON, not by this app: the fleet fan-out asks each
+  // machine this route peer-to-peer, and the app reads the merged core route
+  // instead. Runtime-to-runtime, like the hooks above.
+  "/tool-accounts": "internal-runtime",
   "/usage/claude/statusline": "internal-runtime",
   "/coordination-worklist": "client-api",
   "/project-observability": "client-api",

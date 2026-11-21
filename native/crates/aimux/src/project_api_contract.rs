@@ -6,6 +6,7 @@ pub mod routes {
     pub const STATE: &str = "/state";
     pub const DESKTOP_STATE: &str = "/desktop-state";
     pub const USAGE: &str = "/usage";
+    pub const TOOL_ACCOUNTS: &str = "/tool-accounts";
     pub const USAGE_CLAUDE_STATUSLINE: &str = "/usage/claude/statusline";
     pub const COORDINATION_WORKLIST: &str = "/coordination-worklist";
     pub const PROJECT_OBSERVABILITY: &str = "/project-observability";
@@ -416,6 +417,7 @@ pub fn collect_project_api_routes() -> Vec<&'static str> {
         STATE,
         DESKTOP_STATE,
         USAGE,
+        TOOL_ACCOUNTS,
         USAGE_CLAUDE_STATUSLINE,
         COORDINATION_WORKLIST,
         PROJECT_OBSERVABILITY,

@@ -237,6 +237,25 @@ pub fn route_usage_monitor_request(
             ),
         });
     }
+    if method.eq_ignore_ascii_case("GET") && pathname == "/tool-accounts" {
+        // Answered HERE rather than on the daemon because this is the process
+        // that launches agents: `agent_session_launch` builds their env from
+        // this one, so this is the env a launch actually carries. The daemon's
+        // own `/core/tool-accounts-text` reports its own env, which reaches
+        // here by inheritance.
+        let dirs = crate::managed_launch_env::launch_tool_dirs(std::env::vars());
+        return Some(ProjectServiceDispatchResponse::json(
+            200,
+            json!({
+                "ok": true,
+                // Null, not a path: see `launch_tool_dirs`. An unnamed
+                // directory means the tool uses its own default, and naming
+                // one here would report a path nobody configured.
+                "claudeConfigDir": dirs.claude_config_dir,
+                "codexHome": dirs.codex_home,
+            }),
+        ));
+    }
     if method.eq_ignore_ascii_case("POST") && pathname == "/usage/claude/statusline" {
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         return Some(match store_claude_quota(context, body, now) {

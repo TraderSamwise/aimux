@@ -10,7 +10,11 @@
       "source": "src/project-api-contract.test.ts",
       "api": "routeInvariants",
       "input": {},
-      "output": { "count": 131, "allAbsolute": true, "uniqueCount": 131 },
+      "output": {
+        "count": 132,
+        "allAbsolute": true,
+        "uniqueCount": 132
+      },
       "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
     },
     {
@@ -103,7 +107,13 @@
           "topology",
           "worktrees"
         ],
-        "serviceLifecycle": ["desktop-state", "project-observability", "services", "topology", "worktrees"],
+        "serviceLifecycle": [
+          "desktop-state",
+          "project-observability",
+          "services",
+          "topology",
+          "worktrees"
+        ],
         "worktreeLifecycle": [
           "agents",
           "desktop-state",
@@ -113,12 +123,33 @@
           "topology",
           "worktrees"
         ],
-        "workflow": ["coordination-worklist", "project-observability", "tasks", "threads"],
-        "notifications": ["coordination-worklist", "notifications", "project-observability"],
-        "team": ["coordination-worklist", "project-observability", "tasks", "team", "threads"],
-        "library": ["library"],
-        "plans": ["plans"],
-        "workOutline": ["work-outline"],
+        "workflow": [
+          "coordination-worklist",
+          "project-observability",
+          "tasks",
+          "threads"
+        ],
+        "notifications": [
+          "coordination-worklist",
+          "notifications",
+          "project-observability"
+        ],
+        "team": [
+          "coordination-worklist",
+          "project-observability",
+          "tasks",
+          "team",
+          "threads"
+        ],
+        "library": [
+          "library"
+        ],
+        "plans": [
+          "plans"
+        ],
+        "workOutline": [
+          "work-outline"
+        ],
         "runtime": [
           "agents",
           "coordination-worklist",
@@ -127,7 +158,10 @@
           "topology",
           "worktrees"
         ],
-        "operationFailures": ["desktop-state", "project-observability"],
+        "operationFailures": [
+          "desktop-state",
+          "project-observability"
+        ],
         "repair": [
           "agents",
           "coordination-worklist",
@@ -155,22 +189,56 @@
       "api": "viewsForMutationRoutes",
       "input": {
         "items": [
-          { "method": "PUT", "pathname": "/plans/codex-1" },
-          { "method": "POST", "pathname": "/notifications/read" },
-          { "method": "POST", "pathname": "/agents/spawn" },
-          { "method": "POST", "pathname": "/live-pane/interrupt" },
-          { "method": "POST", "pathname": "/tasks/assign" },
-          { "method": "GET", "pathname": "/control/switch-next" },
-          { "method": "POST", "pathname": "/future-mutation" },
-          { "method": "GET", "pathname": "/agents" }
+          {
+            "method": "PUT",
+            "pathname": "/plans/codex-1"
+          },
+          {
+            "method": "POST",
+            "pathname": "/notifications/read"
+          },
+          {
+            "method": "POST",
+            "pathname": "/agents/spawn"
+          },
+          {
+            "method": "POST",
+            "pathname": "/live-pane/interrupt"
+          },
+          {
+            "method": "POST",
+            "pathname": "/tasks/assign"
+          },
+          {
+            "method": "GET",
+            "pathname": "/control/switch-next"
+          },
+          {
+            "method": "POST",
+            "pathname": "/future-mutation"
+          },
+          {
+            "method": "GET",
+            "pathname": "/agents"
+          }
         ]
       },
       "output": [
-        { "method": "PUT", "pathname": "/plans/codex-1", "views": ["plans"] },
+        {
+          "method": "PUT",
+          "pathname": "/plans/codex-1",
+          "views": [
+            "plans"
+          ]
+        },
         {
           "method": "POST",
           "pathname": "/notifications/read",
-          "views": ["coordination-worklist", "notifications", "project-observability"]
+          "views": [
+            "coordination-worklist",
+            "notifications",
+            "project-observability"
+          ]
         },
         {
           "method": "POST",
@@ -203,7 +271,12 @@
         {
           "method": "POST",
           "pathname": "/tasks/assign",
-          "views": ["coordination-worklist", "project-observability", "tasks", "threads"]
+          "views": [
+            "coordination-worklist",
+            "project-observability",
+            "tasks",
+            "threads"
+          ]
         },
         {
           "method": "GET",
@@ -238,7 +311,11 @@
             "worktrees"
           ]
         },
-        { "method": "GET", "pathname": "/agents", "views": null }
+        {
+          "method": "GET",
+          "pathname": "/agents",
+          "views": null
+        }
       ],
       "inputSha256": "3179c883927a22b9abf67ea11d910336b26880f073cfb7614fc8f43a3b5f656b"
     },
@@ -249,15 +326,36 @@
       "api": "mutationReasons",
       "input": {
         "items": [
-          { "method": "post", "pathname": "/tasks/assign" },
-          { "method": "", "pathname": "" },
-          { "method": "GET", "pathname": "/control/switch-next" }
+          {
+            "method": "post",
+            "pathname": "/tasks/assign"
+          },
+          {
+            "method": "",
+            "pathname": ""
+          },
+          {
+            "method": "GET",
+            "pathname": "/control/switch-next"
+          }
         ]
       },
       "output": [
-        { "method": "post", "pathname": "/tasks/assign", "reason": "POST /tasks/assign" },
-        { "method": "", "pathname": "", "reason": "REQUEST /" },
-        { "method": "GET", "pathname": "/control/switch-next", "reason": "GET /control/switch-next" }
+        {
+          "method": "post",
+          "pathname": "/tasks/assign",
+          "reason": "POST /tasks/assign"
+        },
+        {
+          "method": "",
+          "pathname": "",
+          "reason": "REQUEST /"
+        },
+        {
+          "method": "GET",
+          "pathname": "/control/switch-next",
+          "reason": "GET /control/switch-next"
+        }
       ],
       "inputSha256": "247ff46d619fd04ef742045c8a8d5a0d1fa3b4e1c03d9e4a35ba36224404d376"
     }

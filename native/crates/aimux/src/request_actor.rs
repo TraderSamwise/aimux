@@ -278,6 +278,18 @@ fn assert_peer_allowed(
             // fact a peer needs before it can sensibly ask anything else: whether
             // the tool account behind an agent here has room left.
             PeerRoute::Read
+        } else if pathname == project_routes::TOOL_ACCOUNTS {
+            // WHICH account that headroom belongs to. Opened for the same
+            // reason and with the same scope as the quota read above: a peer
+            // that can see a machine is out of room cannot act on it without
+            // knowing which credential directory ran out, and the pair is what
+            // makes switching an account from another machine possible.
+            //
+            // It reports directory PATHS and no credentials, which is why it is
+            // a read a peer may have at all. The paths are chosen by whoever
+            // configured the profiles, so they are this account's own names for
+            // its own accounts.
+            PeerRoute::Read
         } else {
             return refuse_route();
         };
