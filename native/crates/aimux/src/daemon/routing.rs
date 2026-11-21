@@ -278,6 +278,7 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.tool_accounts_text,
     crate::core_command_contract::CORE_API_ROUTES.credential_profiles_text,
     crate::core_command_contract::CORE_API_ROUTES.linear_settings_text,
+    crate::core_command_contract::CORE_API_ROUTES.linear_check_text,
     crate::core_command_contract::CORE_API_ROUTES.swarm_host_text,
     crate::core_command_contract::CORE_API_ROUTES.graveyard_cleanup_text,
     crate::core_command_contract::CORE_API_ROUTES.graveyard_list_text,

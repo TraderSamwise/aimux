@@ -73,6 +73,7 @@ export const CORE_API_ROUTES = {
   toolAccountsText: "/core/tool-accounts-text",
   credentialProfilesText: "/core/credential-profiles-text",
   linearSettingsText: "/core/linear-settings-text",
+  linearCheckText: "/core/linear-check-text",
   swarmHostText: "/core/swarm-host-text",
   logsTailText: "/core/logs/tail-text",
   metadataText: "/core/metadata-text",

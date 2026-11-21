@@ -60,6 +60,9 @@ pub fn route_system_text_request(
     if method == "GET" && pathname == CORE_API_ROUTES.linear_settings_text {
         return Some(linear_settings_text_route(&route_url));
     }
+    if method == "GET" && pathname == CORE_API_ROUTES.linear_check_text {
+        return Some(linear_check_text_route(&route_url));
+    }
     if pathname == CORE_API_ROUTES.credential_profiles_text {
         // One path, two verbs: GET lists what this machine has, POST chooses.
         // Anything else is refused rather than silently treated as a read,
@@ -256,6 +259,76 @@ pub fn linear_settings_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResp
 }
 
 /// Where tasks go, in words, because that is the question somebody is asking.
+/// Ask Linear whether the credential actually works.
+///
+/// Separate from `linear status` on purpose. Status is LOCAL and instant: it
+/// reads the config and the environment. This one makes a request, so it can
+/// be slow and it can fail for reasons that have nothing to do with the
+/// settings being right -- folding it into status would make a config read
+/// depend on the network.
+pub fn linear_check_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
+    let resolver = crate::paths::PathResolver::from_env();
+    let config = crate::config::load_global_config_with_resolver(&resolver);
+    let settings = crate::linear_settings::parse_linear_settings(&config);
+    let token =
+        crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
+
+    let outcome = match &token {
+        // Nothing to ask yet, so nothing is asked. Re-read here rather than
+        // carried out of `resolve_linear_token`, which deliberately keeps the
+        // VALUE out of its result so a token cannot ride along in a report.
+        crate::linear_settings::LinearToken::Readable { env, .. } => match std::env::var(env) {
+            Ok(value) => LinearCheckOutcome::Asked(
+                crate::remote_control_edge::check_linear_credential(value.trim()),
+            ),
+            // Resolved a moment ago and gone now. Rare, but reporting it as a
+            // refusal would blame the token for a race.
+            Err(_) => LinearCheckOutcome::NotAsked(
+                "The token variable disappeared between reading it and using it.".to_owned(),
+            ),
+        },
+        other => LinearCheckOutcome::NotAsked(crate::linear_settings::linear_token_line(other)),
+    };
+
+    let (report, lines) = linear_check_report(&outcome);
+    text_or_json_lines(route_url, report, &lines)
+}
+
+/// Whether a request was actually made, and what it said.
+///
+/// The distinction is the point: NOT asking is not the same as asking and
+/// being refused. A report that called an unset variable "Linear refused the
+/// token" would be a claim about a call that never happened, and would send
+/// somebody to rotate a credential that is fine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinearCheckOutcome {
+    /// No request was made, and this is why.
+    NotAsked(String),
+    /// A request was made, and this is its result.
+    Asked(Result<String, String>),
+}
+
+/// Build the check's report. Pure, so all three outcomes are provable without
+/// an environment or a network.
+pub fn linear_check_report(outcome: &LinearCheckOutcome) -> (Value, Vec<String>) {
+    match outcome {
+        LinearCheckOutcome::NotAsked(reason) => (
+            serde_json::json!({ "ok": false, "checked": false, "reason": reason }),
+            vec![reason.clone()],
+        ),
+        LinearCheckOutcome::Asked(Ok(viewer)) => (
+            serde_json::json!({ "ok": true, "checked": true, "viewer": viewer }),
+            vec![format!(
+                "Linear accepted the token; it belongs to {viewer}."
+            )],
+        ),
+        LinearCheckOutcome::Asked(Err(error)) => (
+            serde_json::json!({ "ok": false, "checked": true, "error": error }),
+            vec![error.clone()],
+        ),
+    }
+}
+
 pub(crate) fn render_linear_settings_report(report: &Value) -> Vec<String> {
     let Some(configured) = report.get("configured").and_then(Value::as_bool) else {
         // No `configured` key is an unreadable config, which carries its
@@ -754,6 +827,65 @@ mod credential_profiles_render_tests {
             !lines[0].contains("No credential profiles"),
             "an unreadable config read as a machine with none: {lines:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod linear_check_report_tests {
+    use super::{LinearCheckOutcome, linear_check_report};
+
+    /// THE DISTINCTION THIS ROUTE EXISTS FOR. An unset variable means no
+    /// request was made; calling that a refusal would send somebody to rotate
+    /// a credential that is fine. `checked` is what separates them, and a
+    /// surface can rely on it.
+    #[test]
+    fn not_asking_is_not_the_same_as_being_refused() {
+        let (not_asked, lines) = linear_check_report(&LinearCheckOutcome::NotAsked(
+            "T is not set in the daemon's environment, so Linear cannot be reached.".to_owned(),
+        ));
+        assert_eq!(not_asked["ok"], serde_json::json!(false));
+        assert_eq!(not_asked["checked"], serde_json::json!(false));
+        assert!(not_asked.get("error").is_none(), "{not_asked}");
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("is not set"), "{lines:?}");
+
+        let (refused, _) = linear_check_report(&LinearCheckOutcome::Asked(Err(
+            "Linear refused the token. It may be revoked or wrong.".to_owned(),
+        )));
+        assert_eq!(refused["ok"], serde_json::json!(false));
+        // Both are `ok: false`, so `checked` is the ONLY thing telling them
+        // apart -- which is why it is asserted on both sides.
+        assert_eq!(refused["checked"], serde_json::json!(true));
+        assert!(
+            refused["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("refused"))
+        );
+    }
+
+    #[test]
+    fn a_working_token_names_the_person_it_belongs_to() {
+        let (report, lines) =
+            linear_check_report(&LinearCheckOutcome::Asked(Ok("Sam S.".to_owned())));
+        assert_eq!(report["ok"], serde_json::json!(true));
+        assert_eq!(report["checked"], serde_json::json!(true));
+        assert_eq!(report["viewer"], serde_json::json!("Sam S."));
+        assert!(lines[0].contains("Sam S."), "{lines:?}");
+    }
+
+    /// Every outcome renders exactly one non-empty line. A surface that gets
+    /// an empty vector here has nothing to show and reads as a blank.
+    #[test]
+    fn every_outcome_says_exactly_one_thing() {
+        for outcome in [
+            LinearCheckOutcome::NotAsked("nothing named".to_owned()),
+            LinearCheckOutcome::Asked(Ok("Sam S.".to_owned())),
+            LinearCheckOutcome::Asked(Err("refused".to_owned())),
+        ] {
+            let (_, lines) = linear_check_report(&outcome);
+            assert_eq!(lines.len(), 1, "{outcome:?} rendered {lines:?}");
+            assert!(!lines[0].is_empty(), "{outcome:?} rendered an empty line");
+        }
     }
 }
 
