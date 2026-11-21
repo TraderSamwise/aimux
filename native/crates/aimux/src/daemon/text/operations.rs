@@ -260,6 +260,15 @@ pub trait DaemonOperationsTextRuntime {
     fn doctor_services_report(&mut self) -> Result<ServicesDoctorReport, String> {
         Err("services doctor is unavailable".into())
     }
+    /// Quota headroom across the fleet, or why it could not be had.
+    ///
+    /// Defaulted the way `doctor_services_report` above is, and for the same
+    /// reason: a runtime with no relay has no fleet, and five test doubles
+    /// should not each have to say so. The one runtime that can answer
+    /// overrides it.
+    fn fleet_usage_report(&mut self) -> Result<Value, String> {
+        Err("fleet reads need a relay, and this runtime has none".into())
+    }
     fn doctor_coherence_report(
         &mut self,
         project_root: &str,
@@ -319,6 +328,9 @@ pub fn route_operations_text_request(
     let route_url = DaemonRouteUrl::parse(path);
     let pathname = route_url.pathname();
 
+    if method == "GET" && pathname == CORE_API_ROUTES.fleet_usage_text {
+        return Some(fleet_usage_text_route(runtime, &route_url));
+    }
     if method == "GET" && pathname == CORE_API_ROUTES.doctor_versions_text {
         return Some(doctor_versions_text_route(runtime, &route_url));
     }
@@ -527,6 +539,69 @@ pub fn doctor_coherence_text_route(
         }
         Err(error) => text_error(500, format!("Error: {error}")),
     }
+}
+
+/// Ask every machine in this account what its tool accounts have left.
+///
+/// The report already distinguishes its own failures -- a machine that
+/// answered badly, one that said nothing, one whose task died, and not
+/// knowing which machines exist at all -- so this route passes the body
+/// through rather than flattening any of that into one status.
+pub fn fleet_usage_text_route(
+    runtime: &mut impl DaemonOperationsTextRuntime,
+    route_url: &DaemonRouteUrl,
+) -> DaemonRouteResponse {
+    match runtime.fleet_usage_report() {
+        Ok(report) => {
+            let lines = render_fleet_usage_report(&report);
+            text_or_json_lines(route_url, report, &lines)
+        }
+        // A relay that is off or unreachable is this machine's own problem,
+        // not a fleet answer, so it is a 500 and not an empty report.
+        Err(error) => text_error(500, format!("Error: {error}")),
+    }
+}
+
+/// One line per machine, worst first, because the reason to run this is to
+/// find the machine that needs attention rather than to read a table.
+pub(crate) fn render_fleet_usage_report(report: &Value) -> Vec<String> {
+    let Some(machines) = report.get("machines").and_then(Value::as_array) else {
+        // No machine list at all is the "we do not know who is out there"
+        // answer, which carries its reason instead.
+        let reason = report
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("the fleet could not be read");
+        return vec![reason.to_owned()];
+    };
+    if machines.is_empty() {
+        return vec!["No other machines are online.".to_owned()];
+    }
+    let mut lines: Vec<String> = machines
+        .iter()
+        .map(|machine| {
+            let name = machine
+                .get("machineId")
+                .and_then(Value::as_str)
+                .unwrap_or("unnamed machine");
+            if machine.get("ok").and_then(Value::as_bool) == Some(true) {
+                format!("{name}: answered")
+            } else if let Some(error) = machine.get("error").and_then(Value::as_str) {
+                format!("{name}: {error}")
+            } else {
+                let status = machine
+                    .get("status")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default();
+                format!("{name}: answered {status}")
+            }
+        })
+        .collect();
+    lines.sort_by_key(|line| line.ends_with(": answered"));
+    // Anything that is not a clean answer sorts first. A fleet read that
+    // buries the broken machine under the healthy ones has not answered the
+    // question that made somebody run it.
+    lines
 }
 
 pub fn doctor_services_text_route(
@@ -1334,4 +1409,60 @@ fn normalize_path(path: PathBuf) -> PathBuf {
         }
     }
     output
+}
+
+#[cfg(test)]
+mod fleet_usage_render_tests {
+    use super::render_fleet_usage_report;
+    use serde_json::json;
+
+    #[test]
+    fn the_machines_that_need_attention_come_first() {
+        let lines = render_fleet_usage_report(&json!({
+            "ok": true,
+            "asked": 3,
+            "machines": [
+                { "machineId": "mbp", "ok": true, "status": 200, "usage": {} },
+                { "machineId": "strix", "ok": false, "error": "peer was never asked, so it did not answer" },
+                { "machineId": "mini", "ok": true, "status": 200, "usage": {} },
+            ],
+        }));
+
+        // The reason somebody runs this is to find the machine that needs
+        // them. Listing machines in whatever order they answered buries that
+        // one under the healthy ones, which leaves the question unanswered
+        // rather than answered slowly.
+        assert_eq!(lines.len(), 3);
+        assert!(
+            lines[0].starts_with("strix:"),
+            "the broken machine was not first: {lines:?}"
+        );
+        assert!(
+            lines[0].contains("never asked"),
+            "the reason did not survive: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn no_machine_list_renders_its_reason_not_an_empty_fleet() {
+        let lines = render_fleet_usage_report(&json!({
+            "ok": false,
+            "error": "the relay has not sent the owner table yet",
+        }));
+
+        // The "we do not know who is out there" answer. Rendering it as "No
+        // other machines are online" would state the opposite of what it
+        // means.
+        assert_eq!(lines, vec!["the relay has not sent the owner table yet"]);
+    }
+
+    #[test]
+    fn a_known_empty_fleet_says_so() {
+        let lines = render_fleet_usage_report(&json!({
+            "ok": true,
+            "asked": 0,
+            "machines": [],
+        }));
+        assert_eq!(lines, vec!["No other machines are online."]);
+    }
 }

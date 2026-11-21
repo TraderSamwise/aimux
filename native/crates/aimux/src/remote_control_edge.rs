@@ -543,6 +543,10 @@ mod enabled_state {
             self.relay.forward_agent_input(machine_id, body)
         }
 
+        pub fn fleet_usage_report(&self) -> Result<Value, String> {
+            self.relay.fleet_usage_report()
+        }
+
         /// The live client's own state. This used to answer a hardcoded
         /// "disconnected" whenever remote was enabled, which was
         /// indistinguishable from a relay that was up and working.
@@ -694,6 +698,13 @@ mod disabled_state {
             _machine_id: &str,
             _body: &Value,
         ) -> Result<(u16, Value), String> {
+            Err("remote control is not built into this binary".to_owned())
+        }
+
+        /// Same refusal as above, and for the same reason: a build with no
+        /// relay has no fleet to read, and saying so beats an empty report
+        /// that reads as a fleet of one.
+        pub fn fleet_usage_report(&self) -> Result<Value, String> {
             Err("remote control is not built into this binary".to_owned())
         }
 

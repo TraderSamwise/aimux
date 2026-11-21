@@ -593,6 +593,25 @@ fn fake_runtime_coherence_report() -> Value {
     })
 }
 
+/// A runtime with no relay refuses a fleet read rather than reporting none.
+///
+/// `FakeOperationsRuntime` does not override `fleet_usage_report`, so this
+/// exercises the trait's default body -- which has to be a refusal. A 200
+/// carrying no machines would read as a healthy fleet of one.
+#[test]
+fn a_runtime_with_no_relay_refuses_a_fleet_read() {
+    let mut runtime = FakeOperationsRuntime::default();
+    let response =
+        route_operations_text_request(&mut runtime, "GET", CORE_API_ROUTES.fleet_usage_text, None)
+            .expect("fleet usage route");
+
+    assert_eq!(response.status, 500);
+    assert!(
+        text_body(response).contains("need a relay"),
+        "a relayless runtime did not say why"
+    );
+}
+
 #[test]
 fn doctor_exchange_route_reads_project_diagnostics_and_renders_exchange() {
     let mut runtime = FakeOperationsRuntime::default();
