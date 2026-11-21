@@ -907,6 +907,116 @@ fn a_peer_must_name_a_project_service_this_machine_runs() {
     );
 }
 
+/// A peer may read this machine's quota headroom.
+///
+/// The first read route open to a peer, and the fact every other fleet
+/// question depends on: whether the tool account behind an agent here has
+/// room left. It is a GET, so none of the body refusals apply to it, which is
+/// why the gate returns before them rather than running them against a body
+/// the parser never read.
+#[test]
+fn a_peer_may_read_this_machines_quota_headroom() {
+    let allowed = allow(
+        Some(&peer(Some("mbp"))),
+        "GET",
+        project_routes::USAGE,
+        "",
+        None,
+        Some(PROJECT_ROOT),
+    );
+    assert!(allowed.ok, "{:?}", allowed.error);
+}
+
+/// The verb belongs to the route, not to the gate.
+///
+/// Opening a read with one global method rule would have meant relaxing it to
+/// "POST or GET", which also opens `GET /agents/input` -- a verb the body
+/// parser never reads, so every body refusal would then pass by being asked
+/// about `None`. Both directions are asserted here because that is the
+/// mistake this shape exists to prevent, and only the pair catches it: the
+/// first alone passes if reads are opened everywhere, the second alone passes
+/// if nothing is opened at all.
+#[test]
+fn each_peer_route_answers_only_its_own_verb() {
+    let wrong_verb_on_the_read = allow(
+        Some(&peer(Some("mbp"))),
+        "POST",
+        project_routes::USAGE,
+        "",
+        Some(&json!({ "sessionId": "claude-abc", "text": "hello" })),
+        Some(PROJECT_ROOT),
+    );
+    assert!(!wrong_verb_on_the_read.ok, "POST /usage was allowed");
+    assert_eq!(wrong_verb_on_the_read.status, Some(403));
+    assert!(
+        wrong_verb_on_the_read
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("may only GET to")),
+        "{:?}",
+        wrong_verb_on_the_read.error
+    );
+
+    let wrong_verb_on_the_write = allow(
+        Some(&peer(Some("mbp"))),
+        "GET",
+        &port_path(project_routes::agents::INPUT),
+        "",
+        None,
+        Some(PROJECT_ROOT),
+    );
+    assert!(!wrong_verb_on_the_write.ok, "GET /agents/input was allowed");
+    assert_eq!(wrong_verb_on_the_write.status, Some(403));
+    assert!(
+        wrong_verb_on_the_write
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("may only POST to")),
+        "{:?}",
+        wrong_verb_on_the_write.error
+    );
+}
+
+/// A read is still bound to a project this machine serves, and still needs a
+/// machine id.
+///
+/// Both refusals are older than the read route, and the risk in adding a
+/// route is inheriting neither. Asserted on the new route rather than trusted
+/// from the old one, because what shares the code is the gate and what shares
+/// nothing is the arm.
+#[test]
+fn a_peer_read_inherits_the_project_and_machine_rules() {
+    let no_project = allow(
+        Some(&peer(Some("mbp"))),
+        "GET",
+        project_routes::USAGE,
+        "",
+        None,
+        None,
+    );
+    assert!(!no_project.ok, "a read with no project was allowed");
+    assert_eq!(no_project.status, Some(403));
+
+    let no_machine = allow(
+        Some(&peer(None)),
+        "GET",
+        project_routes::USAGE,
+        "",
+        None,
+        Some(PROJECT_ROOT),
+    );
+    assert!(!no_machine.ok, "a read from an unnamed machine was allowed");
+    assert_eq!(no_machine.status, Some(403));
+    assert!(
+        no_machine
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("did not say which machine")),
+        "{:?}",
+        no_machine.error
+    );
+}
+
 /// Three things a peer may not put in the body of the one route it has.
 ///
 /// Each is refused by its own name, because "403" on an input send sends

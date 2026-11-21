@@ -198,6 +198,26 @@ pub fn assert_remote_access_allowed(
 /// account's own machines may speak to an agent this machine is already
 /// running. Every peer here is one of Sam's Macs, and the question this gate
 /// answers is "is the thing on that port mine", not "whose checkout is it".
+/// Which verb a peer route answers, so the method rule cannot be loosened for
+/// one route by opening another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeerRoute {
+    /// Words typed at an agent on this machine. POST, and subject to every
+    /// body refusal below.
+    Input,
+    /// A read of this machine's own state. GET, and carries no body.
+    Read,
+}
+
+impl PeerRoute {
+    fn method(self) -> &'static str {
+        match self {
+            Self::Input => "POST",
+            Self::Read => "GET",
+        }
+    }
+}
+
 fn assert_peer_allowed(
     actor: &RemoteActor,
     method: &str,
@@ -241,27 +261,44 @@ fn assert_peer_allowed(
             format!("no route is open to peer machine {origin}: {route}"),
         )
     };
-    if proxy_sub_path.as_deref() != Some(project_routes::agents::INPUT) && !names_a_project {
-        // `live_pane::INPUT` shares a handler with the route above and is
-        // deliberately NOT here: it is the door a shared guest writes to, and
-        // its guest arm keys on a share session a peer does not have.
-        return refuse_route();
-    }
+    // The verb belongs to the route rather than to the gate. Opening a read
+    // route with one global method rule would have meant relaxing it to "POST
+    // or GET", which silently opens `GET /agents/input` as well -- a verb the
+    // body parser never reads, so every body refusal below would then pass by
+    // being asked about `None`. Each route says which verb it answers, and
+    // nothing else is admitted on either.
+    let peer_route =
+        if proxy_sub_path.as_deref() == Some(project_routes::agents::INPUT) || names_a_project {
+            // `live_pane::INPUT` shares a handler with this one and is
+            // deliberately NOT here: it is the door a shared guest writes to, and
+            // its guest arm keys on a share session a peer does not have.
+            PeerRoute::Input
+        } else if pathname == project_routes::USAGE {
+            // Quota headroom for this machine's own accounts. A read, and the one
+            // fact a peer needs before it can sensibly ask anything else: whether
+            // the tool account behind an agent here has room left.
+            PeerRoute::Read
+        } else {
+            return refuse_route();
+        };
     // Its own sentence, separate from the route refusal above. Sharing one
     // made the test for this indistinguishable from the test for the route:
     // both asserted a 403 carrying the same words, so a change to either rule
     // kept the other's test green.
     //
-    // `== "POST"`, not a case-insensitive compare, because the body parser is
-    // exact (`daemon/server.rs:56`) and the two must agree about what a POST
-    // is. Accepting `post` here would hand this function a request whose body
-    // was never read, which makes every body check below pass by being asked
-    // about `None` -- the field refusals would be vacuous rather than wrong,
-    // which is harder to notice.
-    if method != "POST" {
+    // Exact spellings, not a case-insensitive compare, because the body parser
+    // is exact (`daemon/server.rs:56`) and the two must agree about what a
+    // POST is. Accepting `post` on the input route would hand this function a
+    // request whose body was never read, which makes every body check below
+    // pass by being asked about `None` -- the field refusals would be vacuous
+    // rather than wrong, which is harder to notice.
+    if method != peer_route.method() {
         return RemoteAccessDecision::deny(
             403,
-            format!("peer machine {origin} may only POST to {route}"),
+            format!(
+                "peer machine {origin} may only {verb} to {route}",
+                verb = peer_route.method()
+            ),
         );
     }
     if context.project_root.is_none() {
@@ -278,6 +315,13 @@ fn assert_peer_allowed(
                 )
             },
         );
+    }
+    if matches!(peer_route, PeerRoute::Read) {
+        // Nothing below applies: the body refusals are about the words a peer
+        // types at an agent, and a read types nothing. Returning here rather
+        // than letting them fall through keeps them from reading as checks
+        // that passed when they were never asked.
+        return RemoteAccessDecision::allow();
     }
     if context
         .body
