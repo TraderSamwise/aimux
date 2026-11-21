@@ -44,6 +44,22 @@ pub fn route_system_text_request(
     let route_url = DaemonRouteUrl::parse(path);
     let pathname = route_url.pathname();
 
+    if pathname == CORE_API_ROUTES.credential_profiles_text {
+        // One path, two verbs: GET lists what this machine has, POST chooses.
+        // Anything else is refused rather than silently treated as a read,
+        // because a PUT that listed profiles would look like it had worked.
+        return match method {
+            "GET" => Some(credential_profiles_text_route(&route_url)),
+            "POST" => Some(set_credential_profile_text_route(&route_url, body)),
+            _ => Some(text_error(
+                405,
+                format!(
+                    "{} answers GET to list credential profiles and POST to choose one",
+                    CORE_API_ROUTES.credential_profiles_text
+                ),
+            )),
+        };
+    }
     if method == "GET" && pathname == CORE_API_ROUTES.tool_accounts_text {
         return Some(tool_accounts_text_route(&route_url));
     }
@@ -86,6 +102,111 @@ pub fn route_system_text_request(
 /// builder they are derived from, and are gated there with explicit envs.
 ///
 /// Takes no runtime for that reason -- there is nothing to stub.
+/// What credential profiles this machine has, and which one is active.
+pub fn credential_profiles_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
+    let resolver = crate::paths::PathResolver::from_env();
+    // The MERGED view is right here: this only reads, and a profile block
+    // arriving from a default would still be one this machine would honour.
+    let config = crate::config::load_global_config_with_resolver(&resolver);
+    let profiles = crate::credential_profiles::parse_credential_profiles(&config);
+    let report = crate::credential_profiles::credential_profiles_report(&profiles);
+    let lines = render_credential_profiles_report(&report);
+    text_or_json_lines(route_url, report, &lines)
+}
+
+/// Choose which profile new agents on this machine launch with.
+///
+/// Read-modify-write against the RAW file, not the merged view: writing the
+/// merged value back would bake every default into the config. The parts of
+/// the file this does not care about survive, because other features own them.
+pub fn set_credential_profile_text_route(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let resolver = crate::paths::PathResolver::from_env();
+    // An absent FILE is a machine nobody configured and starts from `{}`; a
+    // file that could not be READ is refused, because replacing it would
+    // discard whatever it holds.
+    let current = match crate::config::try_read_global_config_file(&resolver) {
+        Ok(Some(config)) => config,
+        Ok(None) => json!({}),
+        Err(error) => return text_error(500, format!("Error: {error}")),
+    };
+    // `clear` is its own instruction, distinct from choosing: it puts new
+    // launches back on whatever accounts the machine already had.
+    let clear = body
+        .and_then(|body| body.get("clear"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    let name = string_param(route_url, body, "profile");
+    let chosen = match (clear, name.as_deref()) {
+        (true, Some(_)) => {
+            return text_error(400, "choose a profile or clear the choice, not both");
+        }
+        (true, None) => None,
+        (false, Some(name)) => Some(name),
+        (false, None) => {
+            return text_error(
+                400,
+                "name a profile with --profile, or clear the choice with --clear",
+            );
+        }
+    };
+    let next = match crate::credential_profiles::with_active_profile(&current, chosen) {
+        Ok(next) => next,
+        // The refusal is the point: an undefined name or an unreadable block
+        // must not be stored, so this says so instead of writing something
+        // that would refuse every later spawn.
+        Err(error) => return text_error(400, format!("Error: {error}")),
+    };
+    if let Err(error) = crate::config::write_global_config_file(&resolver, &next) {
+        return text_error(500, format!("Error: {error}"));
+    }
+    let lines = vec![match chosen {
+        Some(name) => format!("New agents on this machine will use credential profile {name}."),
+        None => "New agents on this machine will use its own accounts again.".to_owned(),
+    }];
+    text_or_json_lines(route_url, json!({ "ok": true, "active": chosen }), &lines)
+}
+
+/// One line per profile, marking the active one, or the reason none could be
+/// listed.
+pub(crate) fn render_credential_profiles_report(report: &Value) -> Vec<String> {
+    let Some(profiles) = report.get("profiles").and_then(Value::as_array) else {
+        let reason = report
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("the credential profiles could not be read");
+        return vec![reason.to_owned()];
+    };
+    if profiles.is_empty() {
+        return vec!["No credential profiles are configured on this machine.".to_owned()];
+    }
+    let active = report.get("active").and_then(Value::as_str);
+    profiles
+        .iter()
+        .map(|profile| {
+            let name = profile
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("unnamed profile");
+            let dirs = ["claudeConfigDir", "codexHome"]
+                .into_iter()
+                .filter_map(|key| profile.get(key).and_then(Value::as_str))
+                .collect::<Vec<&str>>()
+                .join(", ");
+            // The marker is the whole reason somebody runs the list, so it is
+            // on the line rather than implied by order.
+            let marker = if Some(name) == active {
+                " (active)"
+            } else {
+                ""
+            };
+            format!("{name}{marker}: {dirs}")
+        })
+        .collect()
+}
+
 pub fn tool_accounts_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
     let dirs = crate::managed_launch_env::launch_tool_dirs(std::env::vars());
     let report = json!({
@@ -373,5 +494,80 @@ mod tool_accounts_render_tests {
                 "an unset tool directory named a path nobody configured: {line}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod credential_profiles_render_tests {
+    use super::render_credential_profiles_report;
+    use serde_json::json;
+
+    /// The marker is the whole reason somebody runs the list, so it is on the
+    /// line rather than implied by order.
+    #[test]
+    fn the_active_profile_is_marked_on_its_own_line() {
+        let lines = render_credential_profiles_report(&json!({
+            "ok": true,
+            "active": "work",
+            "profiles": [
+                { "name": "personal", "codexHome": "/profiles/personal/.codex" },
+                { "name": "work", "claudeConfigDir": "/profiles/work/.claude" },
+            ],
+        }));
+        assert_eq!(
+            lines,
+            vec![
+                "personal: /profiles/personal/.codex",
+                "work (active): /profiles/work/.claude",
+            ]
+        );
+    }
+
+    /// A machine with profiles but none chosen is a real state, and it must
+    /// not look like one where a profile is active.
+    #[test]
+    fn nothing_is_marked_when_no_profile_is_active() {
+        let lines = render_credential_profiles_report(&json!({
+            "ok": true,
+            "active": null,
+            "profiles": [{ "name": "work", "claudeConfigDir": "/profiles/work/.claude" }],
+        }));
+        assert_eq!(lines, vec!["work: /profiles/work/.claude"]);
+        assert!(
+            !lines[0].contains("(active)"),
+            "a profile was marked active with none chosen: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_machine_with_no_profiles_says_so() {
+        let lines = render_credential_profiles_report(&json!({
+            "ok": true,
+            "active": null,
+            "profiles": [],
+        }));
+        assert_eq!(
+            lines,
+            vec!["No credential profiles are configured on this machine."]
+        );
+    }
+
+    /// Unreadable is not empty. A config that could not be parsed must render
+    /// its reason, because "no profiles are configured" would be a different
+    /// and false claim about a machine that may have several.
+    #[test]
+    fn an_unreadable_config_renders_its_reason_not_an_empty_list() {
+        let lines = render_credential_profiles_report(&json!({
+            "ok": false,
+            "error": "credentialProfiles is not an object in the Aimux config",
+        }));
+        assert_eq!(
+            lines,
+            vec!["credentialProfiles is not an object in the Aimux config"]
+        );
+        assert!(
+            !lines[0].contains("No credential profiles"),
+            "an unreadable config read as a machine with none: {lines:?}"
+        );
     }
 }

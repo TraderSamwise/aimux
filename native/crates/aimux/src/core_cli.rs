@@ -180,6 +180,7 @@ pub enum CoreCliOperation {
     FleetUsage,
     FleetAccounts,
     ToolAccounts,
+    CredentialProfiles,
     Logs,
     ProjectsList,
     ProjectsRemove,
@@ -2396,6 +2397,18 @@ where
                     format!("{}?json=1", CORE_API_ROUTES.fleet_usage_text)
                 } else {
                     CORE_API_ROUTES.fleet_usage_text.to_owned()
+                },
+                body: None,
+            },
+            CoreCliFallback::None,
+        ),
+        ("tool", "profiles") => (
+            CoreCliOperation::CredentialProfiles,
+            CoreCliAction::TextRoute {
+                path: if mode == CoreCliOutputMode::Json {
+                    format!("{}?json=1", CORE_API_ROUTES.credential_profiles_text)
+                } else {
+                    CORE_API_ROUTES.credential_profiles_text.to_owned()
                 },
                 body: None,
             },

@@ -71,6 +71,7 @@ export const CORE_API_ROUTES = {
   logsClearText: "/core/logs/clear-text",
   logsPathText: "/core/logs/path-text",
   toolAccountsText: "/core/tool-accounts-text",
+  credentialProfilesText: "/core/credential-profiles-text",
   logsTailText: "/core/logs/tail-text",
   metadataText: "/core/metadata-text",
   logoutText: "/core/logout-text",

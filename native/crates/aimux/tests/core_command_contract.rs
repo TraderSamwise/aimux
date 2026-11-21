@@ -72,6 +72,7 @@ fn core_api_routes_match_the_typescript_contract() {
         ("logsClearText", "/core/logs/clear-text"),
         ("logsPathText", "/core/logs/path-text"),
         ("toolAccountsText", "/core/tool-accounts-text"),
+        ("credentialProfilesText", "/core/credential-profiles-text"),
         ("logsTailText", "/core/logs/tail-text"),
         ("metadataText", "/core/metadata-text"),
         ("usageText", "/core/usage-text"),
