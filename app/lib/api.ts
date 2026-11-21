@@ -673,6 +673,51 @@ export type SwarmHostResponse = {
  * Per machine because the answer is relative: "this machine" means whichever
  * one answered, so `machineId` decides whose perspective you get.
  */
+/**
+ * One Linear issue, in the task shape the other surfaces render.
+ *
+ * `status` and `statusUnknown` are mutually exclusive and the pair is the
+ * point: the service refuses to guess `pending` for a state it does not
+ * recognise, so an unknown state arrives as `statusUnknown` carrying Linear's
+ * own word. A client that read only `status` would show a blank, which a
+ * person takes for "nothing yet".
+ */
+export type LinearTask = {
+  id: string;
+  identifier?: string;
+  description?: string;
+  source?: string;
+  status?: string;
+  statusUnknown?: string;
+  stateName?: string;
+  assignee?: string;
+  updatedAt?: string;
+};
+
+export type LinearTasksResponse = {
+  ok: boolean;
+  /** Whether Linear was actually asked. False means we could not look. */
+  checked?: boolean;
+  project?: string;
+  tasks?: LinearTask[];
+  /** Issues the service could not describe. Reported, never dropped. */
+  problems?: string[];
+  reason?: string;
+  error?: string;
+};
+
+/**
+ * The Linear project's issues, as tasks.
+ *
+ * One request: the daemon reads the config, resolves the token and asks Linear.
+ */
+export async function getLinearTasks(opts?: ApiOpts): Promise<LinearTasksResponse> {
+  const path = `${CORE_API_ROUTES.linearTasksText}?json=1`;
+  if (shouldRouteViaRelay())
+    return callDaemonViaRelay<LinearTasksResponse>("GET", path, undefined, opts);
+  return callJson<LinearTasksResponse>(`${getDaemonUrl()}${path}`, { method: "GET" }, opts);
+}
+
 export async function getSwarmHost(opts?: ApiOpts): Promise<SwarmHostResponse> {
   const path = `${CORE_API_ROUTES.swarmHostText}?json=1`;
   if (shouldRouteViaRelay())
