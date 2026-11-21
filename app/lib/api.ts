@@ -654,6 +654,79 @@ export type FleetUsageResponse = {
   error?: string;
 };
 
+/** One credential profile this machine has. */
+export type CredentialProfile = {
+  name: string;
+  /** Absent when the profile does not switch this tool. */
+  claudeConfigDir?: string | null;
+  codexHome?: string | null;
+};
+
+export type CredentialProfilesResponse = {
+  ok: boolean;
+  /**
+   * Which profile new agents use. Null when none is chosen, which means the
+   * machine keeps whatever accounts it already had -- a real state, distinct
+   * from having no profiles at all.
+   */
+  active?: string | null;
+  /**
+   * Absent -- not empty -- when the profile block could not be read. An empty
+   * array means the machine has none configured, which is the opposite claim,
+   * so the two must not be collapsed on the way in.
+   */
+  profiles?: CredentialProfile[];
+  error?: string;
+};
+
+/**
+ * Which credential profiles a machine has, and which one is active.
+ *
+ * Per machine rather than fleet-wide, because switching is per machine: pass
+ * `machineId` and the relay asks that machine's own daemon. The fleet-wide
+ * read answers a different question -- which DIRECTORY each machine launches
+ * with -- and lives in `getFleetAccounts`.
+ */
+export async function getCredentialProfiles(opts?: ApiOpts): Promise<CredentialProfilesResponse> {
+  const path = `${CORE_API_ROUTES.credentialProfilesText}?json=1`;
+  if (shouldRouteViaRelay())
+    return callDaemonViaRelay<CredentialProfilesResponse>("GET", path, undefined, opts);
+  return callJson<CredentialProfilesResponse>(`${getDaemonUrl()}${path}`, { method: "GET" }, opts);
+}
+
+export type SetCredentialProfileResponse = {
+  ok: boolean;
+  /** The profile now active, or null when the choice was cleared. */
+  active?: string | null;
+  error?: string;
+};
+
+/**
+ * Choose which credential profile a machine launches new agents with, or clear
+ * the choice.
+ *
+ * `null` CLEARS it, which puts the machine back on its own accounts -- a
+ * separate instruction from choosing, and the only way to undo a switch.
+ *
+ * The daemon refuses an undefined name rather than storing it, so a wrong name
+ * comes back as an error here instead of quietly breaking every later spawn on
+ * that machine.
+ */
+export async function setCredentialProfile(
+  profile: string | null,
+  opts?: ApiOpts,
+): Promise<SetCredentialProfileResponse> {
+  const path = CORE_API_ROUTES.credentialProfilesText;
+  const body = profile === null ? { clear: true } : { profile };
+  if (shouldRouteViaRelay())
+    return callDaemonViaRelay<SetCredentialProfileResponse>("POST", path, body, opts);
+  return callJson<SetCredentialProfileResponse>(
+    `${getDaemonUrl()}${path}`,
+    { method: "POST", body: JSON.stringify(body) },
+    opts,
+  );
+}
+
 /**
  * Quota headroom for every machine in this account.
  *

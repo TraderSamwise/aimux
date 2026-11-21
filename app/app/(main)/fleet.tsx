@@ -1,12 +1,20 @@
-import React, { useCallback, useEffect } from "react";
-import { View } from "react-native";
+import React, { useCallback, useEffect, useState } from "react";
+import { Pressable, View } from "react-native";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { UsageMonitor } from "@/components/UsageMonitor";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
-import { getFleetUsage, type FleetUsageMachine } from "@/lib/api";
+import { credentialProfileView, profileDirectories } from "@/lib/credential-profile-view";
+import {
+  getCredentialProfiles,
+  getFleetUsage,
+  setCredentialProfile,
+  type CredentialProfile,
+  type CredentialProfilesResponse,
+  type FleetUsageMachine,
+} from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
   applyFleetUsageFailureAtom,
@@ -52,6 +60,125 @@ function MachineCard({ machine }: { machine: FleetUsageMachine }) {
         <Text className="font-mono text-xs text-muted-foreground">
           This machine reported no usage lines.
         </Text>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Which credential profile this machine launches agents with, and a tap to
+ * change it.
+ *
+ * Per MACHINE, because that is what a profile is. It acts on the machine this
+ * app is talking to, which the relay resolves when the account has one and
+ * which the machine selector names when it has several -- multi-machine
+ * switching from one screen needs that selector wired in, and is not here yet.
+ */
+function CredentialProfilePanel() {
+  const { getToken } = useAuth();
+  const [resource, setResource] = useState<{
+    value: CredentialProfilesResponse | null;
+    error: string | null;
+    pending: boolean;
+  }>({ value: null, error: null, pending: false });
+
+  const load = useCallback(async () => {
+    setResource((current) => ({ ...current, pending: true }));
+    try {
+      const token = await getToken();
+      const value = await getCredentialProfiles({ token });
+      setResource({ value, error: null, pending: false });
+    } catch (error) {
+      setResource((current) => ({
+        // The last good answer is KEPT, so a failed refresh does not read as a
+        // machine with no profiles.
+        ...current,
+        error: `Unable to read credential profiles: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        pending: false,
+      }));
+    }
+  }, [getToken]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const choose = useCallback(
+    async (profile: string | null) => {
+      setResource((current) => ({ ...current, pending: true }));
+      try {
+        const token = await getToken();
+        const result = await setCredentialProfile(profile, { token });
+        if (!result.ok) {
+          // The daemon refuses an undefined name rather than storing it, so
+          // its words are shown rather than a generic failure.
+          throw new Error(result.error ?? "the switch was refused");
+        }
+        await load();
+      } catch (error) {
+        setResource((current) => ({
+          ...current,
+          error: `Unable to switch profile: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          pending: false,
+        }));
+      }
+    },
+    [getToken, load],
+  );
+
+  const report = resource.value;
+  // The branch is decided in `credentialProfileView`, where a gate can reach
+  // every outcome -- the hooks here are stubbed in tests, so a branch written
+  // inline would be unprovable.
+  const view = credentialProfileView(report);
+
+  return (
+    <Card className="mb-4 p-4">
+      <View className="mb-2 flex-row items-center justify-between">
+        <Text className="font-mono text-xs font-semibold text-[#b8bbc6]">Credential profile</Text>
+        {report?.active ? (
+          <Button variant="outline" size="sm" onPress={() => void choose(null)}>
+            <Text>Use this machine&apos;s own accounts</Text>
+          </Button>
+        ) : null}
+      </View>
+
+      {resource.error ? (
+        <Text className="mb-2 font-mono text-xs text-[#f0a0a0]">{resource.error}</Text>
+      ) : null}
+
+      {view.kind === "unreadable" ? (
+        <Text className="font-mono text-xs text-muted-foreground">{view.reason}</Text>
+      ) : view.kind === "loading" ? (
+        <Text className="font-mono text-xs text-muted-foreground">Reading profiles...</Text>
+      ) : view.kind === "none" ? (
+        <Text className="font-mono text-xs text-muted-foreground">
+          No credential profiles are configured on this machine.
+        </Text>
+      ) : (
+        view.profiles.map((profile: CredentialProfile) => {
+          const active = profile.name === view.active;
+          return (
+            <Pressable
+              key={profile.name}
+              disabled={active || resource.pending}
+              onPress={() => void choose(profile.name)}
+              className="mb-1 flex-row items-center justify-between"
+            >
+              <Text className="font-mono text-xs text-[#b8bbc6]">
+                {profile.name}
+                {active ? " (active)" : ""}
+              </Text>
+              <Text className="font-mono text-xs text-muted-foreground">
+                {profileDirectories(profile)}
+              </Text>
+            </Pressable>
+          );
+        })
       )}
     </Card>
   );
@@ -104,6 +231,8 @@ export default function FleetScreen() {
           </Button>
         }
       />
+
+      <CredentialProfilePanel />
 
       {resource.error ? (
         <Card className="mb-3 border-[#5a2a2a] p-4">
