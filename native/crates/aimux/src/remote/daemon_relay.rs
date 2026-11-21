@@ -689,6 +689,32 @@ impl RelaySupervisor {
         }
     }
 
+    /// Quota headroom for the whole fleet, or why the fleet is not knowable.
+    ///
+    /// Two failures that must not look alike. Not knowing which machines exist
+    /// is answered by `unknown_machines_report`, which carries no machine list
+    /// at all -- a successful read of an empty fleet does carry one, and the
+    /// two mean opposite things.
+    pub fn fleet_usage_report(&self) -> Result<Value, String> {
+        let machines = {
+            let Ok(current) = self.current.lock() else {
+                return Err("relay_unavailable".to_owned());
+            };
+            let Some((runner, _)) = current.as_ref() else {
+                return Err("relay_off".to_owned());
+            };
+            // Read under the lock, used after it: the accessor only reads a
+            // snapshot, so there is no reason to hold this across the fan-out.
+            runner.fleet_machines()
+        };
+        match machines {
+            crate::fleet_usage::FleetMachines::Unknown(reason) => {
+                Ok(crate::fleet_usage::unknown_machines_report(&reason))
+            }
+            crate::fleet_usage::FleetMachines::Known(machines) => self.fleet_usage(&machines),
+        }
+    }
+
     /// Ask every machine what its tool accounts have left.
     ///
     /// The first fleet read. Concurrent rather than serial because the text
