@@ -75,6 +75,7 @@ fn build_state(project_root: &str, topology: &Value) -> Value {
         topology,
         metadata_sessions: &metadata_sessions,
         exchange: &exchange,
+        usage: None,
     })
 }
 
@@ -251,6 +252,7 @@ fn the_dashboard_snapshot_carries_the_services_verdict() {
         topology: &topology,
         metadata_sessions: &metadata_sessions,
         exchange: &exchange,
+        usage: None,
     });
 
     let snapshot: DesktopStateSnapshot =

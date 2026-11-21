@@ -1595,6 +1595,7 @@ fn agent_spawn_keeps_existing_control_agents_in_supervisor_lane() {
             topology: &topology,
             metadata_sessions: &metadata.sessions,
             exchange: &json!({}),
+            usage: None,
         },
         Some(&live_windows),
     );
@@ -7276,6 +7277,7 @@ fn published_worktree_group(project: &Path, topology: &Value) -> Value {
             topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &json!({}),
+            usage: None,
         },
         Some(&aimux::tmux::LiveWindowIndex::default()),
     );

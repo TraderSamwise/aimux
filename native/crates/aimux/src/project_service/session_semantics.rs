@@ -26,6 +26,16 @@ pub struct SessionSemanticsInput {
     /// string the chat header and the details pane render.
     pub subagent_label: Option<String>,
     pub input_delivery: Option<Value>,
+    /// Why the tool account behind this session has no room left, if it has
+    /// none.
+    ///
+    /// Carries the REASON rather than a bool so the hint can say when the
+    /// quota resets, which is the only part of this a person can act on
+    /// besides switching profile. `None` means "has room, or we do not know" --
+    /// and those two really are the same answer here, because a session is
+    /// only labelled out of quota on positive evidence. An unknown quota must
+    /// not read as an exhausted one.
+    pub quota_blocked: Option<String>,
 }
 
 pub fn derive_session_semantics(input: SessionSemanticsInput) -> Value {
@@ -316,6 +326,17 @@ fn user_state(input: &SessionSemanticsInput, lifecycle: &str, attention: &str) -
         _ if attention == "error" || input.activity.as_deref() == Some("error") => {
             user("error", "error", "tool", None)
         }
+        // Above generic `blocked` so the CAUSE survives when both are set:
+        // "blocked" tells somebody to look, "out of quota" tells them what to
+        // do. The attention stays `blocked`, so the ranking in
+        // `attention_score_for` is unchanged and this is a better label for a
+        // state that already existed rather than a new rung.
+        _ if input.quota_blocked.is_some() => user(
+            "quota_blocked",
+            "blocked",
+            "tool",
+            input.quota_blocked.as_deref(),
+        ),
         _ if attention == "blocked" => user("blocked", "blocked", "tool", None),
         _ if attention == "needs_input" => user("needs_input", "needs_input", "tool", None),
         _ if attention == "needs_response" => {
@@ -387,6 +408,10 @@ fn status_label_for(label: &str) -> &str {
         // so that moving the row onto this word is not a visible change for
         // the one state where the three disagreed.
         "needs_response" => "needs reply",
+        // The words every surface shows for it. "out of quota" rather than
+        // "quota blocked" because it reads as a condition rather than a
+        // system state, and the hint beside it carries the reset time.
+        "quota_blocked" => "out of quota",
         "next_step" => "next step",
         "working" => "working",
         "ready" => "ready",

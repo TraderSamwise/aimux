@@ -120,6 +120,7 @@ fn build_from(root: &str, top: &Value) -> Value {
         topology: top,
         metadata_sessions: &sessions,
         exchange: &exchange,
+        usage: None,
     })
 }
 

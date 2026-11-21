@@ -119,6 +119,7 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
             topology: &topology,
             metadata_sessions: &metadata,
             exchange: &exchange,
+            usage: None,
         },
         Some(&support::live_windows(
             "aimux-repo",
@@ -323,6 +324,7 @@ fn lanes_render_in_class_order_then_tmux_window_order() {
                 ),
             ]),
             exchange: &json!({}),
+            usage: None,
         },
         Some(&support::live_windows(
             "aimux-repo",
@@ -383,6 +385,7 @@ fn a_stored_plane_moves_an_agent_between_lanes_without_changing_its_role() {
                 ),
             ]),
             exchange: &json!({}),
+            usage: None,
         },
         Some(&support::live_windows(
             "aimux-repo",
@@ -425,6 +428,7 @@ fn desktop_state_drops_services_without_live_tmux_windows() {
             topology: &topology,
             metadata_sessions: &metadata,
             exchange: &exchange,
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &["@1", "@2", "@3"])),
     );
@@ -1164,6 +1168,7 @@ fn a_graveyarded_worktree_leaves_the_dashboard_even_with_an_offline_agent_in_it(
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &[])),
     );
@@ -1246,6 +1251,7 @@ fn a_running_agent_keeps_its_place_when_its_worktree_is_graveyarded() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &["@7"])),
     );
@@ -1331,6 +1337,7 @@ fn an_agent_the_topology_still_calls_running_is_not_debris() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &[])),
     );
@@ -1393,6 +1400,7 @@ fn a_live_agent_attached_through_its_node_keeps_its_worktree_alive() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &["@7"])),
     );
@@ -1459,6 +1467,7 @@ fn a_live_agent_whose_plane_names_the_retired_worktree_keeps_it_alive() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &["@7"])),
     );
@@ -1510,6 +1519,7 @@ fn a_graveyarded_worktrees_stopped_service_leaves_with_it() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &[])),
     );
@@ -1574,6 +1584,7 @@ fn every_published_agent_is_reachable_through_some_group() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &["@7"])),
     );
@@ -1737,6 +1748,7 @@ fn main_checkout_group_coalesces_realpath_and_symlink_spellings() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &["@1", "@2"])),
     );
@@ -1900,6 +1912,7 @@ fn a_failed_row_and_its_group_agree_on_whether_the_key_will_work() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &[])),
     );
@@ -2002,6 +2015,7 @@ fn a_failure_under_an_unreadable_parent_is_not_advertised_as_clearable() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &[])),
     );
@@ -2080,6 +2094,7 @@ fn every_surface_agrees_which_row_is_the_main_checkout() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &[])),
     );
@@ -2194,6 +2209,7 @@ fn a_worktree_row_with_no_path_is_the_main_checkout_everywhere() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &[])),
     );
@@ -2271,6 +2287,7 @@ fn a_branch_git_cannot_give_is_reported_as_a_failure_not_a_blank() {
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &[])),
     );
@@ -2339,6 +2356,7 @@ fn desktop_state_normalizes_legacy_string_worktree_operation_failures_for_dashbo
             topology: &topology,
             metadata_sessions: &BTreeMap::new(),
             exchange: &exchange_fixture(),
+            usage: None,
         },
         Some(&support::live_windows("aimux-repo", &[])),
     );
@@ -2419,6 +2437,7 @@ fn the_expose_chip_words_an_agent_the_way_the_dashboard_row_does() {
             topology: &topology,
             metadata_sessions: &metadata,
             exchange: &exchange,
+            usage: None,
         },
         Some(&support::live_windows(
             "aimux-repo",
@@ -2531,6 +2550,7 @@ fn the_service_decides_who_produced_output_recently() {
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange,
+                usage: None,
             },
             Some(&support::live_windows(
                 "aimux-repo",
@@ -2650,6 +2670,7 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange,
+                usage: None,
             },
             Some(&support::live_windows(
                 "aimux-repo",
@@ -2733,6 +2754,7 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange,
+                usage: None,
             },
             Some(&support::live_windows(
                 "aimux-repo",
@@ -2805,6 +2827,7 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange,
+                usage: None,
             },
             Some(&support::live_windows(
                 "aimux-repo",
@@ -2871,6 +2894,7 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange,
+                usage: None,
             },
             Some(&support::live_windows(
                 "aimux-repo",
@@ -2941,6 +2965,7 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange,
+                usage: None,
             },
             Some(&support::live_windows(
                 "aimux-repo",
@@ -3026,6 +3051,7 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange,
+                usage: None,
             },
             Some(&support::live_windows(
                 "aimux-repo",
@@ -3091,6 +3117,7 @@ fn the_checkout_answer_is_folded_once_over_the_sessions_the_card_renders() {
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange,
+                usage: None,
             },
             Some(&support::live_windows(
                 "aimux-repo",
@@ -3344,6 +3371,7 @@ fn ps_and_the_dashboard_row_print_the_same_word_for_every_agent() {
                 topology: &topology,
                 metadata_sessions: &metadata,
                 exchange: &exchange,
+                usage: None,
             },
             Some(&live),
         );

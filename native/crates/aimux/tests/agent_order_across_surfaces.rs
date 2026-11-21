@@ -304,6 +304,7 @@ fn desktop_state() -> Value {
             topology: &topology(),
             metadata_sessions: &metadata_sessions(),
             exchange: &json!({}),
+            usage: None,
         },
         Some(&live_windows()),
     )

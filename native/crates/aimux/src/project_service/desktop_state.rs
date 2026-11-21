@@ -248,12 +248,19 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
             }
         },
     };
+    // Read ONCE, above the build, because both the rows and the response need
+    // it: the rows label a session out of quota from it, and the response
+    // carries it for the usage panel. This used to be read after the build,
+    // purely for the response, which is why the rows could not see it.
+    let usage = serde_json::to_value(context.usage_monitor.read()?)
+        .map_err(|error| format!("serialize usage snapshot: {error}"))?;
     let mut state = build_desktop_state_with_live_window_projection(
         DesktopStateInput {
             project_root: context.project_root().to_string_lossy().into_owned(),
             topology: &topology,
             metadata_sessions: &metadata.sessions,
             exchange: &exchange,
+            usage: Some(&usage),
         },
         live_window_projection,
     );
@@ -266,11 +273,9 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
         object.insert("operationFailures".into(), Value::Array(operation_failures));
-        object.insert(
-            "usage".into(),
-            serde_json::to_value(context.usage_monitor.read()?)
-                .map_err(|error| format!("serialize usage snapshot: {error}"))?,
-        );
+        // The same snapshot the rows were labelled from, so the usage panel
+        // and the row labels cannot disagree about whether a tool has room.
+        object.insert("usage".into(), usage);
         attach_control_plane_warnings(object);
         object.insert(
             "loopAlertState".into(),
@@ -324,12 +329,19 @@ pub async fn desktop_state_for_context_async(
             }
         },
     };
+    // Read ONCE, above the build, because both the rows and the response need
+    // it: the rows label a session out of quota from it, and the response
+    // carries it for the usage panel. This used to be read after the build,
+    // purely for the response, which is why the rows could not see it.
+    let usage = serde_json::to_value(context.usage_monitor.read()?)
+        .map_err(|error| format!("serialize usage snapshot: {error}"))?;
     let mut state = build_desktop_state_with_live_window_projection_async(
         DesktopStateInput {
             project_root: context.project_root().to_string_lossy().into_owned(),
             topology: &topology,
             metadata_sessions: &metadata.sessions,
             exchange: &exchange,
+            usage: Some(&usage),
         },
         live_window_projection,
     )
@@ -343,11 +355,9 @@ pub async fn desktop_state_for_context_async(
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
         object.insert("operationFailures".into(), Value::Array(operation_failures));
-        object.insert(
-            "usage".into(),
-            serde_json::to_value(context.usage_monitor.read()?)
-                .map_err(|error| format!("serialize usage snapshot: {error}"))?,
-        );
+        // The same snapshot the rows were labelled from, so the usage panel
+        // and the row labels cannot disagree about whether a tool has room.
+        object.insert("usage".into(), usage);
         attach_control_plane_warnings(object);
         object.insert(
             "loopAlertState".into(),
@@ -367,6 +377,12 @@ pub struct DesktopStateInput<'a> {
     pub topology: &'a Value,
     pub metadata_sessions: &'a BTreeMap<String, Value>,
     pub exchange: &'a Value,
+    /// The machine's usage snapshot, when the caller has one.
+    ///
+    /// `None` is a caller that did not read usage, NOT a machine with no
+    /// quota: a session is only labelled out of quota on positive evidence,
+    /// so an absent snapshot leaves every row exactly as it was.
+    pub usage: Option<&'a Value>,
 }
 
 pub fn build_desktop_state(input: DesktopStateInput<'_>) -> Value {
@@ -454,6 +470,7 @@ pub fn build_desktop_state_with_live_window_projection(
             &workflow_stats,
             &notification_stats,
             &active_tasks,
+            input.usage,
         );
         if is_teammate_session(&dashboard_session) {
             teammates.push(dashboard_session);
@@ -573,6 +590,7 @@ async fn build_desktop_state_with_live_window_projection_async(
             &workflow_stats,
             &notification_stats,
             &active_tasks,
+            input.usage,
         );
         if is_teammate_session(&dashboard_session) {
             teammates.push(dashboard_session);
@@ -972,6 +990,12 @@ async fn desktop_worktrees_async(
     }
 }
 
+// Eight now that the usage snapshot comes in. Bundling these into a struct
+// would be the tidier fix, but every one of them is already a borrowed lookup
+// built once per response and the grouping would be arbitrary -- so the
+// allowance is here with its reason rather than a struct invented to satisfy a
+// lint. `periodic_scheduler.rs` and `usage_model.rs` take the same allowance.
+#[allow(clippy::too_many_arguments)]
 fn dashboard_session(
     session: &Value,
     metadata_sessions: &BTreeMap<String, Value>,
@@ -980,6 +1004,10 @@ fn dashboard_session(
     workflow_stats: &BTreeMap<String, WorkflowStats>,
     notification_stats: &BTreeMap<String, NotificationStats>,
     active_tasks: &BTreeSet<String>,
+    // The usage snapshot this response already carries, passed down rather
+    // than read per session: it is one measurement for the whole machine, and
+    // reading it once per row would be the same answer several times.
+    usage: Option<&Value>,
 ) -> Value {
     let id = string_field(session, "id").unwrap_or("");
     let metadata = metadata_sessions.get(id);
@@ -1191,6 +1219,15 @@ fn dashboard_session(
         // and the chat header's sentence come from one summary.
         subagent_label: crate::subagent_activity::subagent_label(item.get("subagents")),
         input_delivery,
+        // Keyed on the session's OWN tool, so a Codex agent is not parked
+        // because the Claude account ran out. `None` when the tool is unknown
+        // or the snapshot is absent, which is the same answer as having room:
+        // this label needs positive evidence.
+        quota_blocked: string_field(session, "tool").and_then(|tool| {
+            usage.and_then(|usage| {
+                crate::project_service::usage_monitor::tool_quota_block_reason(usage, tool)
+            })
+        }),
     });
     let live_label = semantic
         .get("user")
@@ -2793,6 +2830,7 @@ mod tests {
                 &BTreeMap::new(),
                 &BTreeMap::new(),
                 &BTreeSet::new(),
+                None,
             );
             assert_eq!(row[role], false);
             assert_eq!(row["role"], "coder");

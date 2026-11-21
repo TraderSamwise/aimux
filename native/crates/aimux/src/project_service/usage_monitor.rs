@@ -209,6 +209,72 @@ impl PeriodicTask for UsageMonitorTask {
     }
 }
 
+/// Why one tool has no room left, if it has none.
+///
+/// Reads the snapshot the usage monitor already publishes, so there is one
+/// measurement of quota rather than a second opinion derived somewhere else.
+///
+/// `None` MEANS "HAS ROOM, OR WE DO NOT KNOW", and those really are one answer
+/// here: a session is labelled out of quota only on positive evidence. An
+/// unknown quota reading as an exhausted one would park an agent nobody needed
+/// to park, which is worse than showing it as working and letting the tool
+/// refuse -- and `UsageWindow.state` is exactly where "could not measure"
+/// lives, so it is checked rather than assumed.
+///
+/// A window counts as exhausted at 100% rather than at some margin below it.
+/// A tool that has 2% left is not blocked, and guessing a threshold would be
+/// this function inventing policy the tool itself owns.
+pub fn tool_quota_block_reason(usage: &Value, tool: &str) -> Option<String> {
+    let tools = usage.get("tools").and_then(Value::as_array)?;
+    let summary = tools
+        .iter()
+        .find(|summary| summary.get("tool").and_then(Value::as_str) == Some(tool))?;
+    let mut exhausted: Vec<String> = Vec::new();
+    for source in summary
+        .get("quotaSources")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for window in source
+            .pointer("/observation/windows")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            // Only a window we actually measured. `state` carries the
+            // difference between "measured, and it is full" and "could not
+            // measure", and treating the second as full is the mistake this
+            // check exists to avoid.
+
+            if window.get("state").and_then(Value::as_str) != Some("known") {
+                continue;
+            }
+            let used = window.get("usedPercent").and_then(Value::as_f64);
+            if used.is_none_or(|used| used < 100.0) {
+                continue;
+            }
+            let label = window
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or("quota");
+            exhausted.push(match window.get("resetsAt").and_then(Value::as_i64) {
+                Some(resets_at) => format!("{label} is used up, resets {resets_at}"),
+                // No reset time is still a block. Said without one rather
+                // than withheld, because the state is what matters and the
+                // time is the detail.
+                None => format!("{label} is used up"),
+            });
+        }
+    }
+    if exhausted.is_empty() {
+        return None;
+    }
+    exhausted.sort();
+    exhausted.dedup();
+    Some(exhausted.join("; "))
+}
+
 pub fn route_usage_monitor_request(
     context: &ProjectServiceRequestContext,
     method: &str,
@@ -1115,4 +1181,126 @@ fn expire_quota(mut observation: UsageQuotaObservation, now: i64) -> UsageQuotaO
             Some("quota snapshot expired; runtime has not reported the new window".to_owned());
     }
     observation
+}
+
+#[cfg(test)]
+mod tool_quota_block_tests {
+    use super::tool_quota_block_reason;
+    use serde_json::json;
+
+    fn snapshot(tool: &str, windows: serde_json::Value) -> serde_json::Value {
+        json!({
+            "tools": [{
+                "tool": tool,
+                "quotaSources": [{ "observation": { "windows": windows } }],
+            }],
+        })
+    }
+
+    #[test]
+    fn a_full_window_blocks_the_tool_and_names_its_reset() {
+        let reason = tool_quota_block_reason(
+            &snapshot(
+                "claude",
+                json!([{ "state": "known", "label": "Weekly", "usedPercent": 100.0, "resetsAt": 1764000000 }]),
+            ),
+            "claude",
+        )
+        .expect("a full window blocks");
+        assert!(reason.contains("Weekly is used up"), "{reason}");
+        assert!(reason.contains("1764000000"), "{reason}");
+    }
+
+    #[test]
+    fn a_window_with_room_does_not_block() {
+        assert_eq!(
+            tool_quota_block_reason(
+                &snapshot(
+                    "claude",
+                    json!([{ "state": "known", "label": "Weekly", "usedPercent": 98.0 }]),
+                ),
+                "claude",
+            ),
+            None,
+            "98% is not blocked; guessing a margin would invent policy the tool owns"
+        );
+    }
+
+    /// The distinction this function exists to protect. A window we could not
+    /// MEASURE must not read as one that is full: parking an agent nobody
+    /// needed to park is worse than showing it working and letting the tool
+    /// refuse.
+    #[test]
+    fn an_unmeasured_window_is_not_an_exhausted_one() {
+        for state in ["error", "absent", "unknown"] {
+            assert_eq!(
+                tool_quota_block_reason(
+                    &snapshot(
+                        "claude",
+                        json!([{ "state": state, "label": "Weekly", "usedPercent": 100.0 }]),
+                    ),
+                    "claude",
+                ),
+                None,
+                "a {state} window counted as exhausted"
+            );
+        }
+    }
+
+    /// A hole my own gates missed until a mutation found it. `usedPercent` is
+    /// nullable in the contract, so a window can be MEASURED and still carry
+    /// no percentage -- one reported only in dollars, say. Treating that as
+    /// full would park an agent on the absence of a number.
+    #[test]
+    fn a_measured_window_with_no_percentage_does_not_block() {
+        assert_eq!(
+            tool_quota_block_reason(
+                &snapshot(
+                    "claude",
+                    json!([{ "state": "known", "label": "Weekly", "usedPercent": null, "usedUsd": 12.0 }]),
+                ),
+                "claude",
+            ),
+            None,
+            "a known window with no percentage counted as exhausted"
+        );
+    }
+
+    #[test]
+    fn another_tools_exhausted_quota_does_not_block_this_one() {
+        assert_eq!(
+            tool_quota_block_reason(
+                &snapshot(
+                    "codex",
+                    json!([{ "state": "known", "label": "Weekly", "usedPercent": 100.0 }]),
+                ),
+                "claude",
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_snapshot_with_no_tools_blocks_nothing() {
+        assert_eq!(tool_quota_block_reason(&json!({}), "claude"), None);
+    }
+
+    /// Two full windows read as one reason rather than two labels nobody can
+    /// act on separately.
+    #[test]
+    fn several_full_windows_are_reported_once_each() {
+        let reason = tool_quota_block_reason(
+            &snapshot(
+                "claude",
+                json!([
+                    { "state": "known", "label": "5h", "usedPercent": 100.0 },
+                    { "state": "known", "label": "Weekly", "usedPercent": 100.0 },
+                    { "state": "known", "label": "Weekly", "usedPercent": 100.0 },
+                ]),
+            ),
+            "claude",
+        )
+        .expect("two full windows block");
+        assert_eq!(reason, "5h is used up; Weekly is used up");
+    }
 }

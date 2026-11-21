@@ -170,6 +170,7 @@ impl Project {
                 topology: &topology,
                 metadata_sessions: &BTreeMap::new(),
                 exchange: &json!({}),
+                usage: None,
             },
             LiveWindowIdsProjection::Unavailable("tmux was not asked in this test"),
         )
@@ -184,6 +185,7 @@ impl Project {
                 topology: &topology,
                 metadata_sessions: &BTreeMap::new(),
                 exchange: &json!({}),
+                usage: None,
             },
             Some(&support::live_windows("aimux", &[LIVE_WINDOW])),
         )

@@ -280,6 +280,12 @@ pub fn build_statusline_snapshot(context: &ProjectServiceRequestContext) -> Resu
             topology: &topology,
             metadata_sessions: &metadata.sessions,
             exchange: &exchange,
+            // This path builds its own state and does not read the usage
+            // monitor. `None` leaves every row's label exactly as it was,
+            // which is the right default: the statusline falls back to
+            // `context.desktop_state` when there is one, and that one WAS
+            // labelled with usage.
+            usage: None,
         };
         match context.live_window_ids_status() {
             Some(Ok(live_window_ids)) => {
