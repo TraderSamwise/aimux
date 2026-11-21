@@ -22,6 +22,52 @@ fn context(daemon_running: bool, has_credentials: bool) -> CoreCliContext {
     }
 }
 
+/// `aimux fleet usage` plans a fleet read, not a local one.
+///
+/// The names are one word apart: `usage` is this machine's own headroom and
+/// needs a project, `fleet usage` is every other machine's and takes none.
+/// Planning the wrong one would answer a question nobody asked, and look like
+/// an answer, so both are asserted here together.
+#[test]
+fn fleet_usage_plans_the_fleet_read_and_not_the_local_one() {
+    let plan = classify_core_cli(&["fleet", "usage"], &context(true, false)).expect("fleet plan");
+    assert_eq!(plan.operation, CoreCliOperation::FleetUsage);
+    assert_eq!(
+        plan.action,
+        CoreCliAction::TextRoute {
+            path: "/core/fleet/usage-text".into(),
+            body: None,
+        }
+    );
+
+    let json = classify_core_cli(&["fleet", "usage", "--json"], &context(true, false))
+        .expect("fleet json plan");
+    assert_eq!(
+        json.action,
+        CoreCliAction::TextRoute {
+            path: "/core/fleet/usage-text?json=1".into(),
+            body: None,
+        }
+    );
+    assert_eq!(json.output_mode, CoreCliOutputMode::Json);
+
+    // An unrecognised subcommand under `fleet` is not planned as a fleet
+    // read. This holds because the planner has no arm for it, NOT because of
+    // the allowlist -- loosening that entry to `(Some("fleet"), _)` leaves
+    // this passing. Said plainly because the first version of this comment
+    // claimed it guarded the allowlist, which it does not.
+    assert!(
+        classify_core_cli(&["fleet", "status"], &context(true, false)).is_err(),
+        "an unknown fleet subcommand was planned anyway"
+    );
+
+    // The local one still carries a project, which is what makes the two
+    // distinguishable rather than merely differently named.
+    let local = classify_core_cli(&["usage"], &context(true, false)).expect("local usage plan");
+    assert_eq!(local.operation, CoreCliOperation::Usage);
+    assert_ne!(local.action, plan.action);
+}
+
 #[test]
 fn usage_command_reads_project_usage_and_refreshes_through_the_service() {
     let default = classify_core_cli(&["usage"], &context(true, false)).expect("usage plan");

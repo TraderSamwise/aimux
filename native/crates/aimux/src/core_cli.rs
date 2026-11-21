@@ -177,6 +177,7 @@ pub enum CoreCliOperation {
     DaemonProjects,
     DaemonProjectEnsure,
     DoctorVersions,
+    FleetUsage,
     Logs,
     ProjectsList,
     ProjectsRemove,
@@ -2374,6 +2375,18 @@ where
                 _ => unreachable!("validated migration command"),
             }
         }
+        ("fleet", "usage") => (
+            CoreCliOperation::FleetUsage,
+            CoreCliAction::TextRoute {
+                path: if mode == CoreCliOutputMode::Json {
+                    format!("{}?json=1", CORE_API_ROUTES.fleet_usage_text)
+                } else {
+                    CORE_API_ROUTES.fleet_usage_text.to_owned()
+                },
+                body: None,
+            },
+            CoreCliFallback::None,
+        ),
         ("doctor", "versions") => (
             CoreCliOperation::DoctorVersions,
             CoreCliAction::TextRoute {
