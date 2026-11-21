@@ -285,6 +285,35 @@ pub fn load_config_for_project_with_resolver(
     merge_config_layers(global.as_ref(), project.as_ref())
 }
 
+/// The global config file as it is ON DISK, with defaults NOT merged in.
+///
+/// `load_global_config_with_resolver` returns a merged view, which is right for
+/// reading one setting and WRONG for a read-modify-write: it starts from
+/// `default_config()` and deep-merges, so writing that value back would bake
+/// every default into the file and freeze settings that are meant to follow
+/// the defaults as they change.
+///
+/// `Ok(None)` means the file is absent, which is a machine nobody has
+/// configured. A file that could not be read or parsed is `Err`, because
+/// treating it as absent would let a caller replace it.
+pub fn try_read_global_config_file(resolver: &PathResolver) -> Result<Option<Value>, String> {
+    try_read_json_file(resolver.global_config_path())
+}
+
+/// Replace the global config file.
+///
+/// The caller is expected to have read the file with
+/// `try_read_global_config_file` and edited that value, so the parts of the
+/// file it does not care about survive. Writing a value built from scratch
+/// here would drop every other feature's settings.
+pub fn write_global_config_file(resolver: &PathResolver, config: &Value) -> Result<(), String> {
+    let path = resolver.global_config_path();
+    if let Some(parent) = path.parent() {
+        secure_permissions::ensure_private_dir(parent).map_err(|error| error.to_string())?;
+    }
+    write_json_atomic(path, config).map_err(|error| error.to_string())
+}
+
 pub fn load_global_config() -> Value {
     let resolver = PathResolver::from_env();
     load_global_config_with_resolver(&resolver)

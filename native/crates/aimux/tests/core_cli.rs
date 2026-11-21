@@ -66,7 +66,13 @@ fn tool_accounts_plans_the_local_tool_accounts_route() {
     assert!(is_core_cli_command(&["tool", "accounts"]));
     assert!(is_core_cli_command(&["tool", "accounts", "--json"]));
     assert!(!is_core_cli_command(&["tool", "accounts", "--force"]));
-    assert!(!is_core_cli_command(&["tool", "profiles"]));
+    // `tool profiles` IS a command now -- it lists credential profiles -- so
+    // the undefined sibling this pins is one that really is not planned. The
+    // original line named `tool profiles`, and making it a verb failed here,
+    // which is the gate working: a new sibling has to be acknowledged rather
+    // than slipped in.
+    assert!(is_core_cli_command(&["tool", "profiles"]));
+    assert!(!is_core_cli_command(&["tool", "switch"]));
 }
 
 /// `aimux fleet accounts` plans the fleet accounts read.

@@ -284,6 +284,10 @@
       "/core/tool-accounts-text"
     ],
     [
+      "credentialProfilesText",
+      "/core/credential-profiles-text"
+    ],
+    [
       "logsTailText",
       "/core/logs/tail-text"
     ],
