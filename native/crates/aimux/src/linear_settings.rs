@@ -101,6 +101,87 @@ pub fn parse_linear_settings(config: &Value) -> LinearSettings {
     }
 }
 
+/// Whether the token Linear needs can actually be read.
+///
+/// Separate from `LinearSettings` because the two fail differently and a
+/// person fixes them in different places: the settings are a config edit, and
+/// a missing token is an environment the daemon was started without. Telling
+/// somebody "Linear is not configured" when the project is named and only the
+/// variable is unset sends them to the wrong file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinearToken {
+    /// Readable, and this is its length -- never the value.
+    ///
+    /// The length is carried so a report can say the variable holds SOMETHING
+    /// without printing it. A bare "set" cannot distinguish a real token from
+    /// an accidental empty-ish value, and printing the token would put it in
+    /// every surface that renders this.
+    Readable { env: String, length: usize },
+    /// The config names a variable and the environment does not have it.
+    Missing { env: String },
+    /// The config names a variable and it is set to nothing, which is a
+    /// different mistake from not setting it -- usually an export that lost
+    /// its value -- and worth saying separately.
+    Empty { env: String },
+    /// No variable is named, so there is nothing to look up yet.
+    Unnamed,
+}
+
+/// Resolve the token from an environment, without touching the process one.
+///
+/// Takes a lookup so the rules below are provable: a test supplies its own
+/// environment rather than mutating the process's, which would make these
+/// tests order-dependent against every other test in the binary.
+pub fn resolve_linear_token(
+    settings: &LinearSettings,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> LinearToken {
+    let LinearSettings::Configured { token_env, .. } = settings else {
+        return LinearToken::Unnamed;
+    };
+    let Some(env) = token_env else {
+        return LinearToken::Unnamed;
+    };
+    match lookup(env) {
+        Some(value) if value.trim().is_empty() => LinearToken::Empty { env: env.clone() },
+
+        Some(value) => LinearToken::Readable {
+            env: env.clone(),
+            // Counted on the TRIMMED value, because surrounding whitespace in
+            // an exported variable is not token material and a length that
+            // included it would overstate what is there.
+            length: value.trim().chars().count(),
+        },
+        None => LinearToken::Missing { env: env.clone() },
+    }
+}
+
+/// Whether Linear can actually be reached, as opposed to merely chosen.
+pub fn linear_is_usable(settings: &LinearSettings, token: &LinearToken) -> bool {
+    settings.replaces_local_tasks() && matches!(token, LinearToken::Readable { .. })
+}
+
+/// One line about the token, for a route to render.
+///
+/// Never the value, and never a prefix of it: a prefix is still key material
+/// and this string is rendered by the CLI and reported as JSON.
+pub fn linear_token_line(token: &LinearToken) -> String {
+    match token {
+        LinearToken::Readable { env, length } => {
+            format!("Token read from {env} ({length} characters).")
+        }
+        LinearToken::Missing { env } => {
+            format!("{env} is not set in the daemon's environment, so Linear cannot be reached.")
+        }
+        LinearToken::Empty { env } => {
+            format!("{env} is set but empty, so Linear cannot be reached.")
+        }
+        LinearToken::Unnamed => {
+            "No token environment variable is named, so Linear cannot be reached yet.".to_owned()
+        }
+    }
+}
+
 /// What the settings are, for a route to report.
 pub fn linear_settings_report(settings: &LinearSettings) -> Value {
     match settings {
@@ -130,6 +211,129 @@ pub fn linear_settings_report(settings: &LinearSettings) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn configured(env: Option<&str>) -> LinearSettings {
+        LinearSettings::Configured {
+            project: "Aimux".to_owned(),
+            token_env: env.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_named_and_set_variable_is_readable_and_never_echoed() {
+        let token = resolve_linear_token(&configured(Some("AIMUX_LINEAR_TOKEN")), |name| {
+            (name == "AIMUX_LINEAR_TOKEN").then(|| "lin_api_secret_value".to_owned())
+        });
+        assert_eq!(
+            token,
+            LinearToken::Readable {
+                env: "AIMUX_LINEAR_TOKEN".to_owned(),
+                length: "lin_api_secret_value".chars().count(),
+            }
+        );
+        let line = linear_token_line(&token);
+        assert!(line.contains("AIMUX_LINEAR_TOKEN"), "{line}");
+        assert!(
+            !line.contains("lin_api_secret_value"),
+            "the token line echoed the value: {line}"
+        );
+        assert!(
+            !line.contains("lin_api"),
+            "the token line echoed a prefix, which is still key material: {line}"
+        );
+    }
+
+    /// The three failures a person fixes differently. Collapsing them sends
+    /// somebody to the wrong file: unset is an environment problem, empty is
+    /// usually an export that lost its value, and unnamed is a config edit.
+    #[test]
+    fn unset_empty_and_unnamed_are_three_different_answers() {
+        let unset = resolve_linear_token(&configured(Some("T")), |_| None);
+        assert_eq!(
+            unset,
+            LinearToken::Missing {
+                env: "T".to_owned()
+            }
+        );
+        assert!(linear_token_line(&unset).contains("is not set"));
+
+        let empty = resolve_linear_token(&configured(Some("T")), |_| Some("   ".to_owned()));
+        assert_eq!(
+            empty,
+            LinearToken::Empty {
+                env: "T".to_owned()
+            }
+        );
+        assert!(linear_token_line(&empty).contains("set but empty"));
+
+        let unnamed = resolve_linear_token(&configured(None), |_| Some("x".to_owned()));
+        assert_eq!(unnamed, LinearToken::Unnamed);
+        assert!(linear_token_line(&unnamed).contains("No token environment variable"));
+    }
+
+    /// Whitespace around an exported value is not token material, so the
+    /// length must not count it -- a length that did would overstate what is
+    /// there and make an almost-empty variable look fine.
+    #[test]
+    fn the_reported_length_ignores_surrounding_whitespace() {
+        let token = resolve_linear_token(&configured(Some("T")), |_| Some("  abc  ".to_owned()));
+        assert_eq!(
+            token,
+            LinearToken::Readable {
+                env: "T".to_owned(),
+                length: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn an_unconfigured_account_has_nothing_to_look_up() {
+        assert_eq!(
+            resolve_linear_token(&LinearSettings::Absent, |_| Some("x".to_owned())),
+            LinearToken::Unnamed
+        );
+        assert_eq!(
+            resolve_linear_token(&LinearSettings::Unreadable("broken".to_owned()), |_| Some(
+                "x".to_owned()
+            )),
+            LinearToken::Unnamed
+        );
+    }
+
+    /// CHOSEN is not REACHABLE, and the difference is the whole point of this
+    /// pair: a project named with no token set would otherwise look ready.
+    #[test]
+    fn linear_is_usable_only_when_chosen_and_readable() {
+        let settings = configured(Some("T"));
+        assert!(linear_is_usable(
+            &settings,
+            &LinearToken::Readable {
+                env: "T".to_owned(),
+                length: 10
+            }
+        ));
+        assert!(!linear_is_usable(
+            &settings,
+            &LinearToken::Missing {
+                env: "T".to_owned()
+            }
+        ));
+        assert!(!linear_is_usable(
+            &settings,
+            &LinearToken::Empty {
+                env: "T".to_owned()
+            }
+        ));
+        // And an unconfigured account is not usable however the environment
+        // looks, because nothing chose Linear.
+        assert!(!linear_is_usable(
+            &LinearSettings::Absent,
+            &LinearToken::Readable {
+                env: "T".to_owned(),
+                length: 10
+            }
+        ));
+    }
 
     #[test]
     fn no_linear_block_leaves_the_local_task_engine_in_charge() {

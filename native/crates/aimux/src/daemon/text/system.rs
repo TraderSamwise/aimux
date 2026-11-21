@@ -228,8 +228,30 @@ pub fn linear_settings_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResp
     // from a default are still settings this account would honour.
     let config = crate::config::load_global_config_with_resolver(&resolver);
     let settings = crate::linear_settings::parse_linear_settings(&config);
-    let report = crate::linear_settings::linear_settings_report(&settings);
-    let lines = render_linear_settings_report(&report);
+    // Resolved from the DAEMON's own environment, which is where a variable
+    // named in `linear.tokenEnv` has to be set: this process makes the call,
+    // so its environment is the one that matters. Nothing here reads the
+    // launch env an agent gets.
+    let token =
+        crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
+    let mut report = crate::linear_settings::linear_settings_report(&settings);
+    if let Value::Object(object) = &mut report {
+        // `usable` is the question somebody actually has, and it is not the
+        // same as `configured`: a project named with no token set is
+        // configured and unreachable.
+        object.insert(
+            "usable".to_owned(),
+            Value::Bool(crate::linear_settings::linear_is_usable(&settings, &token)),
+        );
+    }
+    let mut lines = render_linear_settings_report(&report);
+    // Only when Linear was chosen. An account using the local engine has no
+    // token to say anything about, and a line about one would read as a
+    // problem it does not have.
+    if settings.replaces_local_tasks() {
+        lines.pop();
+        lines.push(crate::linear_settings::linear_token_line(&token));
+    }
     text_or_json_lines(route_url, report, &lines)
 }
 
