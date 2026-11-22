@@ -93,11 +93,15 @@ pub fn route_coordination_mutation_request_with_runtime(
     // work exists to prevent. The pathname test comes FIRST so a thread or
     // review mutation never pays for a config read it cannot be refused by.
     if writes_a_local_task(pathname) {
-        match local_task_plan(pathname) {
+        match local_task_plan() {
             // Behaves exactly as it always did.
             (crate::task_backend::LocalTaskVerdict::Proceed, _) => {}
             (crate::task_backend::LocalTaskVerdict::DelegateToLinear { project }, secret) => {
-                return Some(delegate_task_to_linear(&project, secret, body));
+                return Some(if creates_a_task(pathname) {
+                    delegate_task_to_linear(&project, secret, body)
+                } else {
+                    delegate_transition_to_linear(pathname, secret, body)
+                });
             }
             // Shaped like every other task error -- `ok: false` with an
             // `error` string at 400 -- so every surface renders it through the
@@ -176,10 +180,12 @@ fn creates_a_task(pathname: &str) -> bool {
 
 /// What to do with a task mutation, and the token to do it with.
 ///
-/// Returns the verdict plus the resolved secret, because the delegation needs
-/// the value and `resolve_linear_token` deliberately keeps it out of its own
-/// result so a token cannot ride along in a report.
-fn local_task_plan(pathname: &str) -> (crate::task_backend::LocalTaskVerdict, Option<String>) {
+/// Takes no pathname any more: the verdict is the same for every task route
+/// now that both filing and moving are built, and the DISPATCHER picks which
+/// delegation to call. Returns the resolved secret alongside, because the
+/// delegation needs the value and `resolve_linear_token` deliberately keeps it
+/// out of its own result so a token cannot ride along in a report.
+fn local_task_plan() -> (crate::task_backend::LocalTaskVerdict, Option<String>) {
     let resolver = crate::paths::PathResolver::from_env();
     let config = crate::config::load_global_config_with_resolver(&resolver);
     let settings = crate::linear_settings::parse_linear_settings(&config);
@@ -190,10 +196,98 @@ fn local_task_plan(pathname: &str) -> (crate::task_backend::LocalTaskVerdict, Op
         _ => None,
     };
     let backend = crate::task_backend::task_backend(&settings, &token);
-    (
-        crate::task_backend::local_task_verdict(&backend, creates_a_task(pathname)),
-        secret,
-    )
+    (crate::task_backend::local_task_verdict(&backend), secret)
+}
+
+/// The local status each transition route moves a task INTO.
+///
+/// Beside `creates_a_task` because the two answer the same question from
+/// different sides, and a transition whose status nobody declared would be
+/// silently undelegatable.
+///
+/// These are the words the routes themselves write -- `in_progress` from
+/// `route_task_accept`, `done` from `route_task_complete` -- not plausible
+/// synonyms. Getting that wrong once is why `linear_tasks` carries a gate
+/// pinning the vocabulary.
+fn transition_status(pathname: &str) -> Option<&'static str> {
+    match pathname {
+        routes::tasks::ACCEPT => Some("in_progress"),
+        routes::tasks::BLOCK => Some("blocked"),
+        routes::tasks::CANCEL => Some("canceled"),
+        routes::tasks::COMPLETE => Some("done"),
+        // Reopening puts a task back in play. `pending` rather than
+        // `in_progress`, because reopening does not claim anybody is on it.
+        routes::tasks::REOPEN => Some("pending"),
+        _ => None,
+    }
+}
+
+/// The task object a delegated assignment reports.
+///
+/// Extracted so it can be GATED. The `id` is the bare identifier because it is
+/// what a later `aimux task complete <id>` parses -- d40fa7022 stored the
+/// edge's display string there instead, with the url glued on, which no
+/// transition could ever have looked up. The url is its own field.
+fn delegated_task(identifier: &str, url: Option<&str>, description: &str, project: &str) -> Value {
+    let mut task = json!({
+        "id": identifier,
+        "identifier": identifier,
+        "status": "pending",
+        "description": description,
+        "source": "linear",
+        "project": project,
+    });
+    if let (Value::Object(object), Some(url)) = (&mut task, url) {
+        object.insert("url".to_owned(), Value::String(url.to_owned()));
+    }
+    task
+}
+
+/// Move a delegated task in Linear instead of the local exchange.
+fn delegate_transition_to_linear(
+    pathname: &str,
+    secret: Option<String>,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let Some(secret) = secret else {
+        return json_response(
+            400,
+            json!({
+                "ok": false,
+                "error": "The Linear token variable disappeared between reading it and using it.",
+            }),
+        );
+    };
+    let Some(status) = transition_status(pathname) else {
+        // Unreachable while `writes_a_local_task` and `transition_status`
+        // agree, and a gate holds them together -- but reported rather than
+        // defaulted, because guessing a status here would move an issue
+        // somewhere nobody asked for.
+        return json_response(
+            400,
+            json!({ "ok": false, "error": format!("{pathname} has no Linear equivalent") }),
+        );
+    };
+    let task_id = string_field(body, "taskId");
+    if task_id.trim().is_empty() {
+        return json_response(
+            400,
+            json!({ "ok": false, "error": "name the task to move with --task-id" }),
+        );
+    }
+    match crate::remote_control_edge::move_linear_issue(secret.trim(), task_id.trim(), status) {
+        Ok(moved) => json_response(
+            200,
+            json!({
+                "ok": true,
+                "task": { "id": task_id, "status": status, "source": "linear" },
+                "moved": moved,
+            }),
+        ),
+        // The edge's own reason, which already separates a bad key from a
+        // missing issue from a status Linear cannot express.
+        Err(reason) => json_response(400, json!({ "ok": false, "error": reason })),
+    }
 }
 
 /// File a task into Linear instead of the local exchange.
@@ -242,18 +336,15 @@ fn delegate_task_to_linear(
         &title,
         &description,
     ) {
-        Ok(created) => json_response(
+        // The id is the BARE IDENTIFIER, because it is what a later
+        // `aimux task complete <id>` has to parse. It used to be the edge's
+        // display string with the url glued on, which no transition could have
+        // looked up -- the url is its own field now.
+        Ok((identifier, url)) => json_response(
             200,
             json!({
                 "ok": true,
-                "task": {
-                    "id": created.clone(),
-                    "identifier": created,
-                    "status": "pending",
-                    "description": description,
-                    "source": "linear",
-                    "project": project,
-                },
+                "task": delegated_task(&identifier, url.as_deref(), &description, project),
             }),
         ),
         Err(reason) => json_response(400, json!({ "ok": false, "error": reason })),
@@ -2438,6 +2529,66 @@ fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
 #[cfg(test)]
 mod local_task_guard_tests {
     use super::*;
+
+    /// THE GATE THAT WOULD HAVE CAUGHT THE ID DEFECT. A delegated task's `id`
+    /// is what a later `aimux task complete <id>` parses, so it has to BE a
+    /// Linear issue key. d40fa7022 stored the edge's display string there --
+    /// `AIM-20 — https://...` -- which no transition could ever have looked
+    /// up, and nothing compared the two halves.
+    #[test]
+    fn a_delegated_task_id_is_a_key_a_transition_can_look_up() {
+        // Built by the CODE, not asserted about a literal -- my first version
+        // of this gate checked `split_issue_identifier("AIM-20")` and never
+        // touched the delegation, so mutating the id back to a display string
+        // passed. A gate that cannot fail is documentation.
+        let task = delegated_task(
+            "AIM-20",
+            Some("https://linear.app/t/issue/AIM-20"),
+            "Ship the plane",
+            "Aimux",
+        );
+        let id = task["id"].as_str().expect("an id");
+        assert!(
+            crate::linear_api::split_issue_identifier(id).is_some(),
+            "the delegation stores an id no transition can parse: {id}"
+        );
+        // The url is its own field and must NOT be inside the id.
+        assert!(!id.contains("http"), "the url was glued onto the id: {id}");
+        assert_eq!(task["url"], json!("https://linear.app/t/issue/AIM-20"));
+        assert_eq!(task["identifier"], json!("AIM-20"));
+
+        // And with no url, still a bare key and no url field.
+        let plain = delegated_task("AIM-21", None, "x", "Aimux");
+        assert_eq!(plain["id"], json!("AIM-21"));
+        assert!(plain.get("url").is_none(), "{plain}");
+    }
+
+    /// Every transition declares the status it moves a task into, or it is
+    /// silently undelegatable. Holds `transition_status` and
+    /// `writes_a_local_task` together.
+    #[test]
+    fn every_transition_declares_the_status_it_moves_into() {
+        for pathname in [
+            routes::tasks::ACCEPT,
+            routes::tasks::BLOCK,
+            routes::tasks::CANCEL,
+            routes::tasks::COMPLETE,
+            routes::tasks::REOPEN,
+        ] {
+            let status = transition_status(pathname)
+                .unwrap_or_else(|| panic!("{pathname} declares no status"));
+            // And it must be a status Linear can actually express, or the
+            // delegation refuses every call to that route.
+            assert!(
+                crate::linear_tasks::linear_state_type_for_local_status(status).is_some()
+                    || status == "blocked",
+                "{pathname} moves to {status}, which Linear cannot express"
+            );
+        }
+        // The creates routes declare none, because they file rather than move.
+        assert!(transition_status(routes::tasks::ASSIGN).is_none());
+        assert!(transition_status(routes::agents::CREATE_TEAMMATE_TASK).is_none());
+    }
 
     /// Both assign routes FILE a task, so both delegate to Linear. Missing
     /// `CREATE_TEAMMATE_TASK` here would send a teammate task to the local
