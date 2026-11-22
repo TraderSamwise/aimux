@@ -459,6 +459,91 @@ pub fn parse_updated_issue(data: &Value) -> Result<String, String> {
     Ok(state.to_owned())
 }
 
+/// The documents in one project, by project NAME, like the issue query.
+pub fn project_documents_query(project: &str) -> Value {
+    json!({
+        "query": "query DocsInProject($project: String!) { \
+                  documents(filter: { project: { name: { eq: $project } } }, first: 50) { \
+                  nodes { id title slugId url updatedAt \
+                  creator { name } } } }",
+        "variables": { "project": project },
+    })
+}
+
+/// One Linear document, reduced to what a surface needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinearDoc {
+    pub id: String,
+    pub title: String,
+    /// The short slug that makes a shareable link. Carried because it is the
+    /// durable handle; a title can be renamed and an id is unreadable.
+    pub slug: Option<String>,
+    pub url: Option<String>,
+    pub author: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+/// Every document in a `project_documents_query` answer.
+///
+/// A malformed document is reported beside the good ones rather than dropped
+/// or fatal, the same rule the issue read follows: under-reporting a project
+/// and hiding every healthy row behind one bad one are both worse than saying
+/// which row is bad.
+pub fn docs_from_linear_data(data: &Value) -> (Vec<LinearDoc>, Vec<String>) {
+    let mut docs = Vec::new();
+    let mut problems = Vec::new();
+    let nodes = data
+        .get("documents")
+        .and_then(|documents| documents.get("nodes"))
+        .and_then(Value::as_array);
+    let Some(nodes) = nodes else {
+        problems.push("Linear's answer carried no documents list".to_owned());
+        return (docs, problems);
+    };
+    for node in nodes {
+        let id = node
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty());
+        let title = node
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|title| !title.is_empty());
+        match (id, title) {
+            (Some(id), Some(title)) => docs.push(LinearDoc {
+                id: id.to_owned(),
+                title: title.to_owned(),
+                slug: node
+                    .get("slugId")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                url: node.get("url").and_then(Value::as_str).map(str::to_owned),
+                author: node
+                    .get("creator")
+                    .and_then(|creator| creator.get("name"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                updated_at: node
+                    .get("updatedAt")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            }),
+            // Named by whichever half arrived, so somebody can go and look.
+            (Some(id), None) => {
+                problems.push(format!("Linear document {id} arrived with no title"));
+            }
+            (None, Some(title)) => {
+                problems.push(format!("Linear document \"{title}\" arrived with no id"));
+            }
+            (None, None) => {
+                problems
+                    .push("a Linear document arrived with neither an id nor a title".to_owned());
+            }
+        }
+    }
+    (docs, problems)
+}
+
 /// Verify a credential, and say whose it is.
 ///
 /// Generic over the trait so this whole path is provable with a fake: the only
@@ -866,6 +951,94 @@ mod tests {
             !text.contains("AIM"),
             "the team key was interpolated: {text}"
         );
+    }
+
+    fn doc_node(id: &str, title: &str) -> Value {
+        json!({
+            "id": id,
+            "title": title,
+            "slugId": "abc123",
+            "url": "https://linear.app/t/document/abc123",
+            "updatedAt": "2026-11-21T10:00:00.000Z",
+            "creator": { "name": "Sam S." },
+        })
+    }
+
+    #[test]
+    fn a_document_carries_the_handle_a_person_can_share() {
+        let data = json!({ "documents": { "nodes": [doc_node("d1", "Fleet spec")] } });
+        let (docs, problems) = docs_from_linear_data(&data);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(
+            docs,
+            vec![LinearDoc {
+                id: "d1".to_owned(),
+                title: "Fleet spec".to_owned(),
+                slug: Some("abc123".to_owned()),
+                url: Some("https://linear.app/t/document/abc123".to_owned()),
+                author: Some("Sam S.".to_owned()),
+                updated_at: Some("2026-11-21T10:00:00.000Z".to_owned()),
+            }]
+        );
+    }
+
+    /// Only the id and the title are required. Everything else absent is a
+    /// real document with less metadata, not a failure -- a doc with no
+    /// author or url still exists and is still worth listing.
+    #[test]
+    fn a_document_with_only_an_id_and_title_is_still_a_document() {
+        let data = json!({ "documents": { "nodes": [{ "id": "d1", "title": "Bare" }] } });
+        let (docs, problems) = docs_from_linear_data(&data);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].slug, None);
+        assert_eq!(docs[0].url, None);
+        assert_eq!(docs[0].author, None);
+    }
+
+    /// ONE BAD ROW MUST NOT HIDE THE HEALTHY ONES and must not vanish, the
+    /// same rule the issue read follows. The problem names whichever half
+    /// arrived, so somebody can go and look.
+    #[test]
+    fn a_malformed_document_is_reported_beside_the_good_ones() {
+        let data = json!({ "documents": { "nodes": [
+            doc_node("d1", "Fleet spec"),
+            json!({ "id": "d2" }),
+            json!({ "title": "Orphan" }),
+            json!({}),
+        ]}});
+        let (docs, problems) = docs_from_linear_data(&data);
+        assert_eq!(docs.len(), 1, "a bad row discarded the good one");
+        assert_eq!(problems.len(), 3, "{problems:?}");
+        assert!(problems[0].contains("d2"), "{problems:?}");
+        assert!(problems[1].contains("Orphan"), "{problems:?}");
+        assert!(problems[2].contains("neither"), "{problems:?}");
+    }
+
+    /// An empty project SUCCEEDED with nothing; a MISSING documents list did
+    /// not. Saying "no docs" for the second would read as a project nobody
+    /// has written anything about.
+    #[test]
+    fn no_documents_and_no_documents_list_are_different_answers() {
+        let (docs, problems) = docs_from_linear_data(&json!({ "documents": { "nodes": [] } }));
+        assert!(docs.is_empty());
+        assert!(problems.is_empty(), "{problems:?}");
+
+        let (docs, problems) = docs_from_linear_data(&json!({}));
+        assert!(docs.is_empty());
+        assert_eq!(problems.len(), 1, "{problems:?}");
+    }
+
+    #[test]
+    fn the_documents_query_sends_its_project_as_a_variable() {
+        let query = project_documents_query("Aimux \"Core\"");
+        assert_eq!(query["variables"]["project"], json!("Aimux \"Core\""));
+        let text = query["query"].as_str().expect("a query");
+        assert!(
+            !text.contains("Aimux"),
+            "the project was interpolated: {text}"
+        );
+        assert!(text.contains("$project: String!"), "{text}");
     }
 
     /// THE GATE THIS MODULE EXISTS FOR. GraphQL reports query errors with HTTP

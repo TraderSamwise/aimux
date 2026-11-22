@@ -308,6 +308,10 @@
       "/core/linear-move-text"
     ],
     [
+      "linearDocsText",
+      "/core/linear-docs-text"
+    ],
+    [
       "swarmHostText",
       "/core/swarm-host-text"
     ],

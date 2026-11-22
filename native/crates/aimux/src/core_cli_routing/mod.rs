@@ -813,6 +813,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("linear"), Some("status")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         (Some("linear"), Some("check")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         (Some("linear"), Some("tasks")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
+        (Some("linear"), Some("docs")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         // Takes the task text as one positional, so this is the `swarm host`
         // shape rather than the flags-only shape its neighbours use.
         // TWO positionals -- the issue and the status -- which is the first

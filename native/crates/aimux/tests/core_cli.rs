@@ -294,6 +294,25 @@ fn linear_assign_always_posts_even_with_nothing_to_file() {
 }
 
 /// `aimux linear tasks` reads, so it carries no body.
+/// `aimux linear docs` reads, so it carries no body.
+#[test]
+fn linear_docs_plans_a_read_with_no_body() {
+    let plan = classify_core_cli(&["linear", "docs"], &context(true, false))
+        .expect("linear docs is planned");
+    assert_eq!(plan.operation, CoreCliOperation::LinearSettings);
+    assert_eq!(
+        plan.action,
+        CoreCliAction::TextRoute {
+            path: "/core/linear-docs-text".into(),
+            body: None,
+        },
+        "a read must carry no body"
+    );
+    assert!(is_core_cli_command(&["linear", "docs"]));
+    assert!(is_core_cli_command(&["linear", "docs", "--json"]));
+    assert!(!is_core_cli_command(&["linear", "docs", "extra"]));
+}
+
 #[test]
 fn linear_tasks_plans_a_read_with_no_body() {
     let plan = classify_core_cli(&["linear", "tasks"], &context(true, false))

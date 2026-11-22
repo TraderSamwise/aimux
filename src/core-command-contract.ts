@@ -77,6 +77,7 @@ export const CORE_API_ROUTES = {
   linearTasksText: "/core/linear-tasks-text",
   linearAssignText: "/core/linear-assign-text",
   linearMoveText: "/core/linear-move-text",
+  linearDocsText: "/core/linear-docs-text",
   swarmHostText: "/core/swarm-host-text",
   logsTailText: "/core/logs/tail-text",
   metadataText: "/core/metadata-text",

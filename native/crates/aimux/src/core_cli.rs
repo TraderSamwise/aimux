@@ -2502,6 +2502,18 @@ where
                 CoreCliFallback::None,
             )
         }
+        ("linear", "docs") => (
+            CoreCliOperation::LinearSettings,
+            CoreCliAction::TextRoute {
+                path: if mode == CoreCliOutputMode::Json {
+                    format!("{}?json=1", CORE_API_ROUTES.linear_docs_text)
+                } else {
+                    CORE_API_ROUTES.linear_docs_text.to_owned()
+                },
+                body: None,
+            },
+            CoreCliFallback::None,
+        ),
         ("linear", "tasks") => (
             CoreCliOperation::LinearSettings,
             CoreCliAction::TextRoute {
