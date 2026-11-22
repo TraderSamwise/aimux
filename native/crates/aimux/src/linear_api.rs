@@ -298,6 +298,167 @@ pub fn parse_created_issue(data: &Value) -> Result<CreatedIssue, String> {
     })
 }
 
+/// Split a Linear issue key into the team key and the number.
+///
+/// Linear's GraphQL has no "filter by identifier", so `AIM-12` has to become a
+/// team key plus a number to be looked up at all. Doing it here makes the
+/// parsing provable instead of buried in a query builder.
+///
+/// `None` for anything that is not an identifier, rather than a guess: looking
+/// up the wrong issue and moving it is worse than refusing a typo.
+pub fn split_issue_identifier(identifier: &str) -> Option<(String, u64)> {
+    let trimmed = identifier.trim();
+    // `rsplit_once` because a team key may itself contain a hyphen, and the
+    // NUMBER is always last.
+    let (team, number) = trimmed.rsplit_once('-')?;
+    if team.is_empty() {
+        return None;
+    }
+    // Rejected rather than truncated: `AIM-12x` is not issue 12.
+    let number: u64 = number.parse().ok()?;
+    Some((team.to_owned(), number))
+}
+
+/// Find one issue by its team key and number.
+pub fn issue_lookup_query(team: &str, number: u64) -> Value {
+    json!({
+        "query": "query FindIssue($team: String!, $number: Float!) { \
+                  issues(filter: { team: { key: { eq: $team } }, \
+                  number: { eq: $number } }, first: 2) { \
+                  nodes { id identifier team { id } } } }",
+        "variables": { "team": team, "number": number },
+    })
+}
+
+/// What an issue lookup found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IssueLookup {
+    Found {
+        issue_id: String,
+        team_id: String,
+    },
+    NotFound,
+    /// Two issues matched one team key and number, which should be impossible.
+    /// Refused rather than resolved, because moving the wrong issue is the one
+    /// outcome that cannot be undone by retrying.
+    Ambiguous,
+    /// Found, but with no team, so its workflow states cannot be read.
+    NoTeam,
+}
+
+pub fn parse_issue_lookup(data: &Value) -> IssueLookup {
+    let nodes = data
+        .get("issues")
+        .and_then(|issues| issues.get("nodes"))
+        .and_then(Value::as_array);
+    let Some(nodes) = nodes else {
+        return IssueLookup::NotFound;
+    };
+    match nodes.len() {
+        0 => IssueLookup::NotFound,
+        1 => {
+            let node = &nodes[0];
+            let Some(issue_id) = node.get("id").and_then(Value::as_str) else {
+                return IssueLookup::NotFound;
+            };
+            match node
+                .get("team")
+                .and_then(|team| team.get("id"))
+                .and_then(Value::as_str)
+            {
+                Some(team_id) => IssueLookup::Found {
+                    issue_id: issue_id.to_owned(),
+                    team_id: team_id.to_owned(),
+                },
+                None => IssueLookup::NoTeam,
+            }
+        }
+        _ => IssueLookup::Ambiguous,
+    }
+}
+
+/// A team's workflow states, which is where a state id comes from.
+pub fn workflow_states_query(team_id: &str) -> Value {
+    json!({
+        "query": "query TeamStates($teamId: String!) { \
+                  team(id: $teamId) { states(first: 50) { \
+                  nodes { id name type position } } } }",
+        "variables": { "teamId": team_id },
+    })
+}
+
+/// Find the state id to move an issue into, for one Linear state TYPE.
+///
+/// Keyed on type for the same reason `local_status_for_linear_state` reads it:
+/// a workspace renames columns freely and the type does not move. When a team
+/// has SEVERAL states of one type -- several `started` columns is normal -- the
+/// lowest `position` wins, which is the leftmost column and the one a person
+/// would call "the" in-progress state.
+///
+/// `None` means the team genuinely has no state of that type, which is a real
+/// answer about the team's workflow rather than a failure to look.
+pub fn state_id_for_type(data: &Value, state_type: &str) -> Option<String> {
+    let nodes = data
+        .get("team")
+        .and_then(|team| team.get("states"))
+        .and_then(|states| states.get("nodes"))
+        .and_then(Value::as_array)?;
+    let mut best: Option<(f64, &str)> = None;
+    for node in nodes {
+        if node.get("type").and_then(Value::as_str) != Some(state_type) {
+            continue;
+        }
+        let Some(id) = node.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        // A state with no position sorts last rather than first, so a
+        // missing field cannot win over a real leftmost column.
+        let position = node
+            .get("position")
+            .and_then(Value::as_f64)
+            .unwrap_or(f64::MAX);
+        if best.is_none_or(|(known, _)| position < known) {
+            best = Some((position, id));
+        }
+    }
+    best.map(|(_, id)| id.to_owned())
+}
+
+/// Move an issue into a state.
+pub fn issue_update_state_mutation(issue_id: &str, state_id: &str) -> Value {
+    json!({
+        "query": "mutation MoveIssue($id: String!, $stateId: String!) { \
+                  issueUpdate(id: $id, input: { stateId: $stateId }) { \
+                  success issue { id identifier state { name type } } } }",
+        "variables": { "id": issue_id, "stateId": state_id },
+    })
+}
+
+/// Read an update response.
+///
+/// `success: false` is checked explicitly for the same reason it is on create:
+/// it is how Linear refuses a mutation it understood, and a parser that only
+/// looked at the issue would report a move that never happened.
+pub fn parse_updated_issue(data: &Value) -> Result<String, String> {
+    let update = data
+        .get("issueUpdate")
+        .ok_or_else(|| "Linear's answer carried no issueUpdate result".to_owned())?;
+    if update.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err("Linear refused to move the issue".to_owned());
+    }
+    let issue = update
+        .get("issue")
+        .ok_or_else(|| "Linear reported success but returned no issue".to_owned())?;
+    // The state it ENDED in, read back rather than assumed, so the report says
+    // what Linear did and not what we asked for.
+    let state = issue
+        .get("state")
+        .and_then(|state| state.get("name"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Linear moved the issue but did not say to which state".to_owned())?;
+    Ok(state.to_owned())
+}
+
 /// Verify a credential, and say whose it is.
 ///
 /// Generic over the trait so this whole path is provable with a fake: the only
@@ -532,6 +693,179 @@ mod tests {
         let created = parse_created_issue(&data).expect("still created");
         assert_eq!(created.url, None);
         assert_eq!(created.identifier, "AIM-21");
+    }
+
+    /// `rsplit_once` because a team key may contain a hyphen and the NUMBER is
+    /// always last. `AIM-CORE-12` is issue 12 of team `AIM-CORE`.
+    #[test]
+    fn an_identifier_splits_into_a_team_key_and_a_number() {
+        assert_eq!(
+            split_issue_identifier("AIM-12"),
+            Some(("AIM".to_owned(), 12))
+        );
+        assert_eq!(
+            split_issue_identifier("  AIM-12  "),
+            Some(("AIM".to_owned(), 12))
+        );
+        assert_eq!(
+            split_issue_identifier("AIM-CORE-12"),
+            Some(("AIM-CORE".to_owned(), 12))
+        );
+    }
+
+    /// A TYPO IS REFUSED, NOT GUESSED, because looking up the wrong issue and
+    /// MOVING it is the one outcome retrying cannot undo. `AIM-12x` is not
+    /// issue 12.
+    #[test]
+    fn a_malformed_identifier_is_refused_rather_than_coerced() {
+        for bad in ["AIM", "AIM-", "-12", "AIM-12x", "AIM-x", "", "12"] {
+            assert_eq!(
+                split_issue_identifier(bad),
+                None,
+                "{bad:?} was coerced into an identifier"
+            );
+        }
+    }
+
+    #[test]
+    fn one_issue_resolves_to_its_issue_and_team_ids() {
+        let data = json!({ "issues": { "nodes": [
+            { "id": "issue-1", "identifier": "AIM-12", "team": { "id": "team-1" } }
+        ]}});
+        assert_eq!(
+            parse_issue_lookup(&data),
+            IssueLookup::Found {
+                issue_id: "issue-1".to_owned(),
+                team_id: "team-1".to_owned(),
+            }
+        );
+    }
+
+    /// Two matches for one team key and number should be impossible, so it is
+    /// REFUSED rather than resolved -- moving the wrong issue cannot be undone
+    /// by retrying.
+    #[test]
+    fn two_matching_issues_are_refused_rather_than_resolved() {
+        let data = json!({ "issues": { "nodes": [
+            { "id": "a", "team": { "id": "t" } },
+            { "id": "b", "team": { "id": "t" } }
+        ]}});
+        assert_eq!(parse_issue_lookup(&data), IssueLookup::Ambiguous);
+    }
+
+    #[test]
+    fn a_missing_issue_is_not_found_and_a_teamless_one_says_so() {
+        assert_eq!(
+            parse_issue_lookup(&json!({ "issues": { "nodes": [] } })),
+            IssueLookup::NotFound
+        );
+        assert_eq!(parse_issue_lookup(&json!({})), IssueLookup::NotFound);
+        let no_team = json!({ "issues": { "nodes": [{ "id": "issue-1" }] } });
+        assert_eq!(parse_issue_lookup(&no_team), IssueLookup::NoTeam);
+    }
+
+    /// SEVERAL STATES OF ONE TYPE IS NORMAL -- a team can have two `started`
+    /// columns -- so the lowest `position` wins, which is the leftmost column
+    /// and the one a person means by "the" in-progress state. Picking
+    /// whichever the API listed first would move issues into a different
+    /// column depending on the response order.
+    #[test]
+    fn the_leftmost_state_of_a_type_wins() {
+        let data = json!({ "team": { "states": { "nodes": [
+            { "id": "late", "name": "In Review", "type": "started", "position": 3.0 },
+            { "id": "early", "name": "In Progress", "type": "started", "position": 1.0 },
+            { "id": "done", "name": "Done", "type": "completed", "position": 4.0 }
+        ]}}});
+        assert_eq!(
+            state_id_for_type(&data, "started"),
+            Some("early".to_owned())
+        );
+        assert_eq!(
+            state_id_for_type(&data, "completed"),
+            Some("done".to_owned())
+        );
+    }
+
+    /// A state with no position must sort LAST, not first -- otherwise a
+    /// missing field beats a real leftmost column.
+    #[test]
+    fn a_state_with_no_position_does_not_win() {
+        let data = json!({ "team": { "states": { "nodes": [
+            { "id": "unpositioned", "type": "started" },
+            { "id": "real", "type": "started", "position": 2.0 }
+        ]}}});
+        assert_eq!(state_id_for_type(&data, "started"), Some("real".to_owned()));
+    }
+
+    /// No state of that type is a REAL answer about the team's workflow, not a
+    /// failure to look -- some teams have no `canceled` column at all.
+    #[test]
+    fn a_type_the_team_does_not_have_is_absent_rather_than_wrong() {
+        let data = json!({ "team": { "states": { "nodes": [
+            { "id": "a", "type": "started", "position": 1.0 }
+        ]}}});
+        assert_eq!(state_id_for_type(&data, "canceled"), None);
+        // And no states at all, which must not panic or invent one.
+        assert_eq!(state_id_for_type(&json!({}), "started"), None);
+    }
+
+    /// The state Linear ENDED in is read back, so a report says what Linear
+    /// did rather than what we asked for.
+    #[test]
+    fn a_moved_issue_reports_the_state_it_actually_landed_in() {
+        let data = json!({ "issueUpdate": {
+            "success": true,
+            "issue": { "id": "i", "identifier": "AIM-12",
+                       "state": { "name": "In Review", "type": "started" } }
+        }});
+        assert_eq!(parse_updated_issue(&data), Ok("In Review".to_owned()));
+    }
+
+    /// `success: false` WITH A POPULATED ISSUE, which is the fixture that
+    /// actually proves the check -- pairing a refusal with a null issue lets
+    /// the parser fail for the wrong reason and the gate proves nothing. Same
+    /// lesson as the create path.
+    #[test]
+    fn a_refused_move_is_not_a_move() {
+        let refused = json!({ "issueUpdate": {
+            "success": false,
+            "issue": { "id": "i", "identifier": "AIM-12",
+                       "state": { "name": "Todo", "type": "unstarted" } }
+        }});
+        let error = parse_updated_issue(&refused).expect_err("a refusal is not a move");
+        assert!(
+            error.contains("refused"),
+            "a refusal with a populated issue read as a move: {error}"
+        );
+
+        assert!(parse_updated_issue(&json!({})).is_err());
+        let hollow = json!({ "issueUpdate": { "success": true } });
+        assert!(parse_updated_issue(&hollow).is_err());
+    }
+
+    /// Both ids travel as variables, like every other value we send.
+    #[test]
+    fn the_move_sends_its_ids_as_variables() {
+        let mutation = issue_update_state_mutation("issue-1", "state-1");
+        assert_eq!(mutation["variables"]["id"], json!("issue-1"));
+        assert_eq!(mutation["variables"]["stateId"], json!("state-1"));
+        let text = mutation["query"].as_str().expect("a query");
+        assert!(!text.contains("issue-1"), "{text}");
+        assert!(text.contains("$stateId: String!"), "{text}");
+    }
+
+    /// The lookup's team key is a variable too -- a team key is workspace data
+    /// and could contain anything.
+    #[test]
+    fn the_issue_lookup_sends_its_team_key_as_a_variable() {
+        let query = issue_lookup_query("AIM\"X", 12);
+        assert_eq!(query["variables"]["team"], json!("AIM\"X"));
+        assert_eq!(query["variables"]["number"], json!(12));
+        let text = query["query"].as_str().expect("a query");
+        assert!(
+            !text.contains("AIM"),
+            "the team key was interpolated: {text}"
+        );
     }
 
     /// THE GATE THIS MODULE EXISTS FOR. GraphQL reports query errors with HTTP

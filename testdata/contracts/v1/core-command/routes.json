@@ -304,6 +304,10 @@
       "/core/linear-assign-text"
     ],
     [
+      "linearMoveText",
+      "/core/linear-move-text"
+    ],
+    [
       "swarmHostText",
       "/core/swarm-host-text"
     ],

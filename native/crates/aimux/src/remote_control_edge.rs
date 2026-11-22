@@ -46,7 +46,7 @@ pub struct RemoteCommandOutput {
 pub use enabled::{
     check_linear_credential, command_help, create_linear_issue, fetch_linear_project_issues,
     forward_alert_to_mobile_push, forward_alert_to_mobile_push_with_context,
-    has_remote_credentials, host_published_attachment, hosted_backlog_snapshots,
+    has_remote_credentials, host_published_attachment, hosted_backlog_snapshots, move_linear_issue,
     plan_remote_core_cli, root_help_commands, run_hosted_root_command, run_remote_cli_action,
     should_defer_to_hosted_cli,
 };
@@ -55,7 +55,7 @@ pub use enabled::{
 pub use disabled::{
     check_linear_credential, command_help, create_linear_issue, fetch_linear_project_issues,
     forward_alert_to_mobile_push, forward_alert_to_mobile_push_with_context,
-    has_remote_credentials, host_published_attachment, hosted_backlog_snapshots,
+    has_remote_credentials, host_published_attachment, hosted_backlog_snapshots, move_linear_issue,
     plan_remote_core_cli, root_help_commands, run_hosted_root_command, run_remote_cli_action,
     should_defer_to_hosted_cli,
 };
@@ -156,6 +156,77 @@ mod enabled {
             Some(url) => format!("{} — {url}", created.identifier),
             None => created.identifier,
         })
+    }
+
+    /// Move a Linear issue into the state matching one local status.
+    ///
+    /// THREE calls, and each is unavoidable: find the issue by its key, read
+    /// its team's workflow states, then update it. Linear has no "set state by
+    /// type" mutation and no filter by identifier, so the ids have to be
+    /// resolved on the way.
+    pub fn move_linear_issue(
+        token: &str,
+        identifier: &str,
+        local_status: &str,
+    ) -> Result<String, String> {
+        use crate::linear_api::{
+            IssueLookup, LinearApi, LinearCall, issue_lookup_query, issue_update_state_mutation,
+            parse_graphql_response, parse_issue_lookup, parse_updated_issue,
+            split_issue_identifier, state_id_for_type, workflow_states_query,
+        };
+        let api = crate::remote::linear_http::HttpLinearApi;
+        let ask = |body: &serde_json::Value| -> Result<serde_json::Value, String> {
+            match api.post_graphql(token, body) {
+                Ok((status, answer)) => match parse_graphql_response(status, &answer) {
+                    LinearCall::Ok(data) => Ok(data),
+                    other => Err(other
+                        .failure_line()
+                        .unwrap_or_else(|| "Linear failed without saying why.".to_owned())),
+                },
+                Err(reason) => Err(format!("Could not reach Linear: {reason}")),
+            }
+        };
+
+        // Inverted from the read mapping rather than written twice, so the two
+        // directions cannot drift.
+        let state_type = crate::linear_tasks::linear_state_type_for_local_status(local_status)
+            .ok_or_else(|| {
+                format!(
+                    "Aimux cannot express the status {local_status} as a Linear state. {}",
+                    crate::linear_tasks::LINEAR_HAS_NO_BLOCKED_STATE
+                )
+            })?;
+
+        let Some((team, number)) = split_issue_identifier(identifier) else {
+            return Err(format!(
+                "{identifier} is not a Linear issue key; expected something like AIM-12."
+            ));
+        };
+
+        let (issue_id, team_id) =
+            match parse_issue_lookup(&ask(&issue_lookup_query(&team, number))?) {
+                IssueLookup::Found { issue_id, team_id } => (issue_id, team_id),
+                IssueLookup::NotFound => return Err(format!("Linear has no issue {identifier}.")),
+                IssueLookup::Ambiguous => {
+                    return Err(format!(
+                        "More than one Linear issue matched {identifier}, so none was moved."
+                    ));
+                }
+                IssueLookup::NoTeam => {
+                    return Err(format!(
+                        "Linear issue {identifier} has no team, so its states cannot be read."
+                    ));
+                }
+            };
+
+        let states = ask(&workflow_states_query(&team_id))?;
+        let state_id = state_id_for_type(&states, state_type).ok_or_else(|| {
+            format!("The team owning {identifier} has no {state_type} state to move it into.")
+        })?;
+
+        let landed =
+            parse_updated_issue(&ask(&issue_update_state_mutation(&issue_id, &state_id))?)?;
+        Ok(format!("{identifier} is now {landed}"))
     }
 
     pub fn check_linear_credential(token: &str) -> Result<String, String> {
@@ -306,6 +377,15 @@ mod disabled {
         _project: &str,
         _title: &str,
         _description: &str,
+    ) -> Result<String, String> {
+        Err("This build has no HTTP client, so Linear cannot be written to.".to_owned())
+    }
+
+    /// No HTTP client in this build. A true answer about the binary.
+    pub fn move_linear_issue(
+        _token: &str,
+        _identifier: &str,
+        _local_status: &str,
     ) -> Result<String, String> {
         Err("This build has no HTTP client, so Linear cannot be written to.".to_owned())
     }

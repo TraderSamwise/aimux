@@ -66,6 +66,19 @@ pub fn route_system_text_request(
     if method == "GET" && pathname == CORE_API_ROUTES.linear_tasks_text {
         return Some(linear_tasks_text_route(&route_url));
     }
+    if pathname == CORE_API_ROUTES.linear_move_text {
+        // POST only: this changes an issue's state.
+        return match method {
+            "POST" => Some(linear_move_text_route(&route_url, body)),
+            _ => Some(text_error(
+                405,
+                format!(
+                    "{} answers POST to move a Linear issue",
+                    CORE_API_ROUTES.linear_move_text
+                ),
+            )),
+        };
+    }
     if pathname == CORE_API_ROUTES.linear_assign_text {
         // POST only, and deliberately: this one CREATES an issue, so a GET
         // that did it would make a read into a write.
@@ -276,6 +289,61 @@ pub fn linear_settings_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResp
 }
 
 /// Where tasks go, in words, because that is the question somebody is asking.
+/// Move a Linear issue into the state matching a local status.
+///
+/// The transition counterpart to `linear assign`. Shares its gate on whether
+/// Linear can be asked at all, because the two problems -- no project, no
+/// token -- are the same whichever way the data goes.
+pub fn linear_move_text_route(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let identifier = string_param(route_url, body, "issue");
+    let Some(identifier) = identifier.filter(|text| !text.trim().is_empty()) else {
+        return text_error(400, "name the issue to move with --issue");
+    };
+    let status = string_param(route_url, body, "status");
+    let Some(status) = status.filter(|text| !text.trim().is_empty()) else {
+        return text_error(400, "name the status to move it to with --status");
+    };
+
+    let resolver = crate::paths::PathResolver::from_env();
+    let config = crate::config::load_global_config_with_resolver(&resolver);
+    let settings = crate::linear_settings::parse_linear_settings(&config);
+    let token =
+        crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
+
+    if !settings.replaces_local_tasks() {
+        return text_error(
+            400,
+            "No Linear project is configured, so there is no Linear issue to move.",
+        );
+    }
+    let crate::linear_settings::LinearToken::Readable { env, .. } = &token else {
+        return text_error(400, crate::linear_settings::linear_token_line(&token));
+    };
+    let Ok(secret) = std::env::var(env) else {
+        return text_error(
+            400,
+            "The token variable disappeared between reading it and using it.",
+        );
+    };
+
+    match crate::remote_control_edge::move_linear_issue(
+        secret.trim(),
+        identifier.trim(),
+        status.trim(),
+    ) {
+        Ok(moved) => {
+            let report = serde_json::json!({ "ok": true, "moved": moved });
+            text_or_json_lines(route_url, report, &[moved])
+        }
+        // The edge's own reason, which distinguishes a bad key from a missing
+        // issue from a status Linear cannot express.
+        Err(reason) => text_error(400, &reason),
+    }
+}
+
 /// File an issue in the configured Linear project.
 ///
 /// The write counterpart to `linear tasks`. Shares its gate on whether we can
