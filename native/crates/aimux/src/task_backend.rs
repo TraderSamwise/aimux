@@ -56,6 +56,53 @@ pub fn task_backend(settings: &LinearSettings, token: &LinearToken) -> TaskBacke
     }
 }
 
+/// What the local engine should do with one task mutation.
+///
+/// The verb matters now, which it did not when every Linear-owned mutation was
+/// simply refused. Filing a NEW task into Linear is built; moving an existing
+/// Linear issue between states is not, because that needs the team's
+/// workflow-state ids and nothing resolves those yet. Those two deserve
+/// different answers, and a person acts on them differently -- one just works,
+/// the other says where to go.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocalTaskVerdict {
+    /// The local exchange owns this. Behave exactly as before.
+    Proceed,
+    /// Linear owns it, and this mutation can be made there.
+    DelegateToLinear { project: String },
+    /// Refused, and this is why.
+    Refuse(String),
+}
+
+/// Decide what to do with a task mutation.
+///
+/// `creates` separates filing a new task from moving an existing one. It is a
+/// bool rather than a verb enum because that is the only distinction that
+/// changes the answer, and a six-variant enum whose arms all behaved
+/// identically bar one would be a worse description of the rule.
+pub fn local_task_verdict(backend: &TaskBackend, creates: bool) -> LocalTaskVerdict {
+    match backend {
+        TaskBackend::Local => LocalTaskVerdict::Proceed,
+        TaskBackend::Linear { project } if creates => LocalTaskVerdict::DelegateToLinear {
+            project: project.clone(),
+        },
+        // Owned by Linear, and we cannot move it yet. The task is REAL and
+        // findable, so the message sends somebody to it rather than implying
+        // the work was lost.
+        TaskBackend::Linear { project } => LocalTaskVerdict::Refuse(format!(
+            "This task lives in the Linear project {project}, and Aimux cannot move a Linear \
+             issue between states yet. Change it in Linear."
+        )),
+        // Unclear or unreachable ownership refuses BOTH ways: filing into a
+        // system we cannot identify is how a task ends up somewhere nobody
+        // looks.
+        TaskBackend::Misconfigured(reason) => LocalTaskVerdict::Refuse(format!(
+            "{reason} Fix the `linear` block in the Aimux config, or remove it to use the local \
+             task engine."
+        )),
+    }
+}
+
 /// Why the LOCAL task engine must not act, if it must not.
 ///
 /// `None` means proceed. Anything else is a message naming the owner and what
@@ -91,6 +138,74 @@ mod tests {
         LinearToken::Readable {
             env: "T".to_owned(),
             length: 20,
+        }
+    }
+
+    /// Filing a NEW task into Linear is built, so it is delegated rather than
+    /// refused -- the whole point of this change.
+    #[test]
+    fn a_new_task_is_delegated_to_linear_rather_than_refused() {
+        let backend = task_backend(&configured(Some("T")), &readable());
+        assert_eq!(
+            local_task_verdict(&backend, true),
+            LocalTaskVerdict::DelegateToLinear {
+                project: "Aimux".to_owned()
+            }
+        );
+    }
+
+    /// MOVING an existing Linear issue is NOT built, and the refusal says so
+    /// and says where to go. Reporting it as delegated would silently drop a
+    /// state change an agent believed it had made.
+    #[test]
+    fn moving_an_existing_linear_task_is_refused_and_names_linear() {
+        let backend = task_backend(&configured(Some("T")), &readable());
+        let verdict = local_task_verdict(&backend, false);
+        let LocalTaskVerdict::Refuse(reason) = verdict else {
+            panic!("moving a Linear task must not be delegated or proceed: {verdict:?}");
+        };
+        assert!(reason.contains("Aimux"), "{reason}");
+        assert!(reason.contains("Change it in Linear"), "{reason}");
+    }
+
+    /// A standalone account behaves exactly as before, both ways. This is the
+    /// case that must not regress.
+    #[test]
+    fn a_standalone_account_proceeds_for_both_verbs() {
+        let backend = task_backend(&LinearSettings::Absent, &LinearToken::Unnamed);
+        assert_eq!(
+            local_task_verdict(&backend, true),
+            LocalTaskVerdict::Proceed
+        );
+        assert_eq!(
+            local_task_verdict(&backend, false),
+            LocalTaskVerdict::Proceed
+        );
+    }
+
+    /// Unclear ownership refuses BOTH ways. Filing into a system we cannot
+    /// identify is how a task ends up somewhere nobody looks.
+    #[test]
+    fn unclear_ownership_refuses_creating_as_well_as_moving() {
+        for backend in [
+            task_backend(
+                &LinearSettings::Unreadable("broken".to_owned()),
+                &LinearToken::Unnamed,
+            ),
+            task_backend(
+                &configured(Some("T")),
+                &LinearToken::Missing {
+                    env: "T".to_owned(),
+                },
+            ),
+        ] {
+            for creates in [true, false] {
+                let verdict = local_task_verdict(&backend, creates);
+                assert!(
+                    matches!(verdict, LocalTaskVerdict::Refuse(_)),
+                    "{backend:?} with creates={creates} gave {verdict:?}"
+                );
+            }
         }
     }
 
