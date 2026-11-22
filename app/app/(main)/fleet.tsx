@@ -10,8 +10,15 @@ import { credentialProfileView, profileDirectories } from "@/lib/credential-prof
 import { canClaimSwarmHost, swarmHostView } from "@/lib/swarm-host-view";
 import { machineTargets, selectableMachines } from "@/lib/machine-targets";
 import {
+  activeTaskCount,
+  linearTasksView,
+  taskAssigneeLabel,
+  taskStatusLabel,
+} from "@/lib/linear-tasks-view";
+import {
   getCredentialProfiles,
   getFleetUsage,
+  getLinearTasks,
   getSwarmHost,
   setCredentialProfile,
   setSwarmHost,
@@ -19,6 +26,7 @@ import {
   type CredentialProfilesResponse,
   type FleetUsageMachine,
   type FleetUsageResponse,
+  type LinearTasksResponse,
   type SwarmHostResponse,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -355,6 +363,99 @@ function MachineSelector({
   );
 }
 
+/**
+ * What is being worked on, and by whom, from Linear.
+ *
+ * Requirement 4's phone surface. Read-only on purpose: filing and moving work
+ * is Linear's own job and it does it better than a panel would, so this one
+ * answers the question a person has while away from their desk.
+ */
+function LinearTasksPanel() {
+  const { getToken } = useAuth();
+  // ONE state object, one `setState` per outcome. Two sequential calls here
+  // are what the cascading-render rule objects to, and the sibling panels in
+  // this file already use the single-object shape.
+  const [resource, setResource] = useState<{
+    value: LinearTasksResponse | null;
+    error: string | null;
+  }>({ value: null, error: null });
+
+  const load = useCallback(async () => {
+    try {
+      const token = await getToken();
+      const value = await getLinearTasks({ token });
+      setResource({ value, error: null });
+    } catch (caught) {
+      setResource((current) => ({
+        // The last good answer is KEPT: blanking the list on a failed refresh
+        // would read as a project nobody is working on.
+        ...current,
+        error: `Unable to read Linear: ${
+          caught instanceof Error ? caught.message : String(caught)
+        }`,
+      }));
+    }
+  }, [getToken]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const view = linearTasksView(resource.value);
+  // Nothing configured is not worth a card on a screen about machines -- it
+  // would be a permanent empty box for everybody who does not use Linear.
+  if (view.kind === "loading" || view.kind === "notAsked") return null;
+
+  return (
+    <Card className="mb-4 p-4">
+      <View className="mb-2 flex-row items-center justify-between">
+        <Text className="font-mono text-xs font-semibold text-[#b8bbc6]">
+          {view.kind === "tasks" && view.project != null ? `Linear — ${view.project}` : "Linear"}
+        </Text>
+        {view.kind === "tasks" ? (
+          <Text className="font-mono text-xs text-muted-foreground">
+            {activeTaskCount(view.tasks)} being worked
+          </Text>
+        ) : null}
+      </View>
+
+      {resource.error ? (
+        <Text className="mb-1 font-mono text-xs text-[#f0a0a0]">{resource.error}</Text>
+      ) : null}
+
+      {view.kind === "failed" ? (
+        <Text className="font-mono text-xs text-[#f0a0a0]">{view.reason}</Text>
+      ) : view.tasks.length === 0 && view.problems.length === 0 ? (
+        <Text className="font-mono text-xs text-muted-foreground">
+          No issues in this Linear project.
+        </Text>
+      ) : (
+        <View className="gap-1">
+          {view.tasks.map((task) => (
+            <View key={task.id} className="flex-row items-center justify-between">
+              <Text className="font-mono text-xs" numberOfLines={1}>
+                <Text className="text-[#b8bbc6]">{task.identifier ?? task.id}</Text>
+                {"  "}
+                {task.description ?? "(no title)"}
+              </Text>
+              <Text className="ml-2 font-mono text-xs text-muted-foreground">
+                {taskStatusLabel(task)} · {taskAssigneeLabel(task)}
+              </Text>
+            </View>
+          ))}
+          {/* Problems are SHOWN, not dropped: hiding them would under-report
+              the project while the panel looked complete. */}
+          {view.problems.map((problem) => (
+            <Text key={problem} className="font-mono text-xs text-[#f0a0a0]">
+              {problem}
+            </Text>
+          ))}
+        </View>
+      )}
+    </Card>
+  );
+}
+
 export default function FleetScreen() {
   const { getToken } = useAuth();
   const resource = useAtomValue(fleetUsageResourceAtom);
@@ -408,6 +509,8 @@ export default function FleetScreen() {
       />
 
       <SwarmHostPanel />
+
+      <LinearTasksPanel />
 
       <MachineSelector report={report} selected={selectedMachine} onSelect={setSelectedMachine} />
 
