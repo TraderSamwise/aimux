@@ -262,8 +262,12 @@ pub fn linear_settings_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResp
     let resolver = crate::paths::PathResolver::from_env();
     // The merged view is right here: this only reads, and settings arriving
     // from a default are still settings this account would honour.
-    let config = crate::config::load_global_config_with_resolver(&resolver);
-    let settings = crate::linear_settings::parse_linear_settings(&config);
+    // The FALLIBLE read: `load_global_config_with_resolver` turns a read error
+    // into the defaults, which would report a standalone account for a config
+    // that could not be read at all.
+    let settings = crate::linear_settings::linear_settings_from_config_read(
+        crate::config::try_load_global_config_with_resolver(&resolver),
+    );
     // Resolved from the DAEMON's own environment, which is where a variable
     // named in `linear.tokenEnv` has to be set: this process makes the call,
     // so its environment is the one that matters. Nothing here reads the
@@ -311,8 +315,12 @@ pub fn linear_move_text_route(
     };
 
     let resolver = crate::paths::PathResolver::from_env();
-    let config = crate::config::load_global_config_with_resolver(&resolver);
-    let settings = crate::linear_settings::parse_linear_settings(&config);
+    // The FALLIBLE read: `load_global_config_with_resolver` turns a read error
+    // into the defaults, which would report a standalone account for a config
+    // that could not be read at all.
+    let settings = crate::linear_settings::linear_settings_from_config_read(
+        crate::config::try_load_global_config_with_resolver(&resolver),
+    );
     let token =
         crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
 
@@ -362,8 +370,12 @@ pub fn linear_assign_text_route(
     };
 
     let resolver = crate::paths::PathResolver::from_env();
-    let config = crate::config::load_global_config_with_resolver(&resolver);
-    let settings = crate::linear_settings::parse_linear_settings(&config);
+    // The FALLIBLE read: `load_global_config_with_resolver` turns a read error
+    // into the defaults, which would report a standalone account for a config
+    // that could not be read at all.
+    let settings = crate::linear_settings::linear_settings_from_config_read(
+        crate::config::try_load_global_config_with_resolver(&resolver),
+    );
     let token =
         crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
 
@@ -430,8 +442,12 @@ pub fn linear_assign_text_route(
 /// person needs from a terminal is to know what exists and how to open it.
 pub fn linear_docs_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
     let resolver = crate::paths::PathResolver::from_env();
-    let config = crate::config::load_global_config_with_resolver(&resolver);
-    let settings = crate::linear_settings::parse_linear_settings(&config);
+    // The FALLIBLE read: `load_global_config_with_resolver` turns a read error
+    // into the defaults, which would report a standalone account for a config
+    // that could not be read at all.
+    let settings = crate::linear_settings::linear_settings_from_config_read(
+        crate::config::try_load_global_config_with_resolver(&resolver),
+    );
     let token =
         crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
 
@@ -531,8 +547,12 @@ pub fn render_linear_docs(
 /// `linear_tasks`, so this route only decides whether it can ask.
 pub fn linear_tasks_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
     let resolver = crate::paths::PathResolver::from_env();
-    let config = crate::config::load_global_config_with_resolver(&resolver);
-    let settings = crate::linear_settings::parse_linear_settings(&config);
+    // The FALLIBLE read: `load_global_config_with_resolver` turns a read error
+    // into the defaults, which would report a standalone account for a config
+    // that could not be read at all.
+    let settings = crate::linear_settings::linear_settings_from_config_read(
+        crate::config::try_load_global_config_with_resolver(&resolver),
+    );
     let token =
         crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
 
@@ -630,8 +650,12 @@ pub fn render_linear_tasks(tasks: &[Value], problems: &[String]) -> Vec<String> 
 /// depend on the network.
 pub fn linear_check_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
     let resolver = crate::paths::PathResolver::from_env();
-    let config = crate::config::load_global_config_with_resolver(&resolver);
-    let settings = crate::linear_settings::parse_linear_settings(&config);
+    // The FALLIBLE read: `load_global_config_with_resolver` turns a read error
+    // into the defaults, which would report a standalone account for a config
+    // that could not be read at all.
+    let settings = crate::linear_settings::linear_settings_from_config_read(
+        crate::config::try_load_global_config_with_resolver(&resolver),
+    );
     let token =
         crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
 

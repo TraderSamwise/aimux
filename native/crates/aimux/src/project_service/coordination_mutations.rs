@@ -187,8 +187,13 @@ fn creates_a_task(pathname: &str) -> bool {
 /// out of its own result so a token cannot ride along in a report.
 fn local_task_plan() -> (crate::task_backend::LocalTaskVerdict, Option<String>) {
     let resolver = crate::paths::PathResolver::from_env();
-    let config = crate::config::load_global_config_with_resolver(&resolver);
-    let settings = crate::linear_settings::parse_linear_settings(&config);
+    // Fallible, because this decides WHERE A TASK IS WRITTEN: a config that
+    // could not be read used to report a standalone account and send the task
+    // to the local exchange, which is the split-brain the whole backend
+    // decision exists to prevent.
+    let settings = crate::linear_settings::linear_settings_from_config_read(
+        crate::config::try_load_global_config_with_resolver(&resolver),
+    );
     let token =
         crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
     let secret = match &token {

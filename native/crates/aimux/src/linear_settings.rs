@@ -182,6 +182,27 @@ pub fn linear_token_line(token: &LinearToken) -> String {
     }
 }
 
+/// Settings from a config READ, which may itself have failed.
+///
+/// This exists because `load_global_config_with_resolver` swallows a read
+/// error and hands back the defaults, which is indistinguishable from a config
+/// with no `linear` block. That made `Unreadable` UNREACHABLE through the
+/// loader every route used: a config file that could not be read reported
+/// "tasks stay in Aimux" while the file may well have named a Linear project.
+/// Silently sending work to the wrong system is the exact failure the three
+/// outcomes exist to prevent, so the distinction has to survive the read.
+///
+/// Takes the `Result` rather than a resolver so it is pure and the mapping is
+/// provable without a filesystem.
+pub fn linear_settings_from_config_read(read: Result<Value, String>) -> LinearSettings {
+    match read {
+        Ok(config) => parse_linear_settings(&config),
+        Err(reason) => {
+            LinearSettings::Unreadable(format!("the Aimux config could not be read: {reason}"))
+        }
+    }
+}
+
 /// What the settings are, for a route to report.
 pub fn linear_settings_report(settings: &LinearSettings) -> Value {
     match settings {
@@ -333,6 +354,46 @@ mod tests {
                 length: 10
             }
         ));
+    }
+
+    /// THE HOLE THIS CLOSES. `load_global_config_with_resolver` turns a read
+    /// failure into the defaults, so a config that could not be READ used to
+    /// report `Absent` -- "tasks stay in Aimux" -- while the file may have
+    /// named a Linear project. That silently sends work to the wrong system,
+    /// which is what the three outcomes exist to prevent.
+    #[test]
+    fn a_config_that_could_not_be_read_is_unreadable_not_absent() {
+        let settings = linear_settings_from_config_read(Err("permission denied".to_owned()));
+        assert_ne!(
+            settings,
+            LinearSettings::Absent,
+            "an unreadable config reported a standalone account"
+        );
+        let LinearSettings::Unreadable(reason) = &settings else {
+            panic!("expected Unreadable, got {settings:?}");
+        };
+        // The underlying reason survives, so a person is told what to fix.
+        assert!(reason.contains("permission denied"), "{reason}");
+        assert!(!settings.replaces_local_tasks(), "{settings:?}");
+    }
+
+    /// A config that READ fine still parses normally, both ways -- the fix
+    /// must not turn every account into an error.
+    #[test]
+    fn a_readable_config_still_parses_as_it_did() {
+        assert_eq!(
+            linear_settings_from_config_read(Ok(json!({}))),
+            LinearSettings::Absent
+        );
+        assert_eq!(
+            linear_settings_from_config_read(Ok(json!({
+                "linear": { "project": "Aimux", "tokenEnv": "T" }
+            }))),
+            LinearSettings::Configured {
+                project: "Aimux".to_owned(),
+                token_env: Some("T".to_owned()),
+            }
+        );
     }
 
     #[test]
