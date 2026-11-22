@@ -222,8 +222,12 @@ fn claim_or_refuse_swarm_host(resolver: &PathResolver) -> Result<(), String> {
 }
 
 fn active_profile_launch_env(resolver: &PathResolver) -> Result<Vec<(String, String)>, String> {
-    let config = crate::config::load_global_config_with_resolver(resolver);
-    match crate::credential_profiles::parse_credential_profiles(&config) {
+    // Fallible, because the swallowed read defeated this very refusal: a
+    // config that could not be read produced `Known` with no active profile,
+    // so the agent launched against whatever account the machine defaults to.
+    match crate::credential_profiles::credential_profiles_from_config_read(
+        crate::config::try_load_global_config_with_resolver(resolver),
+    ) {
         profiles @ crate::credential_profiles::CredentialProfiles::Known { .. } => {
             Ok(crate::credential_profiles::active_launch_env(&profiles))
         }

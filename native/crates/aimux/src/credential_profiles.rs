@@ -158,6 +158,23 @@ pub fn active_launch_env(profiles: &CredentialProfiles) -> Vec<(String, String)>
     }
 }
 
+/// Profiles from a config READ, which may itself have failed.
+///
+/// The same hole as `linear_settings_from_config_read`, and here it defeated
+/// the spawn refusal: `load_global_config_with_resolver` swallowing a read
+/// error produced `Known` with no active profile, so an agent LAUNCHED against
+/// whatever account the machine defaults to. An active profile is an explicit
+/// instruction about credentials, and running work somewhere nobody asked for
+/// is worse than refusing to start.
+pub fn credential_profiles_from_config_read(read: Result<Value, String>) -> CredentialProfiles {
+    match read {
+        Ok(config) => parse_credential_profiles(&config),
+        Err(reason) => {
+            CredentialProfiles::Unreadable(format!("the Aimux config could not be read: {reason}"))
+        }
+    }
+}
+
 /// Render the profile set for a route, keeping the three outcomes apart.
 pub fn credential_profiles_report(profiles: &CredentialProfiles) -> Value {
     match profiles {
