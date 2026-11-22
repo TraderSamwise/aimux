@@ -88,13 +88,24 @@ pub fn route_coordination_mutation_request_with_runtime(
     // work exists to prevent.
     // The pathname test comes FIRST and the config read second, so a thread or
     // review mutation never pays for a config read it cannot be refused by.
-    if writes_a_local_task(pathname)
-        && let Some(refusal) = local_task_refusal()
-    {
-        // Shaped like every other task error -- `ok: false` with an `error`
-        // string at 400 -- so the CLI, the app and the TUI render it through
-        // the paths they already have.
-        return Some(json_response(400, json!({ "ok": false, "error": refusal })));
+    // Before any task route runs, because the local engine writing a task for
+    // an account whose tasks live in Linear is the split-brain the settings
+    // work exists to prevent. The pathname test comes FIRST so a thread or
+    // review mutation never pays for a config read it cannot be refused by.
+    if writes_a_local_task(pathname) {
+        match local_task_plan(pathname) {
+            // Behaves exactly as it always did.
+            (crate::task_backend::LocalTaskVerdict::Proceed, _) => {}
+            (crate::task_backend::LocalTaskVerdict::DelegateToLinear { project }, secret) => {
+                return Some(delegate_task_to_linear(&project, secret, body));
+            }
+            // Shaped like every other task error -- `ok: false` with an
+            // `error` string at 400 -- so every surface renders it through the
+            // paths it already has.
+            (crate::task_backend::LocalTaskVerdict::Refuse(refusal), _) => {
+                return Some(json_response(400, json!({ "ok": false, "error": refusal })));
+            }
+        }
     }
     let response = match pathname {
         routes::threads::OPEN => route_threads_open(&project_state_dir, body),
@@ -151,15 +162,102 @@ fn writes_a_local_task(pathname: &str) -> bool {
 /// Reads the config per call rather than caching: a person who fixes their
 /// `linear` block expects the next command to honour it, and a task mutation
 /// is rare enough that one config read is not the cost worth optimising.
-fn local_task_refusal() -> Option<String> {
+/// Whether this pathname FILES a task rather than moving an existing one.
+///
+/// Both assign routes create; the five transitions move. The distinction is
+/// the only thing that changes the verdict, because filing into Linear is
+/// built and moving a Linear issue between states is not.
+fn creates_a_task(pathname: &str) -> bool {
+    matches!(
+        pathname,
+        routes::tasks::ASSIGN | routes::agents::CREATE_TEAMMATE_TASK
+    )
+}
+
+/// What to do with a task mutation, and the token to do it with.
+///
+/// Returns the verdict plus the resolved secret, because the delegation needs
+/// the value and `resolve_linear_token` deliberately keeps it out of its own
+/// result so a token cannot ride along in a report.
+fn local_task_plan(pathname: &str) -> (crate::task_backend::LocalTaskVerdict, Option<String>) {
     let resolver = crate::paths::PathResolver::from_env();
     let config = crate::config::load_global_config_with_resolver(&resolver);
     let settings = crate::linear_settings::parse_linear_settings(&config);
     let token =
         crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
-    crate::task_backend::refuse_local_task_mutation(&crate::task_backend::task_backend(
-        &settings, &token,
-    ))
+    let secret = match &token {
+        crate::linear_settings::LinearToken::Readable { env, .. } => std::env::var(env).ok(),
+        _ => None,
+    };
+    let backend = crate::task_backend::task_backend(&settings, &token);
+    (
+        crate::task_backend::local_task_verdict(&backend, creates_a_task(pathname)),
+        secret,
+    )
+}
+
+/// File a task into Linear instead of the local exchange.
+///
+/// The response keeps the local shape -- `ok` plus a `task` object -- so the
+/// CLI, the app and the TUI render a delegated task through the paths they
+/// already have. `source: "linear"` is what tells them where it went, the same
+/// marker `linear_tasks` puts on a read.
+fn delegate_task_to_linear(
+    project: &str,
+    secret: Option<String>,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let Some(secret) = secret else {
+        // Readable a moment ago and gone now. Reported as a race rather than
+        // blamed on the token.
+        return json_response(
+            400,
+            json!({
+                "ok": false,
+                "error": "The Linear token variable disappeared between reading it and using it.",
+            }),
+        );
+    };
+    let description = string_field(body, "description");
+    let description = if description.trim().is_empty() {
+        trimmed_string(body.get("prompt")).unwrap_or_default()
+    } else {
+        description
+    };
+    if description.trim().is_empty() {
+        return json_response(
+            400,
+            json!({ "ok": false, "error": "a Linear task needs a description" }),
+        );
+    }
+    let title = description
+        .lines()
+        .next()
+        .unwrap_or(&description)
+        .trim()
+        .to_owned();
+    match crate::remote_control_edge::create_linear_issue(
+        secret.trim(),
+        project,
+        &title,
+        &description,
+    ) {
+        Ok(created) => json_response(
+            200,
+            json!({
+                "ok": true,
+                "task": {
+                    "id": created.clone(),
+                    "identifier": created,
+                    "status": "pending",
+                    "description": description,
+                    "source": "linear",
+                    "project": project,
+                },
+            }),
+        ),
+        Err(reason) => json_response(400, json!({ "ok": false, "error": reason })),
+    }
 }
 
 fn route_threads_open(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
@@ -2340,6 +2438,57 @@ fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
 #[cfg(test)]
 mod local_task_guard_tests {
     use super::*;
+
+    /// Both assign routes FILE a task, so both delegate to Linear. Missing
+    /// `CREATE_TEAMMATE_TASK` here would send a teammate task to the local
+    /// exchange while an ordinary assign went to Linear -- the same split-brain
+    /// the guard exists to prevent, just one route deep.
+    #[test]
+    fn both_assign_routes_count_as_creating_a_task() {
+        assert!(creates_a_task(routes::tasks::ASSIGN));
+        assert!(creates_a_task(routes::agents::CREATE_TEAMMATE_TASK));
+    }
+
+    /// THE INVERSE, and the one that keeps the refusal honest: the five
+    /// transitions MOVE an existing task and must not be treated as creating
+    /// one. Filing a brand-new Linear issue when an agent said "complete"
+    /// would leave the real task untouched and add a duplicate nobody asked
+    /// for.
+    #[test]
+    fn the_five_transitions_do_not_count_as_creating_a_task() {
+        for pathname in [
+            routes::tasks::ACCEPT,
+            routes::tasks::BLOCK,
+            routes::tasks::CANCEL,
+            routes::tasks::COMPLETE,
+            routes::tasks::REOPEN,
+        ] {
+            assert!(
+                !creates_a_task(pathname),
+                "{pathname} moves a task and must not file a new one"
+            );
+        }
+    }
+
+    /// Every route the guard catches is one of the two kinds, so none can fall
+    /// through the verdict unclassified.
+    #[test]
+    fn every_guarded_route_is_either_a_create_or_a_move() {
+        for pathname in [
+            routes::tasks::ASSIGN,
+            routes::tasks::ACCEPT,
+            routes::tasks::BLOCK,
+            routes::tasks::CANCEL,
+            routes::tasks::COMPLETE,
+            routes::tasks::REOPEN,
+            routes::agents::CREATE_TEAMMATE_TASK,
+        ] {
+            assert!(
+                writes_a_local_task(pathname),
+                "{pathname} is classified but not guarded"
+            );
+        }
+    }
 
     /// THE BYPASS THAT WOULD HAVE BEEN LEFT OPEN. `CREATE_TEAMMATE_TASK` calls
     /// `route_task_assign` itself, so guarding the dispatcher's `ASSIGN` arm
