@@ -2700,6 +2700,17 @@ fn render_dashboard_snapshot(
         preview_source: &controller.preview_source,
         scribe_preview_entries: &scribe_preview_entries,
     });
+    if controller.linear_overlay_owns_keys(snapshot)
+        && let Some(linear) = controller.linear_overlay.as_ref()
+    {
+        // Through `dashboard_overlay_frame` like every other dialog, so it
+        // sits in the same box with the same borders rather than replacing the
+        // frame.
+        return dashboard_overlay_frame(
+            &frame,
+            crate::dashboard_linear_overlay::render_linear_overlay(linear).join("\r\n"),
+        );
+    }
     if controller.goal_overlay_owns_keys(snapshot)
         && let Some(goal) = controller.goal_overlay.as_ref()
     {

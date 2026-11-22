@@ -8,6 +8,10 @@ use crate::dashboard_goal_overlay::{
     goal_overlay_key, kind_change_refusal,
 };
 use crate::dashboard_launch_options::DashboardLaunchOptionsState;
+use crate::dashboard_linear_overlay::{
+    DashboardLinearOverlayAction, DashboardLinearOverlayState, linear_overlay_from_report,
+    linear_overlay_key,
+};
 use crate::dashboard_model::{
     DashboardSession, DesktopStateSnapshot, SessionStatus, dashboard_has_clearable_failures,
     dashboard_overseer_session_refs, is_dashboard_scribe_session,
@@ -114,6 +118,7 @@ pub struct DashboardController {
     pub agent_restore_prompt_dismissed: bool,
     pub overseer_overlay_open: bool,
     pub goal_overlay: Option<DashboardGoalOverlayState>,
+    pub linear_overlay: Option<DashboardLinearOverlayState>,
     pub overseer_watch_instructions: Option<DashboardOverseerWatchInstructionsState>,
     pub work_outline_overlay: Option<DashboardWorkOutlineOverlayState>,
     pub migrate_picker: Option<DashboardMigratePickerState>,
@@ -180,6 +185,7 @@ enum DashboardInputOverlay {
     BulkGraveyardConfirm,
     BulkGraveyardReport,
     Goal,
+    Linear,
     Overseer,
     OverseerWatchInstructions,
     WorkOutline,
@@ -642,6 +648,7 @@ impl DashboardController {
             agent_restore_prompt_dismissed: false,
             overseer_overlay_open: false,
             goal_overlay: None,
+            linear_overlay: None,
             overseer_watch_instructions: None,
             work_outline_overlay: None,
             migrate_picker: None,
@@ -815,6 +822,9 @@ impl DashboardController {
         if self.goal_overlay.is_some() {
             return self.handle_goal_overlay_key(snapshot, key);
         }
+        if self.linear_overlay.is_some() {
+            return self.handle_linear_overlay_key(key);
+        }
         if self.overseer_overlay_open {
             return self.handle_overseer_overlay_key(snapshot, key);
         }
@@ -958,6 +968,7 @@ impl DashboardController {
                 self.open_relevant_thread_for_selected_session(snapshot)
             }
             DashboardKey::Printable('G') => self.open_goal_overlay(snapshot),
+            DashboardKey::Printable('I') => self.open_linear_overlay(),
             DashboardKey::Printable('O') => {
                 self.overseer_overlay_open = true;
                 DashboardControllerEffect::Render
@@ -1327,6 +1338,12 @@ impl DashboardController {
     /// on a screen showing the goal dialog ran a worktree cache cleanup, and
     /// Esc dismissed a fleet restore. Render asks this instead of repeating
     /// the chain, so the thing on screen is the thing holding the keyboard.
+    pub fn linear_overlay_owns_keys(&self, snapshot: &DesktopStateSnapshot) -> bool {
+        self.linear_overlay.is_some()
+            && !self.agent_restore_prompt_active(snapshot)
+            && matches!(self.input_overlay(), DashboardInputOverlay::Linear)
+    }
+
     pub fn goal_overlay_owns_keys(&self, snapshot: &DesktopStateSnapshot) -> bool {
         self.goal_overlay.is_some()
             && !self.agent_restore_prompt_active(snapshot)
@@ -1334,7 +1351,9 @@ impl DashboardController {
     }
 
     fn input_overlay(&self) -> DashboardInputOverlay {
-        if self.tool_picker.is_some() {
+        if self.linear_overlay.is_some() {
+            DashboardInputOverlay::Linear
+        } else if self.tool_picker.is_some() {
             DashboardInputOverlay::ToolPicker
         } else if self.service_input.is_some() {
             DashboardInputOverlay::ServiceInput
@@ -2237,6 +2256,57 @@ impl DashboardController {
                 .selected_session_for_tool_action(snapshot)
                 .map(|session| session.id.clone()),
             offset: None,
+        }
+    }
+
+    /// Open the Linear dialog, fetching ONCE.
+    ///
+    /// The fetch is here rather than on a tick deliberately: a Linear read on
+    /// the dashboard's refresh cadence would have every open dashboard polling
+    /// Linear's API forever, which is the churn class the docs warn about plus
+    /// a rate limit nobody would see coming. `r` re-asks.
+    fn open_linear_overlay(&mut self) -> DashboardControllerEffect {
+        self.linear_overlay = Some(self.read_linear_overlay());
+        DashboardControllerEffect::Render
+    }
+
+    /// Read the report, or say why it could not be read.
+    ///
+    /// A transport failure becomes `Failed` carrying its reason rather than an
+    /// empty task list, because "no tasks" and "could not ask" are the two
+    /// answers this dialog exists to keep apart.
+    fn read_linear_overlay(&self) -> DashboardLinearOverlayState {
+        match crate::dashboard_client::fetch_linear_tasks_report() {
+            Ok(report) => linear_overlay_from_report(&report),
+            Err(error) => DashboardLinearOverlayState::Failed {
+                reason: format!("Could not read Linear: {error}"),
+            },
+        }
+    }
+
+    fn handle_linear_overlay_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back => {
+                self.linear_overlay = None;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Printable(pressed) => match linear_overlay_key(pressed) {
+                Some(DashboardLinearOverlayAction::Close) => {
+                    self.linear_overlay = None;
+                    DashboardControllerEffect::Render
+                }
+                Some(DashboardLinearOverlayAction::Refresh) => {
+                    self.linear_overlay = Some(self.read_linear_overlay());
+                    DashboardControllerEffect::Render
+                }
+                // Swallowed rather than passed through, because a stray key
+                // reaching the dashboard behind an open dialog would act on an
+                // agent the person cannot see. `Render` is the inert effect
+                // here -- there is no `None` variant, and re-rendering an
+                // unchanged dialog is the correct no-op.
+                None => DashboardControllerEffect::Render,
+            },
+            _ => DashboardControllerEffect::Render,
         }
     }
 
