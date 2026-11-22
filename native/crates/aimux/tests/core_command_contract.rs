@@ -76,6 +76,7 @@ fn core_api_routes_match_the_typescript_contract() {
         ("linearSettingsText", "/core/linear-settings-text"),
         ("linearCheckText", "/core/linear-check-text"),
         ("linearTasksText", "/core/linear-tasks-text"),
+        ("linearAssignText", "/core/linear-assign-text"),
         ("swarmHostText", "/core/swarm-host-text"),
         ("logsTailText", "/core/logs/tail-text"),
         ("metadataText", "/core/metadata-text"),

@@ -2445,6 +2445,32 @@ where
             },
             CoreCliFallback::None,
         ),
+        ("linear", "assign") => {
+            let description = args
+                .get(2)
+                .map(String::as_str)
+                .filter(|argument| !argument.starts_with("--"));
+            // ALWAYS a body, so this is always a POST. The route refuses an
+            // empty description and says what to pass; a bodyless request
+            // would be a GET and the route answers 405 for that, which is a
+            // worse message for a person who simply forgot the text.
+            let body = Some(match description {
+                Some(description) => json!({ "description": description }),
+                None => json!({}),
+            });
+            (
+                CoreCliOperation::LinearSettings,
+                CoreCliAction::TextRoute {
+                    path: if mode == CoreCliOutputMode::Json {
+                        format!("{}?json=1", CORE_API_ROUTES.linear_assign_text)
+                    } else {
+                        CORE_API_ROUTES.linear_assign_text.to_owned()
+                    },
+                    body,
+                },
+                CoreCliFallback::None,
+            )
+        }
         ("linear", "tasks") => (
             CoreCliOperation::LinearSettings,
             CoreCliAction::TextRoute {

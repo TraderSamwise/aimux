@@ -44,7 +44,7 @@ pub struct RemoteCommandOutput {
 
 #[cfg(feature = "remote-control")]
 pub use enabled::{
-    check_linear_credential, command_help, fetch_linear_project_issues,
+    check_linear_credential, command_help, create_linear_issue, fetch_linear_project_issues,
     forward_alert_to_mobile_push, forward_alert_to_mobile_push_with_context,
     has_remote_credentials, host_published_attachment, hosted_backlog_snapshots,
     plan_remote_core_cli, root_help_commands, run_hosted_root_command, run_remote_cli_action,
@@ -53,7 +53,7 @@ pub use enabled::{
 
 #[cfg(not(feature = "remote-control"))]
 pub use disabled::{
-    check_linear_credential, command_help, fetch_linear_project_issues,
+    check_linear_credential, command_help, create_linear_issue, fetch_linear_project_issues,
     forward_alert_to_mobile_push, forward_alert_to_mobile_push_with_context,
     has_remote_credentials, host_published_attachment, hosted_backlog_snapshots,
     plan_remote_core_cli, root_help_commands, run_hosted_root_command, run_remote_cli_action,
@@ -95,6 +95,67 @@ mod enabled {
             },
             Err(reason) => Err(format!("Could not reach Linear: {reason}")),
         }
+    }
+
+    /// File an issue in the configured project.
+    ///
+    /// TWO calls, because Linear's `issueCreate` needs a `teamId` and the
+    /// config holds a project NAME. The resolve step is what turns one into
+    /// the other, and its refusals -- not found, ambiguous, no team -- are
+    /// passed through verbatim rather than flattened, because each sends a
+    /// person somewhere different.
+    pub fn create_linear_issue(
+        token: &str,
+        project: &str,
+        title: &str,
+        description: &str,
+    ) -> Result<String, String> {
+        use crate::linear_api::{
+            LinearApi, LinearCall, ProjectLookup, issue_create_mutation, parse_created_issue,
+            parse_graphql_response, parse_project_lookup, project_lookup_query,
+        };
+        let api = crate::remote::linear_http::HttpLinearApi;
+
+        let ask = |body: &serde_json::Value| -> Result<serde_json::Value, String> {
+            match api.post_graphql(token, body) {
+                Ok((status, answer)) => match parse_graphql_response(status, &answer) {
+                    LinearCall::Ok(data) => Ok(data),
+                    other => Err(other
+                        .failure_line()
+                        .unwrap_or_else(|| "Linear failed without saying why.".to_owned())),
+                },
+                Err(reason) => Err(format!("Could not reach Linear: {reason}")),
+            }
+        };
+
+        let target = match parse_project_lookup(&ask(&project_lookup_query(project))?) {
+            ProjectLookup::Found(target) => target,
+            ProjectLookup::NotFound => {
+                return Err(format!(
+                    "Linear has no project named {project}. Fix `linear.project` in the Aimux config."
+                ));
+            }
+            // Named with the count, because the fix is to rename one of them
+            // or name the team -- not to retry.
+            ProjectLookup::Ambiguous { count } => {
+                return Err(format!(
+                    "{count} Linear projects are named {project}, so it is unclear which was \
+                     meant. Rename one, or point `linear.project` at a unique name."
+                ));
+            }
+            ProjectLookup::NoTeam => {
+                return Err(format!(
+                    "The Linear project {project} has no team, and an issue needs one."
+                ));
+            }
+        };
+
+        let created =
+            parse_created_issue(&ask(&issue_create_mutation(&target, title, description))?)?;
+        Ok(match created.url {
+            Some(url) => format!("{} — {url}", created.identifier),
+            None => created.identifier,
+        })
     }
 
     pub fn check_linear_credential(token: &str) -> Result<String, String> {
@@ -237,6 +298,16 @@ mod disabled {
         _project: &str,
     ) -> Result<serde_json::Value, String> {
         Err("This build has no HTTP client, so Linear cannot be read.".to_owned())
+    }
+
+    /// No HTTP client in this build. A true answer about the binary.
+    pub fn create_linear_issue(
+        _token: &str,
+        _project: &str,
+        _title: &str,
+        _description: &str,
+    ) -> Result<String, String> {
+        Err("This build has no HTTP client, so Linear cannot be written to.".to_owned())
     }
 
     pub fn check_linear_credential(_token: &str) -> Result<String, String> {
