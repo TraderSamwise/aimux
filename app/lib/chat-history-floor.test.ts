@@ -12,11 +12,11 @@ describe("why scrolling up stopped", () => {
   });
 
   it("states what the view loads once it has stopped", () => {
-    expect(chatHistoryFloorNotice(true)).toBe("This view loads at most the last 2000 lines");
+    expect(chatHistoryFloorNotice(true)).toBe("This view loads at most the last 8000 lines");
   });
 
   // The number is the pager's own floor, not the service's `captureLineLimit`:
-  // the app asks for 160 lines and the service reports 2000 whatever it asked
+  // the app starts with a smaller window and the service reports its cap whatever it asked
   // for, so reading the response would have put the wrong number on screen.
   it("counts from the pager's floor", () => {
     expect(CHAT_HISTORY_FLOOR_LINES).toBe(-CHAT_OUTPUT_MAX_CAPTURE_START_LINE);

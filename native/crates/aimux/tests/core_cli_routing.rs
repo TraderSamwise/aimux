@@ -1772,7 +1772,7 @@ fn host_agent_stream_parser_matches_commander_flag_math() {
         Some(CoreHostAgentStreamArgs {
             session_id: "claude-1".into(),
             project: None,
-            start_line: -2000,
+            start_line: -8000,
             interval_ms: 500,
         })
     );
