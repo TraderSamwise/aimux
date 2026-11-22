@@ -69,10 +69,14 @@ export function taskAssigneeLabel(task: LinearTask): string {
 /**
  * How many tasks somebody is actively working.
  *
- * Counts `accepted` only, which is what the service maps Linear's `started`
- * onto. A count that also included `pending` would answer a different question
- * than "is anything being worked on".
+ * Counts `in_progress` only, which is what the service maps Linear's `started`
+ * onto AND what `route_task_accept` writes for a local task -- the same word
+ * for the same state, which is the point. This counted `accepted` before, a
+ * word neither side produces.
+ *
+ * A count that also included `pending` would answer a different question than
+ * "is anything being worked on".
  */
 export function activeTaskCount(tasks: LinearTask[]): number {
-  return tasks.filter((task) => task.status === "accepted").length;
+  return tasks.filter((task) => task.status === "in_progress").length;
 }
