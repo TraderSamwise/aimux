@@ -35,6 +35,17 @@ describe("chat chrome layout", () => {
     );
   });
 
+  it("can use the route's effective top chrome reserve", () => {
+    expect(
+      chatTranscriptTopReserveHeight({
+        pairingBannerVisible: true,
+        panelReserveHeight: 200,
+        topBarReserveHeight: 12,
+        topInset: 54,
+      }),
+    ).toBe(12 + 200 + CHAT_SESSION_HEADER_HEIGHT);
+  });
+
   it("prefers a measured chrome row to the constant guess", () => {
     // The constants are guesses at rendered height and the panels below are
     // positioned by adding them up, so a guess that is too tall IS the gap.

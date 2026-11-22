@@ -50,7 +50,9 @@ import {
   Clock,
   CircleAlert,
   Columns2,
+  Maximize2,
   MessageSquareText,
+  Minimize2,
   Plus,
   SlidersHorizontal,
   Square,
@@ -262,6 +264,7 @@ import {
   chatChromeVisibleAtom,
   chatComposerDraftFamily,
   chatComposerSendOperationFamily,
+  chatFocusModeAtom,
 } from "@/stores/ui";
 import type { ChatMessage, HistoryPart } from "@/lib/events";
 
@@ -569,6 +572,7 @@ export default function ChatScreen() {
   const markOutputInterrupted = useSetAtom(markOutputInterruptedAtom);
   const clearLocalInterruptHold = useSetAtom(clearLocalInterruptHoldAtom);
   const setGlobalChatChromeVisible = useSetAtom(chatChromeVisibleAtom);
+  const [chatFocusMode, setChatFocusMode] = useAtom(chatFocusModeAtom);
   const markNotificationsReadLocal = useSetAtom(markNotificationRecordsReadLocalAtom);
   const transcript = useAtomValue(transcriptFamily(agentKey));
   const transcriptLastError = useAtomValue(lastErrorFamily(agentKey));
@@ -1078,10 +1082,12 @@ export default function ChatScreen() {
   const resolvedTopInset = resolveChromeTopInset(insets.top, {
     reserveTopSafeArea: sidebarPresentation !== "persistent",
   });
-  const topBarHeight = chatTopBarReserveHeight({
-    pairingBannerVisible: showPairingBanner,
-    topInset: resolvedTopInset,
-  });
+  const topBarHeight = chatFocusMode
+    ? resolvedTopInset
+    : chatTopBarReserveHeight({
+        pairingBannerVisible: showPairingBanner,
+        topInset: resolvedTopInset,
+      });
   const chatHeaderTopReserve =
     topBarHeight + chatChromeRowHeight(sessionHeaderHeight, CHAT_SESSION_HEADER_HEIGHT);
   const chatOverlayPanelReserve = chatOverlayPanelReserveHeight({
@@ -1114,6 +1120,7 @@ export default function ChatScreen() {
     pairingBannerVisible: showPairingBanner,
     panelReserveHeight: chatOverlayPanelReserve,
     sessionHeaderHeight,
+    topBarReserveHeight: topBarHeight,
     topInset: resolvedTopInset,
   });
   const chatBottomContentReserve =
@@ -2683,6 +2690,23 @@ export default function ChatScreen() {
       setAgentOutputViewMode,
     ],
   );
+  const focusModeControl = session ? (
+    <Pressable
+      onPress={() => setChatFocusMode((focused) => !focused)}
+      accessibilityLabel={chatFocusMode ? "Exit focused chat" : "Focus chat"}
+      accessibilityState={{ selected: chatFocusMode }}
+      className={cn(
+        "h-8 w-8 items-center justify-center rounded-md border border-border",
+        chatFocusMode ? "bg-accent" : "bg-background active:bg-accent",
+      )}
+    >
+      {chatFocusMode ? (
+        <Minimize2 size={15} color="#fafafa" />
+      ) : (
+        <Maximize2 size={15} color="#a1a1aa" />
+      )}
+    </Pressable>
+  ) : null;
 
   return (
     <View style={{ flex: 1 }}>
@@ -2769,6 +2793,9 @@ export default function ChatScreen() {
                         </View>
                       </View>
                       {modeControls ? <View className="mr-2">{modeControls}</View> : null}
+                      {focusModeControl ? (
+                        <View className="mr-2">{focusModeControl}</View>
+                      ) : null}
                       {session ? (
                         <>
                           <View className="mr-2">
@@ -2876,6 +2903,9 @@ export default function ChatScreen() {
                     </View>
                     {modeControls ? (
                       <View className="mx-2 flex-shrink-0">{modeControls}</View>
+                    ) : null}
+                    {focusModeControl ? (
+                      <View className="mr-2 flex-shrink-0">{focusModeControl}</View>
                     ) : null}
                     {session ? (
                       <ScrollView

@@ -29,6 +29,11 @@ export const sidebarProjectPickerShowAllAtom = atom<boolean>(false);
 
 export const chatChromeVisibleAtom = atom<boolean>(true);
 
+// Ephemeral focus mode for chat routes. It hides app shell chrome while the
+// chat stays mounted, and non-chat routes ignore it so normal navigation keeps
+// its own chrome.
+export const chatFocusModeAtom = atom<boolean>(false);
+
 export const chatComposerDraftFamily = atomFamily((_key: string) => atom<string>(""));
 
 export const chatComposerSendOperationFamily = atomFamily((_key: string) =>

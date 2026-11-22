@@ -57,6 +57,9 @@ describe("chat chrome geometry", () => {
       /chatTranscriptTopReserveHeight\(\{[^}]*\bsessionHeaderHeight\b[^}]*\}\)/s,
     );
     expect(screenSource()).toMatch(
+      /chatTranscriptTopReserveHeight\(\{[^}]*\btopBarReserveHeight:\s*topBarHeight\b[^}]*\}\)/s,
+    );
+    expect(screenSource()).toMatch(
       /chatOverlayPanelReserveHeight\(\{[^}]*\breconnectingPanelHeight\b[^}]*\}\)/s,
     );
   });
@@ -65,5 +68,14 @@ describe("chat chrome geometry", () => {
     const source = screenSource();
     expect(source).not.toContain("topBarHeight + CHAT_SESSION_HEADER_HEIGHT");
     expect(source).not.toContain("? CHAT_RECONNECTING_PANEL_RESERVE : 0");
+  });
+
+  it("lets focused chat mode drop the app top bar reserve", () => {
+    const source = screenSource();
+    expect(source).toContain("chatFocusModeAtom");
+    expect(source).toContain("const topBarHeight = chatFocusMode");
+    expect(source).toContain(
+      'accessibilityLabel={chatFocusMode ? "Exit focused chat" : "Focus chat"}',
+    );
   });
 });
