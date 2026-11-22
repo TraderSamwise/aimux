@@ -10,6 +10,16 @@ use serde_json::{Map, Value};
 
 /// Translate Linear's state TYPE into the local status vocabulary.
 ///
+/// THE LOCAL VOCABULARY IS WHAT THE TASK ROUTES WRITE, and it is worth naming
+/// because this function got it wrong once: `pending`, `in_progress`,
+/// `blocked`, `done` and `canceled`, from `route_task_assign`, `_accept`,
+/// `_block`, `_complete` and `_cancel`. It returned `accepted` and `completed`
+/// before -- plausible words that the local engine has never written -- so a
+/// Linear-sourced task and a local one described the same state differently
+/// and any surface switching on status treated them as different things.
+/// `open`, `waiting` and `abandoned` also appear in that file but belong to
+/// threads and handoffs, not tasks.
+///
 /// Linear's type is a closed set and is the right thing to key on: a workspace
 /// can rename "In Progress" to anything, but its type stays `started`. Keying
 /// on the display NAME would break the moment somebody renamed a column.
@@ -23,9 +33,14 @@ pub fn local_status_for_linear_state(state_type: &str) -> Option<&'static str> {
         // Nothing has picked it up. Triage is lumped in here because, to
         // somebody asking whether work is happening, it is not.
         "triage" | "backlog" | "unstarted" => Some("pending"),
-        // Somebody is on it. `accepted` is the local word for that.
-        "started" => Some("accepted"),
-        "completed" => Some("completed"),
+        // Somebody is on it. `in_progress` is the word `route_task_accept`
+        // writes, which is what makes it the local word -- NOT `accepted`,
+        // which this function used to return and which the local engine has
+        // never written.
+        "started" => Some("in_progress"),
+        // `done`, for the same reason: it is what `route_task_complete`
+        // writes.
+        "completed" => Some("done"),
         "canceled" => Some("canceled"),
         _ => None,
     }
@@ -46,8 +61,8 @@ pub fn linear_state_type_for_local_status(status: &str) -> Option<&'static str> 
         // pending has been CREATED and is waiting -- which is the todo column,
         // not the backlog somebody has not triaged yet.
         "pending" => Some("unstarted"),
-        "accepted" => Some("started"),
-        "completed" => Some("completed"),
+        "in_progress" => Some("started"),
+        "done" => Some("completed"),
         "canceled" => Some("canceled"),
         _ => None,
     }
@@ -207,7 +222,7 @@ mod tests {
     /// that marks a task `accepted` sees something else on the next read.
     #[test]
     fn the_write_mapping_round_trips_through_the_read_mapping() {
-        for status in ["pending", "accepted", "completed", "canceled"] {
+        for status in ["pending", "in_progress", "done", "canceled"] {
             let state_type = linear_state_type_for_local_status(status)
                 .unwrap_or_else(|| panic!("{status} must be expressible"));
             assert_eq!(
@@ -245,12 +260,42 @@ mod tests {
         assert_eq!(local_status_for_linear_state("triage"), Some("pending"));
         assert_eq!(local_status_for_linear_state("backlog"), Some("pending"));
         assert_eq!(local_status_for_linear_state("unstarted"), Some("pending"));
-        assert_eq!(local_status_for_linear_state("started"), Some("accepted"));
         assert_eq!(
-            local_status_for_linear_state("completed"),
-            Some("completed")
+            local_status_for_linear_state("started"),
+            Some("in_progress")
         );
+        assert_eq!(local_status_for_linear_state("completed"), Some("done"));
         assert_eq!(local_status_for_linear_state("canceled"), Some("canceled"));
+    }
+
+    /// THE GATE THAT WOULD HAVE CAUGHT THE ORIGINAL MISTAKE. Every status this
+    /// mapping produces has to be a word a task route actually writes --
+    /// `accepted` and `completed` were plausible and wrong, and nothing here
+    /// compared them against the engine.
+    ///
+    /// The list is spelled out rather than scanned out of the source, because
+    /// a scan over `coordination_mutations.rs` also picks up `open`,
+    /// `waiting` and `abandoned`, which are thread and handoff words. The
+    /// point of this gate is the TASK vocabulary.
+    #[test]
+    fn every_mapped_status_is_a_word_a_task_route_writes() {
+        // From route_task_assign, _accept, _block, _complete and _cancel.
+        const TASK_STATUSES: [&str; 5] = ["pending", "in_progress", "blocked", "done", "canceled"];
+        for state_type in [
+            "triage",
+            "backlog",
+            "unstarted",
+            "started",
+            "completed",
+            "canceled",
+        ] {
+            let status = local_status_for_linear_state(state_type)
+                .unwrap_or_else(|| panic!("{state_type} must map to something"));
+            assert!(
+                TASK_STATUSES.contains(&status),
+                "{state_type} maps to {status}, which no task route writes"
+            );
+        }
     }
 
     /// THE GATE THIS MODULE TURNS ON. An unrecognised state must not become
@@ -285,9 +330,9 @@ mod tests {
     }
 
     #[test]
-    fn a_started_issue_reads_as_accepted_and_names_who_has_it() {
+    fn a_started_issue_reads_as_in_progress_and_names_who_has_it() {
         let task = task_from_linear_issue(&issue("started", Some("Sam S."))).expect("a task");
-        assert_eq!(task["status"], json!("accepted"));
+        assert_eq!(task["status"], json!("in_progress"));
         assert_eq!(task["assignee"], json!("Sam S."));
         assert_eq!(task["identifier"], json!("AIM-12"));
         assert_eq!(task["source"], json!("linear"));
