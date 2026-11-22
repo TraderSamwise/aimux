@@ -44,20 +44,20 @@ pub struct RemoteCommandOutput {
 
 #[cfg(feature = "remote-control")]
 pub use enabled::{
-    check_linear_credential, command_help, create_linear_issue, fetch_linear_project_issues,
-    forward_alert_to_mobile_push, forward_alert_to_mobile_push_with_context,
-    has_remote_credentials, host_published_attachment, hosted_backlog_snapshots, move_linear_issue,
-    plan_remote_core_cli, root_help_commands, run_hosted_root_command, run_remote_cli_action,
-    should_defer_to_hosted_cli,
+    check_linear_credential, command_help, create_linear_issue, fetch_linear_project_documents,
+    fetch_linear_project_issues, forward_alert_to_mobile_push,
+    forward_alert_to_mobile_push_with_context, has_remote_credentials, host_published_attachment,
+    hosted_backlog_snapshots, move_linear_issue, plan_remote_core_cli, root_help_commands,
+    run_hosted_root_command, run_remote_cli_action, should_defer_to_hosted_cli,
 };
 
 #[cfg(not(feature = "remote-control"))]
 pub use disabled::{
-    check_linear_credential, command_help, create_linear_issue, fetch_linear_project_issues,
-    forward_alert_to_mobile_push, forward_alert_to_mobile_push_with_context,
-    has_remote_credentials, host_published_attachment, hosted_backlog_snapshots, move_linear_issue,
-    plan_remote_core_cli, root_help_commands, run_hosted_root_command, run_remote_cli_action,
-    should_defer_to_hosted_cli,
+    check_linear_credential, command_help, create_linear_issue, fetch_linear_project_documents,
+    fetch_linear_project_issues, forward_alert_to_mobile_push,
+    forward_alert_to_mobile_push_with_context, has_remote_credentials, host_published_attachment,
+    hosted_backlog_snapshots, move_linear_issue, plan_remote_core_cli, root_help_commands,
+    run_hosted_root_command, run_remote_cli_action, should_defer_to_hosted_cli,
 };
 
 #[cfg(feature = "remote-control")]
@@ -229,6 +229,27 @@ mod enabled {
         Ok(format!("{identifier} is now {landed}"))
     }
 
+    /// Every document in a Linear project, as raw GraphQL `data`.
+    ///
+    /// Returns `data` so the SHAPING stays in `linear_api` where it is gated;
+    /// this side only owns the socket.
+    pub fn fetch_linear_project_documents(
+        token: &str,
+        project: &str,
+    ) -> Result<serde_json::Value, String> {
+        use crate::linear_api::{LinearApi, parse_graphql_response, project_documents_query};
+        let api = crate::remote::linear_http::HttpLinearApi;
+        match api.post_graphql(token, &project_documents_query(project)) {
+            Ok((status, body)) => match parse_graphql_response(status, &body) {
+                crate::linear_api::LinearCall::Ok(data) => Ok(data),
+                other => Err(other
+                    .failure_line()
+                    .unwrap_or_else(|| "Linear failed without saying why.".to_owned())),
+            },
+            Err(reason) => Err(format!("Could not reach Linear: {reason}")),
+        }
+    }
+
     pub fn check_linear_credential(token: &str) -> Result<String, String> {
         use crate::linear_api::{LinearCall, verify_linear_token};
         match verify_linear_token(&crate::remote::linear_http::HttpLinearApi, token) {
@@ -388,6 +409,14 @@ mod disabled {
         _local_status: &str,
     ) -> Result<String, String> {
         Err("This build has no HTTP client, so Linear cannot be written to.".to_owned())
+    }
+
+    /// No HTTP client in this build. A true answer about the binary.
+    pub fn fetch_linear_project_documents(
+        _token: &str,
+        _project: &str,
+    ) -> Result<serde_json::Value, String> {
+        Err("This build has no HTTP client, so Linear cannot be read.".to_owned())
     }
 
     pub fn check_linear_credential(_token: &str) -> Result<String, String> {

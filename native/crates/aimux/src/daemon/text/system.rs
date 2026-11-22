@@ -66,6 +66,9 @@ pub fn route_system_text_request(
     if method == "GET" && pathname == CORE_API_ROUTES.linear_tasks_text {
         return Some(linear_tasks_text_route(&route_url));
     }
+    if method == "GET" && pathname == CORE_API_ROUTES.linear_docs_text {
+        return Some(linear_docs_text_route(&route_url));
+    }
     if pathname == CORE_API_ROUTES.linear_move_text {
         // POST only: this changes an issue's state.
         return match method {
@@ -404,6 +407,108 @@ pub fn linear_assign_text_route(
         // from an ambiguous one from an unreachable Linear.
         Err(reason) => text_error(400, &reason),
     }
+}
+
+/// The Linear project's documents.
+///
+/// Sam asked for "linear docs, linear tickets" as first-party. Tickets read
+/// through `linear tasks`; this is the other half. A LIST rather than the
+/// contents, because a document is long and Linear renders it better -- what a
+/// person needs from a terminal is to know what exists and how to open it.
+pub fn linear_docs_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
+    let resolver = crate::paths::PathResolver::from_env();
+    let config = crate::config::load_global_config_with_resolver(&resolver);
+    let settings = crate::linear_settings::parse_linear_settings(&config);
+    let token =
+        crate::linear_settings::resolve_linear_token(&settings, |name| std::env::var(name).ok());
+
+    let crate::linear_settings::LinearSettings::Configured { project, .. } = &settings else {
+        let reason = match &settings {
+            crate::linear_settings::LinearSettings::Unreadable(reason) => reason.clone(),
+            _ => "No Linear project is configured, so there are no Linear docs.".to_owned(),
+        };
+        let report = serde_json::json!({ "ok": false, "checked": false, "reason": reason });
+        return text_or_json_lines(route_url, report, &[reason]);
+    };
+    let crate::linear_settings::LinearToken::Readable { env, .. } = &token else {
+        let reason = crate::linear_settings::linear_token_line(&token);
+        let report = serde_json::json!({ "ok": false, "checked": false, "reason": reason });
+        return text_or_json_lines(route_url, report, &[reason]);
+    };
+    let Ok(secret) = std::env::var(env) else {
+        let reason = "The token variable disappeared between reading it and using it.".to_owned();
+        let report = serde_json::json!({ "ok": false, "checked": false, "reason": reason });
+        return text_or_json_lines(route_url, report, &[reason]);
+    };
+
+    match crate::remote_control_edge::fetch_linear_project_documents(secret.trim(), project) {
+        Ok(data) => {
+            let (docs, problems) = crate::linear_api::docs_from_linear_data(&data);
+            let lines = render_linear_docs(&docs, &problems);
+            let rendered: Vec<Value> = docs
+                .iter()
+                .map(|doc| {
+                    let mut object = serde_json::Map::new();
+                    object.insert("id".to_owned(), Value::String(doc.id.clone()));
+                    object.insert("title".to_owned(), Value::String(doc.title.clone()));
+                    for (key, value) in [
+                        ("slug", doc.slug.as_ref()),
+                        ("url", doc.url.as_ref()),
+                        ("author", doc.author.as_ref()),
+                        ("updatedAt", doc.updated_at.as_ref()),
+                    ] {
+                        if let Some(value) = value {
+                            object.insert(key.to_owned(), Value::String(value.clone()));
+                        }
+                    }
+                    Value::Object(object)
+                })
+                .collect();
+            let report = serde_json::json!({
+                "ok": problems.is_empty(),
+                "checked": true,
+                "project": project,
+                "docs": rendered,
+                "problems": problems,
+            });
+            text_or_json_lines(route_url, report, &lines)
+        }
+        Err(reason) => {
+            let report = serde_json::json!({ "ok": false, "checked": true, "error": reason });
+            text_or_json_lines(route_url, report, &[reason])
+        }
+    }
+}
+
+/// One line per document, problems last.
+pub fn render_linear_docs(
+    docs: &[crate::linear_api::LinearDoc],
+    problems: &[String],
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if docs.is_empty() && problems.is_empty() {
+        lines.push("No documents in the Linear project.".to_owned());
+    }
+    for doc in docs {
+        // The URL is what makes the line actionable from a terminal, so it is
+        // preferred over the slug; the slug is the fallback because a document
+        // with neither is still worth naming.
+        let handle = doc
+            .url
+            .as_deref()
+            .or(doc.slug.as_deref())
+            .unwrap_or("no link");
+        let author = doc
+            .author
+            .as_deref()
+            .map(|author| format!(" — {author}"))
+            .unwrap_or_default();
+        lines.push(format!("{}{author}  {handle}", doc.title));
+    }
+    for problem in problems {
+        lines.push(format!("problem: {problem}"));
+    }
+    lines
 }
 
 /// The Linear project's issues, as tasks.
@@ -1343,5 +1448,78 @@ mod linear_tasks_render_tests {
         let lines = render_linear_tasks(&[], &[]);
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].contains("No issues"), "{lines:?}");
+    }
+}
+
+#[cfg(test)]
+mod linear_docs_render_tests {
+    use super::render_linear_docs;
+    use crate::linear_api::LinearDoc;
+
+    fn doc(title: &str, url: Option<&str>, slug: Option<&str>) -> LinearDoc {
+        LinearDoc {
+            id: "d1".to_owned(),
+            title: title.to_owned(),
+            slug: slug.map(str::to_owned),
+            url: url.map(str::to_owned),
+            author: Some("Sam S.".to_owned()),
+            updated_at: None,
+        }
+    }
+
+    /// The URL is what makes a line ACTIONABLE from a terminal, so it wins
+    /// over the slug. The slug is the fallback rather than the preference,
+    /// because a slug still has to be pasted into a URL by hand.
+    #[test]
+    fn a_document_line_prefers_the_url_over_the_slug() {
+        let lines = render_linear_docs(
+            &[doc(
+                "Fleet spec",
+                Some("https://linear.app/x"),
+                Some("abc123"),
+            )],
+            &[],
+        );
+        assert!(lines[0].contains("https://linear.app/x"), "{lines:?}");
+        assert!(
+            !lines[0].contains("abc123"),
+            "the slug was shown beside a url: {lines:?}"
+        );
+        assert!(lines[0].contains("Fleet spec"), "{lines:?}");
+        assert!(lines[0].contains("Sam S."), "{lines:?}");
+    }
+
+    /// With no url, the slug is better than nothing. With neither, the
+    /// document is STILL named -- it exists, and dropping it would under-report
+    /// the project.
+    #[test]
+    fn a_document_with_no_url_still_says_what_it_can() {
+        let with_slug = render_linear_docs(&[doc("Spec", None, Some("abc123"))], &[]);
+        assert!(with_slug[0].contains("abc123"), "{with_slug:?}");
+
+        let with_neither = render_linear_docs(&[doc("Spec", None, None)], &[]);
+        assert_eq!(with_neither.len(), 1, "{with_neither:?}");
+        assert!(with_neither[0].contains("Spec"), "{with_neither:?}");
+        assert!(with_neither[0].contains("no link"), "{with_neither:?}");
+    }
+
+    /// Problems render AFTER the documents, never instead of them.
+    #[test]
+    fn problems_appear_beside_the_documents() {
+        let lines = render_linear_docs(
+            &[doc("Spec", Some("https://x"), None)],
+            &["Linear document d2 arrived with no title".to_owned()],
+        );
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[1].starts_with("problem:"), "{lines:?}");
+        assert!(lines[1].contains("d2"), "{lines:?}");
+    }
+
+    /// An empty project says so. Zero lines would read as a failed read.
+    #[test]
+    fn an_empty_project_still_says_something() {
+        let lines = render_linear_docs(&[], &[]);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("No documents"), "{lines:?}");
     }
 }

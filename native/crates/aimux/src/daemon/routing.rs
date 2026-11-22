@@ -282,6 +282,7 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.linear_tasks_text,
     crate::core_command_contract::CORE_API_ROUTES.linear_assign_text,
     crate::core_command_contract::CORE_API_ROUTES.linear_move_text,
+    crate::core_command_contract::CORE_API_ROUTES.linear_docs_text,
     crate::core_command_contract::CORE_API_ROUTES.swarm_host_text,
     crate::core_command_contract::CORE_API_ROUTES.graveyard_cleanup_text,
     crate::core_command_contract::CORE_API_ROUTES.graveyard_list_text,
