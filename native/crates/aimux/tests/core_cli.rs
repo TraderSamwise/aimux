@@ -171,6 +171,73 @@ fn tool_use_always_writes_and_never_silently_lists() {
 /// turn "I forgot the text" into "that method is not allowed", which is a
 /// worse message than the route's own "name what the task is". Every shape
 /// therefore carries a body.
+/// `aimux linear move <issue> <status>` is the first verb taking TWO
+/// positionals, and like `assign` it must never become a read.
+#[test]
+fn linear_move_takes_two_positionals_and_always_posts() {
+    let moved = classify_core_cli(
+        &["linear", "move", "AIM-12", "completed"],
+        &context(true, false),
+    )
+    .expect("naming both is planned");
+    assert_eq!(
+        moved.action,
+        CoreCliAction::TextRoute {
+            path: "/core/linear-move-text".into(),
+            body: Some(json!({ "issue": "AIM-12", "status": "completed" })),
+        }
+    );
+
+    // Only the issue: still a POST, so the ROUTE says which half is missing.
+    let partial = classify_core_cli(&["linear", "move", "AIM-12"], &context(true, false))
+        .expect("a partial move is planned");
+    assert_eq!(
+        partial.action,
+        CoreCliAction::TextRoute {
+            path: "/core/linear-move-text".into(),
+            body: Some(json!({ "issue": "AIM-12" })),
+        },
+        "a partial move must still POST so the route names the missing half"
+    );
+
+    // Neither: also a POST, never a GET that would answer 405.
+    let bare = classify_core_cli(&["linear", "move"], &context(true, false))
+        .expect("a bare move is planned");
+    assert_eq!(
+        bare.action,
+        CoreCliAction::TextRoute {
+            path: "/core/linear-move-text".into(),
+            body: Some(json!({})),
+        },
+        "a bare move must still POST, or the route answers 405 instead of saying what to pass"
+    );
+
+    // The allowlist admits TWO positionals here, unlike every other verb.
+    assert!(is_core_cli_command(&["linear", "move"]));
+    assert!(is_core_cli_command(&["linear", "move", "AIM-12"]));
+    assert!(is_core_cli_command(&[
+        "linear",
+        "move",
+        "AIM-12",
+        "completed"
+    ]));
+    assert!(is_core_cli_command(&[
+        "linear",
+        "move",
+        "AIM-12",
+        "completed",
+        "--json"
+    ]));
+    assert!(!is_core_cli_command(&[
+        "linear",
+        "move",
+        "AIM-12",
+        "completed",
+        "extra"
+    ]));
+    assert!(!is_core_cli_command(&["linear", "move", "--force"]));
+}
+
 #[test]
 fn linear_assign_always_posts_even_with_nothing_to_file() {
     let filed = classify_core_cli(

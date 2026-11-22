@@ -31,6 +31,28 @@ pub fn local_status_for_linear_state(state_type: &str) -> Option<&'static str> {
     }
 }
 
+/// The Linear state TYPE that expresses one local status.
+///
+/// The inverse of `local_status_for_linear_state`, and gated AGAINST it rather
+/// than written independently -- two hand-written tables for one relationship
+/// is how a read and a write start disagreeing about what `accepted` means.
+///
+/// `None` for a status Linear cannot express. `blocked` is the real case:
+/// Linear has no state type for it, so a move to `blocked` is refused rather
+/// than silently landing the issue somewhere else.
+pub fn linear_state_type_for_local_status(status: &str) -> Option<&'static str> {
+    match status {
+        // `unstarted` rather than `backlog`, because an aimux task that is
+        // pending has been CREATED and is waiting -- which is the todo column,
+        // not the backlog somebody has not triaged yet.
+        "pending" => Some("unstarted"),
+        "accepted" => Some("started"),
+        "completed" => Some("completed"),
+        "canceled" => Some("canceled"),
+        _ => None,
+    }
+}
+
 /// Why there is no `blocked` above.
 ///
 /// The local engine has a `blocked` status and Linear has no state TYPE for
@@ -178,6 +200,42 @@ mod tests {
             node["assignee"] = json!({ "name": assignee });
         }
         node
+    }
+
+    /// THE TWO DIRECTIONS MUST AGREE. Every local status the write direction
+    /// can express must map back to that same status when read, or an agent
+    /// that marks a task `accepted` sees something else on the next read.
+    #[test]
+    fn the_write_mapping_round_trips_through_the_read_mapping() {
+        for status in ["pending", "accepted", "completed", "canceled"] {
+            let state_type = linear_state_type_for_local_status(status)
+                .unwrap_or_else(|| panic!("{status} must be expressible"));
+            assert_eq!(
+                local_status_for_linear_state(state_type),
+                Some(status),
+                "{status} -> {state_type} -> something else"
+            );
+        }
+    }
+
+    /// `blocked` is the status Linear cannot express, and it is REFUSED rather
+    /// than landed somewhere else. Mapping it to any state would report a
+    /// blockage Linear never recorded.
+    #[test]
+    fn blocked_cannot_be_expressed_as_a_linear_state() {
+        assert_eq!(linear_state_type_for_local_status("blocked"), None);
+        assert_eq!(linear_state_type_for_local_status("somethingElse"), None);
+    }
+
+    /// Pending goes to the TODO column, not the backlog: an aimux task that is
+    /// pending has been created and is waiting, which is not the same as an
+    /// untriaged backlog item.
+    #[test]
+    fn pending_lands_in_the_todo_column_rather_than_the_backlog() {
+        assert_eq!(
+            linear_state_type_for_local_status("pending"),
+            Some("unstarted")
+        );
     }
 
     /// Keyed on the TYPE, never the display name, because a workspace can

@@ -815,6 +815,18 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("linear"), Some("tasks")) => args[2..].iter().all(|arg| arg.as_ref() == "--json"),
         // Takes the task text as one positional, so this is the `swarm host`
         // shape rather than the flags-only shape its neighbours use.
+        // TWO positionals -- the issue and the status -- which is the first
+        // verb to take more than one, so the bound is 2 rather than 1.
+        (Some("linear"), Some("move")) => {
+            let rest = &args[2..];
+            let flags = rest
+                .iter()
+                .filter(|arg| arg.as_ref().starts_with("--"))
+                .count();
+            rest.iter()
+                .all(|arg| !arg.as_ref().starts_with("--") || arg.as_ref() == "--json")
+                && rest.len() - flags <= 2
+        }
         (Some("linear"), Some("assign")) => {
             let rest = &args[2..];
             let flags = rest

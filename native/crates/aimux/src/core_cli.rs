@@ -2445,6 +2445,37 @@ where
             },
             CoreCliFallback::None,
         ),
+        ("linear", "move") => {
+            let positional: Vec<&str> = args[2..]
+                .iter()
+                .map(String::as_str)
+                .filter(|argument| !argument.starts_with("--"))
+                .collect();
+            // ALWAYS a body, so this is always a POST. The route refuses a
+            // missing issue or status and says which; a bodyless request would
+            // be a GET and answer 405, which tells a person nothing about what
+            // they forgot.
+            let mut fields = serde_json::Map::new();
+            if let Some(issue) = positional.first() {
+                fields.insert("issue".into(), json!(issue));
+            }
+            if let Some(status) = positional.get(1) {
+                fields.insert("status".into(), json!(status));
+            }
+            let body = Some(Value::Object(fields));
+            (
+                CoreCliOperation::LinearSettings,
+                CoreCliAction::TextRoute {
+                    path: if mode == CoreCliOutputMode::Json {
+                        format!("{}?json=1", CORE_API_ROUTES.linear_move_text)
+                    } else {
+                        CORE_API_ROUTES.linear_move_text.to_owned()
+                    },
+                    body,
+                },
+                CoreCliFallback::None,
+            )
+        }
         ("linear", "assign") => {
             let description = args
                 .get(2)
