@@ -395,9 +395,22 @@ pub fn linear_assign_text_route(
         &title,
         &description,
     ) {
-        Ok(created) => {
-            let line = format!("Filed {created} in {project}.");
-            let report = serde_json::json!({ "ok": true, "issue": created, "project": project });
+        Ok((identifier, url)) => {
+            // The pretty form is built HERE, where it is only ever read by a
+            // person. The report carries the identifier and the url as
+            // separate fields, so a client never has to pull them apart.
+            let line = match &url {
+                Some(url) => format!("Filed {identifier} in {project} — {url}"),
+                None => format!("Filed {identifier} in {project}."),
+            };
+            let mut report = serde_json::json!({
+                "ok": true,
+                "issue": identifier,
+                "project": project,
+            });
+            if let (Value::Object(object), Some(url)) = (&mut report, url) {
+                object.insert("url".to_owned(), Value::String(url));
+            }
             text_or_json_lines(route_url, report, &[line])
         }
         // The edge's own reason, which already distinguishes a missing project

@@ -104,12 +104,16 @@ mod enabled {
     /// the other, and its refusals -- not found, ambiguous, no team -- are
     /// passed through verbatim rather than flattened, because each sends a
     /// person somewhere different.
+    /// Returns the issue's IDENTIFIER and its url separately, never one
+    /// display string. Gluing them together is how the identifier stopped
+    /// being parseable: a caller that stores the pretty form as an id cannot
+    /// later look the issue up, and formatting is the caller's job anyway.
     pub fn create_linear_issue(
         token: &str,
         project: &str,
         title: &str,
         description: &str,
-    ) -> Result<String, String> {
+    ) -> Result<(String, Option<String>), String> {
         use crate::linear_api::{
             LinearApi, LinearCall, ProjectLookup, issue_create_mutation, parse_created_issue,
             parse_graphql_response, parse_project_lookup, project_lookup_query,
@@ -152,10 +156,7 @@ mod enabled {
 
         let created =
             parse_created_issue(&ask(&issue_create_mutation(&target, title, description))?)?;
-        Ok(match created.url {
-            Some(url) => format!("{} — {url}", created.identifier),
-            None => created.identifier,
-        })
+        Ok((created.identifier, created.url))
     }
 
     /// Move a Linear issue into the state matching one local status.
@@ -377,7 +378,7 @@ mod disabled {
         _project: &str,
         _title: &str,
         _description: &str,
-    ) -> Result<String, String> {
+    ) -> Result<(String, Option<String>), String> {
         Err("This build has no HTTP client, so Linear cannot be written to.".to_owned())
     }
 
