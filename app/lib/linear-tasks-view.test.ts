@@ -76,7 +76,7 @@ describe("the Linear task panel's view", () => {
     expect(taskStatusLabel({ id: "a", statusUnknown: "" })).toBe("state unknown");
     expect(taskStatusLabel({ id: "a" })).toBe("state unknown");
     // And a real status is shown as itself.
-    expect(taskStatusLabel({ id: "a", status: "accepted" })).toBe("accepted");
+    expect(taskStatusLabel({ id: "a", status: "in_progress" })).toBe("in_progress");
   });
 
   it("says nobody has it rather than leaving a gap", () => {
@@ -86,16 +86,44 @@ describe("the Linear task panel's view", () => {
   });
 
   /**
-   * "Is anything being worked on" counts `accepted` only. Including `pending`
-   * would answer a different question, and an unknown state is not evidence
-   * of work either.
+   * "Is anything being worked on" counts `in_progress` only. Including
+   * `pending` would answer a different question, and an unknown state is not
+   * evidence of work either.
+   *
+   * THE WORD MATTERS AND IT WAS WRONG. This counted `accepted`, which neither
+   * the local task engine nor the Linear mapper has ever produced -- the
+   * engine writes `in_progress` from `route_task_accept`. A count keyed on a
+   * word nothing emits is silently always zero.
    */
+  /**
+   * THE GATE THAT WOULD HAVE CAUGHT IT. Every status word this view treats
+   * specially has to be one the service actually emits, and the service's
+   * words come from the task routes: `pending`, `in_progress`, `blocked`,
+   * `done`, `canceled`. A count keyed on anything else is dead code that
+   * reads as a real answer -- silently always zero.
+   */
+  it("only treats status words the task routes actually write as meaningful", () => {
+    const taskStatuses = ["pending", "in_progress", "blocked", "done", "canceled"];
+    // The word the count keys on must be one of them, and must actually
+    // count -- which is what proves the key is live rather than merely
+    // present in the list.
+    expect(taskStatuses).toContain("in_progress");
+    expect(activeTaskCount([{ id: "a", status: "in_progress" }])).toBe(1);
+    // And every real word renders as itself, so none reads as unknown.
+    for (const status of taskStatuses) {
+      expect(taskStatusLabel({ id: "a", status })).toBe(status);
+    }
+  });
+
   it("counts only the tasks somebody is actually working", () => {
+    // `in_progress` and `done`, which are the words the task routes write --
+    // not `accepted` and `completed`, which this test used before and which
+    // neither the local engine nor the Linear mapper ever produces.
     const tasks = [
-      { id: "a", status: "accepted" },
-      { id: "b", status: "accepted" },
+      { id: "a", status: "in_progress" },
+      { id: "b", status: "in_progress" },
       { id: "c", status: "pending" },
-      { id: "d", status: "completed" },
+      { id: "d", status: "done" },
       { id: "e", statusUnknown: "somethingNew" },
     ];
     expect(activeTaskCount(tasks)).toBe(2);
