@@ -295,6 +295,30 @@ fn string_field(value: &Value, field: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// The Linear issues report, for the dialog.
+///
+/// A DAEMON route rather than the project service, because Linear is
+/// account-wide: a project's own service has no opinion about it.
+///
+/// The timeout is generous relative to the dashboard's other reads because
+/// this one crosses the internet, and short of it the dialog would report
+/// "unreachable" for a Linear that was merely slow. It is still bounded, and
+/// it is only ever paid when somebody opens the dialog -- never on a tick.
+pub fn fetch_linear_tasks_report() -> Result<Value> {
+    request_daemon_json(
+        &format!(
+            "{}?json=1",
+            crate::core_command_contract::CORE_API_ROUTES.linear_tasks_text
+        ),
+        DaemonRequestInit {
+            method: Some(DaemonHttpMethod::Get),
+            timeout_ms: Some(12_000),
+            ..DaemonRequestInit::default()
+        },
+    )
+    .context("request linear tasks")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
